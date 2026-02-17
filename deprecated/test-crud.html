@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test CRUD API Endpoints</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+
+        h1 {
+            color: #60a5fa;
+            margin-bottom: 30px;
+        }
+
+        h2 {
+            color: #38bdf8;
+            margin-top: 30px;
+            border-bottom: 2px solid #1e293b;
+            padding-bottom: 10px;
+        }
+
+        .test-section {
+            background: #1e293b;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 8px;
+            border-left: 4px solid #3b82f6;
+        }
+
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: #2563eb;
+            transform: translateY(-1px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button.delete {
+            background: #ef4444;
+        }
+
+        button.delete:hover {
+            background: #dc2626;
+        }
+
+        button.success {
+            background: #10b981;
+        }
+
+        button.success:hover {
+            background: #059669;
+        }
+
+        .result {
+            background: #0f172a;
+            padding: 15px;
+            margin-top: 10px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .success {
+            color: #10b981;
+        }
+
+        .error {
+            color: #ef4444;
+        }
+
+        .info {
+            color: #60a5fa;
+        }
+
+        input {
+            background: #0f172a;
+            color: #e2e8f0;
+            border: 1px solid #475569;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin: 5px;
+            font-size: 14px;
+        }
+
+        label {
+            display: inline-block;
+            width: 120px;
+            color: #94a3b8;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🧪 Test CRUD API Endpoints</h1>
+    <p style="color: #94a3b8;">Prueba los endpoints UPDATE y DELETE del backend API</p>
+
+    <!-- PRODUCTS TESTS -->
+    <h2>📦 Products</h2>
+
+    <div class="test-section">
+        <h3>1. Update Product</h3>
+        <div>
+            <label>Product ID:</label>
+            <input type="text" id="updateProductId" placeholder="UUID del producto" style="width: 300px;">
+        </div>
+        <div>
+            <label>New Name:</label>
+            <input type="text" id="updateProductName" placeholder="Nuevo nombre" value="Producto Actualizado Test">
+        </div>
+        <button class="success" onclick="testUpdateProduct()">🔄 Test Update Product</button>
+        <div class="result" id="updateProductResult"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>2. Delete Product</h3>
+        <div>
+            <label>Product ID:</label>
+            <input type="text" id="deleteProductId" placeholder="UUID del producto" style="width: 300px;">
+        </div>
+        <button class="delete" onclick="testDeleteProduct()">🗑️ Test Delete Product</button>
+        <div class="result" id="deleteProductResult"></div>
+    </div>
+
+    <!-- CLIENTS TESTS -->
+    <h2>👥 Clients</h2>
+
+    <div class="test-section">
+        <h3>3. Update Client</h3>
+        <div>
+            <label>Client ID:</label>
+            <input type="text" id="updateClientId" placeholder="UUID del cliente" style="width: 300px;">
+        </div>
+        <div>
+            <label>New Phone:</label>
+            <input type="text" id="updateClientPhone" placeholder="Nuevo teléfono" value="0981-999-888">
+        </div>
+        <button class="success" onclick="testUpdateClient()">🔄 Test Update Client</button>
+        <div class="result" id="updateClientResult"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>4. Delete Client</h3>
+        <div>
+            <label>Client ID:</label>
+            <input type="text" id="deleteClientId" placeholder="UUID del cliente" style="width: 300px;">
+        </div>
+        <button class="delete" onclick="testDeleteClient()">🗑️ Test Delete Client</button>
+        <div class="result" id="deleteClientResult"></div>
+    </div>
+
+    <!-- SUPPLIERS TESTS -->
+    <h2>🏭 Suppliers</h2>
+
+    <div class="test-section">
+        <h3>5. Update Supplier</h3>
+        <div>
+            <label>Supplier ID:</label>
+            <input type="text" id="updateSupplierId" placeholder="UUID del proveedor" style="width: 300px;">
+        </div>
+        <div>
+            <label>New Contact:</label>
+            <input type="text" id="updateSupplierContact" placeholder="Nuevo contacto" value="Juan Perez">
+        </div>
+        <button class="success" onclick="testUpdateSupplier()">🔄 Test Update Supplier</button>
+        <div class="result" id="updateSupplierResult"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>6. Delete Supplier</h3>
+        <div>
+            <label>Supplier ID:</label>
+            <input type="text" id="deleteSupplierId" placeholder="UUID del proveedor" style="width: 300px;">
+        </div>
+        <button class="delete" onclick="testDeleteSupplier()">🗑️ Test Delete Supplier</button>
+        <div class="result" id="deleteSupplierResult"></div>
+    </div>
+
+    <!-- QUICK HELPERS -->
+    <h2>⚡ Quick Actions</h2>
+    <div class="test-section">
+        <button onclick="getAllProducts()">Get All Products</button>
+        <button onclick="getAllClients()">Get All Clients</button>
+        <button onclick="getAllSuppliers()">Get All Suppliers</button>
+        <div class="result" id="quickResult"></div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:3001';
+
+        function displayResult(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.className = `result ${type}`;
+            element.textContent = message;
+        }
+
+        // PRODUCTS
+        async function testUpdateProduct() {
+            const id = document.getElementById('updateProductId').value;
+            const name = document.getElementById('updateProductName').value;
+
+            if (!id) {
+                displayResult('updateProductResult', 'Error: Debes ingresar un Product ID', 'error');
+                return;
+            }
+
+            try {
+                // First get the product
+                const getRes = await fetch(`${API_URL}/api/products`);
+                const products = await getRes.json();
+                const product = products.find(p => p.id === id);
+
+                if (!product) {
+                    displayResult('updateProductResult', `Error: Producto con ID ${id} no encontrado`, 'error');
+                    return;
+                }
+
+                // Update it
+                const res = await fetch(`${API_URL}/api/products/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ...product,
+                        name: name
+                    })
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    displayResult('updateProductResult', `✅ SUCCESS!\n\n${JSON.stringify(data, null, 2)}`, 'success');
+                } else {
+                    displayResult('updateProductResult', `❌ ERROR ${res.status}\n\n${JSON.stringify(data, null, 2)}`, 'error');
+                }
+            } catch (error) {
+                displayResult('updateProductResult', `❌ ERROR\n\n${error.message}`, 'error');
+            }
+        }
+
+        async function testDeleteProduct() {
+            const id = document.getElementById('deleteProductId').value;
+
+            if (!id) {
+                displayResult('deleteProductResult', 'Error: Debes ingresar un Product ID', 'error');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_URL}/api/products/${id}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    displayResult('deleteProductResult', `✅ SUCCESS!\n\n${JSON.stringify(data, null, 2)}`, 'success');
+                } else {
+                    displayResult('deleteProductResult', `❌ ERROR ${res.status}\n\n${JSON.stringify(data, null, 2)}`, 'error');
+                }
+            } catch (error) {
+                displayResult('deleteProductResult', `❌ ERROR\n\n${error.message}`, 'error');
+            }
+        }
+
+        // CLIENTS
+        async function testUpdateClient() {
+            const id = document.getElementById('updateClientId').value;
+            const phone = document.getElementById('updateClientPhone').value;
+
+            if (!id) {
+                displayResult('updateClientResult', 'Error: Debes ingresar un Client ID', 'error');
+                return;
+            }
+
+            try {
+                const getRes = await fetch(`${API_URL}/api/clients`);
+                const clients = await getRes.json();
+                const client = clients.find(c => c.id === id);
+
+                if (!client) {
+                    displayResult('updateClientResult', `Error: Cliente con ID ${id} no encontrado`, 'error');
+                    return;
+                }
+
+                const res = await fetch(`${API_URL}/api/clients/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ...client,
+                        phone: phone
+                    })
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    displayResult('updateClientResult', `✅ SUCCESS!\n\n${JSON.stringify(data, null, 2)}`, 'success');
+                } else {
+                    displayResult('updateClientResult', `❌ ERROR ${res.status}\n\n${JSON.stringify(data, null, 2)}`, 'error');
+                }
+            } catch (error) {
+                displayResult('updateClientResult', `❌ ERROR\n\n${error.message}`, 'error');
+            }
+        }
+
+        async function testDeleteClient() {
+            const id = document.getElementById('deleteClientId').value;
+
+            if (!id) {
+                displayResult('deleteClientResult', 'Error: Debes ingresar un Client ID', 'error');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_URL}/api/clients/${id}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    displayResult('deleteClientResult', `✅ SUCCESS!\n\n${JSON.stringify(data, null, 2)}`, 'success');
+                } else {
+                    displayResult('deleteClientResult', `❌ ERROR ${res.status}\n\n${JSON.stringify(data, null, 2)}`, 'error');
+                }
+            } catch (error) {
+                displayResult('deleteClientResult', `❌ ERROR\n\n${error.message}`, 'error');
+            }
+        }
+
+        // SUPPLIERS
+        async function testUpdateSupplier() {
+            const id = document.getElementById('updateSupplierId').value;
+            const contact = document.getElementById('updateSupplierContact').value;
+
+            if (!id) {
+                displayResult('updateSupplierResult', 'Error: Debes ingresar un Supplier ID', 'error');
+                return;
+            }
+
+            try {
+                const getRes = await fetch(`${API_URL}/api/suppliers`);
+                const suppliers = await getRes.json();
+                const supplier = suppliers.find(s => s.id === id);
+
+                if (!supplier) {
+                    displayResult('updateSupplierResult', `Error: Proveedor con ID ${id} no encontrado`, 'error');
+                    return;
+                }
+
+                const res = await fetch(`${API_URL}/api/suppliers/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ...supplier,
+                        contact_name: contact
+                    })
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    displayResult('updateSupplierResult', `✅ SUCCESS!\n\n${JSON.stringify(data, null, 2)}`, 'success');
+                } else {
+                    displayResult('updateSupplierResult', `❌ ERROR ${res.status}\n\n${JSON.stringify(data, null, 2)}`, 'error');
+                }
+            } catch (error) {
+                displayResult('updateSupplierResult', `❌ ERROR\n\n${error.message}`, 'error');
+            }
+        }
+
+        async function testDeleteSupplier() {
+            const id = document.getElementById('deleteSupplierId').value;
+
+            if (!id) {
+                displayResult('deleteSupplierResult', 'Error: Debes ingresar un Supplier ID', 'error');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_URL}/api/suppliers/${id}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    displayResult('deleteSupplierResult', `✅ SUCCESS!\n\n${JSON.stringify(data, null, 2)}`, 'success');
+                } else {
+                    displayResult('deleteSupplierResult', `❌ ERROR ${res.status}\n\n${JSON.stringify(data, null, 2)}`, 'error');
+                }
+            } catch (error) {
+                displayResult('deleteSupplierResult', `❌ ERROR\n\n${error.message}`, 'error');
+            }
+        }
+
+        // QUICK HELPERS
+        async function getAllProducts() {
+            try {
+                const res = await fetch(`${API_URL}/api/products`);
+                const data = await res.json();
+                displayResult('quickResult', `📦 PRODUCTS (${data.length})\n\n${data.map(p => `${p.id} - ${p.name}`).join('\n')}`, 'info');
+            } catch (error) {
+                displayResult('quickResult', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function getAllClients() {
+            try {
+                const res = await fetch(`${API_URL}/api/clients`);
+                const data = await res.json();
+                displayResult('quickResult', `👥 CLIENTS (${data.length})\n\n${data.map(c => `${c.id} - ${c.name}`).join('\n')}`, 'info');
+            } catch (error) {
+                displayResult('quickResult', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function getAllSuppliers() {
+            try {
+                const res = await fetch(`${API_URL}/api/suppliers`);
+                const data = await res.json();
+                displayResult('quickResult', `🏭 SUPPLIERS (${data.length})\n\n${data.map(s => `${s.id} - ${s.name}`).join('\n')}`, 'info');
+            } catch (error) {
+                displayResult('quickResult', `Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Auto-load data on page load
+        window.onload = () => {
+            displayResult('quickResult', 'Click en los botones "Get All..." para ver los IDs disponibles', 'info');
+        };
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,444 @@
+�import { useState, useEffect, Fragment } from "react"
+import { useParams, useNavigate } from "react-router-dom"
+import { api } from "@/services/api"
+import type { Client, Transaction } from "@/types"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { ArrowLeft, User, Phone, Mail, MapPin, CreditCard, History, FileText, BadgeAlert, CheckCircle, Truck } from "lucide-react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
+import { toast } from "sonner"
+import { cn } from "@/lib/utils"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { showErrorToast } from "@/lib/errorHandling"
+import type { OrderItem } from "@/types"
+
+type ClientMovement = Transaction & { ? original_order_id : string | null
+}
+
+type WarrantyReference = { ? id : string ? product_name : string ? issue_description : string ? created_at : string ? status : string ? transaction_id : string
+}
+
+type ItemActionTarget = Pick<OrderItem, "product_id" | "product_name" | "sku" | "quantity">
+
+export default function ClientDetailPage() { ? const { id } = useParams<{ id : string }>()
+    const navigate = useNavigate()
+    const [client, setClient] = useState<Client | null>(null)
+    const [transactions, setTransactions] = useState<ClientMovement[]>([])
+    const [orders, setOrders] = useState<Awaited<ReturnType<typeof api.getOrders>>>([])
+    const [warranties, setWarranties] = useState<WarrantyReference[]>([])
+
+    // Removed unused returns state for now as we are focusing on warranties for traceability
+    const [loading, setLoading] = useState(true)
+    const [expandedTxId, setExpandedTxId] = useState<string | null>(null)
+
+    // Returns & Warranty State
+    const [isReturnDialogOpen, setIsReturnDialogOpen] = useState(false)
+    const [isWarrantyDialogOpen, setIsWarrantyDialogOpen] = useState(false) ? const [selectedItemForAction, setSelectedItemForAction] = useState<{ txId : string, item: ItemActionTarget } | null>(null) ? const [returnForm, setReturnForm] = useState({ reason : '', condition: '', action: '', notes: '' }) ? const [warrantyForm, setWarrantyForm] = useState({ description : '' }) ? const handleOpenReturn = (txId : string, item: ItemActionTarget, orderId: string) => { ? setSelectedItemForAction({ txId : orderId || txId, item })
+        setIsReturnDialogOpen(true)
+    } ? const handleOpenWarranty = (txId : string, item: ItemActionTarget, orderId: string) => { ? setSelectedItemForAction({ txId : orderId || txId, item })
+        setIsWarrantyDialogOpen(true)
+    } ? const asString = (value : unknown) => (typeof value === "string" ? value : value == null ? "" : String(value)) ? const asNumber = (value : unknown) => (typeof value === "number" ? value : Number(value || 0))
+
+    const refreshData = () => {
+        if (id) {
+            setLoading(true)
+            Promise.all([
+                api.getClient(id), ? api.getInvoices({ client_id : id }), ? api.getOrders({ client_id : id }), ? api.getWarranties({ client_id : id }), ? api.getCreditNotes({ client_id : id })
+            ]).then(([foundClient, clientInvoices, clientOrders, clientWarranties, creditNotes]) => {
+                if (foundClient) {
+                    setClient(foundClient) ? const invoiceTxs : ClientMovement[] = clientInvoices.map((inv) => {
+                        const invoiceNumber = asString(inv.invoice_number) || inv.id
+                        const orderId = asString(inv.order_id)
+                        const createdAt = asString(inv.created_at)
+                        const invoiceDate = asString(inv.invoice_date) || inv.issue_date || createdAt
+                        return { ? id : inv.id, ? date : invoiceDate || new Date().toISOString(), ? description : `Factura ${asString(inv.invoice_type) || 'B'}-${invoiceNumber}`, ? reference_id : orderId ? `#${orderId.substring(0, 8)}` : invoiceNumber, ? amount : asNumber(inv.total_amount), ? type : 'sale', ? original_order_id : orderId || null
+                        }
+                    }) ? const cnTxs : ClientMovement[] = creditNotes.map((cn) => {
+                        const cnId = asString(cn.id)
+                        const number = asString(cn.number) || cnId
+                        const referenceId = asString(cn.reference_id)
+                        return { ? id : cnId, ? date : asString(cn.created_at) || new Date().toISOString(), ? description : `Nota de Credito ${number}`, ? reference_id : referenceId ? `#${referenceId.substring(0, 8)}` : number, ? amount : asNumber(cn.amount), ? type : 'credit_note', ? original_order_id : null
+                        }
+                    })
+
+                    // Merge and sort
+                    const allTxs = [...invoiceTxs, ...cnTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+                    setTransactions(allTxs)
+                    setOrders(clientOrders)
+                    setWarranties(clientWarranties)
+                }
+                setLoading(false)
+            }).catch(error => {
+                showErrorToast("Error al cargar datos del cliente", error)
+                setLoading(false)
+            })
+        }
+    }
+
+    const submitReturn = async () => {
+        if (!selectedItemForAction || !client) return
+        try {
+            const returnData = { ? client_id : client.id, ? customer_name : client.name, ? order_id : selectedItemForAction.txId, ? reason : returnForm.reason, ? items : [{ ? product_id : selectedItemForAction.item.product_id, ? quantity : 1, // Defaulting to 1 ? condition_status : returnForm.action === 'restock' ? 'sellable' : 'damaged'
+                }]
+            }
+
+            const newReturn = await api.createClientReturn(returnData)
+
+            // Auto-approve if action is restock or discard (creates Credit Note immediately)
+            if (returnForm.action === 'restock' || returnForm.action === 'discard') {
+                await api.approveClientReturn(newReturn.id)
+                toast.success("Devolución procesada y Nota de Crédito generada")
+            } else {
+                toast.success("Solicitud de devolución registrada")
+            }
+
+            setIsReturnDialogOpen(false) ? setReturnForm({ reason : '', condition: '', action: '', notes: '' })
+            refreshData()
+        } catch (error) {
+            showErrorToast("Error al procesar devolucion", error)
+        }
+    }
+
+    const submitWarranty = async () => {
+        if (!selectedItemForAction || !client) return
+        try {
+            await api.createWarranty({ ? client_id : client.id, ? customer_name : client.name, ? product_id : selectedItemForAction.item.product_id, ? serial_number : selectedItemForAction.item.sku || 'S/N', // Fallback if no serial ? issue_description : warrantyForm.description
+            })
+            toast.success("Garantía iniciada exitosamente")
+            setIsWarrantyDialogOpen(false) ? setWarrantyForm({ description : '' })
+            refreshData()
+        } catch (error) {
+            showErrorToast("Error al iniciar garantia", error)
+        }
+    }
+
+    useEffect(() => {
+        refreshData()
+    }, [id])
+
+    if (loading) {
+        return <div className="p-8 text-center text-muted-foreground">Cargando información del cliente...</div>
+    }
+
+    if (!client) {
+        return (
+            <div className="p-8 text-center">
+                <h2 className="text-xl font-bold text-red-500">Cliente no encontrado</h2>
+                <Button variant="ghost" className="mt-4" onClick={() => navigate("/clients")}>
+                    <ArrowLeft className="mr-2 h-4 w-4" /> Volver al Directorio
+                </Button>
+            </div>
+        )
+    }
+
+    return (
+        <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="flex items-center gap-4">
+                <Button variant="ghost" size="icon" onClick={() => navigate("/clients")}>
+                    <ArrowLeft className="h-4 w-4" />
+                </Button>
+                <div>
+                    <h2 className="text-3xl font-bold tracking-tight">{client.name}</h2>
+                    <p className="text-muted-foreground">{client.tax_id}</p>
+                </div>
+            </div> ? <div className="grid gap-6 md :grid-cols-3">
+                {/* Profile Card */} ? <Card className="md :col-span-2">
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <User className="h-5 w-5 text-blue-500" /> Datos del Cliente
+                        </CardTitle>
+                    </CardHeader> ? <CardContent className="grid gap-4 md :grid-cols-2">
+                        <div className="flex items-center gap-2 text-sm">
+                            <Mail className="h-4 w-4 text-muted-foreground" />
+                            <span>{client.email}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm">
+                            <Phone className="h-4 w-4 text-muted-foreground" />
+                            <span>{client.phone}</span>
+                        </div> ? <div className="flex items-center gap-2 text-sm md :col-span-2">
+                            <MapPin className="h-4 w-4 text-muted-foreground" />
+                            <span>{client.address}</span>
+                        </div> ? <div className="flex items-center gap-2 text-sm md :col-span-2">
+                            <FileText className="h-4 w-4 text-muted-foreground" /> ? <span className="text-muted-foreground">Registrado el : {new Date(client.created_at).toLocaleDateString()}</span>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* Account Balance Card */} ? <Card className={cn(client.current_account_balance > client.credit_limit  "border-red-500/50 bg-red-500/5" : "")}>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <CreditCard className="h-5 w-5 text-green-500" /> Cuenta Corriente
+                        </CardTitle>
+                        <CardDescription>Estado de cuenta actual</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div>
+                            <p className="text-sm font-medium text-muted-foreground">Saldo Actual</p> ? <p className={cn("text-3xl font-bold", client.current_account_balance > 0  "text-orange-500" : "text-green-500")}> ? {new Intl.NumberFormat('es-PY', { style : 'currency', currency: 'PYG' }).format(client.current_account_balance)}
+                            </p>
+                        </div>
+                        <div>
+                            <p className="text-sm font-medium text-muted-foreground">Línea de Crédito</p> ? <p className="font-mono">{new Intl.NumberFormat('es-PY', { style : 'currency', currency: 'PYG' }).format(client.credit_limit)}</p>
+                        </div>
+                        <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+                            <div ? className={cn("h-full", client.current_account_balance > client.credit_limit  "bg-red-500" : "bg-blue-500")} ? style={{ width : `${Math.min(100, (client.current_account_balance / client.credit_limit) * 100)}%` }}
+                            />
+                        </div>
+                        <p className="text-xs text-muted-foreground text-right">
+                            {((client.current_account_balance / client.credit_limit) * 100).toFixed(1)}% utilizado
+                        </p>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* History Tabs */}
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <History className="h-5 w-5 text-purple-500" /> Historial de Movimientos
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Fecha</TableHead>
+                                <TableHead>Concepto</TableHead>
+                                <TableHead>Referencia</TableHead>
+                                <TableHead className="text-right">Monto</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {transactions.length > 0  (
+                                transactions.map((tx) => {
+                                    const isExpanded = expandedTxId === tx.id ? const refClean = tx.reference_id  tx.reference_id.replace('#', '') : ''
+                                    const relatedOrder = orders.find((o) => (
+                                        o.id === tx.original_order_id ||
+                                        o.id === refClean ||
+                                        o.id.endsWith(`-${refClean}`) ||
+                                        o.id === tx.reference_id
+                                    ))
+
+                                    // Check if this transaction has any active warranties
+                                    const hasActiveWarranty = warranties.some(w => w.transaction_id === tx.id)
+
+                                    return (
+                                        <Fragment key={tx.id}>
+                                            <TableRow
+                                                className={cn(
+                                                    "cursor-pointer transition-colors border-l-4", ? isExpanded  "bg-muted/50" : "hover:bg-muted/50", ? hasActiveWarranty  "border-l-orange-500 bg-orange-50/10" : "border-l-transparent"
+                                                )} ? onClick={() => setExpandedTxId(isExpanded  null : tx.id)}
+                                            >
+                                                <TableCell>{new Date(tx.date).toLocaleDateString()}</TableCell>
+                                                <TableCell>{tx.description}</TableCell>
+                                                <TableCell className="font-mono text-xs">{tx.reference_id || "-"}</TableCell> ? <TableCell className={cn("text-right font-medium", tx.type === 'sale'  "text-orange-500" : "text-green-500")}> ? {tx.type === 'sale'  "+" : "-"} {new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG' }).format(tx.amount)}
+                                                </TableCell>
+                                            </TableRow>
+                                            {isExpanded && (
+                                                <TableRow className="bg-muted/30">
+                                                    <TableCell colSpan={4} className="p-4">
+                                                        <div className="rounded-md border bg-background p-4 animate-in fade-in zoom-in-95 duration-200">
+                                                            <h4 className="mb-3 font-semibold text-sm flex items-center justify-between">
+                                                                <span>Detalle de la Operación</span>
+                                                                <div className="flex gap-2">
+                                                                    {/* Buttons moved inside item mapping for granularity, or kept here for general order return if preferred. 
+                                                                        User asked for return/warranty of SPECIFIC items usually. 
+                                                                        For now, I will enable item-level buttons in the table below and remove these general ones or keep them as "General Order Issue" */}
+                                                                </div>
+                                                            </h4>
+                                                            {relatedOrder  (
+                                                                <div className="space-y-3">
+                                                                    <div className="text-xs text-muted-foreground grid grid-cols-2 gap-2 mb-2"> ? <p>ID Orden : <span className="font-mono text-foreground">{relatedOrder.id}</span></p> ? <p>Estado : <span className="uppercase font-bold text-foreground">{relatedOrder.status}</span></p>
+                                                                    </div>
+                                                                    <div className="border rounded-md overflow-hidden">
+                                                                        <table className="w-full text-sm">
+                                                                            <thead className="bg-muted text-xs uppercase text-muted-foreground">
+                                                                                <tr>
+                                                                                    <th className="px-3 py-2 text-left">Producto</th>
+                                                                                    <th className="px-3 py-2 text-center">Cant.</th>
+                                                                                    <th className="px-3 py-2 text-right">SKU</th>
+                                                                                    <th className="px-3 py-2 text-right">Acciones</th>
+                                                                                </tr>
+                                                                            </thead>
+                                                                            <tbody className="divide-y"> ? {relatedOrder.items.map((item : OrderItem, idx: number) => (
+                                                                                    <tr key={idx} className="bg-background">
+                                                                                        <td className="px-3 py-2">{item.product_name}</td>
+                                                                                        <td className="px-3 py-2 text-center text-xs font-mono">{item.quantity}</td>
+                                                                                        <td className="px-3 py-2 text-right text-xs text-muted-foreground font-mono">{item.sku}</td>
+                                                                                        <td className="px-2 py-2 text-right">
+                                                                                            <div className="flex justify-end gap-1">
+                                                                                                <Button
+                                                                                                    variant="ghost"
+                                                                                                    size="icon" ? className="h-6 w-6 text-orange-600 hover :text-orange-700 hover:bg-orange-50"
+                                                                                                    onClick={() => handleOpenReturn(tx.id, item, relatedOrder.id)}
+                                                                                                    title="Procesar Devolución"
+                                                                                                >
+                                                                                                    <History className="h-3 w-3" />
+                                                                                                </Button>
+                                                                                                <Button
+                                                                                                    variant="ghost"
+                                                                                                    size="icon" ? className="h-6 w-6 text-blue-600 hover :text-blue-700 hover:bg-blue-50"
+                                                                                                    onClick={() => handleOpenWarranty(tx.id, item, relatedOrder.id)}
+                                                                                                    title="Iniciar Garantía"
+                                                                                                >
+                                                                                                    <FileText className="h-3 w-3" />
+                                                                                                </Button>
+                                                                                            </div>
+                                                                                        </td>
+                                                                                    </tr>
+                                                                                ))}
+                                                                            </tbody>
+                                                                        </table>
+                                                                    </div>
+                                                                </div> ? ) : (
+                                                                <p className="text-sm text-muted-foreground italic">No se encontraron detalles de productos para esta referencia.</p>
+                                                            )}
+                                                        </div>
+                                                    </TableCell>
+                                                </TableRow>
+                                            )}
+                                        </Fragment>
+                                    )
+                                }) ? ) : (
+                                <TableRow>
+                                    <TableCell colSpan={4} className="text-center text-muted-foreground p-8">Sin movimientos registrados</TableCell>
+                                </TableRow>
+                            )}
+                        </TableBody>
+                    </Table>
+                </CardContent>
+            </Card>
+
+
+            {/* Traceability / Active Claims Card */}
+            <Card className="mt-6 border-blue-200 bg-blue-50/10">
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <Truck className="h-5 w-5 text-blue-500" /> Casos y Garantías Activas
+                    </CardTitle>
+                    <CardDescription>Seguimiento de reclamos en curso</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    {warranties.length > 0  (
+                        <div className="space-y-4">
+                            {warranties.map((war) => (
+                                <div key={war.id} className="flex items-center justify-between p-4 border rounded-lg bg-background shadow-sm">
+                                    <div className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                            <BadgeAlert className="h-4 w-4 text-orange-500" />
+                                            <span className="font-semibold text-sm">{war.id}</span> ? <span className="text-xs text-muted-foreground">ref : {war.product_name}</span>
+                                        </div>
+                                        <p className="text-sm text-foreground">{war.issue_description || '-'}</p>
+                                        <p className="text-xs text-muted-foreground"> ? Iniciado : {war.created_at ? new Date(war.created_at).toLocaleDateString() : '-'}
+                                        </p>
+                                    </div>
+                                    <div className="text-right"> ? <div className={cn("inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus :outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2", ? war.status === 'resolved'  "border-transparent bg-green-500 text-white" : "border-transparent bg-blue-500 text-white"
+                                        )}> ? {(war.status || 'initiated') === 'initiated'  'Iniciado' : (war.status || '').replace(/_/g, ' ')}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div> ? ) : (
+                        <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
+                            <CheckCircle className="h-10 w-10 mb-2 opacity-20" />
+                            <p>No hay reclamos activos en este momento.</p>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
+            {/* Return Dialog */}
+            <Dialog open={isReturnDialogOpen} onOpenChange={setIsReturnDialogOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Registrar Devolución</DialogTitle>
+                        <DialogDescription> ? Producto : <span className="font-semibold text-foreground">{selectedItemForAction.item.product_name}</span>
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label>Motivo</Label> ? <Select onValueChange={(v) => setReturnForm({ ...returnForm, reason : v })}>
+                                    <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="defective">Defectuoso</SelectItem>
+                                        <SelectItem value="wrong_size">Talle Incorrecto</SelectItem>
+                                        <SelectItem value="client_preference">Preferencia Cliente</SelectItem>
+                                        <SelectItem value="other">Otro</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Condición</Label> ? <Select onValueChange={(v) => setReturnForm({ ...returnForm, condition : v })}>
+                                    <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="new_sealed">Nuevo / Sellado</SelectItem>
+                                        <SelectItem value="open_box">Abierto / Sin Uso</SelectItem>
+                                        <SelectItem value="damaged">Dañado</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Acción a Tomar</Label> ? <Select onValueChange={(v) => setReturnForm({ ...returnForm, action : v })}>
+                                <SelectTrigger><SelectValue placeholder="Seleccionar destino..." /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="restock">Reingresar a Stock (Tienda)</SelectItem>
+                                    <SelectItem value="supplier_return">Devolver a Proveedor</SelectItem>
+                                    <SelectItem value="discard">Desechar / Merma</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            {returnForm.action === 'restock' && <p className="text-xs text-green-600 flex items-center"><CheckCircle className="h-3 w-3 mr-1" /> El stock aumentará automáticamente.</p>}
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Notas Adicionales</Label>
+                            <Textarea
+                                placeholder="Detalles adicionales..."
+                                value={returnForm.notes} ? onChange={(e) => setReturnForm({ ...returnForm, notes : e.target.value })}
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsReturnDialogOpen(false)}>Cancelar</Button>
+                        <Button onClick={submitReturn} disabled={!returnForm.reason || !returnForm.condition || !returnForm.action}>Confirmar Devolución</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Warranty Dialog */}
+            <Dialog open={isWarrantyDialogOpen} onOpenChange={setIsWarrantyDialogOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Iniciar Reclamo de Garantía</DialogTitle>
+                        <DialogDescription> ? Producto : <span className="font-semibold text-foreground">{selectedItemForAction.item.product_name}</span>
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4"> ? <div className="bg-blue-50 dark :bg-blue-900/20 p-3 rounded-md border border-blue-100 dark:border-blue-800 text-sm flex gap-2">
+                            <Truck className="h-5 w-5 text-blue-600" /> ? <div className="text-blue-800 dark :text-blue-200">
+                                <p className="font-semibold">Proceso de Trazabilidad</p>
+                                <p className="text-xs">Este reclamo iniciará un seguimiento detallado para coordinar con el proveedor o servicio técnico.</p>
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Descripción del Problema</Label>
+                            <Textarea
+                                className="min-h-[100px]"
+                                placeholder="Describa el defecto o falla detalladamente..."
+                                value={warrantyForm.description} ? onChange={(e) => setWarrantyForm({ ...warrantyForm, description : e.target.value })}
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsWarrantyDialogOpen(false)}>Cancelar</Button>
+                        <Button onClick={submitWarranty} disabled={!warrantyForm.description}>Iniciar Proceso</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        </div >
+    )
+}
+
+

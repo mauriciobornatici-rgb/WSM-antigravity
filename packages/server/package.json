@@ -1,0 +1,27 @@
+{
+    "name": "@wsm/server",
+    "private": true,
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "start": "node index.js",
+        "dev": "nodemon index.js",
+        "smoke:rbac": "node scripts/rbac-validation-smoke.js",
+        "smoke:integrity": "node scripts/integrity-validation-smoke.js"
+    },
+    "dependencies": {
+        "bcrypt": "^6.0.0",
+        "cors": "^2.8.6",
+        "dotenv": "^17.2.3",
+        "express": "^5.2.1",
+        "express-rate-limit": "^8.2.1",
+        "helmet": "^8.1.0",
+        "hpp": "^0.2.3",
+        "joi": "^18.0.2",
+        "jsonwebtoken": "^9.0.3",
+        "mysql2": "^3.16.2"
+    },
+    "devDependencies": {
+        "nodemon": "^3.1.11"
+    }
+}

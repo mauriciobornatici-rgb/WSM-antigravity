@@ -1,0 +1,19 @@
+-- ============================================================
+-- WSM SportsERP - Schema Reference
+-- ============================================================
+-- Source of truth:
+--   packages/server/migrations/*.sql
+--
+-- Bootstrap policy:
+-- 1) Backend startup runs runMigrations()
+-- 2) All DDL must be introduced as a new migration file
+-- 3) Do not edit runtime schema ad-hoc in initDb.js
+--
+-- Current base schema migration:
+--   000_create_core_schema.sql
+--
+-- Feature migrations:
+--   001_create_supplier_returns.sql
+--
+-- For a fresh environment, execute backend startup and let the
+-- migration manager apply all pending files in sorted order.

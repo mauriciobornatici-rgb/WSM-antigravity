@@ -1,0 +1,517 @@
+�import { useState, useEffect } from "react"
+import { Search, ShoppingCart, CreditCard, Trash2, ArrowLeft, User, Check, ChevronDown, UserPlus, Banknote, QrCode, Building, Printer, ArrowRight, X } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from "@/components/ui/dialog"
+import { api } from "@/services/api"
+import { toast } from "sonner"
+import { Link } from "react-router-dom"
+import { showErrorToast } from "@/lib/errorHandling"
+import {
+    DEFAULT_COMPANY_SETTINGS,
+    fetchCompanySettingsSafe,
+    getCompanyAddressLine,
+    getCompanyDisplayName,
+    getTaxRatePercentage,
+} from "@/lib/companySettings"
+import type { Client, CompanySettings, Product } from "@/types"
+import type { CashRegister, CashShiftSummary, Invoice, InvoiceItem } from "@/types/api"
+import { useAuth } from "@/context/AuthContext"
+
+interface CartItem extends Product { ? quantity : number
+}
+
+interface POSProduct extends Product { ? stock : number
+}
+
+type PrintableItem = Partial<InvoiceItem> &
+    Partial<CartItem> & { ? name : string ? product_name : string ? description : string ? quantity : number ? sale_price : number ? unit_price : number
+    }
+
+type POSClient = Client & { ? tax_condition : string ? credit_terms : string
+}
+
+type POSInvoice = Invoice & { ? cae : string | null ? items : PrintableItem[] ? net_amount : number ? vat_amount : number ? total_amount : number ? invoice_type : string ? point_of_sale : number ? invoice_number : number | string
+}
+
+type LastSaleData = { ? orderId : string ? invoice : POSInvoice | null ? items : PrintableItem[] ? totalAmount : number ? client : POSClient | null
+}
+
+const CATEGORIES = [ ? { value : "Todos", label: "Todos" }, ? { value : "Footwear", label: "Calzado" }, ? { value : "Apparel", label: "Indumentaria" }, ? { value : "Equipment", label: "Equipamiento" },
+]
+
+export default function POSPage() {
+    const { user } = useAuth()
+    const [products, setProducts] = useState<POSProduct[]>([])
+    const [searchQuery, setSearchQuery] = useState("")
+    const [selectedCategory, setSelectedCategory] = useState("Todos")
+    const [cart, setCart] = useState<CartItem[]>([])
+    const [clients, setClients] = useState<POSClient[]>([])
+    const [selectedClient, setSelectedClient] = useState<POSClient | null>(null)
+    const [isClientDialogOpen, setIsClientDialogOpen] = useState(false)
+    const [isCreatingClient, setIsCreatingClient] = useState(false)
+    const [clientSearchQuery, setClientSearchQuery] = useState("")
+    const [newClientData, setNewClientData] = useState({ ? name : "", tax_id: "", phone: "", email: "", address: "", credit_limit: 0
+    })
+    const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false)
+    const [companySettings, setCompanySettings] = useState<CompanySettings>(DEFAULT_COMPANY_SETTINGS)
+    const [emitInvoice, setEmitInvoice] = useState(false)
+    const [invoiceType, setInvoiceType] = useState<'A' | 'B'>('B')
+    const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false)
+    const [lastSaleData, setLastSaleData] = useState<LastSaleData | null>(null)
+    const [currentRegister, setCurrentRegister] = useState<CashRegister | null>(null)
+    const [currentShift, setCurrentShift] = useState<CashShiftSummary | null>(null)
+
+    useEffect(() => {
+        const loadInitialData = async () => {
+            try {
+                const [clientsData, productsData, registersData, settingsData] = await Promise.all([
+                    api.getClients(),
+                    api.getProducts(),
+                    api.getCashRegisters(),
+                    fetchCompanySettingsSafe(),
+                ])
+
+                setClients(clientsData)
+                setCompanySettings(settingsData) ? const productsWithStock : POSProduct[] = productsData.map((p: Product) => ({
+                    ...p,
+                    // /api/products now exposes stock_current derived from inventory. ? stock : Number(p.stock_current || 0)
+                }))
+                setProducts(productsWithStock)
+
+                const primaryRegister = registersData.[0] || null
+                setCurrentRegister(primaryRegister)
+
+                if (primaryRegister) {
+                    const openShift = await api.getOpenShift(primaryRegister.id)
+                    setCurrentShift(openShift)
+                } else {
+                    setCurrentShift(null)
+                }
+            } catch (error) {
+                showErrorToast("Error cargando datos del POS", error)
+            }
+        }
+
+        void loadInitialData()
+    }, [])
+
+    const taxRate = companySettings.operation.tax_rate
+    const taxRatePercent = getTaxRatePercentage(companySettings)
+    const taxRateLabel = `IVA (${taxRatePercent}%)`
+    const companyName = getCompanyDisplayName(companySettings)
+    const companyAddress = getCompanyAddressLine(companySettings)
+    const companyTaxId = companySettings.identity.tax_id || "No informado"
+
+    const handleCreateClient = async () => {
+        if (!newClientData.name || !newClientData.tax_id) {
+            toast.warning("Por favor completa Nombre y RUC/CI");
+            return;
+        }
+        try {
+            const newClient = await api.createClient(newClientData)
+            setClients(prev => [newClient, ...prev])
+            setSelectedClient(newClient)
+            setIsCreatingClient(false)
+            setIsClientDialogOpen(false) ? setNewClientData({ name : "", tax_id: "", phone: "", email: "", address: "", credit_limit: 0 })
+            toast.success("Cliente creado exitosamente")
+        } catch (error) {
+            showErrorToast("Error al crear cliente", error)
+        }
+    }
+
+    const filteredProducts = products.filter(p => {
+        const matchesSearch =
+            p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (p.sku || "").toLowerCase().includes(searchQuery.toLowerCase())
+        const matchesCategory = selectedCategory === "Todos" || p.category === selectedCategory
+        return matchesSearch && matchesCategory
+    }) ? const addToCart = (product : POSProduct) => {
+        const availableStock = Number(product.stock || 0)
+        if (availableStock <= 0) {
+            toast.warning("Sin stock disponible para este producto")
+            return
+        }
+
+        setCart(prev => {
+            const existing = prev.find(item => item.id === product.id)
+            if (existing) {
+                if (existing.quantity >= availableStock) {
+                    toast.warning("No hay mas stock disponible")
+                    return prev
+                } ? return prev.map(item => item.id === product.id  { ...item, quantity : item.quantity + 1 } : item)
+            } ? return [...prev, { ...product, quantity : 1 }]
+        })
+    } ? const updateQuantity = (productId : string, delta: number) => {
+        const product = products.find(p => p.id === productId)
+        const availableStock = Number(product.stock || 0)
+
+        setCart(prev => prev.map(item => {
+            if (item.id === productId) {
+                if (delta > 0 && item.quantity >= availableStock) {
+                    toast.warning("No hay mas stock disponible")
+                    return item
+                }
+                const newQuantity = Math.max(1, item.quantity + delta) ? return { ...item, quantity : newQuantity }
+            }
+            return item
+        }))
+    } ? const formatInvoiceNumber = (inv : Partial<Invoice>) => {
+        if (!inv.invoice_number) return "S/N";
+        if (typeof inv.invoice_number === 'number') {
+            return `${inv.invoice_type || 'TK'}-${String(inv.point_of_sale || 1).padStart(4, '0')}-${String(inv.invoice_number).padStart(8, '0')}`;
+        }
+        return String(inv.invoice_number);
+    } ? const removeFromCart = (productId : string) => {
+        setCart(prev => prev.filter(item => item.id !== productId))
+    }
+
+    const cartTotal = cart.reduce((sum, item) => sum + (item.sale_price * item.quantity), 0)
+    const taxAmount = cartTotal * taxRate
+    const grantTotal = cartTotal + taxAmount ? const handlePayment = async (method : 'cash' | 'card' | 'qr' | 'account') => {
+        if (method === 'account' && !selectedClient) {
+            toast.error("Debe seleccionar un cliente para cobrar en Cuenta Corriente")
+            return
+        }
+        if (cart.length === 0) {
+            toast.warning("Agregue productos al carrito antes de cobrar")
+            return
+        }
+
+        if (!currentShift) { ? toast.error("ERROR : No hay un turno de caja abierto", { ? description : "Debe abrir caja desde el módulo de Gestión de Caja antes de vender."
+            });
+            return;
+        }
+
+        try { ? const methodMapping : Record<'cash' | 'card' | 'qr' | 'account', string> = { ? cash : 'cash', ? card : 'debit_card', ? qr : 'qr', ? account : 'credit_account'
+            }
+
+            // 1. Create Order ? const orderItems = cart.map(item => ({ product_id : item.id, quantity: item.quantity })) ? const orderPayload : Parameters<typeof api.createOrder>[0] = { ? items : orderItems, ? payment_method : methodMapping[method] || 'cash', ? customer_name : selectedClient.name || 'Consumidor Final'
+            }
+            if (selectedClient.id) {
+                orderPayload.client_id = selectedClient.id
+            }
+
+            const orderRes = await api.createOrder(orderPayload) ? let createdInvoice : POSInvoice | null = null;
+            // 2. Emit Invoice if selected
+            if (emitInvoice) {
+                try {
+                    const invoiceData = { ? client_id : selectedClient.id || undefined, ? invoice_type : invoiceType, ? point_of_sale : 1, ? order_id : orderRes.id, ? items : cart.map(item => ({ ? product_id : item.id, ? description : item.name, ? quantity : item.quantity, ? unit_price : item.sale_price, ? vat_rate : taxRatePercent, ? discount_percentage : 0
+                        }))
+                    };
+                    createdInvoice = await api.createInvoice(invoiceData) as POSInvoice;
+                } catch (error) {
+                    showErrorToast("Venta guardada, pero fallo la factura", error);
+                }
+            }
+
+            // 3. Record Payment in Cash Shift
+            if (currentShift) {
+                try {
+                    await api.addShiftPayment(currentShift.id, { ? order_id : orderRes.id, ? payment_method : methodMapping[method] || 'cash', ? amount : grantTotal, ? type : 'sale'
+                    });
+                } catch {
+                    toast.warning("Venta guardada, pero no se pudo registrar en el turno de caja.");
+                }
+            } ? const soldByProduct = cart.reduce((acc : Record<string, number>, item) => {
+                acc[item.id] = (acc[item.id] || 0) + Number(item.quantity || 0)
+                return acc
+            }, {})
+            setProducts(prev => prev.map((p) => ({
+                ...p, ? stock : Math.max(0, Number(p.stock || 0) - (soldByProduct[p.id] || 0))
+            })))
+
+            setLastSaleData({ ? orderId : orderRes.id, ? invoice : createdInvoice, ? items : cart.map(item => ({ ...item })), ? totalAmount : grantTotal, ? client : selectedClient ? { ...selectedClient } : null
+            })
+            setIsSuccessDialogOpen(true)
+            setCart([])
+            setSelectedClient(null)
+            setEmitInvoice(false)
+            setIsPaymentDialogOpen(false)
+            toast.success("Venta procesada correctamente")
+
+        } catch (error) {
+            showErrorToast("Error al procesar la venta", error)
+        }
+    }
+
+    const printableHasInvoice = Boolean(lastSaleData.invoice) ? const printableInvoiceType = printableHasInvoice  (lastSaleData.invoice.invoice_type || 'B') : 'X'
+    const printableTotal = Number(lastSaleData.invoice.total_amount || lastSaleData.totalAmount || 0) ? const printableNet = printableHasInvoice  Number(lastSaleData.invoice.net_amount || 0) : printableTotal / (1 + taxRate) ? const printableVat = printableHasInvoice  Number(lastSaleData.invoice.vat_amount || 0) : printableTotal - printableNet ? const printableItems : PrintableItem[] = ((lastSaleData.invoice.items as PrintableItem[] | undefined)  lastSaleData.items  [])
+
+    return (
+        <div className="h-screen w-screen bg-background flex flex-col overflow-hidden"> ? <header className="h-16 bg-slate-900 text-white flex items-center justify-between px-6 shadow-md shrink-0 print :hidden">
+                <div className="flex items-center gap-4">
+                    <Link to="/"> ? <Button variant="ghost" size="icon" className="text-white hover :bg-white/10">
+                            <ArrowLeft className="h-6 w-6" />
+                        </Button>
+                    </Link>
+                    <div className="flex items-center gap-3">
+                        <h1 className="text-xl font-bold tracking-tight">Punto de Venta</h1> ? <Badge variant={currentShift  "default" : "destructive"} className={currentShift ? "bg-green-600" : "animate-pulse"}> ? {currentShift  "CAJA ABIERTA" : "CAJA CERRADA"}
+                        </Badge>
+                    </div> ? <div className="ml-8 hidden md :block w-72">
+                        <Dialog open={isClientDialogOpen} onOpenChange={setIsClientDialogOpen}>
+                            <DialogTrigger asChild> ? <Button variant="outline" className="w-full justify-between bg-slate-800 border-slate-700 text-white hover :bg-slate-700 text-left overflow-hidden truncate"> ? {selectedClient  selectedClient.name : "Seleccionar Cliente..."}
+                                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                </Button>
+                            </DialogTrigger> ? <DialogContent className="sm :max-w-[425px] p-0 gap-0 overflow-hidden bg-slate-900 border-slate-800 text-white print:hidden">
+                                {isCreatingClient  (
+                                    <div className="flex flex-col h-full animate-in slide-in-from-right-10 duration-200">
+                                        <DialogHeader className="px-4 py-3 border-b border-slate-800 bg-slate-900 flex flex-row items-center justify-between">
+                                            <DialogTitle>Registrar Nuevo Cliente</DialogTitle>
+                                            <Button variant="ghost" size="sm" onClick={() => setIsCreatingClient(false)} className="h-8 w-8 p-0">
+                                                <ArrowLeft className="h-4 w-4" />
+                                            </Button>
+                                        </DialogHeader>
+                                        <div className="p-4 space-y-3 overflow-y-auto max-h-[60vh]">
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-medium text-slate-400">Nombre Completo *</label> ? <Input value={newClientData.name} onChange={(e) => setNewClientData(prev => ({ ...prev, name : e.target.value }))} className="bg-slate-950 border-slate-700 h-9" />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-medium text-slate-400">RUC / CI *</label> ? <Input value={newClientData.tax_id} onChange={(e) => setNewClientData(prev => ({ ...prev, tax_id : e.target.value }))} className="bg-slate-950 border-slate-700 h-9" />
+                                            </div> ? <Button className="w-full bg-blue-600 hover :bg-blue-500" onClick={handleCreateClient}>Guardar y Seleccionar</Button>
+                                        </div>
+                                    </div> ? ) : (
+                                    <>
+                                        <DialogHeader className="px-4 py-3 border-b border-slate-800 bg-slate-900"><DialogTitle>Seleccionar Cliente</DialogTitle></DialogHeader>
+                                        <div className="p-4 border-b border-slate-800 bg-slate-900/50">
+                                            <div className="relative">
+                                                <Search className="absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
+                                                <Input placeholder="Buscar por nombre o RUC..." value={clientSearchQuery} onChange={(e) => setClientSearchQuery(e.target.value)} className="pl-8 bg-slate-950 border-slate-700 text-white" />
+                                            </div>
+                                        </div>
+                                        <div className="max-h-[300px] overflow-y-auto p-2"> ? <div className={`flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors ${!selectedClient  "bg-blue-600/20 text-blue-200" : "hover:bg-slate-800"}`} onClick={() => { setSelectedClient(null); setIsClientDialogOpen(false); }}>
+                                                <div className="h-8 w-8 rounded-full bg-slate-800 flex items-center justify-center"><User className="h-4 w-4" /></div>
+                                                <div className="flex-1"><p className="font-medium text-sm">Consumidor Final</p></div>
+                                                {!selectedClient && <Check className="h-4 w-4 text-blue-400" />}
+                                            </div>
+                                            {clients.filter(c => (c.name || "").toLowerCase().includes(clientSearchQuery.toLowerCase())).map(c => ( ? <div key={c.id} className={`flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors ${selectedClient.id === c.id  "bg-blue-600/20 text-blue-200" : "hover:bg-slate-800"}`} onClick={() => { setSelectedClient(c); setIsClientDialogOpen(false); }}>
+                                                    <div className="h-8 w-8 rounded-full bg-slate-800 flex items-center justify-center"><span className="font-bold text-xs">{(c.name || "CF").substring(0, 2).toUpperCase()}</span></div>
+                                                    <div className="flex-1 text-xs truncate"><p className="font-medium text-sm">{c.name || "Sin nombre"}</p><p className="text-slate-400">{c.tax_id || "-"}</p></div>
+                                                </div>
+                                            ))}
+                                        </div> ? <Button variant="ghost" className="w-full justify-start text-blue-400 hover :bg-slate-800" onClick={() => setIsCreatingClient(true)}><UserPlus className="mr-2 h-4 w-4" /> Crear Nuevo Cliente</Button>
+                                    </>
+                                )}
+                            </DialogContent>
+                        </Dialog>
+                    </div>
+                </div>
+                <div className="flex items-center gap-4"> ? <div className="text-right hidden md :block">
+                        <p className="text-sm font-medium">{currentRegister.name || "Caja no seleccionada"}</p>
+                        <p className="text-xs text-white/70">{user.name || "Sin sesion"} ({user.role || "sin rol"})</p>
+                    </div>
+                    <div className="h-10 w-10 bg-blue-600 rounded-full flex items-center justify-center"><User className="h-5 w-5" /></div>
+                </div>
+            </header> ? <div className="flex-1 flex overflow-hidden print :hidden"> ? <main className="flex-1 flex flex-col bg-slate-50 dark :bg-zinc-900 border-r">
+                    <div className="p-4 bg-background border-b flex gap-4">
+                        <div className="flex-1 relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input placeholder="Buscar producto..." className="pl-9 h-12 text-lg" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                        </div> ? <div className="flex bg-slate-200 dark :bg-slate-800 p-1 rounded-lg">
+                            {CATEGORIES.map(cat => (
+                                <button
+                                    key={cat.value}
+                                    onClick={() => setSelectedCategory(cat.value)} ? className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${selectedCategory === cat.value  "bg-blue-600 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"}`}
+                                >
+                                    {cat.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-4 content-start"> ? <div className="grid grid-cols-2 md :grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                            {filteredProducts.map(product => (
+                                <Card
+                                    key={product.id} ? className={`transition-all border-0 shadow-sm bg-white dark :bg-slate-800 ${Number(product.stock || 0) > 0 ? "cursor-pointer hover :ring-2 hover:ring-blue-500" ?   : "opacity-60 cursor-not-allowed"
+                                        }`}
+                                    onClick={() => {
+                                        if (Number(product.stock || 0) <= 0) return
+                                        addToCart(product)
+                                    }}
+                                >
+                                    <CardContent className="p-4 flex flex-col h-full justify-between"> ? <div className="aspect-square bg-slate-100 dark :bg-slate-900 rounded-md mb-3 flex items-center justify-center"><span className="text-2xl font-bold text-slate-300">{product.name.substring(0, 2).toUpperCase()}</span></div>
+                                        <div>
+                                            <h3 className="font-semibold text-sm leading-tight line-clamp-2 mb-1">{product.name}</h3>
+                                            <div className="flex items-center justify-between"> ? <Badge variant="secondary" className={Number(product.stock || 0) > 0  "bg-slate-800 text-slate-300" : "bg-red-800 text-red-100"}> ? {Number(product.stock || 0) > 0  `Stock : ${product.stock}` : "Sin stock"}
+                                                </Badge>
+                                                <span className="font-bold text-lg">${Number(product.sale_price || 0).toFixed(2)}</span>
+                                            </div>
+                                        </div>
+                                    </CardContent>
+                                </Card>
+                            ))}
+                        </div>
+                    </div>
+                </main> ? <div className="w-[400px] bg-slate-100 dark :bg-slate-950 flex flex-col shadow-xl"> ? <div className="p-6 border-b bg-white dark :bg-slate-900 flex justify-between items-center">
+                        <div>
+                            <h2 className="text-xl font-bold">Carrito</h2>
+                            <p className="text-slate-500 text-sm">{cart.length} productos</p>
+                        </div> ? <Button variant="ghost" size="icon" onClick={() => setCart([])} className="text-slate-400 hover :text-red-500"><Trash2 className="h-5 w-5" /></Button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                        {cart.length === 0  (
+                            <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
+                                <ShoppingCart className="h-16 w-16 opacity-20" />
+                                <p>El carrito está vacío</p>
+                            </div> ? ) : (
+                            cart.map(item => ( ? <div key={item.id} className="flex items-center gap-4 p-3 bg-white dark :bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800"> ? <div className="h-12 w-12 bg-slate-100 dark :bg-slate-800 rounded-lg flex items-center justify-center font-bold text-blue-600">{item.name.substring(0, 2).toUpperCase()}</div>
+                                    <div className="flex-1 min-w-0">
+                                        <h4 className="font-medium text-sm truncate">{item.name}</h4>
+                                        <div className="flex items-center gap-2 mt-1"> ? <button onClick={() => updateQuantity(item.id, -1)} className="h-6 w-6 rounded-md bg-slate-100 dark :bg-slate-800 flex items-center justify-center hover:bg-slate-200">-</button>
+                                            <span className="text-sm font-bold w-6 text-center">{item.quantity}</span> ? <button onClick={() => updateQuantity(item.id, 1)} className="h-6 w-6 rounded-md bg-slate-100 dark :bg-slate-800 flex items-center justify-center hover:bg-slate-200">+</button>
+                                            <span className="text-blue-600 font-bold ml-2">${(item.sale_price * item.quantity).toFixed(2)}</span>
+                                        </div>
+                                    </div> ? <Button variant="ghost" size="icon" onClick={() => removeFromCart(item.id)} className="text-slate-300 hover :text-red-500"><X className="h-4 w-4" /></Button>
+                                </div>
+                            ))
+                        )}
+                    </div> ? <div className="p-6 bg-white dark :bg-slate-900 border-t space-y-4 shadow-2xl">
+                        <div className="space-y-2">
+                            <div className="flex justify-between text-slate-500"><span className="text-sm">Subtotal</span><span className="font-medium">${cartTotal.toFixed(2)}</span></div>
+                            <div className="flex justify-between text-slate-500"><span className="text-sm">{taxRateLabel}</span><span className="font-medium">${taxAmount.toFixed(2)}</span></div>
+                            <div className="flex justify-between items-center pt-2"><span className="text-lg font-bold">Total</span><span className="text-3xl font-black text-blue-600">${grantTotal.toFixed(2)}</span></div>
+                        </div>
+
+                        <div className="flex flex-col gap-2"> ? <div className="flex items-center space-x-2 bg-slate-50 dark :bg-slate-800 p-2 rounded-lg border border-slate-200 dark:border-slate-700">
+                                <input
+                                    type="checkbox"
+                                    id="emitInvoice"
+                                    className="h-4 w-4 accent-blue-600 cursor-pointer"
+                                    checked={emitInvoice}
+                                    onChange={(e) => setEmitInvoice(e.target.checked)}
+                                />
+                                <label htmlFor="emitInvoice" className="text-xs font-medium leading-none cursor-pointer">Emitir Factura Legal</label>
+                            </div>
+                            {emitInvoice && (
+                                <div className="flex gap-2"> ? <Button variant={invoiceType === 'B'  'default' : 'outline'} size="sm" className="flex-1 text-xs" onClick={() => setInvoiceType('B')}>Factura B</Button> ? <Button variant={invoiceType === 'A'  'default' : 'outline'} size="sm" className="flex-1 text-xs" onClick={() => setInvoiceType('A')}>Factura A</Button>
+                                </div>
+                            )}
+                        </div>
+
+                        <Dialog open={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen}>
+                            <DialogTrigger asChild> ? <Button className="w-full h-14 text-lg font-bold bg-blue-600 hover :bg-blue-700 shadow-lg shadow-blue-500/20 group" disabled={cart.length === 0} onClick={() => setIsPaymentDialogOpen(true)}> ? Cobrar <ArrowRight className="ml-2 h-5 w-5 group-hover :translate-x-1 transition-transform" />
+                                </Button>
+                            </DialogTrigger> ? <DialogContent className="bg-slate-900 border-slate-800 text-white print :hidden">
+                                <DialogHeader><DialogTitle className="text-center">Método de Pago</DialogTitle></DialogHeader>
+                                <div className="p-6 space-y-6">
+                                    <div className="text-center"><p className="text-4xl font-bold">${grantTotal.toFixed(2)}</p></div>
+                                    <div className="bg-slate-800 p-4 rounded-lg space-y-4 border border-slate-700">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-3"><div className="h-10 w-10 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400"><Banknote className="h-5 w-5" /></div><span className="font-medium">Efectivo</span></div>
+                                            <Button variant="ghost" className="text-blue-400" onClick={() => handlePayment('cash')}>Seleccionar</Button>
+                                        </div>
+                                        <div className="flex items-center justify-between border-t border-slate-700 pt-4">
+                                            <div className="flex items-center gap-3"><div className="h-10 w-10 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400"><CreditCard className="h-5 w-5" /></div><span className="font-medium">Tarjeta</span></div>
+                                            <Button variant="ghost" className="text-purple-400" onClick={() => handlePayment('card')}>Seleccionar</Button>
+                                        </div>
+                                        <div className="flex items-center justify-between border-t border-slate-700 pt-4">
+                                            <div className="flex items-center gap-3"><div className="h-10 w-10 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400"><QrCode className="h-5 w-5" /></div><span className="font-medium">QR / Transferencia</span></div>
+                                            <Button variant="ghost" className="text-orange-400" onClick={() => handlePayment('qr')}>Seleccionar</Button>
+                                        </div>
+                                        <div className="flex items-center justify-between border-t border-slate-700 pt-4">
+                                            <div className="flex items-center gap-3"><div className="h-10 w-10 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-400"><Building className="h-5 w-5" /></div><span className="font-medium">Cta. Cte.</span></div>
+                                            <Button variant="ghost" className="text-amber-400" disabled={!selectedClient} onClick={() => handlePayment('account')}>Seleccionar</Button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </DialogContent>
+                        </Dialog>
+                    </div>
+                </div>
+            </div>
+
+            <Dialog open={isSuccessDialogOpen} onOpenChange={setIsSuccessDialogOpen}> ? <DialogContent className="sm :max-w-md bg-slate-900 border-slate-800 text-white text-center print:hidden">
+                    <div className="flex flex-col items-center py-6">
+                        <div className="h-20 w-20 bg-green-500/20 rounded-full flex items-center justify-center mb-4"><Check className="h-10 w-10 text-green-500" /></div>
+                        <h2 className="text-2xl font-bold mb-2">¡Venta Exitosa!</h2>
+                        <p className="text-slate-400 mb-8">El comprobante ha sido generado correctamente.</p>
+                        <div className="grid grid-cols-2 gap-4 w-full"> ? <Button onClick={() => { window.print(); }} variant="outline" className="border-slate-700 hover :bg-slate-800 text-white"><Printer className="mr-2 h-4 w-4" /> Imprimir</Button> ? <Button onClick={() => setIsSuccessDialogOpen(false)} className="bg-blue-600 hover :bg-blue-700">Nueva Venta</Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Hidden Printable Invoice (Unified Format) */} ? <div id="printable-invoice" className="hidden print :block fixed inset-0 bg-white text-black p-0 m-0 z-[9999] overflow-visible">
+                {(lastSaleData.invoice || (lastSaleData.orderId && lastSaleData.items.length)) && (
+                    <div className="p-10 w-full bg-white">
+                        <div className="flex justify-between border-b-2 border-slate-900 pb-4 text-left">
+                            <div className="space-y-1"> ? <h2 className="text-4xl font-black text-slate-800">{printableHasInvoice  'FACTURA' : 'TICKET'}</h2>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-14 h-14 border-2 border-slate-900 flex items-center justify-center font-bold text-3xl">
+                                        {printableInvoiceType}
+                                    </div>
+                                    <div className="text-[10px] font-bold leading-tight uppercase"> ? {!printableHasInvoice  'Documento\nNo V�lido\nComo Factura' : 'Cod. 01\nComprobante\nOriginal'}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="text-right space-y-1"> ? <p className="text-xl font-bold">Nº {lastSaleData.invoice  formatInvoiceNumber(lastSaleData.invoice) : `TK-000-${lastSaleData.orderId.substring(0, 8)}`}</p> ? <p className="text-sm">Fecha : <b>{new Date().toLocaleDateString()}</b></p> ? <p className="text-sm">CUIT : <b>{companyTaxId}</b></p> ? <p className="text-sm">Ingresos Brutos : <b>Exento</b></p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-8 text-sm mt-8 text-left">
+                            <div className="space-y-1 border-r border-slate-200 pr-4">
+                                <p className="text-slate-500 uppercase font-semibold text-[10px]">Emisor</p>
+                                <p className="font-bold text-lg">{companyName}</p>
+                                <p>{companyAddress}</p>
+                                <p className="font-semibold italic">IVA Responsable Inscripto</p>
+                            </div>
+                            <div className="space-y-1 pl-4">
+                                <p className="text-slate-500 uppercase font-semibold text-[10px]">Receptor</p>
+                                <p className="font-bold text-lg">{lastSaleData.client.name || 'Consumidor Final'}</p> ? <p>CUIT/DNI : <b>{lastSaleData.client.tax_id || '99-99999999-9'}</b></p> ? <p>Condici�n : <b>{lastSaleData.client.credit_terms || lastSaleData.client.tax_condition || 'Consumidor Final'}</b></p> ? <p>Domicilio : {lastSaleData.client.address || 'S/D'}</p>
+                            </div>
+                        </div>
+
+                        <div className="border-2 border-slate-900 rounded-sm overflow-hidden mt-8">
+                            <table className="w-full text-sm">
+                                <thead className="bg-slate-200">
+                                    <tr>
+                                        <th className="text-left p-2 border-r border-slate-300">Descripción</th>
+                                        <th className="p-2 border-r border-slate-300 w-20 text-center">Cant.</th>
+                                        <th className="text-right p-2 border-r border-slate-300 w-32">Unitario</th>
+                                        <th className="text-right p-2 w-32">Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody> ? {printableItems.map((item, idx : number) => (
+                                        <tr key={idx} className="border-b border-slate-200">
+                                            <td className="p-2 border-r border-slate-200 text-left">{item.name || item.product_name || item.description || 'Producto'}</td>
+                                            <td className="p-2 border-r border-slate-200 text-center">{item.quantity}</td>
+                                            <td className="p-2 border-r border-slate-200 text-right">${Number(item.sale_price || item.unit_price || 0).toLocaleString()}</td>
+                                            <td className="p-2 text-right font-semibold">${(Number(item.quantity) * Number(item.sale_price || item.unit_price || 0)).toLocaleString()}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="flex justify-between items-start mt-8 text-left">
+                            <div className="space-y-4">
+                                {lastSaleData.invoice.cae && (
+                                    <div className="p-4 bg-slate-50 border-2 border-slate-900 rounded text-xs font-mono">
+                                        <p className="font-bold border-b pb-1 mb-1 uppercase">Autorización AFIP</p> ? <p>CAE : <span className="font-bold">{lastSaleData.invoice.cae}</span></p> ? <p>Vto. CAE : <span className="font-bold">{new Date().toLocaleDateString()}</span></p>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="w-72 space-y-2 text-sm bg-slate-100 p-4 rounded-sm"> ? <div className="flex justify-between"><span>Subtotal :</span><span>${printableNet.toFixed(2)}</span></div> ? <div className="flex justify-between"><span>{taxRateLabel} :</span><span>${printableVat.toFixed(2)}</span></div>
+                                <div className="flex justify-between text-2xl font-black border-t-2 border-slate-900 pt-2 mt-2"> ? <span>TOTAL :</span><span>${printableTotal.toFixed(2)}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="text-center mt-12 pt-4 border-t border-dashed text-slate-400 text-xs text-left">
+                            <p className="font-bold">¡GRACIAS POR SU COMPRA!</p>
+                            {!printableHasInvoice && <p className="mt-1">ESTE NO ES UN COMPROBANTE FISCAL</p>}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}

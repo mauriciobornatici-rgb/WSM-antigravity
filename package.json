@@ -1,0 +1,23 @@
+{
+  "name": "wsm-antigravity",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+    "scripts": {
+        "dev": "npm -w @wsm/client run dev",
+        "server": "npm -w @wsm/server run start",
+        "dev:all": "concurrently \"npm run server\" \"npm run dev\"",
+        "build": "npm -w @wsm/client run build",
+        "lint": "npm -w @wsm/client run lint",
+        "test": "npm -w @wsm/client run test",
+        "smoke:rbac": "npm -w @wsm/server run smoke:rbac",
+        "smoke:integrity": "npm -w @wsm/server run smoke:integrity",
+        "audit": "npm audit --workspaces"
+    },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

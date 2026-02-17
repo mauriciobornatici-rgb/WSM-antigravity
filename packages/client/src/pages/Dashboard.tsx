@@ -1,0 +1,80 @@
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { TrendingUp, Package, AlertCircle, DollarSign } from "lucide-react";
+import { useState, useEffect } from "react";
+import { DashboardSkeleton } from "@/components/common/Skeletons";
+
+export default function Dashboard() {
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setIsLoading(false);
+        }, 1500);
+        return () => clearTimeout(timer);
+    }, []);
+
+    const stats = [
+        { title: "Ventas de hoy", value: "$1,250", icon: DollarSign, trend: "+12%" },
+        { title: "Pedidos de deposito", value: "32", icon: Package, trend: "+4" },
+        { title: "Stock bajo", value: "5", icon: AlertCircle, trend: "Urgente", className: "text-destructive" },
+        { title: "Rendimiento", value: "98%", icon: TrendingUp, trend: "+2%" },
+    ];
+
+    if (isLoading) {
+        return <DashboardSkeleton />;
+    }
+
+    return (
+        <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {stats.map((stat, i) => (
+                    <Card key={i}>
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
+                            <stat.icon className="h-4 w-4 text-muted-foreground" />
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold">{stat.value}</div>
+                            <p className={`text-xs text-muted-foreground ${stat.className || ""}`}>
+                                {stat.trend} respecto de ayer
+                            </p>
+                        </CardContent>
+                    </Card>
+                ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-7 gap-6">
+                <Card className="md:col-span-4">
+                    <CardHeader>
+                        <CardTitle>Resumen de ventas</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="h-[200px] flex items-center justify-center border-2 border-dashed rounded-md text-muted-foreground">
+                            Grafico de ventas (espacio reservado)
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card className="md:col-span-3">
+                    <CardHeader>
+                        <CardTitle>Actividad reciente</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="space-y-4">
+                            {[1, 2, 3].map((_, i) => (
+                                <div key={i} className="flex items-center gap-4">
+                                    <div className="h-2 w-2 rounded-full bg-primary" />
+                                    <div className="flex-1">
+                                        <p className="text-sm font-medium">Venta #{1020 + i}</p>
+                                        <p className="text-xs text-muted-foreground">Hace {i * 10 + 5} minutos</p>
+                                    </div>
+                                    <div className="text-sm font-bold">+$120.00</div>
+                                </div>
+                            ))}
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+        </div>
+    );
+}

@@ -1,0 +1,758 @@
+�import { useState, useEffect } from "react"
+import { api } from "@/services/api"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { toast } from "sonner"
+import { Plus, RotateCcw, ShieldCheck, FileText, Printer, Eye } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { showErrorToast } from "@/lib/errorHandling"
+import type { Client, Product } from "@/types"
+
+type WarrantyRow = { ? id : string ? created_at : string ? client_name : string ? product_name : string ? serial_number : string ? issue_description : string ? status : string ? resolution_type : string ? resolution_notes : string
+}
+
+type ClientReturnItem = { ? id : string ? product_name : string ? quantity : number ? condition_status : string
+}
+
+type ClientReturnRow = { ? id : string ? created_at : string ? client_name : string ? order_number : string ? reason : string ? status : string ? items : ClientReturnItem[]
+}
+
+type CreditNoteRow = { ? id : string ? number : string ? created_at : string ? client_name : string ? amount : number | string ? status : string ? reference_type : string ? reference_id : string
+}
+
+type WarrantyCreateInput = Parameters<typeof api.createWarranty>[0]
+type WarrantyStatusUpdateInput = Parameters<typeof api.updateWarrantyStatus>[1]
+type ClientReturnCreateInput = Parameters<typeof api.createClientReturn>[0]
+type CreditNoteCreateInput = Parameters<typeof api.createCreditNote>[0]
+
+export default function ReturnsAndWarrantiesPage() {
+    return (
+        <div className="space-y-6 animate-in fade-in duration-500">
+            <div>
+                <h2 className="text-3xl font-bold tracking-tight">Devoluciones y Garantías</h2>
+                <p className="text-muted-foreground">Gestión de reclamos, devoluciones de mercadería y notas de crédito.</p>
+            </div>
+
+            <Tabs defaultValue="warranties" className="space-y-4">
+                <TabsList>
+                    <TabsTrigger value="warranties" className="gap-2"><ShieldCheck className="h-4 w-4" /> Garantías</TabsTrigger>
+                    <TabsTrigger value="returns" className="gap-2"><RotateCcw className="h-4 w-4" /> Devoluciones</TabsTrigger>
+                    <TabsTrigger value="credits" className="gap-2"><FileText className="h-4 w-4" /> Notas de Crédito</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="warranties">
+                    <WarrantiesTab />
+                </TabsContent>
+
+                <TabsContent value="returns">
+                    <ReturnsTab />
+                </TabsContent>
+
+                <TabsContent value="credits">
+                    <CreditNotesTab />
+                </TabsContent>
+            </Tabs>
+        </div>
+    )
+}
+
+function WarrantiesTab() {
+    const [warranties, setWarranties] = useState<WarrantyRow[]>([])
+    const [clients, setClients] = useState<Client[]>([])
+    const [products, setProducts] = useState<Product[]>([])
+    const [isCreateOpen, setIsCreateOpen] = useState(false)
+    const [selectedWarranty, setSelectedWarranty] = useState<WarrantyRow | null>(null)
+    const [isViewOpen, setIsViewOpen] = useState(false)
+
+    useEffect(() => {
+        void loadData()
+    }, [])
+
+    const loadData = async () => {
+        const [warrantiesResult, clientsResult, productsResult] = await Promise.allSettled([
+            api.getWarranties(),
+            api.getClients(),
+            api.getProducts(),
+        ])
+
+        if (warrantiesResult.status === "fulfilled") {
+            setWarranties(warrantiesResult.value as WarrantyRow[])
+        } else {
+            setWarranties([])
+            showErrorToast("Error al cargar garantias", warrantiesResult.reason)
+        }
+
+        if (clientsResult.status === "fulfilled") {
+            setClients(clientsResult.value)
+        } else {
+            setClients([])
+            showErrorToast("Error al cargar clientes", clientsResult.reason)
+        }
+
+        if (productsResult.status === "fulfilled") {
+            setProducts(productsResult.value)
+        } else {
+            setProducts([])
+            showErrorToast("Error al cargar productos", productsResult.reason)
+        }
+    } ? const handleCreate = async (data : WarrantyCreateInput) => {
+        await api.createWarranty(data)
+        toast.success("Garantía Registrada")
+        setIsCreateOpen(false)
+        void loadData()
+    } ? const handleUpdateStatus = async (id : string, data: WarrantyStatusUpdateInput) => {
+        try {
+            await api.updateWarrantyStatus(id, data)
+            toast.success("Estado actualizado")
+            setIsViewOpen(false)
+            void loadData()
+        } catch (error) {
+            showErrorToast("Error al actualizar", error)
+        }
+    }
+
+    return (
+        <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                    <CardTitle>Reclamos de Garantía</CardTitle>
+                    <CardDescription>Seguimiento de productos fallados.</CardDescription>
+                </div>
+                <Button onClick={() => setIsCreateOpen(true)}><Plus className="mr-2 h-4 w-4" /> Nueva Garantía</Button>
+            </CardHeader>
+            <CardContent>
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Fecha</TableHead>
+                            <TableHead>Cliente</TableHead>
+                            <TableHead>Producto</TableHead>
+                            <TableHead>Serial / Problema</TableHead>
+                            <TableHead>Estado</TableHead>
+                            <TableHead>Acciones</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {warranties.map((w) => (
+                            <TableRow key={w.id}> ? <TableCell>{w.created_at  new Date(w.created_at).toLocaleDateString() : '-'}</TableCell>
+                                <TableCell>{w.client_name || '-'}</TableCell>
+                                <TableCell>{w.product_name || '-'}</TableCell>
+                                <TableCell>
+                                    <div className="text-xs font-mono">{w.serial_number || '-'}</div>
+                                    <div className="text-xs text-muted-foreground truncate max-w-[200px]">{w.issue_description || '-'}</div>
+                                </TableCell>
+                                <TableCell>
+                                    <Badge variant="outline" className="capitalize">{(w.status || '').replace('_', ' ')}</Badge>
+                                </TableCell>
+                                <TableCell>
+                                    <Button variant="ghost" size="sm" onClick={() => { setSelectedWarranty(w); setIsViewOpen(true) }}>Ver / Gestionar</Button>
+                                </TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+
+                <CreateWarrantyDialog
+                    open={isCreateOpen}
+                    onOpenChange={setIsCreateOpen}
+                    clients={clients}
+                    products={products}
+                    onSubmit={handleCreate}
+                />
+
+                <ViewWarrantyDialog
+                    open={isViewOpen}
+                    onOpenChange={setIsViewOpen}
+                    warranty={selectedWarranty}
+                    onUpdate={handleUpdateStatus}
+                />
+            </CardContent>
+        </Card>
+    )
+}
+
+function CreateWarrantyDialog({
+    open,
+    onOpenChange,
+    clients,
+    products,
+    onSubmit
+}: { ? open : boolean ? onOpenChange : (open: boolean) => void ? clients : Client[] ? products : Product[] ? onSubmit : (data: WarrantyCreateInput) => void
+}) {
+    const [clientId, setClientId] = useState("")
+    const [isConsumerFinal, setIsConsumerFinal] = useState(false)
+    const [customerName, setCustomerName] = useState("")
+    const [productId, setProductId] = useState("")
+    const [serial, setSerial] = useState("")
+    const [desc, setDesc] = useState("")
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>Nueva Garantía</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                    <div className="flex items-center space-x-2">
+                        <input type="checkbox" id="cf" checked={isConsumerFinal} onChange={e => setIsConsumerFinal(e.target.checked)} className="h-4 w-4" /> ? <label htmlFor="cf" className="text-sm font-medium leading-none peer-disabled :cursor-not-allowed peer-disabled:opacity-70">
+                            Consumidor Final (Sin Cliente Registrado)
+                        </label>
+                    </div>
+
+                    {!isConsumerFinal  (
+                        <div className="grid gap-2">
+                            <Label>Cliente</Label>
+                            <Select value={clientId} onValueChange={setClientId}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Seleccionar Cliente" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {clients.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                        </div> ? ) : (
+                        <div className="grid gap-2">
+                            <Label>Nombre del Cliente</Label> ? <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Ej : Juan Perez" />
+                        </div>
+                    )}
+
+                    <div className="grid gap-2">
+                        <Label>Producto</Label>
+                        <Select value={productId} onValueChange={setProductId}>
+                            <SelectTrigger>
+                                <SelectValue placeholder="Seleccionar Producto" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="grid gap-2">
+                        <Label>Número de Serie</Label>
+                        <Input value={serial} onChange={e => setSerial(e.target.value)} />
+                    </div>
+                    <div className="grid gap-2">
+                        <Label>Descripción del Problema</Label>
+                        <Input value={desc} onChange={e => setDesc(e.target.value)} />
+                    </div>
+                    <Button onClick={() => { ? const payload : WarrantyCreateInput = { ? product_id : productId, ? issue_description : desc, ? ...(serial  { serial_number : serial } : {}), ? ...(isConsumerFinal  { customer_name : customerName } : { client_id: clientId }),
+                        }
+                        onSubmit(payload)
+                    }}>
+                        Registrar
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+function ReturnsTab() {
+    const [returns, setReturns] = useState<ClientReturnRow[]>([])
+    const [clients, setClients] = useState<Client[]>([])
+    const [products, setProducts] = useState<Product[]>([])
+    const [isCreateOpen, setIsCreateOpen] = useState(false)
+    const [selectedReturn, setSelectedReturn] = useState<ClientReturnRow | null>(null)
+    const [isViewOpen, setIsViewOpen] = useState(false)
+
+    useEffect(() => {
+        void loadData()
+    }, [])
+
+    const loadData = async () => {
+        const [r, c, p] = await Promise.all([
+            api.getClientReturns(),
+            api.getClients(),
+            api.getProducts()
+        ])
+        setReturns(r as ClientReturnRow[])
+        setClients(c)
+        setProducts(p)
+    } ? const handleCreate = async (data : ClientReturnCreateInput) => {
+        await api.createClientReturn(data)
+        toast.success("Devolución Registrada")
+        setIsCreateOpen(false)
+        void loadData()
+    } ? const handleApprove = async (id : string) => {
+        try {
+            await api.approveClientReturn(id) ? toast.success("Devolución Aprobada", { description : "Nota de Crédito generada automáticamente." })
+            void loadData()
+        } catch (error) {
+            showErrorToast("Error al aprobar", error)
+        }
+    }
+
+    return (
+        <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                    <CardTitle>Devoluciones de Clientes</CardTitle>
+                    <CardDescription>Historial de devoluciones y aprobaciones.</CardDescription>
+                </div>
+                <Button onClick={() => setIsCreateOpen(true)}><Plus className="mr-2 h-4 w-4" /> Nueva Devolución</Button>
+            </CardHeader>
+            <CardContent>
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>ID Devolución</TableHead>
+                            <TableHead>Fecha</TableHead>
+                            <TableHead>Cliente</TableHead>
+                            <TableHead>Orden Orig.</TableHead>
+                            <TableHead>Razón</TableHead>
+                            <TableHead>Estado</TableHead>
+                            <TableHead>Acciones</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {returns.map((r) => (
+                            <TableRow key={r.id}>
+                                <TableCell className="font-mono text-xs">{r.id.substring(0, 8)}</TableCell> ? <TableCell>{r.created_at  new Date(r.created_at).toLocaleDateString() : '-'}</TableCell>
+                                <TableCell>{r.client_name || '-'}</TableCell> ? <TableCell>{r.order_number  r.order_number.substring(0, 8) : '-'}</TableCell>
+                                <TableCell>{r.reason || '-'}</TableCell>
+                                <TableCell> ? <Badge variant={r.status === 'approved'  'default' : 'secondary'} ? className={r.status === 'approved'  'bg-green-600' : ''}>
+                                        {r.status}
+                                    </Badge>
+                                </TableCell>
+                                <TableCell>
+                                    <div className="flex gap-2">
+                                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setSelectedReturn(r); setIsViewOpen(true) }}>
+                                            <Eye className="h-4 w-4" />
+                                        </Button>
+                                        {r.status === 'pending' && (
+                                            <> ? <Button size="sm" className="h-7 bg-green-600 hover :bg-green-500" onClick={() => handleApprove(r.id)}>
+                                                    Aprobar
+                                                </Button>
+                                                <Button size="sm" variant="destructive" className="h-7">Rechazar</Button>
+                                            </>
+                                        )}
+                                    </div>
+                                </TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+                <CreateReturnDialog
+                    open={isCreateOpen}
+                    onOpenChange={setIsCreateOpen}
+                    clients={clients}
+                    products={products}
+                    onSubmit={handleCreate}
+                />
+
+                <ViewReturnDialog
+                    open={isViewOpen}
+                    onOpenChange={setIsViewOpen}
+                    returnData={selectedReturn}
+                />
+            </CardContent>
+        </Card>
+    )
+}
+
+function CreditNotesTab() {
+    const [notes, setNotes] = useState<CreditNoteRow[]>([])
+    const [clients, setClients] = useState<Client[]>([])
+    const [isCreateOpen, setIsCreateOpen] = useState(false)
+    const [noteToPrint, setNoteToPrint] = useState<CreditNoteRow | null>(null)
+
+    useEffect(() => {
+        void loadData()
+    }, [])
+
+    const loadData = async () => {
+        const [n, c] = await Promise.all([
+            api.getCreditNotes(),
+            api.getClients()
+        ])
+        setNotes(n as CreditNoteRow[])
+        setClients(c)
+    } ? const handleCreate = async (data : CreditNoteCreateInput) => {
+        await api.createCreditNote(data)
+        toast.success("Nota de Credito Generada")
+        setIsCreateOpen(false)
+        void loadData()
+    } ? const handlePrintNote = (note : CreditNoteRow) => {
+        setNoteToPrint(note)
+        setTimeout(() => window.print(), 100)
+    }
+
+    return (
+        <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                    <CardTitle>Notas de Credito Emitidas</CardTitle>
+                </div>
+                <Button onClick={() => setIsCreateOpen(true)}><Plus className="mr-2 h-4 w-4" /> Nueva Nota Manual</Button>
+            </CardHeader>
+            <CardContent>
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Numero</TableHead>
+                            <TableHead>Fecha</TableHead>
+                            <TableHead>Cliente</TableHead>
+                            <TableHead>Monto</TableHead>
+                            <TableHead>Estado</TableHead>
+                            <TableHead>Referencia</TableHead>
+                            <TableHead>Acciones</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {notes.map((n) => (
+                            <TableRow key={n.id}>
+                                <TableCell className="font-mono font-bold">{n.number}</TableCell> ? <TableCell>{n.created_at  new Date(n.created_at).toLocaleDateString() : '-'}</TableCell>
+                                <TableCell>{n.client_name}</TableCell>
+                                <TableCell className="font-bold text-red-400">-${Number(n.amount || 0).toFixed(2)}</TableCell>
+                                <TableCell><Badge variant="outline">{n.status}</Badge></TableCell>
+                                <TableCell className="text-muted-foreground text-xs">{n.reference_type} #{n.reference_id.substring(0, 6)}</TableCell>
+                                <TableCell>
+                                    <Button variant="ghost" size="sm" onClick={() => handlePrintNote(n)}>
+                                        <Printer className="h-4 w-4 mr-2" />
+                                        Imprimir
+                                    </Button>
+                                </TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+                <CreateCreditNoteDialog
+                    open={isCreateOpen}
+                    onOpenChange={setIsCreateOpen}
+                    clients={clients}
+                    onSubmit={handleCreate}
+                />
+
+                {/* Hidden printable area (safe JSX rendering, no document.write) */} ? <div id="printable-credit-note" className="hidden print :block fixed inset-0 bg-white text-black p-0 m-0 z-[9999]">
+                    {noteToPrint && (
+                        <div className="p-10 w-full">
+                            <h1 className="text-3xl font-bold mb-6">Nota de Credito</h1>
+                            <div className="space-y-2 text-sm"> ? <p><span className="font-semibold">Numero :</span> {noteToPrint.number || '-'}</p> ? <p><span className="font-semibold">Fecha :</span> {noteToPrint.created_at ? new Date(noteToPrint.created_at).toLocaleDateString() : '-'}</p> ? <p><span className="font-semibold">Cliente :</span> {noteToPrint.client_name || '-'}</p> ? <p><span className="font-semibold">Referencia :</span> {noteToPrint.reference_type || 'manual'} #{noteToPrint.reference_id || 'Manual'}</p>
+                            </div>
+                            <div className="mt-8 border-t pt-4">
+                                <p className="text-2xl font-bold text-red-700"> ? Total : -${Number(noteToPrint.amount || 0).toFixed(2)}
+                                </p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </CardContent>
+        </Card>
+    )
+}
+function CreateReturnDialog({
+    open,
+    onOpenChange,
+    clients,
+    products,
+    onSubmit
+}: { ? open : boolean ? onOpenChange : (open: boolean) => void ? clients : Client[] ? products : Product[] ? onSubmit : (data: ClientReturnCreateInput) => void | Promise<void>
+}) {
+    const [clientId, setClientId] = useState("")
+    const [productId, setProductId] = useState("")
+    const [reason, setReason] = useState("")
+    const [quantity, setQuantity] = useState(1)
+    const [condition, setCondition] = useState("sellable")
+
+    const handleSubmit = () => {
+        onSubmit({ ? client_id : clientId, ? items : [{ ? product_id : productId, ? quantity : quantity, ? condition_status : condition
+            }], ? reason : reason
+        })
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>Registrar Devolución</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                    <div className="grid gap-2">
+                        <Label>Cliente</Label>
+                        <Select value={clientId} onValueChange={setClientId}>
+                            <SelectTrigger>
+                                <SelectValue placeholder="Seleccionar Cliente" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {clients.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="grid gap-2">
+                        <Label>Producto</Label>
+                        <Select value={productId} onValueChange={setProductId}>
+                            <SelectTrigger>
+                                <SelectValue placeholder="Seleccionar Producto" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="grid gap-2">
+                        <Label>Cantidad</Label>
+                        <Input type="number" min="1" value={quantity} onChange={e => setQuantity(parseInt(e.target.value))} />
+                    </div>
+                    <div className="grid gap-2">
+                        <Label>Razón</Label>
+                        <Select value={reason} onValueChange={setReason}>
+                            <SelectTrigger>
+                                <SelectValue placeholder="Seleccionar Razón" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="defective">Defectuoso</SelectItem>
+                                <SelectItem value="wrong_item">Producto Incorrecto</SelectItem>
+                                <SelectItem value="too_many">Exceso de Compra</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="grid gap-2">
+                        <Label>Condición</Label>
+                        <Select value={condition} onValueChange={setCondition}>
+                            <SelectTrigger>
+                                <SelectValue placeholder="Seleccionar Condición" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="sellable">Vendible (Retorno a Stock)</SelectItem>
+                                <SelectItem value="damaged">Dañado (Merma)</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <Button onClick={handleSubmit} disabled={!clientId || !productId || !reason}>Registrar</Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+function CreateCreditNoteDialog({
+    open,
+    onOpenChange,
+    clients,
+    onSubmit
+}: { ? open : boolean ? onOpenChange : (open: boolean) => void ? clients : Client[] ? onSubmit : (data: CreditNoteCreateInput) => void | Promise<void>
+}) {
+    const [clientId, setClientId] = useState("")
+    const [amount, setAmount] = useState("")
+    const [reason, setReason] = useState("")
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>Nueva Nota de Crédito Manual</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                    <div className="grid gap-2">
+                        <Label>Cliente</Label>
+                        <Select value={clientId} onValueChange={setClientId}>
+                            <SelectTrigger>
+                                <SelectValue placeholder="Seleccionar Cliente" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {clients.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="grid gap-2">
+                        <Label>Monto</Label>
+                        <Input type="number" value={amount} onChange={e => setAmount(e.target.value)} />
+                    </div>
+                    <div className="grid gap-2">
+                        <Label>Motivo / Descripción</Label>
+                        <Input value={reason} onChange={e => setReason(e.target.value)} />
+                    </div> ? <Button onClick={() => onSubmit({ client_id : clientId, amount: parseFloat(amount), reason, reference_type: 'manual' })} disabled={!clientId || !amount}>Generar</Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+function ViewWarrantyDialog({
+    open,
+    onOpenChange,
+    warranty,
+    onUpdate
+}: { ? open : boolean ? onOpenChange : (open: boolean) => void ? warranty : WarrantyRow | null ? onUpdate : (id: string, data: WarrantyStatusUpdateInput) => void | Promise<void>
+}) {
+    const [status, setStatus] = useState<WarrantyStatusUpdateInput["status"]>("initiated")
+    const [resolution, setResolution] = useState("")
+    const [notes, setNotes] = useState("")
+
+    useEffect(() => {
+        if (warranty) {
+            setStatus((warranty.status as WarrantyStatusUpdateInput["status"]) || "initiated")
+            setResolution(warranty.resolution_type || "")
+            setNotes(warranty.resolution_notes || "")
+        }
+    }, [warranty])
+
+    const handleSubmit = () => {
+        if (!warranty) return ? const payload : WarrantyStatusUpdateInput = {
+            status, ? ...(notes  { resolution_notes : notes } : {}),
+        }
+
+        if (status === 'resolved' && resolution) {
+            payload.resolution_type = resolution as NonNullable<WarrantyStatusUpdateInput["resolution_type"]>
+        }
+
+        onUpdate(warranty.id, payload)
+    }
+
+    if (!warranty) return null
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>Detalle de Garantía</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <Label className="text-xs text-muted-foreground">Cliente</Label>
+                            <div className="font-medium">{warranty.client_name || '-'}</div>
+                        </div>
+                        <div>
+                            <Label className="text-xs text-muted-foreground">Producto</Label>
+                            <div className="font-medium">{warranty.product_name || '-'}</div>
+                        </div>
+                        <div>
+                            <Label className="text-xs text-muted-foreground">Serial</Label>
+                            <div className="font-mono text-sm">{warranty.serial_number || '-'}</div>
+                        </div>
+                        <div>
+                            <Label className="text-xs text-muted-foreground">Fecha</Label> ? <div className="text-sm">{warranty.created_at  new Date(warranty.created_at).toLocaleDateString() : '-'}</div>
+                        </div>
+                    </div>
+                    <div>
+                        <Label className="text-xs text-muted-foreground">Problema Reportado</Label>
+                        <div className="text-sm bg-muted p-2 rounded">{warranty.issue_description || '-'}</div>
+                    </div>
+
+                    <div className="border-t pt-4 mt-2 space-y-4">
+                        <h4 className="font-medium">Resolución</h4>
+                        <div className="grid gap-2">
+                            <Label>Estado</Label>
+                            <Select value={status} onValueChange={(value) => setStatus(value as WarrantyStatusUpdateInput["status"])}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Seleccionar Estado" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="initiated">Iniciado</SelectItem>
+                                    <SelectItem value="received">Recibido en Taller</SelectItem>
+                                    <SelectItem value="in_progress">En Diagnóstico/Reparación</SelectItem>
+                                    <SelectItem value="resolved">Resuelto</SelectItem>
+                                    <SelectItem value="rejected">Rechazado</SelectItem>
+                                    <SelectItem value="closed">Cerrado</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        {status === 'resolved' && (
+                            <div className="grid gap-2">
+                                <Label>Tipo de Resolución</Label>
+                                <Select value={resolution} onValueChange={setResolution}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Seleccionar Resolución" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="repaired">Reparado</SelectItem>
+                                        <SelectItem value="replaced">Reemplazado</SelectItem>
+                                        <SelectItem value="refunded">Reembolsado</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        )}
+                        <div className="grid gap-2">
+                            <Label>Notas de Resolución / Técnicas</Label>
+                            <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Detalles de la reparación o motivo de rechazo..." />
+                        </div>
+                        <Button onClick={handleSubmit} className="w-full">Guardar Cambios</Button>
+                    </div>
+                </div>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+function ViewReturnDialog({
+    open,
+    onOpenChange,
+    returnData
+}: { ? open : boolean ? onOpenChange : (open: boolean) => void ? returnData : ClientReturnRow | null
+}) {
+    if (!returnData) return null
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="max-w-3xl">
+                <DialogHeader>
+                    <DialogTitle>Detalle de Devolución</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <Label className="text-xs text-muted-foreground">ID Devolución</Label>
+                            <div className="font-mono text-sm">{returnData.id}</div>
+                        </div>
+                        <div>
+                            <Label className="text-xs text-muted-foreground">Fecha</Label> ? <div className="text-sm">{returnData.created_at  new Date(returnData.created_at).toLocaleDateString() : '-'}</div>
+                        </div>
+                        <div>
+                            <Label className="text-xs text-muted-foreground">Cliente</Label>
+                            <div className="font-medium">{returnData.client_name || '-'}</div>
+                        </div>
+                        <div>
+                            <Label className="text-xs text-muted-foreground">Orden Original</Label>
+                            <div className="font-mono text-sm">{returnData.order_number || '-'}</div>
+                        </div>
+                        <div>
+                            <Label className="text-xs text-muted-foreground">Razón</Label>
+                            <div className="font-medium capitalize">{returnData.reason.replace('_', ' ')}</div>
+                        </div>
+                        <div>
+                            <Label className="text-xs text-muted-foreground">Estado</Label> ? <Badge variant={returnData.status === 'approved'  'default' : 'secondary'} ? className={returnData.status === 'approved'  'bg-green-600' : ''}>
+                                {returnData.status}
+                            </Badge>
+                        </div>
+                    </div>
+
+                    <div className="border-t pt-4 mt-2">
+                        <h4 className="font-medium mb-2">Productos Devueltos</h4>
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Producto</TableHead>
+                                    <TableHead>Cantidad</TableHead>
+                                    <TableHead>Condición</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody> ? {returnData.items && returnData.items.map((item : ClientReturnItem) => (
+                                    <TableRow key={item.id}>
+                                        <TableCell>{item.product_name}</TableCell>
+                                        <TableCell>{item.quantity}</TableCell>
+                                        <TableCell> ? <Badge variant="outline" className={item.condition_status === 'sellable'  'border-green-500 text-green-500' : 'border-red-500 text-red-500'}> ? {item.condition_status === 'sellable'  'Vendible' : 'Dañado'}
+                                            </Badge>
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                                {(!returnData.items || returnData.items.length === 0) && (
+                                    <TableRow>
+                                        <TableCell colSpan={3} className="text-center text-muted-foreground">No hay items registrados</TableCell>
+                                    </TableRow>
+                                )}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </div>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
