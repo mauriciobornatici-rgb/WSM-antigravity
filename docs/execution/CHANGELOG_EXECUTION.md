@@ -34,6 +34,14 @@
     - explicit simulation message when integration is not available
     - feature-flag gate (`VITE_ENABLE_INVOICE_EMAIL`) for future backend hookup
   - Replaced remaining English action label (`Add` -> `Agregar`) in manual invoice flow.
+- `packages/client/src/pages/Accounting.tsx`
+  - Hardened transactions loading flow:
+    - migrated from `.then()` without error handling to `try/catch/finally`
+    - standardized toast-based error reporting
+    - added explicit fallback state when accounting data cannot be loaded
+  - Locale normalized for chart weekday labels (`es-AR`).
+- `docs/execution/STATE.md`
+  - Moved active task to `P2.3` after starting async-state standardization.
 
 ### Verified
 - Frontend checks passed:
@@ -42,6 +50,7 @@
   - `npm -w @wsm/client run build`
   - `npm -w @wsm/client exec eslint src/pages/Dashboard.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Invoices.tsx`
+  - `npm -w @wsm/client exec eslint src/pages/Accounting.tsx src/pages/Invoices.tsx src/pages/Dashboard.tsx`
 
 ## 2026-02-17
 

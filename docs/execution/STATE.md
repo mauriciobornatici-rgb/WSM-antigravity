@@ -3,14 +3,13 @@
 Last updated: 2026-02-18
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.2 - Replace fake data/simulations with real data or explicit role-aware fallback
+Current task: P2.3 - Uniform async error/loading/empty state patterns in key pages
 
 ## Resume From Here
-1. Continue P2.2 in remaining screens that still simulate data/flows (email send in invoices, other mocked placeholders).
+1. Continue P2.3 in remaining pages with manual async handling (`Picking`, `Suppliers`, `Clients`) to standardize error/empty states.
 2. Run full mojibake/wording pass in core screens (`Orders`, `POS`, `Invoices`, `Settings`, `Receptions`) and normalize labels to Spanish AR.
-3. Standardize loading/error/empty states in procurement and sales screens.
-4. Continue contrast/accessibility pass on remaining high-density tables (`Suppliers`, `Invoices`, `Clients`).
-5. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
+3. Continue contrast/accessibility pass on remaining high-density tables (`Suppliers`, `Invoices`, `Clients`).
+4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
 - Consolidated gap list and priority order.
@@ -199,9 +198,20 @@ Current task: P2.2 - Replace fake data/simulations with real data or explicit ro
     - `packages/client/src/pages/Invoices.tsx`
   - Validation:
     - Frontend lint/typecheck/build passed.
+- P2.3 partial progress:
+  - Accounting page now uses robust async handling:
+    - replaced promise chain without catch by `try/catch/finally`
+    - standardized user-facing error feedback via `showErrorToast`
+    - added explicit fallback UI state when accounting data cannot be loaded
+  - Locale consistency:
+    - day labels switched to `es-AR`
+  - File:
+    - `packages/client/src/pages/Accounting.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
 
 ## Next After Current Task
-P2.3 - Uniform async error/loading/empty state patterns in key pages.
+P2.4 - Incremental React Query adoption in data-heavy screens.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):

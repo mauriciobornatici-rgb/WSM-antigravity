@@ -1,20 +1,33 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 import { api } from "@/services/api"
 import type { Transaction } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { DollarSign, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight } from "lucide-react"
+import { showErrorToast } from "@/lib/errorHandling"
 
 export default function AccountingPage() {
     const [transactions, setTransactions] = useState<Transaction[]>([])
     const [isLoading, setIsLoading] = useState(true)
+    const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+    const loadTransactions = useCallback(async () => {
+        setIsLoading(true)
+        setErrorMessage(null)
+        try {
+            const data = await api.getTransactions()
+            setTransactions(data)
+        } catch (error) {
+            setErrorMessage("No se pudieron cargar los datos contables.")
+            showErrorToast("Error al cargar contabilidad", error)
+        } finally {
+            setIsLoading(false)
+        }
+    }, [])
 
     useEffect(() => {
-        api.getTransactions().then(data => {
-            setTransactions(data)
-            setIsLoading(false)
-        })
-    }, [])
+        void loadTransactions()
+    }, [loadTransactions])
 
     // KPI Calculations
     const totalIncome = transactions
@@ -36,7 +49,7 @@ export default function AccountingPage() {
 
     const chartData = last7Days.map(date => {
         const dateStr = date.toLocaleDateString()
-        const dayName = date.toLocaleDateString("es-ES", { weekday: 'short' })
+        const dayName = date.toLocaleDateString("es-AR", { weekday: 'short' })
 
         const dayTransactions = transactions.filter(t => new Date(t.date).toLocaleDateString() === dateStr)
 
@@ -57,6 +70,10 @@ export default function AccountingPage() {
 
     if (isLoading) {
         return <div className="p-8 text-center">Cargando datos contables...</div>
+    }
+
+    if (errorMessage) {
+        return <div className="p-8 text-center text-muted-foreground">{errorMessage}</div>
     }
 
     return (
