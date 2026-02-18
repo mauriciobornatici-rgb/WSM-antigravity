@@ -240,6 +240,12 @@ Current task: P2.3 - Uniform async error/loading/empty state patterns (stabiliza
     - `packages/client/src/pages/Inventory.tsx`
   - Validation:
     - Frontend lint/typecheck/build passed.
+- P2.3 partial progress (terminology consistency):
+  - Settings page fiscal label normalized to AR wording (`CUIT / DNI`).
+  - File:
+    - `packages/client/src/pages/Settings.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
 
 ## Next After Current Task
 P2.4 - Incremental React Query adoption in data-heavy screens.

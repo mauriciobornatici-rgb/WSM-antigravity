@@ -67,6 +67,10 @@
   - Added explicit cache invalidation on product create/update/delete.
 - `docs/execution/STATE.md`
   - Added P2.3 inventory reliability checkpoint.
+- `packages/client/src/pages/Settings.tsx`
+  - Normalized fiscal label to AR terminology (`CUIT / DNI`).
+- `docs/execution/STATE.md`
+  - Added terminology consistency checkpoint in P2.3.
 
 ### Verified
 - Frontend checks passed:
@@ -78,6 +82,7 @@
   - `npm -w @wsm/client exec eslint src/pages/Accounting.tsx src/pages/Invoices.tsx src/pages/Dashboard.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Picking.tsx src/pages/Suppliers.tsx src/pages/Clients.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx`
+  - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/pages/Settings.tsx`
 
 ## 2026-02-17
 

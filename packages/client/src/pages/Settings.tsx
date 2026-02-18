@@ -233,7 +233,7 @@ export default function SettingsPage() {
                                     <Input value={company.identity.legal_name} onChange={e => setCompany({ ...company, identity: { ...company.identity, legal_name: e.target.value } })} />
                                 </div>
                                 <div className="space-y-2">
-                                    <Label>RUC / Tax ID</Label>
+                                    <Label>CUIT / DNI</Label>
                                     <Input value={company.identity.tax_id} onChange={e => setCompany({ ...company, identity: { ...company.identity, tax_id: e.target.value } })} />
                                 </div>
                                 <div className="space-y-2">
