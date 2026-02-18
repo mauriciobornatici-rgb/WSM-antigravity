@@ -105,6 +105,14 @@
     - status-filtered history query
   - Migrated reception/return create+approve actions to mutations with cache invalidation.
   - Added active-tab load-error banner with retry action.
+- `packages/client/src/lib/queryKeys.ts`
+  - Added centralized query-key registry for operational modules (`orders`, `products`, `clients`, `purchase-orders`, `receptions`, `supplier-returns`).
+- `packages/client/src/pages/Orders.tsx`
+  - Refactored to consume shared keys from `queryKeys`.
+- `packages/client/src/pages/PurchaseOrders.tsx`
+  - Refactored to consume shared keys from `queryKeys`.
+- `packages/client/src/pages/Receptions.tsx`
+  - Refactored to consume shared keys from `queryKeys`.
 - `docs/execution/STATE.md`
   - Updated active task and resume steps for P2.4 continuation.
 
@@ -124,6 +132,7 @@
   - `npm -w @wsm/client exec eslint src/pages/Orders.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
+  - `npm -w @wsm/client exec eslint src/lib/queryKeys.ts src/pages/Orders.tsx src/pages/PurchaseOrders.tsx src/pages/Receptions.tsx`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 

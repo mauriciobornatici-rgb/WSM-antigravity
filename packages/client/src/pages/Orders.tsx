@@ -5,6 +5,7 @@ import { CircleDashed, FileText, Package, Plus, Search, Truck, XCircle } from "l
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { Client, Order, Product } from "@/types";
+import { queryKeys } from "@/lib/queryKeys";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,10 +28,6 @@ const PAYMENT_METHODS = [
     { value: "qr", label: "QR" },
     { value: "credit_account", label: "Cuenta corriente" },
 ];
-
-const ORDERS_QUERY_KEY = ["orders"] as const;
-const PRODUCTS_QUERY_KEY = ["products"] as const;
-const CLIENTS_QUERY_KEY = ["clients"] as const;
 const EMPTY_ORDERS: Order[] = [];
 const EMPTY_PRODUCTS: Product[] = [];
 const EMPTY_CLIENTS: Client[] = [];
@@ -90,17 +87,17 @@ export default function OrdersPage() {
     const [invoicePayments, setInvoicePayments] = useState<PaymentLine[]>([]);
 
     const ordersQuery = useQuery({
-        queryKey: ORDERS_QUERY_KEY,
+        queryKey: queryKeys.orders.all,
         queryFn: () => api.getOrders(),
     });
 
     const productsQuery = useQuery({
-        queryKey: PRODUCTS_QUERY_KEY,
+        queryKey: queryKeys.products.all,
         queryFn: () => api.getProducts(),
     });
 
     const clientsQuery = useQuery({
-        queryKey: CLIENTS_QUERY_KEY,
+        queryKey: queryKeys.clients.all,
         queryFn: () => api.getClients(),
     });
 
@@ -108,8 +105,8 @@ export default function OrdersPage() {
         mutationFn: (payload: Parameters<typeof api.createOrder>[0]) => api.createOrder(payload),
         onSuccess: async () => {
             await Promise.all([
-                queryClient.invalidateQueries({ queryKey: ORDERS_QUERY_KEY }),
-                queryClient.invalidateQueries({ queryKey: PRODUCTS_QUERY_KEY }),
+                queryClient.invalidateQueries({ queryKey: queryKeys.orders.all }),
+                queryClient.invalidateQueries({ queryKey: queryKeys.products.all }),
             ]);
         },
     });
@@ -118,7 +115,7 @@ export default function OrdersPage() {
         mutationFn: ({ orderId, status }: { orderId: string; status: string }) =>
             api.updateOrderStatus(orderId, status),
         onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: ORDERS_QUERY_KEY });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
         },
     });
 
@@ -126,7 +123,7 @@ export default function OrdersPage() {
         mutationFn: ({ orderId, payload }: { orderId: string; payload: Parameters<typeof api.dispatchOrder>[1] }) =>
             api.dispatchOrder(orderId, payload),
         onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: ORDERS_QUERY_KEY });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
         },
     });
 
@@ -134,7 +131,7 @@ export default function OrdersPage() {
         mutationFn: ({ orderId, payload }: { orderId: string; payload: Parameters<typeof api.deliverOrder>[1] }) =>
             api.deliverOrder(orderId, payload),
         onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: ORDERS_QUERY_KEY });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
         },
     });
 
@@ -142,7 +139,7 @@ export default function OrdersPage() {
         mutationFn: ({ orderId, payload }: { orderId: string; payload: Parameters<typeof api.createInvoiceFromOrder>[1] }) =>
             api.createInvoiceFromOrder(orderId, payload),
         onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: ORDERS_QUERY_KEY });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
         },
     });
 

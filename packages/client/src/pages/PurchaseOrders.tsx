@@ -4,6 +4,7 @@ import { CheckCircle2, Clock, Eye, Package, Plus, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { PurchaseOrder } from "@/types";
+import { queryKeys } from "@/lib/queryKeys";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PurchaseOrderForm } from "@/components/purchase-orders/PurchaseOrderForm";
 import { PurchaseOrderDetails } from "@/components/purchase-orders/PurchaseOrderDetails";
@@ -11,7 +12,6 @@ import { PurchaseOrderDetails } from "@/components/purchase-orders/PurchaseOrder
 type OrderStatus = PurchaseOrder["status"];
 type OrderFilter = "all" | "draft" | "sent" | "partial" | "received";
 
-const PURCHASE_ORDERS_QUERY_KEY = ["purchase-orders"] as const;
 const EMPTY_PURCHASE_ORDERS: PurchaseOrder[] = [];
 
 function statusLabel(status: OrderStatus): string {
@@ -67,21 +67,21 @@ export default function PurchaseOrdersPage() {
     const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
     const ordersQuery = useQuery({
-        queryKey: [...PURCHASE_ORDERS_QUERY_KEY, filter],
+        queryKey: queryKeys.purchaseOrders.byFilter(filter),
         queryFn: () => api.getPurchaseOrders(filter !== "all" ? { status: filter } : undefined),
     });
 
     const createOrderMutation = useMutation({
         mutationFn: (payload: Parameters<typeof api.createPurchaseOrder>[0]) => api.createPurchaseOrder(payload),
         onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: PURCHASE_ORDERS_QUERY_KEY });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.purchaseOrders.all });
         },
     });
 
     const approveOrderMutation = useMutation({
         mutationFn: (orderId: string) => api.updatePurchaseOrderStatus(orderId, "sent"),
         onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: PURCHASE_ORDERS_QUERY_KEY });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.purchaseOrders.all });
         },
     });
 

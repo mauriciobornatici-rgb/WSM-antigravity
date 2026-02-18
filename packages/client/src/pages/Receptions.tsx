@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { PurchaseOrder } from "@/types";
+import { queryKeys } from "@/lib/queryKeys";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { ReceptionForm } from "@/components/receptions/ReceptionForm";
@@ -31,9 +32,6 @@ type SupplierReturnRecord = {
 type ReceptionsFilter = "all" | "pending_qc" | "approved" | "rejected";
 type ReceptionsTab = "pending" | "history" | "returns";
 
-const RECEPTIONS_QUERY_KEY = ["receptions"] as const;
-const SUPPLIER_RETURNS_QUERY_KEY = ["supplier-returns"] as const;
-const PURCHASE_ORDERS_QUERY_KEY = ["purchase-orders"] as const;
 const EMPTY_RECEPTIONS: ReceptionRecord[] = [];
 const EMPTY_RETURNS: SupplierReturnRecord[] = [];
 const EMPTY_PENDING_ORDERS: PurchaseOrder[] = [];
@@ -109,7 +107,7 @@ export default function ReceptionsPage() {
     const [prefilledSupplierId, setPrefilledSupplierId] = useState<string | undefined>(undefined);
 
     const pendingOrdersQuery = useQuery({
-        queryKey: [...PURCHASE_ORDERS_QUERY_KEY, "pending-reception"],
+        queryKey: queryKeys.purchaseOrders.pendingReception,
         queryFn: async () => {
             const orders = await api.getPurchaseOrders();
             return orders.filter((order) => order.status === "sent" || order.status === "partial");
@@ -118,13 +116,13 @@ export default function ReceptionsPage() {
     });
 
     const receptionsQuery = useQuery({
-        queryKey: [...RECEPTIONS_QUERY_KEY, filter],
+        queryKey: queryKeys.receptions.byFilter(filter),
         queryFn: () => api.getReceptions(filter !== "all" ? { status: filter } : undefined),
         enabled: activeTab === "history",
     });
 
     const supplierReturnsQuery = useQuery({
-        queryKey: SUPPLIER_RETURNS_QUERY_KEY,
+        queryKey: queryKeys.supplierReturns.all,
         queryFn: async () => {
             const rows = await api.getReturns();
             return rows.map(toSupplierReturnRecord);
@@ -136,8 +134,8 @@ export default function ReceptionsPage() {
         mutationFn: (payload: Parameters<typeof api.createReception>[0]) => api.createReception(payload),
         onSuccess: async () => {
             await Promise.all([
-                queryClient.invalidateQueries({ queryKey: RECEPTIONS_QUERY_KEY }),
-                queryClient.invalidateQueries({ queryKey: PURCHASE_ORDERS_QUERY_KEY }),
+                queryClient.invalidateQueries({ queryKey: queryKeys.receptions.all }),
+                queryClient.invalidateQueries({ queryKey: queryKeys.purchaseOrders.all }),
             ]);
         },
     });
@@ -145,7 +143,7 @@ export default function ReceptionsPage() {
     const createReturnMutation = useMutation({
         mutationFn: (payload: Parameters<typeof api.createReturn>[0]) => api.createReturn(payload),
         onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: SUPPLIER_RETURNS_QUERY_KEY });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.supplierReturns.all });
         },
     });
 
@@ -153,8 +151,8 @@ export default function ReceptionsPage() {
         mutationFn: (receptionId: string) => api.approveReception(receptionId),
         onSuccess: async () => {
             await Promise.all([
-                queryClient.invalidateQueries({ queryKey: RECEPTIONS_QUERY_KEY }),
-                queryClient.invalidateQueries({ queryKey: PURCHASE_ORDERS_QUERY_KEY }),
+                queryClient.invalidateQueries({ queryKey: queryKeys.receptions.all }),
+                queryClient.invalidateQueries({ queryKey: queryKeys.purchaseOrders.all }),
             ]);
         },
     });
@@ -162,7 +160,7 @@ export default function ReceptionsPage() {
     const approveReturnMutation = useMutation({
         mutationFn: (returnId: string) => api.approveReturn(returnId),
         onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: SUPPLIER_RETURNS_QUERY_KEY });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.supplierReturns.all });
         },
     });
 
