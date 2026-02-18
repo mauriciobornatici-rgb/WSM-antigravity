@@ -6,9 +6,9 @@ Current block: P2
 Current task: P2.4 - Incremental React Query adoption in data-heavy screens (Orders first pass)
 
 ## Resume From Here
-1. Continue P2.4 by extracting shared React Query keys/helpers and repeat the same query/mutation pattern in `Receptions` or `PurchaseOrders`.
+1. Continue P2.4 by applying the same React Query migration pattern in `Receptions` (tabs + conditional datasets).
 2. Preserve standardized async UX in migrated pages: visible load error with retry + mutation invalidation strategy.
-3. Continue wording and locale consistency pass in remaining core screens to keep Spanish AR terminology.
+3. Extract shared query key helpers for operational modules (`orders`, `purchase-orders`, `receptions`) to reduce duplication.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
@@ -257,6 +257,18 @@ Current task: P2.4 - Incremental React Query adoption in data-heavy screens (Ord
     - `packages/client/src/pages/Orders.tsx`
   - Validation:
     - `npm -w @wsm/client exec eslint src/pages/Orders.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.4 partial progress (continued):
+  - Purchase Orders page migrated to React Query with filter-aware query key:
+    - query by `status` filter (`all|draft|sent|partial|received`)
+    - mutations for create and approve with cache invalidation
+  - Added explicit load-error banner with retry action.
+  - Removed manual `useEffect/useCallback` reload cycle.
+  - File:
+    - `packages/client/src/pages/PurchaseOrders.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):

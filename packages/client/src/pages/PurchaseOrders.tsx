@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Clock, Eye, Package, Plus, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { PurchaseOrder } from "@/types";
-import { showErrorToast } from "@/lib/errorHandling";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PurchaseOrderForm } from "@/components/purchase-orders/PurchaseOrderForm";
 import { PurchaseOrderDetails } from "@/components/purchase-orders/PurchaseOrderDetails";
 
 type OrderStatus = PurchaseOrder["status"];
 type OrderFilter = "all" | "draft" | "sent" | "partial" | "received";
+
+const PURCHASE_ORDERS_QUERY_KEY = ["purchase-orders"] as const;
+const EMPTY_PURCHASE_ORDERS: PurchaseOrder[] = [];
 
 function statusLabel(status: OrderStatus): string {
     const labels: Record<OrderStatus, string> = {
@@ -58,48 +61,46 @@ const tableCellMutedClass = "whitespace-nowrap px-6 py-4 text-sm text-slate-600"
 const tableCellStrongClass = "whitespace-nowrap px-6 py-4 font-semibold text-slate-900";
 
 export default function PurchaseOrdersPage() {
-    const [orders, setOrders] = useState<PurchaseOrder[]>([]);
-    const [loading, setLoading] = useState(true);
+    const queryClient = useQueryClient();
     const [filter, setFilter] = useState<OrderFilter>("all");
     const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
     const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
-    const loadOrders = useCallback(async () => {
-        try {
-            setLoading(true);
-            const filters = filter !== "all" ? { status: filter } : undefined;
-            const response = await api.getPurchaseOrders(filters);
-            setOrders(response);
-        } catch (error) {
-            showErrorToast("Error al cargar ordenes de compra", error);
-        } finally {
-            setLoading(false);
-        }
-    }, [filter]);
+    const ordersQuery = useQuery({
+        queryKey: [...PURCHASE_ORDERS_QUERY_KEY, filter],
+        queryFn: () => api.getPurchaseOrders(filter !== "all" ? { status: filter } : undefined),
+    });
 
-    useEffect(() => {
-        void loadOrders();
-    }, [loadOrders]);
+    const createOrderMutation = useMutation({
+        mutationFn: (payload: Parameters<typeof api.createPurchaseOrder>[0]) => api.createPurchaseOrder(payload),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: PURCHASE_ORDERS_QUERY_KEY });
+        },
+    });
+
+    const approveOrderMutation = useMutation({
+        mutationFn: (orderId: string) => api.updatePurchaseOrderStatus(orderId, "sent"),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: PURCHASE_ORDERS_QUERY_KEY });
+        },
+    });
+
+    const orders = ordersQuery.data ?? EMPTY_PURCHASE_ORDERS;
+    const loading = ordersQuery.isLoading;
+    const hasLoadError = ordersQuery.isError;
 
     async function handleCreateOrder(data: Parameters<typeof api.createPurchaseOrder>[0]) {
-        try {
-            await api.createPurchaseOrder(data);
-            toast.success("Orden de compra creada");
-            setIsCreateDialogOpen(false);
-            await loadOrders();
-        } catch (error) {
-            showErrorToast("Error al crear la orden", error);
-            throw error;
-        }
+        await createOrderMutation.mutateAsync(data);
+        toast.success("Orden de compra creada");
+        setIsCreateDialogOpen(false);
     }
 
     async function handleApprove(orderId: string) {
         try {
-            await api.updatePurchaseOrderStatus(orderId, "sent");
+            await approveOrderMutation.mutateAsync(orderId);
             toast.success("Orden aprobada y enviada");
-            await loadOrders();
-        } catch (error) {
-            showErrorToast("Error al aprobar la orden", error);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
@@ -179,6 +180,18 @@ export default function PurchaseOrdersPage() {
             </div>
 
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-900">
+                {hasLoadError ? (
+                    <div className="mx-4 mt-4 flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 md:flex-row md:items-center md:justify-between">
+                        <span>No pudimos cargar las ordenes de compra. Reintenta para actualizar los datos.</span>
+                        <button
+                            type="button"
+                            onClick={() => void ordersQuery.refetch()}
+                            className="rounded border border-red-300 px-3 py-1 font-medium text-red-700 transition hover:bg-red-100"
+                        >
+                            Reintentar
+                        </button>
+                    </div>
+                ) : null}
                 {loading ? (
                     <div className="flex h-48 items-center justify-center">
                         <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
@@ -232,6 +245,7 @@ export default function PurchaseOrdersPage() {
                                         {order.status === "draft" ? (
                                             <button
                                                 onClick={() => void handleApprove(order.id)}
+                                                disabled={approveOrderMutation.isPending}
                                                 className="rounded bg-green-50 px-2 py-1 text-xs font-semibold uppercase tracking-wider text-green-700 transition hover:bg-green-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-2"
                                             >
                                                 Aprobar

@@ -93,6 +93,12 @@
     - invalidated query cache after successful mutations to keep UI synchronized
   - Added explicit visible load-error banner with retry action.
   - Kept existing business flow and UI behavior while removing repeated manual refresh plumbing.
+- `packages/client/src/pages/PurchaseOrders.tsx`
+  - Continued P2.4 React Query rollout in procurement workflow:
+    - replaced manual `useEffect/useCallback` fetch with filter-aware `useQuery`
+    - migrated create/approve actions to `useMutation`
+    - synchronized listing via cache invalidation after successful mutations
+  - Added explicit visible load-error banner with retry action.
 - `docs/execution/STATE.md`
   - Updated active task and resume steps for P2.4 continuation.
 
@@ -110,6 +116,7 @@
   - `node --check packages/server/index.js`
   - `node --check packages/server/config/env.js`
   - `npm -w @wsm/client exec eslint src/pages/Orders.tsx`
+  - `npm -w @wsm/client exec eslint src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 
