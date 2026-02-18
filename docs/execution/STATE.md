@@ -246,6 +246,21 @@ Current task: P2.3 - Uniform async error/loading/empty state patterns (stabiliza
     - `packages/client/src/pages/Settings.tsx`
   - Validation:
     - Frontend lint/typecheck/build passed.
+- Incident hotfix (staging availability):
+  - Root cause:
+    - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),
+      causing broad `429 too_many_requests` and empty screens.
+  - Mitigation:
+    - rate limits now configurable via env
+    - safer defaults by environment (dev/staging higher, production controlled)
+    - `/api/health` excluded from limiter
+    - login limiter preserved separately and configurable
+  - Files:
+    - `packages/server/index.js`
+    - `packages/server/config/env.js`
+    - `.env.example`
+  - Validation:
+    - server syntax checks + frontend typecheck/build passed.
 
 ## Next After Current Task
 P2.4 - Incremental React Query adoption in data-heavy screens.

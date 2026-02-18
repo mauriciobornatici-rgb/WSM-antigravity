@@ -20,6 +20,16 @@ function parsePortEnv(name, defaultValue) {
     return value;
 }
 
+function parsePositiveIntEnv(name, defaultValue) {
+    const raw = process.env[name];
+    if (raw == null || raw === '') return defaultValue;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value <= 0) {
+        throw new Error(`Invalid positive integer for ${name}: '${raw}'`);
+    }
+    return value;
+}
+
 function parseCorsOrigins(raw, fallback = []) {
     const value = raw == null || raw === '' ? null : raw;
     if (!value) return fallback;
@@ -76,7 +86,14 @@ export function getEnvConfig() {
         trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
         dbSsl: parseBooleanEnv('DB_SSL', false),
         dbSslRejectUnauthorized: parseBooleanEnv('DB_SSL_REJECT_UNAUTHORIZED', true),
-        allowInsecureNonDev: parseBooleanEnv('ALLOW_INSECURE_NON_DEV', false)
+        allowInsecureNonDev: parseBooleanEnv('ALLOW_INSECURE_NON_DEV', false),
+        apiRateLimitWindowMs: parsePositiveIntEnv('API_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+        apiRateLimitMax: parsePositiveIntEnv(
+            'API_RATE_LIMIT_MAX',
+            isDevelopment ? 1200 : isStaging ? 2000 : 500
+        ),
+        loginRateLimitWindowMs: parsePositiveIntEnv('LOGIN_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+        loginRateLimitMax: parsePositiveIntEnv('LOGIN_RATE_LIMIT_MAX', 8)
     };
 
     const errors = [];

@@ -71,6 +71,21 @@
   - Normalized fiscal label to AR terminology (`CUIT / DNI`).
 - `docs/execution/STATE.md`
   - Added terminology consistency checkpoint in P2.3.
+- `packages/server/config/env.js`
+  - Added configurable rate-limit env parameters:
+    - `API_RATE_LIMIT_WINDOW_MS`
+    - `API_RATE_LIMIT_MAX`
+    - `LOGIN_RATE_LIMIT_WINDOW_MS`
+    - `LOGIN_RATE_LIMIT_MAX`
+  - Added environment-aware defaults for API limiter (higher in dev/staging).
+- `packages/server/index.js`
+  - Global `/api` limiter now reads env-configured values.
+  - Excluded `/api/health` from global limiter to avoid false operational alerts.
+  - Login limiter now uses env-configured window/max values.
+- `.env.example`
+  - Documented all new rate-limit variables.
+- `docs/execution/STATE.md`
+  - Added incident hotfix checkpoint for `429 too_many_requests` saturation in staging.
 
 ### Verified
 - Frontend checks passed:
@@ -83,6 +98,8 @@
   - `npm -w @wsm/client exec eslint src/pages/Picking.tsx src/pages/Suppliers.tsx src/pages/Clients.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/pages/Settings.tsx`
+  - `node --check packages/server/index.js`
+  - `node --check packages/server/config/env.js`
 
 ## 2026-02-17
 

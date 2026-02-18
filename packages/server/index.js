@@ -48,10 +48,11 @@ app.use(hpp()); // Prevent HTTP Parameter Pollution
 
 // Rate Limiting
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    limit: 100, // Limit each IP to 100 requests per windowMs
+    windowMs: env.apiRateLimitWindowMs,
+    limit: env.apiRateLimitMax,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.path === '/health',
     message: { error: 'too_many_requests', message: 'Demasiadas peticiones desde esta IP, por favor intente nuevamente en 15 minutos' }
 });
 
@@ -102,9 +103,9 @@ if (env.isDevelopment) {
 
 // Public Auth Routes
 const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    limit: 5, // Limit each IP to 5 login requests per windowMs
-    message: { error: 'too_many_requests', message: 'Demasiados intentos de inicio de sesiÃ³n, por favor intente nuevamente en 15 minutos' },
+    windowMs: env.loginRateLimitWindowMs,
+    limit: env.loginRateLimitMax,
+    message: { error: 'too_many_requests', message: 'Demasiados intentos de inicio de sesion, por favor intente nuevamente en 15 minutos' },
     standardHeaders: true,
     legacyHeaders: false,
 });
