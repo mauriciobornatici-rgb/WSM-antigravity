@@ -1,40 +1,28 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-    AlertCircle,
-    CheckCircle2,
-    Clock,
-    PackageCheck,
-    Plus,
-    RotateCcw,
-    ShoppingCart,
-} from "lucide-react";
+import { Plus, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
-import type { PurchaseOrder } from "@/types";
 import { queryKeys } from "@/lib/queryKeys";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Progress } from "@/components/ui/progress";
+import { PendingOrdersSection } from "@/components/receptions/PendingOrdersSection";
 import { ReceptionForm } from "@/components/receptions/ReceptionForm";
+import { ReceptionsHistorySection } from "@/components/receptions/ReceptionsHistorySection";
 import { ReturnForm } from "@/components/receptions/ReturnForm";
+import { SupplierReturnsSection } from "@/components/receptions/SupplierReturnsSection";
+import type {
+    PendingReceptionOrder,
+    ReceptionRecord,
+    ReceptionsFilter,
+    ReceptionsTab,
+    SupplierReturnRecord,
+} from "@/components/receptions/types";
 
-type ReceptionRecord = Awaited<ReturnType<typeof api.getReceptions>>[number];
 type SupplierReturnRaw = Awaited<ReturnType<typeof api.getReturns>>[number];
-
-type SupplierReturnRecord = {
-    id: string;
-    return_number: string;
-    supplier_name: string;
-    created_at: string;
-    status: string;
-};
-
-type ReceptionsFilter = "all" | "pending_qc" | "approved" | "rejected";
-type ReceptionsTab = "pending" | "history" | "returns";
 
 const EMPTY_RECEPTIONS: ReceptionRecord[] = [];
 const EMPTY_RETURNS: SupplierReturnRecord[] = [];
-const EMPTY_PENDING_ORDERS: PurchaseOrder[] = [];
+const EMPTY_PENDING_ORDERS: PendingReceptionOrder[] = [];
 
 function readText(value: unknown, fallback = "-"): string {
     return typeof value === "string" && value.length > 0 ? value : fallback;
@@ -54,46 +42,6 @@ function toSupplierReturnRecord(row: SupplierReturnRaw): SupplierReturnRecord {
         status: readText(row.status, "draft"),
     };
 }
-
-function receptionStatusLabel(status: string): string {
-    const labels: Record<string, string> = {
-        pending_qc: "Pendiente QC",
-        approved: "Aprobada",
-        partially_approved: "Aprobada parcial",
-        rejected: "Rechazada",
-    };
-    return labels[status] ?? status;
-}
-
-function returnStatusLabel(status: string): string {
-    if (status === "draft") return "Borrador";
-    if (status === "approved") return "Aprobada";
-    return status;
-}
-
-function statusBadgeClass(status: string): string {
-    const map: Record<string, string> = {
-        pending_qc: "bg-amber-100 text-amber-800 ring-1 ring-amber-200",
-        approved: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200",
-        partially_approved: "bg-sky-100 text-sky-800 ring-1 ring-sky-200",
-        rejected: "bg-rose-100 text-rose-800 ring-1 ring-rose-200",
-        draft: "bg-amber-100 text-amber-800 ring-1 ring-amber-200",
-    };
-    return `rounded-full px-2 py-1 text-xs font-semibold ${map[status] ?? "bg-slate-100 text-slate-700 ring-1 ring-slate-200"}`;
-}
-
-function calculateOrderProgress(order: PurchaseOrder): number {
-    const items = order.items ?? [];
-    const totalOrdered = items.reduce((sum, item) => sum + Number(item.quantity_ordered ?? item.quantity ?? 0), 0);
-    const totalReceived = items.reduce((sum, item) => sum + Number(item.quantity_received ?? item.received_quantity ?? 0), 0);
-    if (totalOrdered <= 0) return 0;
-    return Math.round((totalReceived / totalOrdered) * 100);
-}
-
-const tableHeadClass = "px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-700";
-const tableHeadRightClass = "px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-700";
-const tableCellClass = "px-6 py-4 text-slate-800";
-const tableCellStrongClass = "px-6 py-4 font-semibold text-slate-900";
 
 export default function ReceptionsPage() {
     const queryClient = useQueryClient();
@@ -307,205 +255,36 @@ export default function ReceptionsPage() {
             ) : null}
 
             {!loading && activeTab === "pending" ? (
-                <div className="overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-900">
-                    {pendingOrders.length === 0 ? (
-                        <div className="p-12 text-center">
-                            <ShoppingCart className="mx-auto mb-4 h-16 w-16 text-slate-300" />
-                            <h3 className="mb-2 text-lg font-medium text-slate-900">No hay pedidos pendientes</h3>
-                            <p className="text-slate-600">Todos los pedidos aprobados fueron recepcionados.</p>
-                        </div>
-                    ) : (
-                        <table className="w-full text-slate-900">
-                            <thead className="border-b border-slate-200 bg-slate-50">
-                                <tr>
-                                    <th className={tableHeadClass}>Orden</th>
-                                    <th className={tableHeadClass}>Proveedor</th>
-                                    <th className={tableHeadClass}>Fecha</th>
-                                    <th className={tableHeadClass}>Progreso</th>
-                                    <th className={tableHeadRightClass}>Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-200 text-slate-800">
-                                {pendingOrders.map((order) => {
-                                    const progress = calculateOrderProgress(order);
-                                    return (
-                                        <tr key={order.id} className="hover:bg-slate-50">
-                                            <td className={tableCellStrongClass}>{order.po_number ?? order.id}</td>
-                                            <td className={tableCellClass}>{order.supplier_name ?? "-"}</td>
-                                            <td className={tableCellClass}>{order.order_date ? new Date(order.order_date).toLocaleDateString("es-AR") : "-"}</td>
-                                            <td className="w-48 px-6 py-4">
-                                                <div className="flex items-center gap-2">
-                                                    <Progress value={progress} className="h-2" />
-                                                    <span className="text-xs font-medium">{progress}%</span>
-                                                </div>
-                                            </td>
-                                            <td className="px-6 py-4 text-right">
-                                                <button
-                                                    onClick={() => {
-                                                        setPrefilledOrderId(order.id);
-                                                        setPrefilledSupplierId(order.supplier_id);
-                                                        setIsCreateDialogOpen(true);
-                                                    }}
-                                                    className="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white transition hover:bg-green-700"
-                                                >
-                                                    Comenzar recepcion
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    )}
-                </div>
+                <PendingOrdersSection
+                    pendingOrders={pendingOrders}
+                    onStartReception={(order) => {
+                        setPrefilledOrderId(order.id);
+                        setPrefilledSupplierId(order.supplier_id);
+                        setIsCreateDialogOpen(true);
+                    }}
+                />
             ) : null}
 
             {!loading && activeTab === "returns" ? (
-                <div className="overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-900">
-                    {returns.length === 0 ? (
-                        <div className="p-12 text-center">
-                            <RotateCcw className="mx-auto mb-4 h-16 w-16 text-slate-300" />
-                            <h3 className="mb-2 text-lg font-medium text-slate-900">No hay devoluciones</h3>
-                        </div>
-                    ) : (
-                        <table className="w-full text-slate-900">
-                            <thead className="border-b border-slate-200 bg-slate-50">
-                                <tr>
-                                    <th className={tableHeadClass}>Referencia</th>
-                                    <th className={tableHeadClass}>Proveedor</th>
-                                    <th className={tableHeadClass}>Fecha</th>
-                                    <th className={tableHeadClass}>Estado</th>
-                                    <th className={tableHeadRightClass}>Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-200 text-slate-800">
-                                {returns.map((supplierReturn) => (
-                                    <tr key={supplierReturn.id} className="hover:bg-slate-50">
-                                        <td className={tableCellStrongClass}>{supplierReturn.return_number}</td>
-                                        <td className={tableCellClass}>{supplierReturn.supplier_name}</td>
-                                        <td className={tableCellClass}>{new Date(supplierReturn.created_at).toLocaleDateString("es-AR")}</td>
-                                        <td className={tableCellClass}>
-                                            <span className={statusBadgeClass(supplierReturn.status)}>{returnStatusLabel(supplierReturn.status)}</span>
-                                        </td>
-                                        <td className="px-6 py-4 text-right">
-                                            {supplierReturn.status === "draft" ? (
-                                                <button
-                                                    onClick={() => void handleApproveReturn(supplierReturn.id, supplierReturn.return_number)}
-                                                    disabled={approveReturnMutation.isPending}
-                                                    className="rounded bg-red-600 px-3 py-1 text-sm font-medium text-white transition hover:bg-red-700"
-                                                >
-                                                    Aprobar salida
-                                                </button>
-                                            ) : null}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    )}
-                </div>
+                <SupplierReturnsSection
+                    returns={returns}
+                    approving={approveReturnMutation.isPending}
+                    onApproveReturn={(id, returnNumber) => {
+                        void handleApproveReturn(id, returnNumber);
+                    }}
+                />
             ) : null}
 
             {!loading && activeTab === "history" ? (
-                <div className="space-y-4">
-                    <div className="flex gap-2">
-                        {(["all", "pending_qc", "approved", "rejected"] as const).map((status) => (
-                            <button
-                                key={status}
-                                onClick={() => setFilter(status)}
-                                className={`rounded px-4 py-2 text-sm font-medium transition ${
-                                    filter === status ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                                }`}
-                            >
-                                {status === "all" ? "Todas" : receptionStatusLabel(status)}
-                            </button>
-                        ))}
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                        <div className="rounded-lg border bg-white p-4 text-slate-900">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-slate-600">Total</p>
-                                    <p className="text-2xl font-bold">{receptions.length}</p>
-                                </div>
-                                <PackageCheck className="h-8 w-8 text-blue-600" />
-                            </div>
-                        </div>
-                        <div className="rounded-lg border bg-white p-4 text-slate-900">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-slate-600">Pendiente QC</p>
-                                    <p className="text-2xl font-bold text-amber-600">{receptions.filter((item) => item.status === "pending_qc").length}</p>
-                                </div>
-                                <Clock className="h-8 w-8 text-amber-600" />
-                            </div>
-                        </div>
-                        <div className="rounded-lg border bg-white p-4 text-slate-900">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-slate-600">Aprobadas</p>
-                                    <p className="text-2xl font-bold text-green-600">{receptions.filter((item) => item.status === "approved").length}</p>
-                                </div>
-                                <CheckCircle2 className="h-8 w-8 text-green-600" />
-                            </div>
-                        </div>
-                        <div className="rounded-lg border bg-white p-4 text-slate-900">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-slate-600">Rechazadas</p>
-                                    <p className="text-2xl font-bold text-red-600">{receptions.filter((item) => item.status === "rejected").length}</p>
-                                </div>
-                                <AlertCircle className="h-8 w-8 text-red-600" />
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-900">
-                        {receptions.length === 0 ? (
-                            <div className="p-12 text-center text-slate-600">No hay recepciones.</div>
-                        ) : (
-                            <table className="w-full">
-                                <thead className="border-b border-slate-200 bg-slate-50">
-                                    <tr>
-                                        <th className={tableHeadClass}>Numero</th>
-                                        <th className={tableHeadClass}>Proveedor</th>
-                                        <th className={tableHeadClass}>OC</th>
-                                        <th className={tableHeadClass}>Fecha</th>
-                                        <th className={tableHeadClass}>Estado</th>
-                                        <th className={tableHeadRightClass}>Acciones</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-200 text-slate-800">
-                                    {receptions.map((reception) => (
-                                        <tr key={reception.id} className="hover:bg-slate-50">
-                                            <td className={tableCellStrongClass}>{reception.reception_number}</td>
-                                            <td className={tableCellClass}>{reception.supplier_name}</td>
-                                            <td className={tableCellClass}>{reception.po_number ?? "-"}</td>
-                                            <td className={tableCellClass}>
-                                                {reception.reception_date ? new Date(reception.reception_date).toLocaleString("es-AR") : "-"}
-                                            </td>
-                                            <td className={tableCellClass}>
-                                                <span className={statusBadgeClass(reception.status)}>{receptionStatusLabel(reception.status)}</span>
-                                            </td>
-                                            <td className="px-6 py-4 text-right">
-                                                {reception.status === "pending_qc" ? (
-                                                    <button
-                                                        onClick={() => void handleApproveReception(reception.id, reception.reception_number)}
-                                                        disabled={approveReceptionMutation.isPending}
-                                                        className="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white transition hover:bg-green-700"
-                                                    >
-                                                        Aprobar
-                                                    </button>
-                                                ) : null}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        )}
-                    </div>
-                </div>
+                <ReceptionsHistorySection
+                    receptions={receptions}
+                    filter={filter}
+                    approving={approveReceptionMutation.isPending}
+                    onFilterChange={setFilter}
+                    onApproveReception={(id, receptionNumber) => {
+                        void handleApproveReception(id, receptionNumber);
+                    }}
+                />
             ) : null}
 
             <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>

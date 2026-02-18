@@ -6,7 +6,7 @@ Current block: P2
 Current task: P2.5 - Decomposition pass on oversized pages (Inventory started)
 
 ## Resume From Here
-1. Continue P2.5 decomposition on `Receptions` by extracting tab sections into dedicated feature components.
+1. Continue P2.5 decomposition on remaining high-complexity pages (`POS`, `Invoices`) keeping behavior parity.
 2. Preserve standardized async UX in migrated pages: visible load error with retry + mutation invalidation strategy.
 3. Evaluar deduplicacion de toasts de error global/local en React Query para evitar mensajes duplicados en futuros handlers.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
@@ -310,6 +310,22 @@ Current task: P2.5 - Decomposition pass on oversized pages (Inventory started)
     - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/components/products/InventoryTable.tsx src/lib/inventorySnapshot.ts`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
+- P2.5 partial progress (continued):
+  - Receptions page decomposed into modular sections while preserving existing behavior and React Query integration:
+    - shared types:
+      - `packages/client/src/components/receptions/types.ts`
+    - shared status helpers:
+      - `packages/client/src/components/receptions/receptionStatus.ts`
+    - tab sections:
+      - `packages/client/src/components/receptions/PendingOrdersSection.tsx`
+      - `packages/client/src/components/receptions/SupplierReturnsSection.tsx`
+      - `packages/client/src/components/receptions/ReceptionsHistorySection.tsx`
+    - page orchestration simplified:
+      - `packages/client/src/pages/Receptions.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/SupplierReturnsSection.tsx src/components/receptions/ReceptionsHistorySection.tsx src/components/receptions/receptionStatus.ts src/components/receptions/types.ts`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):
   - Root cause:
     - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),
@@ -327,7 +343,7 @@ Current task: P2.5 - Decomposition pass on oversized pages (Inventory started)
     - server syntax checks + frontend typecheck/build passed.
 
 ## Next After Current Task
-P2.5 continuation - decompose `Receptions` sections into modular components without behavior changes.
+P2.5 continuation - decompose another high-complexity operational page with behavior parity.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):

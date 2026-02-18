@@ -124,6 +124,19 @@
     - create/edit/delete dialog flow
     - delegates table rendering to `InventoryTable`
   - Wired cache invalidation via shared helper (`invalidateInventorySnapshotCache`).
+- `packages/client/src/components/receptions/types.ts`
+  - Added shared reception feature types (`ReceptionsTab`, `ReceptionsFilter`, section row contracts).
+- `packages/client/src/components/receptions/receptionStatus.ts`
+  - Added shared status label/style helpers for receptions and supplier returns.
+- `packages/client/src/components/receptions/PendingOrdersSection.tsx`
+  - Extracted pending purchase orders tab UI and progress rendering.
+- `packages/client/src/components/receptions/SupplierReturnsSection.tsx`
+  - Extracted supplier returns tab UI and approval action rendering.
+- `packages/client/src/components/receptions/ReceptionsHistorySection.tsx`
+  - Extracted receptions history tab UI (filters, KPI cards, table actions).
+- `packages/client/src/pages/Receptions.tsx`
+  - Simplified to orchestration layer by delegating tab content rendering to modular components.
+  - Preserved existing React Query behavior and mutation flows.
 - `docs/execution/STATE.md`
   - Updated active task and resume steps for P2.5 continuation.
 
@@ -145,6 +158,7 @@
   - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
   - `npm -w @wsm/client exec eslint src/lib/queryKeys.ts src/pages/Orders.tsx src/pages/PurchaseOrders.tsx src/pages/Receptions.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/components/products/InventoryTable.tsx src/lib/inventorySnapshot.ts`
+  - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/SupplierReturnsSection.tsx src/components/receptions/ReceptionsHistorySection.tsx src/components/receptions/receptionStatus.ts src/components/receptions/types.ts`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 
