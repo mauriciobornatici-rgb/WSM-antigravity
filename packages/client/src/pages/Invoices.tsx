@@ -66,6 +66,7 @@ export default function InvoicesPage() {
     const [manualItem, setManualItem] = useState<DraftInvoiceItem>({
         description: "", quantity: 1, unit_price: 0, vat_rate: getTaxRatePercentage(DEFAULT_COMPANY_SETTINGS)
     })
+    const emailFeatureEnabled = import.meta.env.VITE_ENABLE_INVOICE_EMAIL === "true"
 
     useEffect(() => { void loadData() }, [])
 
@@ -118,14 +119,17 @@ export default function InvoicesPage() {
     }
 
     const handleSendEmail = (invoice: InvoiceView) => {
-        toast.promise(
-            new Promise((resolve) => setTimeout(resolve, 1500)),
-            {
-                loading: 'Enviando comprobante por email...',
-                success: `Enviado a ${invoice.client_snapshot?.email || 'el cliente'}`,
-                error: 'Error al enviar email',
-            }
-        );
+        // TODO: Integrar con endpoint backend real de envio de comprobantes.
+        if (!emailFeatureEnabled) {
+            toast.info("Envio por email en modo simulacion", {
+                description: `No hay integracion activa. Destinatario estimado: ${invoice.client_snapshot?.email || "cliente sin email"}.`,
+            });
+            return;
+        }
+
+        toast.warning("Integracion de email pendiente", {
+            description: "Activaste la feature flag, pero aun falta implementar el endpoint de envio.",
+        });
     }
 
     const openInvoicePreview = async (invoice: InvoiceView) => {
@@ -199,7 +203,7 @@ export default function InvoicesPage() {
                                         <TableBody>{newInvoice.items.map((item, idx) => (
                                             <TableRow key={idx}><TableCell>{item.description}</TableCell><TableCell>{item.quantity}</TableCell><TableCell>${item.unit_price}</TableCell><TableCell className="text-right">${((item.quantity * item.unit_price) * (1 + item.vat_rate / 100)).toFixed(2)}</TableCell></TableRow>
                                         ))}</TableBody></Table>
-                                    <div className="grid grid-cols-12 gap-2"><div className="col-span-6"><Input placeholder="Descripción..." value={manualItem.description} onChange={e => setManualItem({ ...manualItem, description: e.target.value })} /></div><div className="col-span-2"><Input type="number" value={manualItem.quantity} onChange={e => setManualItem({ ...manualItem, quantity: Number(e.target.value) })} /></div><div className="col-span-2"><Input type="number" value={manualItem.unit_price} onChange={e => setManualItem({ ...manualItem, unit_price: Number(e.target.value) })} /></div><div className="col-span-2"><Button variant="secondary" className="w-full" onClick={addItem}>Add</Button></div></div>
+                                    <div className="grid grid-cols-12 gap-2"><div className="col-span-6"><Input placeholder="Descripción..." value={manualItem.description} onChange={e => setManualItem({ ...manualItem, description: e.target.value })} /></div><div className="col-span-2"><Input type="number" value={manualItem.quantity} onChange={e => setManualItem({ ...manualItem, quantity: Number(e.target.value) })} /></div><div className="col-span-2"><Input type="number" value={manualItem.unit_price} onChange={e => setManualItem({ ...manualItem, unit_price: Number(e.target.value) })} /></div><div className="col-span-2"><Button variant="secondary" className="w-full" onClick={addItem}>Agregar</Button></div></div>
                                 </div>
                                 <div className="flex justify-end text-xl font-bold">Total: ${calculateTotal().toFixed(2)}</div>
                             </div>
@@ -228,7 +232,7 @@ export default function InvoicesPage() {
                                     <TableCell>{getStatusBadge(inv.status, inv.invoice_type)}</TableCell>
                                     <TableCell className="text-right flex justify-end gap-1">
                                         <Button variant="ghost" size="sm" title="Ver Detalles" onClick={() => openInvoicePreview(inv)}><Eye className="h-4 w-4" /></Button>
-                                        <Button variant="ghost" size="sm" title="Enviar Email" onClick={() => handleSendEmail(inv)}><Mail className="h-4 w-4 text-blue-500" /></Button>
+                                        <Button variant="ghost" size="sm" title="Enviar por email" onClick={() => handleSendEmail(inv)}><Mail className="h-4 w-4 text-blue-500" /></Button>
                                         <Button variant="ghost" size="sm" title="Imprimir" onClick={() => { setSelectedInvoice(inv); setTimeout(() => window.print(), 200); }}><Printer className="h-4 w-4" /></Button>
                                     </TableCell>
                                 </TableRow>

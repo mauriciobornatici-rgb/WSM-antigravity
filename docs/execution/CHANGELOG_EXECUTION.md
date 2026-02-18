@@ -29,6 +29,11 @@
     - recent activity from transactions/orders
 - `docs/execution/STATE.md`
   - Moved active task to `P2.2` after dashboard de-mocking.
+- `packages/client/src/pages/Invoices.tsx`
+  - Hardened email action UX to avoid fake operational confirmation:
+    - explicit simulation message when integration is not available
+    - feature-flag gate (`VITE_ENABLE_INVOICE_EMAIL`) for future backend hookup
+  - Replaced remaining English action label (`Add` -> `Agregar`) in manual invoice flow.
 
 ### Verified
 - Frontend checks passed:
@@ -36,6 +41,7 @@
   - `npm -w @wsm/client exec eslint src/pages/PurchaseOrders.tsx`
   - `npm -w @wsm/client run build`
   - `npm -w @wsm/client exec eslint src/pages/Dashboard.tsx`
+  - `npm -w @wsm/client exec eslint src/pages/Invoices.tsx`
 
 ## 2026-02-17
 

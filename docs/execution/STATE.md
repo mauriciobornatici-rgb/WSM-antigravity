@@ -189,6 +189,16 @@ Current task: P2.2 - Replace fake data/simulations with real data or explicit ro
     - `packages/client/src/pages/Dashboard.tsx`
   - Validation:
     - Frontend lint/typecheck/build passed.
+- P2.2 partial progress (continued):
+  - Invoices email action no longer reports false "success" as if it were real.
+  - Added explicit simulation messaging and feature flag gate:
+    - `VITE_ENABLE_INVOICE_EMAIL` controls behavior
+    - without integration, UI now informs user that email is simulated/pending
+  - Normalized remaining English label in manual invoice item adder (`Agregar`).
+  - File:
+    - `packages/client/src/pages/Invoices.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
 
 ## Next After Current Task
 P2.3 - Uniform async error/loading/empty state patterns in key pages.
