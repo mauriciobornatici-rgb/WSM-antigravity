@@ -113,8 +113,19 @@
   - Refactored to consume shared keys from `queryKeys`.
 - `packages/client/src/pages/Receptions.tsx`
   - Refactored to consume shared keys from `queryKeys`.
+- `packages/client/src/lib/inventorySnapshot.ts`
+  - Extracted inventory snapshot/cache orchestration from page into a reusable helper module.
+  - Keeps existing deduplication + TTL cache strategy and stock immobilization calculation.
+- `packages/client/src/components/products/InventoryTable.tsx`
+  - Extracted inventory table rendering/actions into a dedicated presentational component.
+- `packages/client/src/pages/Inventory.tsx`
+  - Simplified to page orchestration:
+    - data load/error/search state
+    - create/edit/delete dialog flow
+    - delegates table rendering to `InventoryTable`
+  - Wired cache invalidation via shared helper (`invalidateInventorySnapshotCache`).
 - `docs/execution/STATE.md`
-  - Updated active task and resume steps for P2.4 continuation.
+  - Updated active task and resume steps for P2.5 continuation.
 
 ### Verified
 - Frontend checks passed:
@@ -133,6 +144,7 @@
   - `npm -w @wsm/client exec eslint src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
   - `npm -w @wsm/client exec eslint src/lib/queryKeys.ts src/pages/Orders.tsx src/pages/PurchaseOrders.tsx src/pages/Receptions.tsx`
+  - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/components/products/InventoryTable.tsx src/lib/inventorySnapshot.ts`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 

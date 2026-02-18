@@ -3,10 +3,10 @@
 Last updated: 2026-02-18
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.4 - Incremental React Query adoption in data-heavy screens (Orders first pass)
+Current task: P2.5 - Decomposition pass on oversized pages (Inventory started)
 
 ## Resume From Here
-1. Continue P2.5 decomposition pass on oversized pages (`Inventory`, `Receptions`) after the React Query baseline.
+1. Continue P2.5 decomposition on `Receptions` by extracting tab sections into dedicated feature components.
 2. Preserve standardized async UX in migrated pages: visible load error with retry + mutation invalidation strategy.
 3. Evaluar deduplicacion de toasts de error global/local en React Query para evitar mensajes duplicados en futuros handlers.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
@@ -297,6 +297,19 @@ Current task: P2.4 - Incremental React Query adoption in data-heavy screens (Ord
     - `npm -w @wsm/client exec eslint src/lib/queryKeys.ts src/pages/Orders.tsx src/pages/PurchaseOrders.tsx src/pages/Receptions.tsx`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
+- P2.5 partial progress:
+  - Inventory page decomposed into dedicated data/helper and table rendering modules:
+    - extracted inventory snapshot/cache logic to:
+      - `packages/client/src/lib/inventorySnapshot.ts`
+    - extracted table rendering/actions to:
+      - `packages/client/src/components/products/InventoryTable.tsx`
+    - simplified page orchestration to state + dialogs + search:
+      - `packages/client/src/pages/Inventory.tsx`
+  - Behavior preserved (same CRUD, same retry, same stock derivation and cache invalidation flow).
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/components/products/InventoryTable.tsx src/lib/inventorySnapshot.ts`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):
   - Root cause:
     - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),
@@ -314,7 +327,7 @@ Current task: P2.4 - Incremental React Query adoption in data-heavy screens (Ord
     - server syntax checks + frontend typecheck/build passed.
 
 ## Next After Current Task
-P2.4 continuation - replicate React Query adoption pattern in another high-traffic operational screen.
+P2.5 continuation - decompose `Receptions` sections into modular components without behavior changes.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):
