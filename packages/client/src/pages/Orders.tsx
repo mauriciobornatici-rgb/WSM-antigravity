@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleDashed, FileText, Package, Plus, Search, Truck, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { Client, Order, Product } from "@/types";
-import { showErrorToast } from "@/lib/errorHandling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +27,13 @@ const PAYMENT_METHODS = [
     { value: "qr", label: "QR" },
     { value: "credit_account", label: "Cuenta corriente" },
 ];
+
+const ORDERS_QUERY_KEY = ["orders"] as const;
+const PRODUCTS_QUERY_KEY = ["products"] as const;
+const CLIENTS_QUERY_KEY = ["clients"] as const;
+const EMPTY_ORDERS: Order[] = [];
+const EMPTY_PRODUCTS: Product[] = [];
+const EMPTY_CLIENTS: Client[] = [];
 
 function statusLabel(status: OrderStatus): string {
     const labels: Record<OrderStatus, string> = {
@@ -51,16 +58,12 @@ function getInvoiceTotal(order: Order): number {
 
 export default function OrdersPage() {
     const navigate = useNavigate();
-    const [orders, setOrders] = useState<Order[]>([]);
-    const [products, setProducts] = useState<Product[]>([]);
-    const [clients, setClients] = useState<Client[]>([]);
-    const [loading, setLoading] = useState(true);
+    const queryClient = useQueryClient();
 
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState<OrderFilter>("all");
 
     const [createOpen, setCreateOpen] = useState(false);
-    const [createSubmitting, setCreateSubmitting] = useState(false);
     const [createClientId, setCreateClientId] = useState("");
     const [createProductId, setCreateProductId] = useState("");
     const [createQuantity, setCreateQuantity] = useState(1);
@@ -69,7 +72,6 @@ export default function OrdersPage() {
 
     const [dispatchOpen, setDispatchOpen] = useState(false);
     const [dispatchOrder, setDispatchOrder] = useState<Order | null>(null);
-    const [dispatchSubmitting, setDispatchSubmitting] = useState(false);
     const [shippingMethod, setShippingMethod] = useState<ShippingMethod>("delivery");
     const [trackingNumber, setTrackingNumber] = useState("");
     const [shippingAddress, setShippingAddress] = useState("");
@@ -79,37 +81,76 @@ export default function OrdersPage() {
 
     const [deliverOpen, setDeliverOpen] = useState(false);
     const [deliverOrder, setDeliverOrder] = useState<Order | null>(null);
-    const [deliverSubmitting, setDeliverSubmitting] = useState(false);
     const [deliverRecipientName, setDeliverRecipientName] = useState("");
     const [deliverRecipientDni, setDeliverRecipientDni] = useState("");
     const [deliveryNotes, setDeliveryNotes] = useState("");
 
     const [invoiceOpen, setInvoiceOpen] = useState(false);
     const [invoiceOrder, setInvoiceOrder] = useState<Order | null>(null);
-    const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
     const [invoicePayments, setInvoicePayments] = useState<PaymentLine[]>([]);
 
-    useEffect(() => {
-        void loadData();
-    }, []);
+    const ordersQuery = useQuery({
+        queryKey: ORDERS_QUERY_KEY,
+        queryFn: () => api.getOrders(),
+    });
 
-    async function loadData() {
-        try {
-            setLoading(true);
-            const [ordersResponse, productsResponse, clientsResponse] = await Promise.all([
-                api.getOrders(),
-                api.getProducts(),
-                api.getClients(),
+    const productsQuery = useQuery({
+        queryKey: PRODUCTS_QUERY_KEY,
+        queryFn: () => api.getProducts(),
+    });
+
+    const clientsQuery = useQuery({
+        queryKey: CLIENTS_QUERY_KEY,
+        queryFn: () => api.getClients(),
+    });
+
+    const createOrderMutation = useMutation({
+        mutationFn: (payload: Parameters<typeof api.createOrder>[0]) => api.createOrder(payload),
+        onSuccess: async () => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ORDERS_QUERY_KEY }),
+                queryClient.invalidateQueries({ queryKey: PRODUCTS_QUERY_KEY }),
             ]);
-            setOrders(ordersResponse);
-            setProducts(productsResponse);
-            setClients(clientsResponse);
-        } catch (error) {
-            showErrorToast("Error al cargar pedidos", error);
-        } finally {
-            setLoading(false);
-        }
-    }
+        },
+    });
+
+    const updateOrderStatusMutation = useMutation({
+        mutationFn: ({ orderId, status }: { orderId: string; status: string }) =>
+            api.updateOrderStatus(orderId, status),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: ORDERS_QUERY_KEY });
+        },
+    });
+
+    const dispatchOrderMutation = useMutation({
+        mutationFn: ({ orderId, payload }: { orderId: string; payload: Parameters<typeof api.dispatchOrder>[1] }) =>
+            api.dispatchOrder(orderId, payload),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: ORDERS_QUERY_KEY });
+        },
+    });
+
+    const deliverOrderMutation = useMutation({
+        mutationFn: ({ orderId, payload }: { orderId: string; payload: Parameters<typeof api.deliverOrder>[1] }) =>
+            api.deliverOrder(orderId, payload),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: ORDERS_QUERY_KEY });
+        },
+    });
+
+    const createInvoiceMutation = useMutation({
+        mutationFn: ({ orderId, payload }: { orderId: string; payload: Parameters<typeof api.createInvoiceFromOrder>[1] }) =>
+            api.createInvoiceFromOrder(orderId, payload),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: ORDERS_QUERY_KEY });
+        },
+    });
+
+    const orders: Order[] = ordersQuery.data ?? EMPTY_ORDERS;
+    const products: Product[] = productsQuery.data ?? EMPTY_PRODUCTS;
+    const clients: Client[] = clientsQuery.data ?? EMPTY_CLIENTS;
+    const loading = ordersQuery.isLoading || productsQuery.isLoading || clientsQuery.isLoading;
+    const hasLoadError = ordersQuery.isError || productsQuery.isError || clientsQuery.isError;
 
     const filteredOrders = useMemo(() => {
         const query = search.trim().toLowerCase();
@@ -128,7 +169,6 @@ export default function OrdersPage() {
             return;
         }
         try {
-            setCreateSubmitting(true);
             const selectedClient = clients.find((client) => client.id === createClientId);
             const payload: Parameters<typeof api.createOrder>[0] = {
                 customer_name: selectedClient?.name || createCustomerName || "Consumidor final",
@@ -137,7 +177,7 @@ export default function OrdersPage() {
             };
             if (createClientId) payload.client_id = createClientId;
 
-            await api.createOrder(payload);
+            await createOrderMutation.mutateAsync(payload);
             toast.success("Pedido creado");
             setCreateOpen(false);
             setCreateClientId("");
@@ -145,22 +185,19 @@ export default function OrdersPage() {
             setCreateQuantity(1);
             setCreatePaymentMethod("cash");
             setCreateCustomerName("");
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al crear pedido", error);
-        } finally {
-            setCreateSubmitting(false);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
     async function startPicking(order: Order) {
         try {
             if (order.status === "pending") {
-                await api.updateOrderStatus(order.id, "picking");
+                await updateOrderStatusMutation.mutateAsync({ orderId: order.id, status: "picking" });
             }
             navigate(`/picking/${order.id}`);
-        } catch (error) {
-            showErrorToast("Error al iniciar picking", error);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
@@ -188,16 +225,12 @@ export default function OrdersPage() {
         }
 
         try {
-            setDispatchSubmitting(true);
-            await api.dispatchOrder(dispatchOrder.id, payload);
+            await dispatchOrderMutation.mutateAsync({ orderId: dispatchOrder.id, payload });
             toast.success("Pedido despachado");
             setDispatchOpen(false);
             setDispatchOrder(null);
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al despachar", error);
-        } finally {
-            setDispatchSubmitting(false);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
@@ -216,20 +249,19 @@ export default function OrdersPage() {
             return;
         }
         try {
-            setDeliverSubmitting(true);
-            await api.deliverOrder(deliverOrder.id, {
-                recipient_name: deliverRecipientName,
-                recipient_dni: deliverRecipientDni,
-                ...(deliveryNotes ? { delivery_notes: deliveryNotes } : {}),
+            await deliverOrderMutation.mutateAsync({
+                orderId: deliverOrder.id,
+                payload: {
+                    recipient_name: deliverRecipientName,
+                    recipient_dni: deliverRecipientDni,
+                    ...(deliveryNotes ? { delivery_notes: deliveryNotes } : {}),
+                },
             });
             toast.success("Entrega confirmada");
             setDeliverOpen(false);
             setDeliverOrder(null);
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al confirmar entrega", error);
-        } finally {
-            setDeliverSubmitting(false);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
@@ -255,26 +287,21 @@ export default function OrdersPage() {
             return;
         }
         try {
-            setInvoiceSubmitting(true);
-            await api.createInvoiceFromOrder(invoiceOrder.id, { payments: invoicePayments });
+            await createInvoiceMutation.mutateAsync({ orderId: invoiceOrder.id, payload: { payments: invoicePayments } });
             toast.success("Factura creada");
             setInvoiceOpen(false);
             setInvoiceOrder(null);
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al facturar", error);
-        } finally {
-            setInvoiceSubmitting(false);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
     async function cancelOrder(order: Order) {
         try {
-            await api.updateOrderStatus(order.id, "cancelled");
+            await updateOrderStatusMutation.mutateAsync({ orderId: order.id, status: "cancelled" });
             toast.success("Pedido cancelado");
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al cancelar", error);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
@@ -361,8 +388,8 @@ export default function OrdersPage() {
                             <Button variant="outline" onClick={() => setCreateOpen(false)}>
                                 Cancelar
                             </Button>
-                            <Button onClick={() => void createOrder()} disabled={createSubmitting}>
-                                {createSubmitting ? "Creando..." : "Crear"}
+                            <Button onClick={() => void createOrder()} disabled={createOrderMutation.isPending}>
+                                {createOrderMutation.isPending ? "Creando..." : "Crear"}
                             </Button>
                         </div>
                     </DialogContent>
@@ -395,6 +422,25 @@ export default function OrdersPage() {
                     </div>
                 </CardHeader>
                 <CardContent>
+                    {hasLoadError ? (
+                        <div className="mb-4 flex flex-col gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100 md:flex-row md:items-center md:justify-between">
+                            <span>No pudimos cargar la informacion de pedidos. Reintenta para actualizar los datos.</span>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                    void Promise.all([
+                                        ordersQuery.refetch(),
+                                        productsQuery.refetch(),
+                                        clientsQuery.refetch(),
+                                    ]);
+                                }}
+                            >
+                                Reintentar
+                            </Button>
+                        </div>
+                    ) : null}
                     <div className="mb-4 grid gap-4 md:grid-cols-3">
                         <SummaryCard title="Pendientes" count={orders.filter((o) => o.status === "pending").length} />
                         <SummaryCard title="En picking" count={orders.filter((o) => o.status === "picking").length} />
@@ -509,8 +555,8 @@ export default function OrdersPage() {
                         <Button variant="outline" onClick={() => setDispatchOpen(false)}>
                             Cancelar
                         </Button>
-                        <Button onClick={() => void submitDispatch()} disabled={dispatchSubmitting}>
-                            {dispatchSubmitting ? "Guardando..." : "Confirmar"}
+                        <Button onClick={() => void submitDispatch()} disabled={dispatchOrderMutation.isPending}>
+                            {dispatchOrderMutation.isPending ? "Guardando..." : "Confirmar"}
                         </Button>
                     </div>
                 </DialogContent>
@@ -530,8 +576,8 @@ export default function OrdersPage() {
                         <Button variant="outline" onClick={() => setDeliverOpen(false)}>
                             Cancelar
                         </Button>
-                        <Button onClick={() => void submitDelivery()} disabled={deliverSubmitting}>
-                            {deliverSubmitting ? "Guardando..." : "Confirmar"}
+                        <Button onClick={() => void submitDelivery()} disabled={deliverOrderMutation.isPending}>
+                            {deliverOrderMutation.isPending ? "Guardando..." : "Confirmar"}
                         </Button>
                     </div>
                 </DialogContent>
@@ -576,8 +622,8 @@ export default function OrdersPage() {
                         <Button variant="outline" onClick={() => setInvoiceOpen(false)}>
                             Cancelar
                         </Button>
-                        <Button onClick={() => void submitInvoice()} disabled={invoiceSubmitting}>
-                            {invoiceSubmitting ? "Facturando..." : "Emitir factura"}
+                        <Button onClick={() => void submitInvoice()} disabled={createInvoiceMutation.isPending}>
+                            {createInvoiceMutation.isPending ? "Facturando..." : "Emitir factura"}
                         </Button>
                     </div>
                 </DialogContent>

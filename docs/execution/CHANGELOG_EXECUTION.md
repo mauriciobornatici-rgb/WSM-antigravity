@@ -86,6 +86,15 @@
   - Documented all new rate-limit variables.
 - `docs/execution/STATE.md`
   - Added incident hotfix checkpoint for `429 too_many_requests` saturation in staging.
+- `packages/client/src/pages/Orders.tsx`
+  - Started P2.4 incremental React Query adoption in a high-traffic screen:
+    - replaced manual `loadData()` + local fetch lifecycle with `useQuery` (`orders`, `products`, `clients`)
+    - migrated core write actions to `useMutation` (`createOrder`, status updates, dispatch, delivery, invoice creation)
+    - invalidated query cache after successful mutations to keep UI synchronized
+  - Added explicit visible load-error banner with retry action.
+  - Kept existing business flow and UI behavior while removing repeated manual refresh plumbing.
+- `docs/execution/STATE.md`
+  - Updated active task and resume steps for P2.4 continuation.
 
 ### Verified
 - Frontend checks passed:
@@ -100,6 +109,9 @@
   - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/pages/Settings.tsx`
   - `node --check packages/server/index.js`
   - `node --check packages/server/config/env.js`
+  - `npm -w @wsm/client exec eslint src/pages/Orders.tsx`
+  - `npm -w @wsm/client exec -- tsc --noEmit`
+  - `npm -w @wsm/client run build`
 
 ## 2026-02-17
 

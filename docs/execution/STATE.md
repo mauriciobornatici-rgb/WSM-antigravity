@@ -3,12 +3,12 @@
 Last updated: 2026-02-18
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.3 - Uniform async error/loading/empty state patterns (stabilization pass)
+Current task: P2.4 - Incremental React Query adoption in data-heavy screens (Orders first pass)
 
 ## Resume From Here
-1. Run wording and locale consistency pass in remaining core screens (`Settings`, `Receptions`, `Orders`) to keep Spanish AR terminology.
-2. Continue contrast/accessibility pass on remaining high-density tables (`Invoices`, `Clients`, `Suppliers` details).
-3. Start P2.4 incremental React Query adoption in a high-traffic page (recommended: `Orders`).
+1. Continue P2.4 by extracting shared React Query keys/helpers and repeat the same query/mutation pattern in `Receptions` or `PurchaseOrders`.
+2. Preserve standardized async UX in migrated pages: visible load error with retry + mutation invalidation strategy.
+3. Continue wording and locale consistency pass in remaining core screens to keep Spanish AR terminology.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
@@ -246,6 +246,19 @@ Current task: P2.3 - Uniform async error/loading/empty state patterns (stabiliza
     - `packages/client/src/pages/Settings.tsx`
   - Validation:
     - Frontend lint/typecheck/build passed.
+- P2.4 partial progress:
+  - Orders page migrated from manual fetch lifecycle to React Query:
+    - data queries for `orders`, `products`, and `clients`
+    - mutations for create/status/dispatch/deliver/invoice actions
+    - cache invalidation strategy after successful mutations
+  - Added explicit visible error banner with retry action for initial data load failures.
+  - Removed manual `loadData()` refresh cycle and local submit/loading flags now derived from query/mutation state.
+  - File:
+    - `packages/client/src/pages/Orders.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Orders.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):
   - Root cause:
     - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),
@@ -263,7 +276,7 @@ Current task: P2.3 - Uniform async error/loading/empty state patterns (stabiliza
     - server syntax checks + frontend typecheck/build passed.
 
 ## Next After Current Task
-P2.4 - Incremental React Query adoption in data-heavy screens.
+P2.4 continuation - replicate React Query adoption pattern in another high-traffic operational screen.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):
