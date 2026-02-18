@@ -137,6 +137,21 @@
 - `packages/client/src/pages/Receptions.tsx`
   - Simplified to orchestration layer by delegating tab content rendering to modular components.
   - Preserved existing React Query behavior and mutation flows.
+- `packages/client/src/pages/Inventory.tsx`
+  - Normalized UI wording to Spanish AR (`Gestión`, `información`, `acción`).
+- `packages/client/src/components/products/InventoryTable.tsx`
+  - Normalized table label (`Categoría`).
+- `packages/client/src/pages/Orders.tsx`
+  - Normalized user-facing labels/messages to Spanish AR (`Gestión`, `Método`, `información`, `Envío`, `Dirección`, etc.).
+- `packages/client/src/pages/Receptions.tsx`
+  - Normalized wording to Spanish AR (`Mercadería`, `Recepción`, `Devolución`, `ítem`).
+- `packages/client/src/components/receptions/PendingOrdersSection.tsx`
+  - Normalized CTA label (`Comenzar recepción`).
+- `packages/client/src/components/receptions/ReceptionForm.tsx`
+  - Normalized wording/labels to Spanish AR (`Número`, `recepción`, `órdenes`, `ítems`).
+- `packages/client/src/components/receptions/ReturnForm.tsx`
+  - Normalized wording/labels to Spanish AR (`mostrarán`, `devolución`, `mercadería`).
+  - Removed malformed JSX artifact introduced during wording pass.
 - `docs/execution/STATE.md`
   - Updated active task and resume steps for P2.5 continuation.
 
@@ -159,6 +174,7 @@
   - `npm -w @wsm/client exec eslint src/lib/queryKeys.ts src/pages/Orders.tsx src/pages/PurchaseOrders.tsx src/pages/Receptions.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/components/products/InventoryTable.tsx src/lib/inventorySnapshot.ts`
   - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/SupplierReturnsSection.tsx src/components/receptions/ReceptionsHistorySection.tsx src/components/receptions/receptionStatus.ts src/components/receptions/types.ts`
+  - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/pages/Orders.tsx src/pages/Receptions.tsx src/components/products/InventoryTable.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/ReceptionForm.tsx src/components/receptions/ReturnForm.tsx`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 

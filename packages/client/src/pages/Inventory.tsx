@@ -94,7 +94,7 @@ export default function InventoryPage() {
             <div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">Inventario</h2>
-                    <p className="text-muted-foreground">Gestion de productos, stock disponible y stock comprometido.</p>
+                    <p className="text-muted-foreground">Gestión de productos, stock disponible y stock comprometido.</p>
                 </div>
                 <Dialog
                     open={dialogOpen}
@@ -119,7 +119,7 @@ export default function InventoryPage() {
                         <DialogHeader>
                             <DialogTitle>{editingProduct ? "Editar producto" : "Agregar producto"}</DialogTitle>
                             <DialogDescription>
-                                {editingProduct ? "Actualiza la informacion del producto seleccionado." : "Completa los datos para registrar un producto nuevo."}
+                                {editingProduct ? "Actualiza la información del producto seleccionado." : "Completa los datos para registrar un producto nuevo."}
                             </DialogDescription>
                         </DialogHeader>
                         <ProductForm
@@ -173,7 +173,7 @@ export default function InventoryPage() {
                     <DialogHeader>
                         <DialogTitle>Eliminar producto</DialogTitle>
                         <DialogDescription>
-                            Esta accion eliminara el producto <strong>{deletingProduct?.name}</strong>.
+                            Esta acción eliminará el producto <strong>{deletingProduct?.name}</strong>.
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter className="gap-2">

@@ -59,7 +59,7 @@ export function PendingOrdersSection({ pendingOrders, onStartReception }: Pendin
                                             onClick={() => onStartReception(order)}
                                             className="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white transition hover:bg-green-700"
                                         >
-                                            Comenzar recepcion
+                                            Comenzar recepción
                                         </button>
                                     </td>
                                 </tr>

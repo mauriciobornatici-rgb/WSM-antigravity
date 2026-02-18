@@ -7,7 +7,7 @@ Current task: P2.5 - Decomposition pass on oversized pages (Inventory started)
 
 ## Resume From Here
 1. Continue P2.5 decomposition on remaining high-complexity pages (`POS`, `Invoices`) keeping behavior parity.
-2. Preserve standardized async UX in migrated pages: visible load error with retry + mutation invalidation strategy.
+2. Continue P2.6 locale/wording normalization (Spanish AR) in remaining pages/components not covered yet.
 3. Evaluar deduplicacion de toasts de error global/local en React Query para evitar mensajes duplicados en futuros handlers.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
@@ -324,6 +324,20 @@ Current task: P2.5 - Decomposition pass on oversized pages (Inventory started)
       - `packages/client/src/pages/Receptions.tsx`
   - Validation:
     - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/SupplierReturnsSection.tsx src/components/receptions/ReceptionsHistorySection.tsx src/components/receptions/receptionStatus.ts src/components/receptions/types.ts`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.6 partial progress:
+  - Wording/locale normalization pass (Spanish AR) in operational modules:
+    - `packages/client/src/pages/Inventory.tsx`
+    - `packages/client/src/pages/Orders.tsx`
+    - `packages/client/src/pages/Receptions.tsx`
+    - `packages/client/src/components/products/InventoryTable.tsx`
+    - `packages/client/src/components/receptions/PendingOrdersSection.tsx`
+    - `packages/client/src/components/receptions/ReceptionForm.tsx`
+    - `packages/client/src/components/receptions/ReturnForm.tsx`
+  - Normalized accents and terminology in user-visible labels/messages (e.g. `Gestión`, `Recepción`, `Devolución`, `Método`, `Dirección`, `Categoría`).
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/pages/Orders.tsx src/pages/Receptions.tsx src/components/products/InventoryTable.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/ReceptionForm.tsx src/components/receptions/ReturnForm.tsx`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):

@@ -22,8 +22,8 @@ type PaymentLine = { method: string; amount: number };
 
 const PAYMENT_METHODS = [
     { value: "cash", label: "Efectivo" },
-    { value: "debit_card", label: "Tarjeta debito" },
-    { value: "credit_card", label: "Tarjeta credito" },
+    { value: "debit_card", label: "Tarjeta débito" },
+    { value: "credit_card", label: "Tarjeta crédito" },
     { value: "transfer", label: "Transferencia" },
     { value: "qr", label: "QR" },
     { value: "credit_account", label: "Cuenta corriente" },
@@ -162,7 +162,7 @@ export default function OrdersPage() {
 
     async function createOrder() {
         if (!createProductId || createQuantity <= 0) {
-            toast.error("Selecciona producto y cantidad valida");
+            toast.error("Selecciona producto y cantidad válida");
             return;
         }
         try {
@@ -307,7 +307,7 @@ export default function OrdersPage() {
             <div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">Pedidos de venta</h2>
-                    <p className="text-muted-foreground">Gestion de ciclo comercial desde alta hasta entrega.</p>
+                    <p className="text-muted-foreground">Gestión de ciclo comercial desde alta hasta entrega.</p>
                 </div>
                 <Dialog open={createOpen} onOpenChange={setCreateOpen}>
                     <DialogTrigger asChild>
@@ -366,7 +366,7 @@ export default function OrdersPage() {
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label>Metodo de pago</Label>
+                                <Label>Método de pago</Label>
                                 <Select value={createPaymentMethod} onValueChange={setCreatePaymentMethod}>
                                     <SelectTrigger>
                                         <SelectValue />
@@ -421,7 +421,7 @@ export default function OrdersPage() {
                 <CardContent>
                     {hasLoadError ? (
                         <div className="mb-4 flex flex-col gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100 md:flex-row md:items-center md:justify-between">
-                            <span>No pudimos cargar la informacion de pedidos. Reintenta para actualizar los datos.</span>
+                            <span>No pudimos cargar la información de pedidos. Reintenta para actualizar los datos.</span>
                             <Button
                                 type="button"
                                 variant="outline"
@@ -524,13 +524,13 @@ export default function OrdersPage() {
                     </DialogHeader>
                     <div className="space-y-3">
                         <div className="space-y-2">
-                            <Label>Metodo</Label>
+                            <Label>Método</Label>
                             <Select value={shippingMethod} onValueChange={(value) => setShippingMethod(value as ShippingMethod)}>
                                 <SelectTrigger>
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="delivery">Envio</SelectItem>
+                                    <SelectItem value="delivery">Envío</SelectItem>
                                     <SelectItem value="pickup">Retiro</SelectItem>
                                 </SelectContent>
                             </Select>
@@ -538,7 +538,7 @@ export default function OrdersPage() {
                         {shippingMethod === "delivery" ? (
                             <>
                                 <Input placeholder="Tracking" value={trackingNumber} onChange={(event) => setTrackingNumber(event.target.value)} />
-                                <Input placeholder="Direccion" value={shippingAddress} onChange={(event) => setShippingAddress(event.target.value)} />
+                                <Input placeholder="Dirección" value={shippingAddress} onChange={(event) => setShippingAddress(event.target.value)} />
                                 <Input type="date" value={estimatedDelivery} onChange={(event) => setEstimatedDelivery(event.target.value)} />
                             </>
                         ) : (

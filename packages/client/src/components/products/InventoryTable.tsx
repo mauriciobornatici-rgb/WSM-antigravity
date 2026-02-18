@@ -25,7 +25,7 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
                     <TableRow>
                         <TableHead>SKU</TableHead>
                         <TableHead>Producto</TableHead>
-                        <TableHead>Categoria</TableHead>
+                        <TableHead>Categoría</TableHead>
                         <TableHead className="text-right">Costo</TableHead>
                         <TableHead className="text-right">Venta</TableHead>
                         <TableHead className="text-right">Disponible</TableHead>

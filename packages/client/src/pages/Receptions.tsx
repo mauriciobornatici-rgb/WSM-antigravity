@@ -140,7 +140,7 @@ export default function ReceptionsPage() {
     async function handleCreateReception(data: Parameters<typeof api.createReception>[0]) {
         try {
             await createReceptionMutation.mutateAsync(data);
-            toast.success("Recepcion registrada correctamente");
+            toast.success("Recepción registrada correctamente");
             setIsCreateDialogOpen(false);
             setPrefilledOrderId(undefined);
             setPrefilledSupplierId(undefined);
@@ -152,7 +152,7 @@ export default function ReceptionsPage() {
     async function handleCreateReturn(data: Parameters<typeof api.createReturn>[0]) {
         try {
             await createReturnMutation.mutateAsync(data);
-            toast.success("Devolucion registrada en borrador");
+            toast.success("Devolución registrada en borrador");
             setIsReturnDialogOpen(false);
         } catch {
             // El manejo global de React Query ya informa el error.
@@ -162,8 +162,8 @@ export default function ReceptionsPage() {
     async function handleApproveReception(id: string, receptionNumber: string) {
         try {
             await approveReceptionMutation.mutateAsync(id);
-            toast.success("Recepcion aprobada", {
-                description: `${receptionNumber} fue aprobada y el stock se actualizo.`,
+            toast.success("Recepción aprobada", {
+                description: `${receptionNumber} fue aprobada y el stock se actualizó.`,
             });
         } catch {
             // El manejo global de React Query ya informa el error.
@@ -173,7 +173,7 @@ export default function ReceptionsPage() {
     async function handleApproveReturn(id: string, returnNumber: string) {
         try {
             await approveReturnMutation.mutateAsync(id);
-            toast.success("Devolucion aprobada", {
+            toast.success("Devolución aprobada", {
                 description: `${returnNumber} fue procesada correctamente.`,
             });
         } catch {
@@ -185,8 +185,8 @@ export default function ReceptionsPage() {
         <div className="space-y-6 p-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-slate-900">Mercaderia entrante</h1>
-                    <p className="mt-1 text-slate-600">Gestion de recepciones y devoluciones a proveedor.</p>
+                    <h1 className="text-3xl font-bold text-slate-900">Mercadería entrante</h1>
+                    <p className="mt-1 text-slate-600">Gestión de recepciones y devoluciones a proveedor.</p>
                 </div>
 
                 <button
@@ -204,7 +204,7 @@ export default function ReceptionsPage() {
                     }`}
                 >
                     {activeTab === "returns" ? <RotateCcw className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
-                    {activeTab === "returns" ? "Nueva devolucion" : "Nueva recepcion"}
+                    {activeTab === "returns" ? "Nueva devolución" : "Nueva recepción"}
                 </button>
             </div>
 
@@ -290,8 +290,8 @@ export default function ReceptionsPage() {
             <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
                 <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>Registrar ingreso de mercaderia</DialogTitle>
-                        <DialogDescription>Confirma cantidades recibidas y estado de cada item.</DialogDescription>
+                        <DialogTitle>Registrar ingreso de mercadería</DialogTitle>
+                        <DialogDescription>Confirma cantidades recibidas y estado de cada ítem.</DialogDescription>
                     </DialogHeader>
                     <ReceptionForm
                         onSubmit={handleCreateReception}
@@ -305,8 +305,8 @@ export default function ReceptionsPage() {
             <Dialog open={isReturnDialogOpen} onOpenChange={setIsReturnDialogOpen}>
                 <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>Nueva devolucion a proveedor</DialogTitle>
-                        <DialogDescription>Registra la salida de mercaderia y su motivo.</DialogDescription>
+                        <DialogTitle>Nueva devolución a proveedor</DialogTitle>
+                        <DialogDescription>Registra la salida de mercadería y su motivo.</DialogDescription>
                     </DialogHeader>
                     <ReturnForm onSubmit={handleCreateReturn} onCancel={() => setIsReturnDialogOpen(false)} />
                 </DialogContent>

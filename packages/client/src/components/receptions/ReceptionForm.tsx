@@ -109,7 +109,7 @@ export function ReceptionForm({
             const available = response.filter((order) => order.status === "sent" || order.status === "partial");
             setPurchaseOrders(available);
         } catch (error) {
-            showErrorToast("Error al cargar ordenes de compra", error);
+            showErrorToast("Error al cargar órdenes de compra", error);
         }
     }
 
@@ -119,7 +119,7 @@ export function ReceptionForm({
             const orderItems = order.items ?? [];
             setItems(orderItems.map(toReceptionItem));
         } catch (error) {
-            showErrorToast("Error al cargar items de la orden", error);
+            showErrorToast("Error al cargar ítems de la orden", error);
             setItems([]);
         }
     }
@@ -212,7 +212,7 @@ export function ReceptionForm({
                 </div>
 
                 <div className="space-y-2">
-                    <Label htmlFor="remito">Numero de remito</Label>
+                    <Label htmlFor="remito">Número de remito</Label>
                     <Input
                         id="remito"
                         value={remitoNumber}
@@ -308,7 +308,7 @@ export function ReceptionForm({
             )}
 
             <div className="space-y-2">
-                <Label htmlFor="notes">Notas de recepcion</Label>
+                <Label htmlFor="notes">Notas de recepción</Label>
                 <textarea
                     id="notes"
                     className="min-h-[80px] w-full resize-none rounded-md border px-3 py-2 text-sm"
@@ -323,7 +323,7 @@ export function ReceptionForm({
                     Cancelar
                 </Button>
                 <Button type="submit" className="bg-blue-600 hover:bg-blue-700" disabled={submitting}>
-                    {submitting ? "Guardando..." : "Registrar recepcion"}
+                    {submitting ? "Guardando..." : "Registrar recepción"}
                 </Button>
             </div>
         </form>

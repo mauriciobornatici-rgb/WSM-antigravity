@@ -134,7 +134,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                         </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                        Solo se mostraran los productos que se hayan recibido previamente de este proveedor.
+                        Solo se mostrarán los productos que se hayan recibido previamente de este proveedor.
                     </p>
                 </div>
                 <div className="space-y-2">
@@ -143,7 +143,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                         id="notes"
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
-                        placeholder="Ej: Devolucion por mercaderia defectuosa"
+                        placeholder="Ej: Devolución por mercadería defectuosa"
                     />
                 </div>
             </div>
@@ -170,7 +170,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                 {items.length === 0 ? (
                     <div className="rounded-lg border-2 border-dashed py-8 text-center text-muted-foreground">
                         <Search className="mx-auto mb-2 h-8 w-8 opacity-50" />
-                        <p>Seleccione un producto para agregarlo a la devolucion</p>
+                        <p>Seleccione un producto para agregarlo a la devolución</p>
                     </div>
                 ) : (
                     <div className="space-y-2">
@@ -233,7 +233,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
 
                 {items.length > 0 && (
                     <div className="mt-4 flex items-center justify-end gap-4 border-t pt-4">
-                        <span className="text-sm font-medium">Total Estimado de Devolucion:</span>
+                        <span className="text-sm font-medium">Total Estimado de Devolución:</span>
                         <span className="text-xl font-bold text-slate-900 dark:text-white">${totalAmount.toLocaleString()}</span>
                     </div>
                 )}
@@ -245,7 +245,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                 </Button>
                 <Button type="submit" disabled={isSubmitting || items.length === 0} className="bg-red-600 text-white hover:bg-red-700">
                     <Save className="mr-2 h-4 w-4" />
-                    {isSubmitting ? 'Guardando...' : 'Confirmar Devolucion'}
+                    {isSubmitting ? 'Guardando...' : 'Confirmar Devolución'}
                 </Button>
             </div>
         </form>
