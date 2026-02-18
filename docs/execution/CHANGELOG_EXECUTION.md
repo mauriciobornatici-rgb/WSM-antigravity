@@ -172,6 +172,31 @@
   - Normalized additional user-facing labels to Spanish AR (`Sin categoría`, stock message wording).
 - `docs/execution/STATE.md`
   - Updated current task snapshot after completing POS decomposition inside P2.5.
+- `packages/client/src/components/invoices/types.ts`
+  - Added shared invoices domain contracts (`InvoiceView`, draft invoice types).
+- `packages/client/src/components/invoices/invoiceUtils.tsx`
+  - Added shared invoice helpers:
+    - status badge rendering
+    - invoice number formatting
+    - draft total calculation
+- `packages/client/src/components/invoices/InvoiceCreateDialog.tsx`
+  - Extracted manual invoice creation flow into dedicated dialog component.
+- `packages/client/src/components/invoices/InvoicesTable.tsx`
+  - Extracted invoices listing/table with refresh and row actions.
+- `packages/client/src/components/invoices/InvoiceDocument.tsx`
+  - Centralized invoice rendering for preview/print to remove duplicated markup.
+- `packages/client/src/components/invoices/InvoicePreviewDialog.tsx`
+  - Extracted preview dialog shell for selected invoice.
+- `packages/client/src/components/invoices/PrintableInvoiceArea.tsx`
+  - Extracted hidden printable container using shared invoice document component.
+- `packages/client/src/pages/Invoices.tsx`
+  - Refactored into orchestration layer:
+    - data loading
+    - create/preview/print/email handlers
+    - composition of extracted invoice modules
+  - Normalized additional user-facing copy to Spanish AR (acentos y terminologia).
+- `docs/execution/STATE.md`
+  - Updated active snapshot after finishing Invoices decomposition in P2.5.
 
 ### Verified
 - Frontend checks passed:
@@ -194,6 +219,7 @@
   - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/SupplierReturnsSection.tsx src/components/receptions/ReceptionsHistorySection.tsx src/components/receptions/receptionStatus.ts src/components/receptions/types.ts`
   - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/pages/Orders.tsx src/pages/Receptions.tsx src/components/products/InventoryTable.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/ReceptionForm.tsx src/components/receptions/ReturnForm.tsx`
   - `npm -w @wsm/client exec eslint src/pages/POS.tsx src/components/pos/types.ts src/components/pos/ProductCatalogCard.tsx src/components/pos/CartPanelCard.tsx src/components/pos/PaymentDialog.tsx src/components/pos/QuickClientDialog.tsx src/components/pos/CheckoutSuccessDialog.tsx`
+  - `npm -w @wsm/client exec eslint src/pages/Invoices.tsx src/components/invoices/types.ts src/components/invoices/invoiceUtils.tsx src/components/invoices/InvoiceCreateDialog.tsx src/components/invoices/InvoicesTable.tsx src/components/invoices/InvoiceDocument.tsx src/components/invoices/InvoicePreviewDialog.tsx src/components/invoices/PrintableInvoiceArea.tsx`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 

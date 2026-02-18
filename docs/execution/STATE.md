@@ -3,12 +3,12 @@
 Last updated: 2026-02-18
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.5 - Decomposition pass on oversized pages (POS completed, Invoices pending)
+Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido de error
 
 ## Resume From Here
-1. Continue P2.5 decomposition on remaining high-complexity pages (`Invoices`) keeping behavior parity.
-2. Continue P2.6 locale/wording normalization (Spanish AR) in remaining pages/components not covered yet.
-3. Evaluar deduplicacion de toasts de error global/local en React Query para evitar mensajes duplicados en futuros handlers.
+1. Ejecutar barrido final de textos UI pendientes en espanol AR en paginas auxiliares y dialogs.
+2. Implementar estrategia de deduplicacion de errores entre handlers locales y React Query global para evitar toasts repetidos.
+3. Revisar regresion visual en Invoices/POS/Receptions luego de la modularizacion.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
@@ -355,6 +355,23 @@ Current task: P2.5 - Decomposition pass on oversized pages (POS completed, Invoi
     - `npm -w @wsm/client exec eslint src/pages/POS.tsx src/components/pos/types.ts src/components/pos/ProductCatalogCard.tsx src/components/pos/CartPanelCard.tsx src/components/pos/PaymentDialog.tsx src/components/pos/QuickClientDialog.tsx src/components/pos/CheckoutSuccessDialog.tsx`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
+- P2.5 partial progress (continued):
+  - Invoices page decomposed into focused modules preserving behavior and current API contracts.
+  - New modules:
+    - `packages/client/src/components/invoices/types.ts`
+    - `packages/client/src/components/invoices/invoiceUtils.tsx`
+    - `packages/client/src/components/invoices/InvoiceCreateDialog.tsx`
+    - `packages/client/src/components/invoices/InvoicesTable.tsx`
+    - `packages/client/src/components/invoices/InvoiceDocument.tsx`
+    - `packages/client/src/components/invoices/InvoicePreviewDialog.tsx`
+    - `packages/client/src/components/invoices/PrintableInvoiceArea.tsx`
+  - Orchestration page simplified:
+    - `packages/client/src/pages/Invoices.tsx`
+  - Locale pass included in touched module (`ítems`, `envío`, `integración`, `previsualización`, etc.).
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Invoices.tsx src/components/invoices/types.ts src/components/invoices/invoiceUtils.tsx src/components/invoices/InvoiceCreateDialog.tsx src/components/invoices/InvoicesTable.tsx src/components/invoices/InvoiceDocument.tsx src/components/invoices/InvoicePreviewDialog.tsx src/components/invoices/PrintableInvoiceArea.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):
   - Root cause:
     - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),
@@ -372,7 +389,7 @@ Current task: P2.5 - Decomposition pass on oversized pages (POS completed, Invoi
     - server syntax checks + frontend typecheck/build passed.
 
 ## Next After Current Task
-P2.5 continuation - decompose `Invoices` with behavior parity before moving to broader P2.6 cleanup.
+P2.6 continuation - cerrar normalizacion de textos y aplicar estrategia anti-duplicacion de errores.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):
