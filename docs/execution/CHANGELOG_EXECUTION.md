@@ -59,6 +59,14 @@
   - Normalized currency formatting to `es-AR` / `ARS`.
 - `docs/execution/STATE.md`
   - Updated resume point after extending `P2.3` on Picking/Suppliers/Clients.
+- `packages/client/src/pages/Inventory.tsx`
+  - Mitigated duplicate load/request bursts:
+    - shared in-flight request deduplication
+    - short cache window to avoid immediate duplicate fetches on remount
+  - Replaced repeated toast spam on load failure with inline error + retry action.
+  - Added explicit cache invalidation on product create/update/delete.
+- `docs/execution/STATE.md`
+  - Added P2.3 inventory reliability checkpoint.
 
 ### Verified
 - Frontend checks passed:
@@ -69,6 +77,7 @@
   - `npm -w @wsm/client exec eslint src/pages/Invoices.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Accounting.tsx src/pages/Invoices.tsx src/pages/Dashboard.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Picking.tsx src/pages/Suppliers.tsx src/pages/Clients.tsx`
+  - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx`
 
 ## 2026-02-17
 

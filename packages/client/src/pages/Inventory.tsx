@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { Order, Product } from "@/types";
-import { showErrorToast } from "@/lib/errorHandling";
+import { getErrorMessage, showErrorToast } from "@/lib/errorHandling";
 import { cn } from "@/lib/utils";
 import { ProductForm } from "@/components/products/ProductForm";
 import { TableSkeleton } from "@/components/common/Skeletons";
@@ -19,6 +19,11 @@ export type ProductWithStock = Product & {
     stock_immobilized: number;
 };
 
+const INVENTORY_CACHE_TTL_MS = 30_000;
+
+let inventorySnapshotCache: { data: ProductWithStock[]; timestamp: number } | null = null;
+let inventorySnapshotPromise: Promise<ProductWithStock[]> | null = null;
+
 function computeImmobilizedStock(productId: string, orders: Order[]): number {
     return orders
         .filter((order) => order.status === "pending" || order.status === "picking")
@@ -27,34 +32,67 @@ function computeImmobilizedStock(productId: string, orders: Order[]): number {
         .reduce((sum, item) => sum + Number(item.quantity || 0), 0);
 }
 
+function isInventoryCacheFresh(): boolean {
+    if (!inventorySnapshotCache) return false;
+    return Date.now() - inventorySnapshotCache.timestamp < INVENTORY_CACHE_TTL_MS;
+}
+
+function invalidateInventoryCache(): void {
+    inventorySnapshotCache = null;
+}
+
+async function fetchInventorySnapshot(force = false): Promise<ProductWithStock[]> {
+    if (!force && isInventoryCacheFresh() && inventorySnapshotCache) {
+        return inventorySnapshotCache.data;
+    }
+
+    if (!force && inventorySnapshotPromise) {
+        return inventorySnapshotPromise;
+    }
+
+    inventorySnapshotPromise = (async () => {
+        const [productsResponse, ordersResponse] = await Promise.all([api.getProducts(), api.getOrders()]);
+        return productsResponse.map((product) => ({
+            ...product,
+            stock_available: Number(product.stock_current ?? 0),
+            stock_immobilized: computeImmobilizedStock(product.id, ordersResponse),
+        }));
+    })();
+
+    try {
+        const snapshot = await inventorySnapshotPromise;
+        inventorySnapshotCache = { data: snapshot, timestamp: Date.now() };
+        return snapshot;
+    } finally {
+        inventorySnapshotPromise = null;
+    }
+}
+
 export default function InventoryPage() {
     const [products, setProducts] = useState<ProductWithStock[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [search, setSearch] = useState("");
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<ProductWithStock | null>(null);
     const [deletingProduct, setDeletingProduct] = useState<ProductWithStock | null>(null);
 
-    useEffect(() => {
-        void loadData();
-    }, []);
-
-    async function loadData() {
+    const loadData = useCallback(async (force = false) => {
         try {
             setLoading(true);
-            const [productsResponse, ordersResponse] = await Promise.all([api.getProducts(), api.getOrders()]);
-            const merged = productsResponse.map((product) => ({
-                ...product,
-                stock_available: Number(product.stock_current ?? 0),
-                stock_immobilized: computeImmobilizedStock(product.id, ordersResponse),
-            }));
-            setProducts(merged);
+            setLoadError(null);
+            const snapshot = await fetchInventorySnapshot(force);
+            setProducts(snapshot);
         } catch (error) {
-            showErrorToast("Error al cargar inventario", error);
+            setLoadError(getErrorMessage(error, "No se pudo cargar el inventario."));
         } finally {
             setLoading(false);
         }
-    }
+    }, []);
+
+    useEffect(() => {
+        void loadData();
+    }, [loadData]);
 
     const filteredProducts = useMemo(() => {
         const query = search.trim().toLowerCase();
@@ -85,9 +123,10 @@ export default function InventoryPage() {
                 });
                 toast.success("Producto creado");
             }
+            invalidateInventoryCache();
             setDialogOpen(false);
             setEditingProduct(null);
-            await loadData();
+            await loadData(true);
         } catch (error) {
             showErrorToast(editingProduct ? "Error al actualizar producto" : "Error al crear producto", error);
         }
@@ -98,8 +137,9 @@ export default function InventoryPage() {
         try {
             await api.deleteProduct(deletingProduct.id);
             toast.success("Producto eliminado");
+            invalidateInventoryCache();
             setDeletingProduct(null);
-            await loadData();
+            await loadData(true);
         } catch (error) {
             showErrorToast("Error al eliminar producto", error);
         }
@@ -153,6 +193,16 @@ export default function InventoryPage() {
                     <CardDescription>{products.length} productos registrados.</CardDescription>
                 </CardHeader>
                 <CardContent>
+                    {loadError ? (
+                        <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm text-amber-800">{loadError}</p>
+                                <Button variant="outline" size="sm" onClick={() => void loadData(true)}>
+                                    Reintentar
+                                </Button>
+                            </div>
+                        </div>
+                    ) : null}
                     <div className="mb-4">
                         <Input
                             placeholder="Buscar por nombre, SKU, categoria o ubicacion..."

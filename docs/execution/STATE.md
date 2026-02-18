@@ -230,6 +230,16 @@ Current task: P2.3 - Uniform async error/loading/empty state patterns (stabiliza
     - `packages/client/src/pages/Clients.tsx`
   - Validation:
     - Frontend lint/typecheck/build passed.
+- P2.3 partial progress (inventory reliability):
+  - Inventory page hardened against duplicate load bursts (notably in dev StrictMode):
+    - request deduplication via shared in-flight promise
+    - short-lived cache to prevent immediate duplicated fetches on remount
+    - inline load error + retry action instead of repeated toast spam
+    - cache invalidation on create/update/delete to keep data fresh
+  - File:
+    - `packages/client/src/pages/Inventory.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
 
 ## Next After Current Task
 P2.4 - Incremental React Query adoption in data-heavy screens.
