@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { api } from "@/services/api"
 import type { Supplier, SupplierPayment, PurchaseOrder, Transaction } from "@/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
@@ -17,6 +17,8 @@ import type { SupplierPaymentCreateInput, SupplierUpsertInput } from "@/types/ap
 
 export default function SuppliersPage() {
     const [suppliers, setSuppliers] = useState<Supplier[]>([])
+    const [loadingSuppliers, setLoadingSuppliers] = useState(true)
+    const [suppliersError, setSuppliersError] = useState<string | null>(null)
     const [searchQuery, setSearchQuery] = useState("")
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
     const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
@@ -32,18 +34,23 @@ export default function SuppliersPage() {
         account_balance: 0
     })
 
-    useEffect(() => {
-        loadSuppliers()
-    }, [])
-
-    const loadSuppliers = async () => {
+    const loadSuppliers = useCallback(async () => {
+        setLoadingSuppliers(true)
+        setSuppliersError(null)
         try {
             const data = await api.getSuppliers()
             setSuppliers(data)
         } catch (error) {
+            setSuppliersError("No se pudieron cargar los proveedores.")
             showErrorToast("Error al cargar proveedores", error)
+        } finally {
+            setLoadingSuppliers(false)
         }
-    }
+    }, [])
+
+    useEffect(() => {
+        void loadSuppliers()
+    }, [loadSuppliers])
 
     const handleCreateSupplier = async () => {
         if (!newSupplier.name || !newSupplier.tax_id) return
@@ -105,7 +112,7 @@ export default function SuppliersPage() {
     const [showPaymentForm, setShowPaymentForm] = useState(false)
     const [loadingDetails, setLoadingDetails] = useState(false)
 
-    const loadSupplierDetails = async (supplierId: string) => {
+    const loadSupplierDetails = useCallback(async (supplierId: string) => {
         setLoadingDetails(true)
         try {
             const [payments, orders, transactions] = await Promise.all([
@@ -121,7 +128,7 @@ export default function SuppliersPage() {
         } finally {
             setLoadingDetails(false)
         }
-    }
+    }, [])
 
     const handleRegisterPayment = async (data: SupplierPaymentCreateInput) => {
         try {
@@ -141,9 +148,9 @@ export default function SuppliersPage() {
     // Load extra details when a supplier is selected
     useEffect(() => {
         if (selectedSupplier) {
-            loadSupplierDetails(selectedSupplier.id)
+            void loadSupplierDetails(selectedSupplier.id)
         }
-    }, [selectedSupplier])
+    }, [selectedSupplier, loadSupplierDetails])
 
 
     return (
@@ -174,8 +181,8 @@ export default function SuppliersPage() {
                                     <Input value={newSupplier.name} onChange={e => setNewSupplier({ ...newSupplier, name: e.target.value })} placeholder="Ej: Nike Dist" />
                                 </div>
                                 <div className="space-y-2">
-                                    <Label>RUC / Tax ID *</Label>
-                                    <Input value={newSupplier.tax_id} onChange={e => setNewSupplier({ ...newSupplier, tax_id: e.target.value })} placeholder="80012345-1" />
+                                    <Label>CUIT / DNI *</Label>
+                                    <Input value={newSupplier.tax_id} onChange={e => setNewSupplier({ ...newSupplier, tax_id: e.target.value })} placeholder="30-12345678-9" />
                                 </div>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
@@ -358,7 +365,7 @@ export default function SuppliersPage() {
                                             <p>{selectedSupplier.name}</p>
                                         </div>
                                         <div className="space-y-1">
-                                            <Label className="text-muted-foreground">RUC / Tax ID</Label>
+                                            <Label className="text-muted-foreground">CUIT / DNI</Label>
                                             <p>{selectedSupplier.tax_id}</p>
                                         </div>
                                         <div className="space-y-1">
@@ -390,7 +397,7 @@ export default function SuppliersPage() {
                     <div className="relative w-full max-w-sm">
                         <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                         <Input
-                            placeholder="Buscar por nombre, RUC o categoría..."
+                            placeholder="Buscar por nombre, CUIT o categoria..."
                             className="pl-8"
                             value={searchQuery}
                             onChange={e => setSearchQuery(e.target.value)}
@@ -398,8 +405,22 @@ export default function SuppliersPage() {
                     </div>
                 </CardHeader>
                 <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {filteredSuppliers.map(supplier => (
+                    {loadingSuppliers ? (
+                        <div className="flex h-40 items-center justify-center">
+                            <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
+                        </div>
+                    ) : suppliersError ? (
+                        <div className="space-y-4 py-8 text-center">
+                            <p className="text-sm text-muted-foreground">{suppliersError}</p>
+                            <Button variant="outline" onClick={() => void loadSuppliers()}>Reintentar</Button>
+                        </div>
+                    ) : filteredSuppliers.length === 0 ? (
+                        <div className="py-10 text-center text-sm text-muted-foreground">
+                            No hay proveedores para los filtros aplicados.
+                        </div>
+                    ) : (
+                    <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                        {filteredSuppliers.map((supplier) => (
                             <Card key={supplier.id} className="overflow-hidden hover:shadow-md transition-shadow">
                                 <CardHeader className="pb-3 bg-slate-50 dark:bg-slate-900 border-b">
                                     <div className="flex justify-between items-start">
@@ -455,6 +476,7 @@ export default function SuppliersPage() {
                             </Card>
                         ))}
                     </div>
+                    )}
                 </CardContent>
                 <CardFooter className="bg-slate-50 dark:bg-slate-900 border-t py-4 text-xs text-muted-foreground">
                     Mostrando {filteredSuppliers.length} proveedores
@@ -517,7 +539,7 @@ function EditSupplierDialog({ supplier, open, onOpenChange, onSubmit }: { suppli
                             <Input value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} required />
                         </div>
                         <div className="space-y-2">
-                            <Label>RUC / Tax ID *</Label>
+                            <Label>CUIT / DNI *</Label>
                             <Input value={formData.tax_id} onChange={e => setFormData({ ...formData, tax_id: e.target.value })} required />
                         </div>
                     </div>
@@ -556,12 +578,12 @@ function DeleteSupplierDialog({ supplier, open, onOpenChange, onConfirm }: { sup
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
-                    <DialogTitle className="text-red-400">¿Eliminar Proveedor?</DialogTitle>
+                    <DialogTitle className="text-red-400">Eliminar proveedor?</DialogTitle>
                     <DialogDescription>
-                        Esta acción eliminará permanentemente al proveedor <strong>{supplier.name}</strong>.
+                        Esta accion eliminara permanentemente al proveedor <strong>{supplier.name}</strong>.
                         {supplier.account_balance > 0 && (
                             <span className="block mt-2 text-yellow-400">
-                                ⚠️ Este proveedor tiene un saldo pendiente de ${supplier.account_balance.toLocaleString()}
+                                Aviso: este proveedor tiene un saldo pendiente de ${supplier.account_balance.toLocaleString()}
                             </span>
                         )}
                     </DialogDescription>

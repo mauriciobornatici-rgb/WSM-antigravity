@@ -42,6 +42,23 @@
   - Locale normalized for chart weekday labels (`es-AR`).
 - `docs/execution/STATE.md`
   - Moved active task to `P2.3` after starting async-state standardization.
+- `packages/client/src/pages/Picking.tsx`
+  - Fixed hook dependency warning by stabilizing `loadOrders` with `useCallback`.
+  - Added explicit initial-load error state with retry CTA.
+- `packages/client/src/pages/Suppliers.tsx`
+  - Added robust catalog load states:
+    - loading spinner
+    - visible error message + retry
+    - empty state for filtered results
+  - Stabilized supplier-details effect with awaited async call.
+  - Normalized key fiscal labels to AR vocabulary (`CUIT / DNI`).
+- `packages/client/src/pages/Clients.tsx`
+  - Added robust load/error handling for customer directory with retry banner.
+  - Stabilized clients loader with `useCallback` + safe `useEffect` dependency.
+  - Normalized fiscal labels to AR vocabulary (`CUIT / DNI`).
+  - Normalized currency formatting to `es-AR` / `ARS`.
+- `docs/execution/STATE.md`
+  - Updated resume point after extending `P2.3` on Picking/Suppliers/Clients.
 
 ### Verified
 - Frontend checks passed:
@@ -51,6 +68,7 @@
   - `npm -w @wsm/client exec eslint src/pages/Dashboard.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Invoices.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Accounting.tsx src/pages/Invoices.tsx src/pages/Dashboard.tsx`
+  - `npm -w @wsm/client exec eslint src/pages/Picking.tsx src/pages/Suppliers.tsx src/pages/Clients.tsx`
 
 ## 2026-02-17
 

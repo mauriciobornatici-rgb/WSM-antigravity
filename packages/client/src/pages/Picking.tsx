@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Box, Check, ScanLine } from "lucide-react";
 import { toast } from "sonner";
@@ -40,14 +40,12 @@ export default function PickingPage() {
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
     const [scannerInput, setScannerInput] = useState("");
     const [loading, setLoading] = useState(true);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-    useEffect(() => {
-        void loadOrders();
-    }, [id]);
-
-    async function loadOrders() {
+    const loadOrders = useCallback(async () => {
         try {
             setLoading(true);
+            setErrorMessage(null);
             const response = await api.getOrders();
             const normalized = response.map((order) => toPickedFlag(sortItemsByLocation(order)));
             setOrders(normalized);
@@ -56,11 +54,16 @@ export default function PickingPage() {
                 setSelectedOrder(found ?? null);
             }
         } catch (error) {
+            setErrorMessage("No se pudieron cargar los pedidos para picking.");
             showErrorToast("Error al cargar pedidos", error);
         } finally {
             setLoading(false);
         }
-    }
+    }, [id]);
+
+    useEffect(() => {
+        void loadOrders();
+    }, [loadOrders]);
 
     const completion = useMemo(() => {
         if (!selectedOrder) return 0;
@@ -120,7 +123,7 @@ export default function PickingPage() {
 
     async function closeWithMissing() {
         if (!selectedOrder) return;
-        const confirmed = window.confirm("Se cerrara el picking con faltantes. ¿Deseas continuar?");
+        const confirmed = window.confirm("Se cerrara el picking con faltantes. Deseas continuar?");
         if (!confirmed) return;
         try {
             await api.updateOrderStatus(selectedOrder.id, "packed");
@@ -137,6 +140,17 @@ export default function PickingPage() {
             <div className="flex h-64 items-center justify-center">
                 <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
             </div>
+        );
+    }
+
+    if (errorMessage && !selectedOrder) {
+        return (
+            <Card>
+                <CardContent className="space-y-4 p-8 text-center">
+                    <p className="text-sm text-muted-foreground">{errorMessage}</p>
+                    <Button onClick={() => void loadOrders()}>Reintentar</Button>
+                </CardContent>
+            </Card>
         );
     }
 

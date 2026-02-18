@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { api } from "@/services/api"
 import type { Client } from "@/types"
@@ -19,26 +19,29 @@ export default function ClientsPage() {
     const navigate = useNavigate()
     const [clients, setClients] = useState<Client[]>([])
     const [loading, setLoading] = useState(true)
+    const [errorMessage, setErrorMessage] = useState<string | null>(null)
     const [search, setSearch] = useState("")
     const [isCreateOpen, setIsCreateOpen] = useState(false)
     const [editingClient, setEditingClient] = useState<Client | null>(null)
     const [deletingClient, setDeletingClient] = useState<Client | null>(null)
 
-    useEffect(() => {
-        loadClients()
-    }, [])
-
-    const loadClients = async () => {
+    const loadClients = useCallback(async () => {
         setLoading(true)
+        setErrorMessage(null)
         try {
             const data = await api.getClients()
             setClients(data)
         } catch (error) {
+            setErrorMessage("No se pudo cargar la cartera de clientes.")
             showErrorToast("Error al cargar clientes", error)
         } finally {
             setLoading(false)
         }
-    }
+    }, [])
+
+    useEffect(() => {
+        void loadClients()
+    }, [loadClients])
 
     const filteredClients = clients.filter(c =>
         c.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -127,7 +130,7 @@ export default function ClientsPage() {
                 />
                 <StatusCard
                     title="Cartera Total"
-                    count={new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG' }).format(clients.reduce((acc, c) => acc + c.current_account_balance, 0))}
+                    count={new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(clients.reduce((acc, c) => acc + c.current_account_balance, 0))}
                     icon={Building}
                     description="Deuda total exigible"
                     color="text-green-500"
@@ -145,7 +148,7 @@ export default function ClientsPage() {
                         <div className="relative w-full max-w-sm">
                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                             <Input
-                                placeholder="Buscar por nombre, RUC o email..."
+                                placeholder="Buscar por nombre, CUIT o email..."
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 className="pl-8"
@@ -153,13 +156,24 @@ export default function ClientsPage() {
                         </div>
                     </div>
 
+                    {errorMessage && !loading ? (
+                        <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                            <div className="flex items-center justify-between gap-3">
+                                <span>{errorMessage}</span>
+                                <Button variant="outline" size="sm" onClick={() => void loadClients()}>
+                                    Reintentar
+                                </Button>
+                            </div>
+                        </div>
+                    ) : null}
+
                     <div className="rounded-md border">
                         <Table>
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>Cliente</TableHead>
                                     <TableHead>Contacto</TableHead>
-                                    <TableHead>RUC / ID</TableHead>
+                                    <TableHead>CUIT / DNI</TableHead>
                                     <TableHead className="text-right">Saldo Cta Cte</TableHead>
                                     <TableHead className="text-right">Límite Crédito</TableHead>
                                     <TableHead className="text-right">Acciones</TableHead>
@@ -204,11 +218,11 @@ export default function ClientsPage() {
                                                     "font-mono",
                                                     client.current_account_balance > client.credit_limit ? "bg-red-900 text-red-200" : ""
                                                 )}>
-                                                    {new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG' }).format(client.current_account_balance)}
+                                                    {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(client.current_account_balance)}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell className="text-right font-mono text-muted-foreground">
-                                                {new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG' }).format(client.credit_limit)}
+                                                {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(client.credit_limit)}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <div className="flex justify-end gap-2">
@@ -272,7 +286,7 @@ function StatusCard({ title, count, icon: Icon, description, color, isCurrency }
             <CardContent>
                 <div className="text-2xl font-bold">
                     {isCurrency && typeof count === 'number'
-                        ? new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG' }).format(count)
+                        ? new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(count)
                         : count}
                 </div>
                 <p className="text-xs text-muted-foreground">{description}</p>
@@ -321,7 +335,7 @@ function CreateClientDialog({ open, onOpenChange, onSubmit }: { open: boolean, o
                         <Input id="name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="col-span-3" required />
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
-                        <Label htmlFor="tax_id" className="text-right">RUC / CI</Label>
+                        <Label htmlFor="tax_id" className="text-right">CUIT / DNI</Label>
                         <Input id="tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} className="col-span-3" required />
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
@@ -381,7 +395,7 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
                         <Input id="edit-name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="col-span-3" required />
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
-                        <Label htmlFor="edit-tax_id" className="text-right">RUC / CI</Label>
+                        <Label htmlFor="edit-tax_id" className="text-right">CUIT / DNI</Label>
                         <Input id="edit-tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} className="col-span-3" required />
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
@@ -415,12 +429,12 @@ function DeleteClientDialog({ client, open, onOpenChange, onConfirm }: { client:
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
-                    <DialogTitle className="text-red-400">¿Eliminar Cliente?</DialogTitle>
+                    <DialogTitle className="text-red-400">Eliminar cliente?</DialogTitle>
                     <DialogDescription>
-                        Esta acción eliminará permanentemente al cliente <strong>{client.name}</strong>.
+                        Esta accion eliminara permanentemente al cliente <strong>{client.name}</strong>.
                         {client.current_account_balance > 0 && (
                             <span className="block mt-2 text-yellow-400">
-                                ⚠️ Este cliente tiene un saldo pendiente de {new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG' }).format(client.current_account_balance)}
+                                Aviso: este cliente tiene un saldo pendiente de {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(client.current_account_balance)}
                             </span>
                         )}
                     </DialogDescription>

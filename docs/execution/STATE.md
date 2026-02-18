@@ -3,12 +3,12 @@
 Last updated: 2026-02-18
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.3 - Uniform async error/loading/empty state patterns in key pages
+Current task: P2.3 - Uniform async error/loading/empty state patterns (stabilization pass)
 
 ## Resume From Here
-1. Continue P2.3 in remaining pages with manual async handling (`Picking`, `Suppliers`, `Clients`) to standardize error/empty states.
-2. Run full mojibake/wording pass in core screens (`Orders`, `POS`, `Invoices`, `Settings`, `Receptions`) and normalize labels to Spanish AR.
-3. Continue contrast/accessibility pass on remaining high-density tables (`Suppliers`, `Invoices`, `Clients`).
+1. Run wording and locale consistency pass in remaining core screens (`Settings`, `Receptions`, `Orders`) to keep Spanish AR terminology.
+2. Continue contrast/accessibility pass on remaining high-density tables (`Invoices`, `Clients`, `Suppliers` details).
+3. Start P2.4 incremental React Query adoption in a high-traffic page (recommended: `Orders`).
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
@@ -207,6 +207,27 @@ Current task: P2.3 - Uniform async error/loading/empty state patterns in key pag
     - day labels switched to `es-AR`
   - File:
     - `packages/client/src/pages/Accounting.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
+- P2.3 partial progress (continued):
+  - Picking page:
+    - stabilized async loading with `useCallback` + safe `useEffect` dependency
+    - added visible error state with retry action for initial load failures
+  - Suppliers page:
+    - added explicit loading state for provider catalog
+    - added visible error state + retry action
+    - added filtered empty-state message
+    - stabilized supplier detail loading effect with awaited async call
+    - normalized key labels to AR terminology (`CUIT/DNI`)
+  - Clients page:
+    - stabilized async loading with `useCallback` + safe `useEffect` dependency
+    - added visible error banner + retry action
+    - normalized fiscal labels to AR terminology (`CUIT/DNI`)
+    - normalized monetary formatting to `es-AR` / `ARS`
+  - Files:
+    - `packages/client/src/pages/Picking.tsx`
+    - `packages/client/src/pages/Suppliers.tsx`
+    - `packages/client/src/pages/Clients.tsx`
   - Validation:
     - Frontend lint/typecheck/build passed.
 
