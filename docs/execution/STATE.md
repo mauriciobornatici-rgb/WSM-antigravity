@@ -3,10 +3,10 @@
 Last updated: 2026-02-18
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.5 - Decomposition pass on oversized pages (Inventory started)
+Current task: P2.5 - Decomposition pass on oversized pages (POS completed, Invoices pending)
 
 ## Resume From Here
-1. Continue P2.5 decomposition on remaining high-complexity pages (`POS`, `Invoices`) keeping behavior parity.
+1. Continue P2.5 decomposition on remaining high-complexity pages (`Invoices`) keeping behavior parity.
 2. Continue P2.6 locale/wording normalization (Spanish AR) in remaining pages/components not covered yet.
 3. Evaluar deduplicacion de toasts de error global/local en React Query para evitar mensajes duplicados en futuros handlers.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
@@ -340,6 +340,21 @@ Current task: P2.5 - Decomposition pass on oversized pages (Inventory started)
     - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/pages/Orders.tsx src/pages/Receptions.tsx src/components/products/InventoryTable.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/ReceptionForm.tsx src/components/receptions/ReturnForm.tsx`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
+- P2.5 partial progress (continued):
+  - POS page decomposed into focused operational modules while preserving behavior and API contracts.
+  - New modular components/types:
+    - `packages/client/src/components/pos/types.ts`
+    - `packages/client/src/components/pos/ProductCatalogCard.tsx`
+    - `packages/client/src/components/pos/CartPanelCard.tsx`
+    - `packages/client/src/components/pos/PaymentDialog.tsx`
+    - `packages/client/src/components/pos/QuickClientDialog.tsx`
+    - `packages/client/src/components/pos/CheckoutSuccessDialog.tsx`
+  - Page orchestration simplified:
+    - `packages/client/src/pages/POS.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/POS.tsx src/components/pos/types.ts src/components/pos/ProductCatalogCard.tsx src/components/pos/CartPanelCard.tsx src/components/pos/PaymentDialog.tsx src/components/pos/QuickClientDialog.tsx src/components/pos/CheckoutSuccessDialog.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):
   - Root cause:
     - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),
@@ -357,7 +372,7 @@ Current task: P2.5 - Decomposition pass on oversized pages (Inventory started)
     - server syntax checks + frontend typecheck/build passed.
 
 ## Next After Current Task
-P2.5 continuation - decompose another high-complexity operational page with behavior parity.
+P2.5 continuation - decompose `Invoices` with behavior parity before moving to broader P2.6 cleanup.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):

@@ -154,6 +154,24 @@
   - Removed malformed JSX artifact introduced during wording pass.
 - `docs/execution/STATE.md`
   - Updated active task and resume steps for P2.5 continuation.
+- `packages/client/src/components/pos/types.ts`
+  - Added shared POS contracts for cart items, payment methods, and checkout result payload.
+- `packages/client/src/components/pos/ProductCatalogCard.tsx`
+  - Extracted product catalog section (filters/search/grid + add-to-cart actions).
+- `packages/client/src/components/pos/CartPanelCard.tsx`
+  - Extracted cart summary and line-management section (quantities, totals, clear actions).
+- `packages/client/src/components/pos/PaymentDialog.tsx`
+  - Extracted checkout/payment capture dialog preserving existing business options.
+- `packages/client/src/components/pos/QuickClientDialog.tsx`
+  - Extracted in-flow quick client creation dialog for POS operations.
+- `packages/client/src/components/pos/CheckoutSuccessDialog.tsx`
+  - Extracted successful-sale confirmation dialog with operational traceability data.
+- `packages/client/src/pages/POS.tsx`
+  - Simplified page into orchestration layer (state/business flow) delegating UI sections to POS components.
+  - Preserved API contract and checkout behavior parity.
+  - Normalized additional user-facing labels to Spanish AR (`Sin categoría`, stock message wording).
+- `docs/execution/STATE.md`
+  - Updated current task snapshot after completing POS decomposition inside P2.5.
 
 ### Verified
 - Frontend checks passed:
@@ -175,6 +193,7 @@
   - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/components/products/InventoryTable.tsx src/lib/inventorySnapshot.ts`
   - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/SupplierReturnsSection.tsx src/components/receptions/ReceptionsHistorySection.tsx src/components/receptions/receptionStatus.ts src/components/receptions/types.ts`
   - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/pages/Orders.tsx src/pages/Receptions.tsx src/components/products/InventoryTable.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/ReceptionForm.tsx src/components/receptions/ReturnForm.tsx`
+  - `npm -w @wsm/client exec eslint src/pages/POS.tsx src/components/pos/types.ts src/components/pos/ProductCatalogCard.tsx src/components/pos/CartPanelCard.tsx src/components/pos/PaymentDialog.tsx src/components/pos/QuickClientDialog.tsx src/components/pos/CheckoutSuccessDialog.tsx`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 
