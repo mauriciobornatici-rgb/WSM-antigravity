@@ -197,6 +197,16 @@
   - Normalized additional user-facing copy to Spanish AR (acentos y terminologia).
 - `docs/execution/STATE.md`
   - Updated active snapshot after finishing Invoices decomposition in P2.5.
+- `packages/client/src/lib/errorHandling.ts`
+  - Added centralized toast deduplication strategy:
+    - avoids duplicate notifications for already-handled error objects (WeakSet tracking)
+    - suppresses rapid duplicate bursts via short signature window
+  - Normalized fallback error copy with proper accents.
+- `packages/client/src/App.tsx`
+  - QueryClient global error handlers now delegate to shared `showErrorToast`.
+  - Unified wording (`Error de operación`) and dedupe behavior between global/local handlers.
+- `docs/execution/STATE.md`
+  - Updated active snapshot for P2.6 deduplication progress.
 
 ### Verified
 - Frontend checks passed:
@@ -220,6 +230,7 @@
   - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/pages/Orders.tsx src/pages/Receptions.tsx src/components/products/InventoryTable.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/ReceptionForm.tsx src/components/receptions/ReturnForm.tsx`
   - `npm -w @wsm/client exec eslint src/pages/POS.tsx src/components/pos/types.ts src/components/pos/ProductCatalogCard.tsx src/components/pos/CartPanelCard.tsx src/components/pos/PaymentDialog.tsx src/components/pos/QuickClientDialog.tsx src/components/pos/CheckoutSuccessDialog.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Invoices.tsx src/components/invoices/types.ts src/components/invoices/invoiceUtils.tsx src/components/invoices/InvoiceCreateDialog.tsx src/components/invoices/InvoicesTable.tsx src/components/invoices/InvoiceDocument.tsx src/components/invoices/InvoicePreviewDialog.tsx src/components/invoices/PrintableInvoiceArea.tsx`
+  - `npm -w @wsm/client exec eslint src/App.tsx src/lib/errorHandling.ts`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 

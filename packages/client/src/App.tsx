@@ -7,8 +7,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute"
 import AppLayout from "@/layout/AppLayout"
 import ErrorBoundary from "@/components/common/ErrorBoundary"
 import { Loader } from "@/components/common/Loader"
-import { toast } from "sonner"
-import { getErrorMessage } from "@/lib/errorHandling"
+import { showErrorToast } from "@/lib/errorHandling"
 
 // Lazy Load Pages
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
@@ -32,12 +31,12 @@ const PresentationPage = lazy(() => import("@/pages/Presentation"));
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error) => {
-      toast.error("Error de consulta", { description: getErrorMessage(error) })
+      showErrorToast("Error de consulta", error)
     },
   }),
   mutationCache: new MutationCache({
     onError: (error) => {
-      toast.error("Error de operacion", { description: getErrorMessage(error) })
+      showErrorToast("Error de operación", error)
     },
   }),
   defaultOptions: {

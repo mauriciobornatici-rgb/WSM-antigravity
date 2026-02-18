@@ -6,9 +6,9 @@ Current block: P2
 Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido de error
 
 ## Resume From Here
-1. Ejecutar barrido final de textos UI pendientes en espanol AR en paginas auxiliares y dialogs.
-2. Implementar estrategia de deduplicacion de errores entre handlers locales y React Query global para evitar toasts repetidos.
-3. Revisar regresion visual en Invoices/POS/Receptions luego de la modularizacion.
+1. Ejecutar barrido final de textos UI pendientes en español AR en páginas auxiliares y diálogos.
+2. Validar en staging que la deduplicación de errores elimina toasts repetidos sin ocultar errores relevantes.
+3. Revisar regresión visual en Invoices/POS/Receptions luego de la modularización.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
@@ -370,6 +370,18 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
   - Locale pass included in touched module (`ítems`, `envío`, `integración`, `previsualización`, etc.).
   - Validation:
     - `npm -w @wsm/client exec eslint src/pages/Invoices.tsx src/components/invoices/types.ts src/components/invoices/invoiceUtils.tsx src/components/invoices/InvoiceCreateDialog.tsx src/components/invoices/InvoicesTable.tsx src/components/invoices/InvoiceDocument.tsx src/components/invoices/InvoicePreviewDialog.tsx src/components/invoices/PrintableInvoiceArea.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.6 partial progress:
+  - Added centralized toast deduplication strategy for async errors (global React Query + local handlers):
+    - avoids duplicate notifications for the same error object
+    - adds short signature window guard to reduce repeated bursts
+  - App now routes React Query global errors through shared `showErrorToast`.
+  - Files:
+    - `packages/client/src/lib/errorHandling.ts`
+    - `packages/client/src/App.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/App.tsx src/lib/errorHandling.ts`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):
