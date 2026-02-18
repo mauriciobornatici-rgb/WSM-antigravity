@@ -1,5 +1,31 @@
 # Execution Changelog
 
+## 2026-02-18
+
+### Changed
+- `packages/client/src/pages/POS.tsx`
+  - Expanded POS checkout workflow for reconstruction parity:
+    - category filtering in product catalog
+    - quick client creation dialog
+    - broader payment methods and invoice type selection
+    - sale success dialog with order/invoice traceability
+  - Kept API contract aligned with current backend (`createOrder`, optional `createInvoice`, `addShiftPayment`).
+- `packages/client/src/pages/PurchaseOrders.tsx`
+  - Improved accessibility and readability in dense table view:
+    - higher-contrast status badges with ring outlines
+    - unified table header/body text classes for legibility
+    - focus-visible rings for primary/filter/action controls
+    - aria-label on details action button
+  - Stabilized data loading hook with `useCallback` to clear lint warning.
+- `docs/execution/STATE.md`
+  - Updated active state snapshot and resume steps for next session.
+
+### Verified
+- Frontend checks passed:
+  - `npx tsc -p packages/client/tsconfig.app.json --noEmit`
+  - `npm -w @wsm/client exec eslint src/pages/PurchaseOrders.tsx`
+  - `npm -w @wsm/client run build`
+
 ## 2026-02-17
 
 ### Added

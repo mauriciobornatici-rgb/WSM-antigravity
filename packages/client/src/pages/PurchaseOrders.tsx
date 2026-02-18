@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Clock, Eye, Package, Plus, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
@@ -26,15 +26,15 @@ function statusLabel(status: OrderStatus): string {
 
 function statusBadgeClass(status: OrderStatus): string {
     const styles: Record<OrderStatus, string> = {
-        draft: "bg-slate-100 text-slate-700",
-        sent: "bg-blue-100 text-blue-700",
-        partial: "bg-amber-100 text-amber-700",
-        received: "bg-emerald-100 text-emerald-700",
-        cancelled: "bg-red-100 text-red-700",
-        ordered: "bg-blue-100 text-blue-700",
-        completed: "bg-emerald-100 text-emerald-700",
+        draft: "bg-slate-100 text-slate-800 ring-1 ring-slate-200",
+        sent: "bg-blue-100 text-blue-800 ring-1 ring-blue-200",
+        partial: "bg-amber-100 text-amber-800 ring-1 ring-amber-200",
+        received: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200",
+        cancelled: "bg-red-100 text-red-800 ring-1 ring-red-200",
+        ordered: "bg-blue-100 text-blue-800 ring-1 ring-blue-200",
+        completed: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200",
     };
-    return `rounded-full px-2 py-1 text-xs font-medium ${styles[status]}`;
+    return `rounded-full px-2 py-1 text-xs font-semibold ${styles[status]}`;
 }
 
 function statusIcon(status: OrderStatus) {
@@ -51,6 +51,12 @@ function statusIcon(status: OrderStatus) {
     }
 }
 
+const tableHeadClass = "px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-700";
+const tableHeadRightClass = "px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-700";
+const tableCellClass = "whitespace-nowrap px-6 py-4 text-slate-700";
+const tableCellMutedClass = "whitespace-nowrap px-6 py-4 text-sm text-slate-600";
+const tableCellStrongClass = "whitespace-nowrap px-6 py-4 font-semibold text-slate-900";
+
 export default function PurchaseOrdersPage() {
     const [orders, setOrders] = useState<PurchaseOrder[]>([]);
     const [loading, setLoading] = useState(true);
@@ -58,11 +64,7 @@ export default function PurchaseOrdersPage() {
     const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
     const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
-    useEffect(() => {
-        void loadOrders();
-    }, [filter]);
-
-    async function loadOrders() {
+    const loadOrders = useCallback(async () => {
         try {
             setLoading(true);
             const filters = filter !== "all" ? { status: filter } : undefined;
@@ -73,7 +75,11 @@ export default function PurchaseOrdersPage() {
         } finally {
             setLoading(false);
         }
-    }
+    }, [filter]);
+
+    useEffect(() => {
+        void loadOrders();
+    }, [loadOrders]);
 
     async function handleCreateOrder(data: Parameters<typeof api.createPurchaseOrder>[0]) {
         try {
@@ -110,7 +116,7 @@ export default function PurchaseOrdersPage() {
                 </div>
                 <button
                     onClick={() => setIsCreateDialogOpen(true)}
-                    className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700"
+                    className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
                 >
                     <Plus className="h-5 w-5" />
                     Nueva orden
@@ -123,7 +129,9 @@ export default function PurchaseOrdersPage() {
                         key={statusFilter}
                         onClick={() => setFilter(statusFilter)}
                         className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                            filter === statusFilter ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                            filter === statusFilter
+                                ? "bg-blue-600 text-white focus-visible:ring-blue-500"
+                                : "bg-slate-100 text-slate-700 hover:bg-slate-200 focus-visible:ring-slate-400"
                         }`}
                     >
                         {statusFilter === "all" ? "Todas" : statusLabel(statusFilter)}
@@ -170,7 +178,7 @@ export default function PurchaseOrdersPage() {
                 </div>
             </div>
 
-            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-900">
                 {loading ? (
                     <div className="flex h-48 items-center justify-center">
                         <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
@@ -184,55 +192,56 @@ export default function PurchaseOrdersPage() {
                         </p>
                     </div>
                 ) : (
-                    <table className="w-full">
+                    <table className="w-full text-slate-900">
                         <thead className="border-b border-slate-200 bg-slate-50">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Numero OC</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Proveedor</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Fecha</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Entrega</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Estado</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Total</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Items</th>
-                                <th className="px-6 py-3 text-right text-xs font-medium uppercase text-slate-500">Acciones</th>
+                                <th className={tableHeadClass}>Numero OC</th>
+                                <th className={tableHeadClass}>Proveedor</th>
+                                <th className={tableHeadClass}>Fecha</th>
+                                <th className={tableHeadClass}>Entrega</th>
+                                <th className={tableHeadClass}>Estado</th>
+                                <th className={tableHeadClass}>Total</th>
+                                <th className={tableHeadClass}>Items</th>
+                                <th className={tableHeadRightClass}>Acciones</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-200">
+                        <tbody className="divide-y divide-slate-200 text-slate-800">
                             {orders.map((order) => (
                                 <tr key={order.id} className="transition hover:bg-slate-50">
                                     <td className="whitespace-nowrap px-6 py-4">
                                         <div className="flex items-center gap-2">
                                             {statusIcon(order.status)}
-                                            <span className="font-medium text-slate-900">{order.po_number ?? order.id}</span>
+                                            <span className="font-semibold text-slate-900">{order.po_number ?? order.id}</span>
                                         </div>
                                     </td>
-                                    <td className="whitespace-nowrap px-6 py-4 text-slate-700">{order.supplier_name ?? "-"}</td>
-                                    <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">
+                                    <td className={tableCellClass}>{order.supplier_name ?? "-"}</td>
+                                    <td className={tableCellMutedClass}>
                                         {order.order_date ? new Date(order.order_date).toLocaleDateString("es-AR") : "-"}
                                     </td>
-                                    <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">
+                                    <td className={tableCellMutedClass}>
                                         {order.expected_delivery_date ? new Date(order.expected_delivery_date).toLocaleDateString("es-AR") : "-"}
                                     </td>
-                                    <td className="whitespace-nowrap px-6 py-4">
+                                    <td className={tableCellClass}>
                                         <span className={statusBadgeClass(order.status)}>{statusLabel(order.status)}</span>
                                     </td>
-                                    <td className="whitespace-nowrap px-6 py-4 font-medium text-slate-900">
+                                    <td className={tableCellStrongClass}>
                                         ${Number(order.total_amount ?? 0).toLocaleString("es-AR")}
                                     </td>
-                                    <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{order.items?.length ?? 0}</td>
+                                    <td className={tableCellMutedClass}>{order.items?.length ?? 0}</td>
                                     <td className="space-x-2 whitespace-nowrap px-6 py-4 text-right">
                                         {order.status === "draft" ? (
                                             <button
                                                 onClick={() => void handleApprove(order.id)}
-                                                className="rounded bg-green-50 px-2 py-1 text-xs font-semibold uppercase tracking-wider text-green-700 transition hover:bg-green-100"
+                                                className="rounded bg-green-50 px-2 py-1 text-xs font-semibold uppercase tracking-wider text-green-700 transition hover:bg-green-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-2"
                                             >
                                                 Aprobar
                                             </button>
                                         ) : null}
                                         <button
                                             onClick={() => setSelectedOrderId(order.id)}
-                                            className="inline-block align-middle text-blue-600 transition hover:text-blue-800"
+                                            className="inline-block align-middle text-blue-700 transition hover:text-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
                                             title="Ver detalles"
+                                            aria-label={`Ver detalles de orden ${order.po_number ?? order.id}`}
                                         >
                                             <Eye className="h-5 w-5" />
                                         </button>

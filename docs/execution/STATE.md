@@ -1,15 +1,15 @@
 # Execution State Snapshot
 
-Last updated: 2026-02-17
+Last updated: 2026-02-18
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.1 - Contrast/accessibility pass and visual consistency
+Current task: P2.1 - Contrast/accessibility pass + UX consistency on remaining sales/procurement tables
 
 ## Resume From Here
-1. Continue contrast/accessibility pass on `PurchaseOrders` and remaining high-density tables.
-2. Run full mojibake pass in core screens (Orders/POS/Invoices/Settings/Receptions) and normalize encoding.
-3. Standardize loading/error empty states in procurement and sales screens.
-4. Keep P2 changes incremental and verify lint/typecheck on each batch.
+1. Run full mojibake/wording pass in core screens (`Orders`, `POS`, `Invoices`, `Settings`, `Receptions`) and normalize labels to Spanish AR.
+2. Standardize loading/error/empty states in procurement and sales screens.
+3. Continue contrast/accessibility pass on remaining high-density tables (`Suppliers`, `Invoices`, `Clients`).
+4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
 - Consolidated gap list and priority order.
@@ -154,6 +154,26 @@ Current task: P2.1 - Contrast/accessibility pass and visual consistency
     - `packages/client/src/pages/Receptions.tsx`
   - Validation:
     - Frontend lint/typecheck passed for touched files (one non-blocking hooks warning in `Receptions.tsx`).
+- P2.1 partial progress (continued):
+  - Reinforced POS checkout flow and operator UX:
+    - quick client creation in-place
+    - expanded payment/invoice variants (`credit_card`, `transfer`, invoice type selector)
+    - success confirmation dialog with order/invoice trace
+    - category filter in products grid
+  - File:
+    - `packages/client/src/pages/POS.tsx`
+  - Validation:
+    - Frontend typecheck and build passed.
+- P2.1 partial progress (continued):
+  - Improved contrast/accessibility in purchase orders table and controls:
+    - stronger status badge contrast with ring outlines
+    - unified table typography classes for dense data
+    - focus-visible rings and aria-label on row actions
+    - fixed hooks warning by stabilizing `loadOrders` with `useCallback`
+  - File:
+    - `packages/client/src/pages/PurchaseOrders.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
 
 ## Next After Current Task
 P2.2 - Replace fake data/simulations with real data or explicit feature flags.
