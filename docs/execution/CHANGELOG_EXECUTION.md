@@ -99,6 +99,12 @@
     - migrated create/approve actions to `useMutation`
     - synchronized listing via cache invalidation after successful mutations
   - Added explicit visible load-error banner with retry action.
+- `packages/client/src/pages/Receptions.tsx`
+  - Extended P2.4 React Query rollout to receptions workflow with tab-aware data loading:
+    - conditional queries by active tab (`pending`, `history`, `returns`)
+    - status-filtered history query
+  - Migrated reception/return create+approve actions to mutations with cache invalidation.
+  - Added active-tab load-error banner with retry action.
 - `docs/execution/STATE.md`
   - Updated active task and resume steps for P2.4 continuation.
 
@@ -117,6 +123,7 @@
   - `node --check packages/server/config/env.js`
   - `npm -w @wsm/client exec eslint src/pages/Orders.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
+  - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 

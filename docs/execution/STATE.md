@@ -6,9 +6,9 @@ Current block: P2
 Current task: P2.4 - Incremental React Query adoption in data-heavy screens (Orders first pass)
 
 ## Resume From Here
-1. Continue P2.4 by applying the same React Query migration pattern in `Receptions` (tabs + conditional datasets).
+1. Extract shared query key helpers/constants for operational modules (`orders`, `purchase-orders`, `receptions`) to reduce duplication.
 2. Preserve standardized async UX in migrated pages: visible load error with retry + mutation invalidation strategy.
-3. Extract shared query key helpers for operational modules (`orders`, `purchase-orders`, `receptions`) to reduce duplication.
+3. Continue P2.5 decomposition pass on oversized pages (`Inventory`, `Receptions`) after the React Query baseline.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
@@ -269,6 +269,21 @@ Current task: P2.4 - Incremental React Query adoption in data-heavy screens (Ord
     - `packages/client/src/pages/PurchaseOrders.tsx`
   - Validation:
     - `npm -w @wsm/client exec eslint src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.4 partial progress (continued):
+  - Receptions page migrated to React Query with tab-aware conditional queries (`enabled`):
+    - pending purchase orders for reception
+    - receptions history with status filter
+    - supplier returns list
+  - Mutations migrated with cache invalidation:
+    - create reception, approve reception
+    - create return, approve return
+  - Added visible error state with retry bound to the active tab/query.
+  - File:
+    - `packages/client/src/pages/Receptions.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):

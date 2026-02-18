@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     AlertCircle,
     CheckCircle2,
@@ -11,7 +12,6 @@ import {
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { PurchaseOrder } from "@/types";
-import { showErrorToast } from "@/lib/errorHandling";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { ReceptionForm } from "@/components/receptions/ReceptionForm";
@@ -30,6 +30,13 @@ type SupplierReturnRecord = {
 
 type ReceptionsFilter = "all" | "pending_qc" | "approved" | "rejected";
 type ReceptionsTab = "pending" | "history" | "returns";
+
+const RECEPTIONS_QUERY_KEY = ["receptions"] as const;
+const SUPPLIER_RETURNS_QUERY_KEY = ["supplier-returns"] as const;
+const PURCHASE_ORDERS_QUERY_KEY = ["purchase-orders"] as const;
+const EMPTY_RECEPTIONS: ReceptionRecord[] = [];
+const EMPTY_RETURNS: SupplierReturnRecord[] = [];
+const EMPTY_PENDING_ORDERS: PurchaseOrder[] = [];
 
 function readText(value: unknown, fallback = "-"): string {
     return typeof value === "string" && value.length > 0 ? value : fallback;
@@ -91,10 +98,7 @@ const tableCellClass = "px-6 py-4 text-slate-800";
 const tableCellStrongClass = "px-6 py-4 font-semibold text-slate-900";
 
 export default function ReceptionsPage() {
-    const [receptions, setReceptions] = useState<ReceptionRecord[]>([]);
-    const [returns, setReturns] = useState<SupplierReturnRecord[]>([]);
-    const [pendingOrders, setPendingOrders] = useState<PurchaseOrder[]>([]);
-    const [loading, setLoading] = useState(true);
+    const queryClient = useQueryClient();
 
     const [filter, setFilter] = useState<ReceptionsFilter>("all");
     const [activeTab, setActiveTab] = useState<ReceptionsTab>("pending");
@@ -104,81 +108,130 @@ export default function ReceptionsPage() {
     const [prefilledOrderId, setPrefilledOrderId] = useState<string | undefined>(undefined);
     const [prefilledSupplierId, setPrefilledSupplierId] = useState<string | undefined>(undefined);
 
-    useEffect(() => {
-        void loadData();
-    }, [filter, activeTab]);
-
-    async function loadData() {
-        try {
-            setLoading(true);
-
-            if (activeTab === "history") {
-                const filters = filter !== "all" ? { status: filter } : undefined;
-                const response = await api.getReceptions(filters);
-                setReceptions(response);
-                return;
-            }
-
-            if (activeTab === "returns") {
-                const response = await api.getReturns();
-                setReturns(response.map(toSupplierReturnRecord));
-                return;
-            }
-
+    const pendingOrdersQuery = useQuery({
+        queryKey: [...PURCHASE_ORDERS_QUERY_KEY, "pending-reception"],
+        queryFn: async () => {
             const orders = await api.getPurchaseOrders();
-            setPendingOrders(orders.filter((order) => order.status === "sent" || order.status === "partial"));
-        } catch (error) {
-            showErrorToast("Error al cargar datos de recepciones", error);
-        } finally {
-            setLoading(false);
+            return orders.filter((order) => order.status === "sent" || order.status === "partial");
+        },
+        enabled: activeTab === "pending",
+    });
+
+    const receptionsQuery = useQuery({
+        queryKey: [...RECEPTIONS_QUERY_KEY, filter],
+        queryFn: () => api.getReceptions(filter !== "all" ? { status: filter } : undefined),
+        enabled: activeTab === "history",
+    });
+
+    const supplierReturnsQuery = useQuery({
+        queryKey: SUPPLIER_RETURNS_QUERY_KEY,
+        queryFn: async () => {
+            const rows = await api.getReturns();
+            return rows.map(toSupplierReturnRecord);
+        },
+        enabled: activeTab === "returns",
+    });
+
+    const createReceptionMutation = useMutation({
+        mutationFn: (payload: Parameters<typeof api.createReception>[0]) => api.createReception(payload),
+        onSuccess: async () => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: RECEPTIONS_QUERY_KEY }),
+                queryClient.invalidateQueries({ queryKey: PURCHASE_ORDERS_QUERY_KEY }),
+            ]);
+        },
+    });
+
+    const createReturnMutation = useMutation({
+        mutationFn: (payload: Parameters<typeof api.createReturn>[0]) => api.createReturn(payload),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: SUPPLIER_RETURNS_QUERY_KEY });
+        },
+    });
+
+    const approveReceptionMutation = useMutation({
+        mutationFn: (receptionId: string) => api.approveReception(receptionId),
+        onSuccess: async () => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: RECEPTIONS_QUERY_KEY }),
+                queryClient.invalidateQueries({ queryKey: PURCHASE_ORDERS_QUERY_KEY }),
+            ]);
+        },
+    });
+
+    const approveReturnMutation = useMutation({
+        mutationFn: (returnId: string) => api.approveReturn(returnId),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: SUPPLIER_RETURNS_QUERY_KEY });
+        },
+    });
+
+    const receptions = receptionsQuery.data ?? EMPTY_RECEPTIONS;
+    const returns = supplierReturnsQuery.data ?? EMPTY_RETURNS;
+    const pendingOrders = pendingOrdersQuery.data ?? EMPTY_PENDING_ORDERS;
+
+    const activeQuery =
+        activeTab === "history"
+            ? receptionsQuery
+            : activeTab === "returns"
+                ? supplierReturnsQuery
+                : pendingOrdersQuery;
+    const loading = activeQuery.isLoading;
+    const hasLoadError = activeQuery.isError;
+
+    function retryActiveQuery() {
+        if (activeTab === "history") {
+            void receptionsQuery.refetch();
+            return;
         }
+        if (activeTab === "returns") {
+            void supplierReturnsQuery.refetch();
+            return;
+        }
+        void pendingOrdersQuery.refetch();
     }
 
     async function handleCreateReception(data: Parameters<typeof api.createReception>[0]) {
         try {
-            await api.createReception(data);
+            await createReceptionMutation.mutateAsync(data);
             toast.success("Recepcion registrada correctamente");
             setIsCreateDialogOpen(false);
             setPrefilledOrderId(undefined);
             setPrefilledSupplierId(undefined);
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al registrar recepcion", error);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
     async function handleCreateReturn(data: Parameters<typeof api.createReturn>[0]) {
         try {
-            await api.createReturn(data);
+            await createReturnMutation.mutateAsync(data);
             toast.success("Devolucion registrada en borrador");
             setIsReturnDialogOpen(false);
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al registrar devolucion", error);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
     async function handleApproveReception(id: string, receptionNumber: string) {
         try {
-            await api.approveReception(id);
+            await approveReceptionMutation.mutateAsync(id);
             toast.success("Recepcion aprobada", {
                 description: `${receptionNumber} fue aprobada y el stock se actualizo.`,
             });
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al aprobar recepcion", error);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
     async function handleApproveReturn(id: string, returnNumber: string) {
         try {
-            await api.approveReturn(id);
+            await approveReturnMutation.mutateAsync(id);
             toast.success("Devolucion aprobada", {
                 description: `${returnNumber} fue procesada correctamente.`,
             });
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al aprobar devolucion", error);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
@@ -235,6 +288,19 @@ export default function ReceptionsPage() {
                     Devoluciones
                 </button>
             </div>
+
+            {hasLoadError ? (
+                <div className="flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 md:flex-row md:items-center md:justify-between">
+                    <span>No pudimos cargar los datos de esta seccion. Reintenta para actualizar la vista.</span>
+                    <button
+                        type="button"
+                        onClick={retryActiveQuery}
+                        className="rounded border border-red-300 px-3 py-1 font-medium text-red-700 transition hover:bg-red-100"
+                    >
+                        Reintentar
+                    </button>
+                </div>
+            ) : null}
 
             {loading ? (
                 <div className="flex h-48 items-center justify-center">
@@ -327,6 +393,7 @@ export default function ReceptionsPage() {
                                             {supplierReturn.status === "draft" ? (
                                                 <button
                                                     onClick={() => void handleApproveReturn(supplierReturn.id, supplierReturn.return_number)}
+                                                    disabled={approveReturnMutation.isPending}
                                                     className="rounded bg-red-600 px-3 py-1 text-sm font-medium text-white transition hover:bg-red-700"
                                                 >
                                                     Aprobar salida
@@ -427,6 +494,7 @@ export default function ReceptionsPage() {
                                                 {reception.status === "pending_qc" ? (
                                                     <button
                                                         onClick={() => void handleApproveReception(reception.id, reception.reception_number)}
+                                                        disabled={approveReceptionMutation.isPending}
                                                         className="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white transition hover:bg-green-700"
                                                     >
                                                         Aprobar
