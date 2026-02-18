@@ -3,13 +3,14 @@
 Last updated: 2026-02-18
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.1 - Contrast/accessibility pass + UX consistency on remaining sales/procurement tables
+Current task: P2.2 - Replace fake data/simulations with real data or explicit role-aware fallback
 
 ## Resume From Here
-1. Run full mojibake/wording pass in core screens (`Orders`, `POS`, `Invoices`, `Settings`, `Receptions`) and normalize labels to Spanish AR.
-2. Standardize loading/error/empty states in procurement and sales screens.
-3. Continue contrast/accessibility pass on remaining high-density tables (`Suppliers`, `Invoices`, `Clients`).
-4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
+1. Continue P2.2 in remaining screens that still simulate data/flows (email send in invoices, other mocked placeholders).
+2. Run full mojibake/wording pass in core screens (`Orders`, `POS`, `Invoices`, `Settings`, `Receptions`) and normalize labels to Spanish AR.
+3. Standardize loading/error/empty states in procurement and sales screens.
+4. Continue contrast/accessibility pass on remaining high-density tables (`Suppliers`, `Invoices`, `Clients`).
+5. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
 - Consolidated gap list and priority order.
@@ -174,9 +175,23 @@ Current task: P2.1 - Contrast/accessibility pass + UX consistency on remaining s
     - `packages/client/src/pages/PurchaseOrders.tsx`
   - Validation:
     - Frontend lint/typecheck/build passed.
+- P2.2 partial progress:
+  - Dashboard switched from static demo values to real operational data.
+  - Metrics now computed from API data with role-aware fallback:
+    - sales totals (transactions when available, orders fallback)
+    - pending warehouse orders
+    - low stock alerts
+    - completion rate
+  - Replaced placeholder sections with:
+    - 7-day sales panel
+    - recent activity feed from live data
+  - File:
+    - `packages/client/src/pages/Dashboard.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
 
 ## Next After Current Task
-P2.2 - Replace fake data/simulations with real data or explicit feature flags.
+P2.3 - Uniform async error/loading/empty state patterns in key pages.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):

@@ -19,12 +19,23 @@
   - Stabilized data loading hook with `useCallback` to clear lint warning.
 - `docs/execution/STATE.md`
   - Updated active state snapshot and resume steps for next session.
+- `packages/client/src/pages/Dashboard.tsx`
+  - Replaced simulated metrics/activity with real API-driven dashboard data.
+  - Added role-aware fallback:
+    - uses `/api/transactions` for sales when role allows it
+    - falls back to `/api/orders`-derived sales if finance endpoint is forbidden
+  - Added real panels:
+    - sales trend for last 7 days
+    - recent activity from transactions/orders
+- `docs/execution/STATE.md`
+  - Moved active task to `P2.2` after dashboard de-mocking.
 
 ### Verified
 - Frontend checks passed:
   - `npx tsc -p packages/client/tsconfig.app.json --noEmit`
   - `npm -w @wsm/client exec eslint src/pages/PurchaseOrders.tsx`
   - `npm -w @wsm/client run build`
+  - `npm -w @wsm/client exec eslint src/pages/Dashboard.tsx`
 
 ## 2026-02-17
 
