@@ -282,6 +282,17 @@
   - Updated snapshot after backend auth/password hardening pass.
 - `docs/execution/STATE.md`
   - Added smoke validation checkpoint for current staging runtime.
+- `packages/server/migrations/003_add_user_token_version.sql`
+  - Added schema migration to support server-side token revocation (`users.token_version`).
+- `packages/server/controllers/userController.js`
+  - JWT payload now includes `token_version`.
+  - Password updates now rotate token version to invalidate active sessions.
+  - User deactivation now rotates token version as additional revocation guard.
+- `packages/server/middleware/authMiddleware.js`
+  - Authentication now validates user status and token_version against DB on each request.
+  - Introduced explicit `token_revoked` / `invalid_session` unauthorized responses.
+- `docs/execution/STATE.md`
+  - Updated snapshot after token-version session hardening pass.
 
 ### Verified
 - Frontend checks passed:
@@ -319,6 +330,13 @@
   - `npm -w @wsm/server run smoke:integrity`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
+  - `node --check packages/server/controllers/userController.js`
+  - `node --check packages/server/middleware/authMiddleware.js`
+  - `npm -w @wsm/server run test`
+
+### Validation Notes
+- During token-version hardening, `npm -w @wsm/server run smoke:rbac` returned `429` in `/api/health` due active environment rate-limit window.
+- Code-level checks and build remained green; smoke re-run is pending after limiter window reset.
 
 ### Validation Notes
 - The extended lint command above reports pre-existing errors/warnings unrelated to this batch in:

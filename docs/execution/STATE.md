@@ -6,11 +6,12 @@ Current block: P2
 Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido de error
 
 ## Resume From Here
-1. Validar en staging que la deduplicación de errores elimina toasts repetidos sin ocultar errores relevantes.
-2. Revisar regresión visual en Invoices/POS/Receptions luego de la modularización.
-3. Ejecutar smoke funcional de `ReturnsAndWarranties` (crear garantía, devolución y nota de crédito) en staging.
-4. Revisar impacto operativo de nueva política de contraseñas fuertes en alta/edición de usuarios.
-5. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
+1. Re-ejecutar smoke backend cuando venza la ventana de rate-limit del entorno activo (último intento respondió `429` en `/api/health`).
+2. Validar en staging que la deduplicación de errores elimina toasts repetidos sin ocultar errores relevantes.
+3. Revisar regresión visual en Invoices/POS/Receptions luego de la modularización.
+4. Ejecutar smoke funcional de `ReturnsAndWarranties` (crear garantía, devolución y nota de crédito) en staging.
+5. Revisar impacto operativo de nueva política de contraseñas fuertes en alta/edición de usuarios.
+6. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
 - Consolidated gap list and priority order.
@@ -471,6 +472,25 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
   - Results:
     - `npm -w @wsm/server run smoke:rbac` -> PASS
     - `npm -w @wsm/server run smoke:integrity` -> PASS (mutation/reception/cash optional flows skipped by env flags)
+- P2.6 partial progress (backend session hardening):
+  - Added token revocation by server-side `token_version`:
+    - JWT now includes `token_version` claim at login.
+    - `authenticateToken` now checks current user status and token_version in DB.
+    - password change and user deactivation rotate token version to revoke active sessions.
+  - Added migration:
+    - `packages/server/migrations/003_add_user_token_version.sql`
+  - Files:
+    - `packages/server/controllers/userController.js`
+    - `packages/server/middleware/authMiddleware.js`
+    - `packages/server/migrations/003_add_user_token_version.sql`
+  - Validation:
+    - `node --check packages/server/controllers/userController.js`
+    - `node --check packages/server/middleware/authMiddleware.js`
+    - `npm -w @wsm/server run test`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+  - Operational note:
+    - `npm -w @wsm/server run smoke:rbac` during this pass was blocked by environment limiter (`429` in health check), so smoke re-run remains pending.
 - Incident hotfix (staging availability):
   - Root cause:
     - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),

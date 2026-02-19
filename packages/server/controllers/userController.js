@@ -45,7 +45,7 @@ export const login = catchAsync(async (req, res) => {
     }
 
     const token = jwt.sign(
-        { id: user.id, email: user.email, role: user.role },
+        { id: user.id, email: user.email, role: user.role, token_version: Number(user.token_version || 0) },
         JWT_SECRET,
         { expiresIn: JWT_EXPIRES_IN }
     );
@@ -136,7 +136,7 @@ export const updateUser = catchAsync(async (req, res) => {
     const params = [name, email, role, status];
 
     if (password) {
-        updateQuery += ', password_hash = ?';
+        updateQuery += ', password_hash = ?, token_version = token_version + 1';
         const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
         params.push(hashedPassword);
     }
@@ -177,7 +177,10 @@ export const deleteUser = catchAsync(async (req, res) => {
         }
     }
 
-    await pool.query('UPDATE users SET deleted_at = CURRENT_TIMESTAMP, status = ? WHERE id = ?', ['inactive', id]);
+    await pool.query(
+        'UPDATE users SET deleted_at = CURRENT_TIMESTAMP, status = ?, token_version = token_version + 1 WHERE id = ?',
+        ['inactive', id]
+    );
     await auditService.log({
         user_id: req.user?.id || null,
         action: 'DELETE_USER',
