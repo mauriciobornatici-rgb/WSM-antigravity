@@ -23,4 +23,13 @@ export const queryKeys = {
     supplierReturns: {
         all: ["supplier-returns"] as const,
     },
+    warranties: {
+        all: ["warranties"] as const,
+    },
+    clientReturns: {
+        all: ["client-returns"] as const,
+    },
+    creditNotes: {
+        all: ["credit-notes"] as const,
+    },
 } as const;

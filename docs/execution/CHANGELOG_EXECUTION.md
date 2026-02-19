@@ -244,6 +244,20 @@
   - Added temporary lint bypass for `react-hooks/set-state-in-effect` pending React Query migration.
 - `docs/execution/STATE.md`
   - Updated active snapshot after lint stabilization pass.
+- `packages/client/src/pages/ReturnsAndWarranties.tsx`
+  - Replaced manual data orchestration (`useEffect + loadData`) with React Query:
+    - queries for warranties, client returns, credit notes, clients, and products
+    - mutations for create/update/approve actions
+    - cache invalidation after writes
+  - Added explicit per-section loading and retry UI states.
+  - Removed temporary lint bypass used in the previous pass.
+- `packages/client/src/lib/queryKeys.ts`
+  - Added domain keys:
+    - `warranties.all`
+    - `clientReturns.all`
+    - `creditNotes.all`
+- `docs/execution/STATE.md`
+  - Updated snapshot after React Query migration of Returns/Warranties domain.
 
 ### Verified
 - Frontend checks passed:
@@ -270,6 +284,7 @@
   - `npm -w @wsm/client exec eslint src/App.tsx src/lib/errorHandling.ts`
   - `npm -w @wsm/client exec eslint src/App.tsx src/lib/errorHandling.ts src/layout/AppLayout.tsx src/context/AuthContext.tsx src/pages/Dashboard.tsx src/pages/Login.tsx src/pages/Picking.tsx src/pages/ReturnsAndWarranties.tsx src/pages/PurchaseOrders.tsx src/pages/Settings.tsx src/components/users/UserForm.tsx src/pages/ClientDetail.tsx src/components/pos/QuickClientDialog.tsx`
   - `npm -w @wsm/client exec eslint src/context/AuthContext.tsx src/components/users/UserForm.tsx src/pages/Login.tsx src/pages/ReturnsAndWarranties.tsx src/pages/ClientDetail.tsx`
+  - `npm -w @wsm/client exec eslint src/pages/ReturnsAndWarranties.tsx src/lib/queryKeys.ts`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 

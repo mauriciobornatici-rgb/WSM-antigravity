@@ -1,10 +1,10 @@
-/* eslint-disable react-hooks/set-state-in-effect -- legacy module pending React Query migration */
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Plus, RotateCcw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
+import { queryKeys } from "@/lib/queryKeys";
 import type { Client, Product } from "@/types";
-import { showErrorToast } from "@/lib/errorHandling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,6 +41,14 @@ type CreditNoteRow = {
     status: string;
 };
 
+type GenericRow = Record<string, unknown>;
+
+const EMPTY_CLIENTS: Client[] = [];
+const EMPTY_PRODUCTS: Product[] = [];
+const EMPTY_WARRANTIES: WarrantyRow[] = [];
+const EMPTY_CLIENT_RETURNS: ClientReturnRow[] = [];
+const EMPTY_CREDIT_NOTES: CreditNoteRow[] = [];
+
 function readText(value: unknown, fallback = "-"): string {
     return typeof value === "string" && value.length > 0 ? value : fallback;
 }
@@ -50,11 +58,70 @@ function readNumber(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function readIsoDate(value: unknown): string {
+    return typeof value === "string" && value.length > 0 ? value : new Date().toISOString();
+}
+
+function mapWarrantyRows(rows: GenericRow[]): WarrantyRow[] {
+    return rows.map((row) => ({
+        id: readText(row.id, crypto.randomUUID()),
+        created_at: readIsoDate(row.created_at),
+        client_name: readText(row.client_name),
+        product_name: readText(row.product_name),
+        issue_description: readText(row.issue_description),
+        status: readText(row.status, "initiated"),
+    }));
+}
+
+function mapClientReturnRows(rows: GenericRow[]): ClientReturnRow[] {
+    return rows.map((row) => ({
+        id: readText(row.id, crypto.randomUUID()),
+        created_at: readIsoDate(row.created_at),
+        client_name: readText(row.client_name),
+        reason: readText(row.reason),
+        status: readText(row.status, "draft"),
+    }));
+}
+
+function mapCreditNoteRows(rows: GenericRow[]): CreditNoteRow[] {
+    return rows.map((row) => ({
+        id: readText(row.id, crypto.randomUUID()),
+        number: readText(row.number, "-"),
+        created_at: readIsoDate(row.created_at),
+        client_name: readText(row.client_name),
+        amount: readNumber(row.amount),
+        status: readText(row.status, "issued"),
+    }));
+}
+
+function QueryErrorBanner({ onRetry }: { onRetry: () => void }) {
+    return (
+        <div className="flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 md:flex-row md:items-center md:justify-between">
+            <span>No pudimos cargar esta sección. Reintentá para actualizar la vista.</span>
+            <button
+                type="button"
+                onClick={onRetry}
+                className="rounded border border-red-300 px-3 py-1 font-medium text-red-700 transition hover:bg-red-100"
+            >
+                Reintentar
+            </button>
+        </div>
+    );
+}
+
+function QueryLoadingState() {
+    return (
+        <div className="flex h-48 items-center justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
+        </div>
+    );
+}
+
 export default function ReturnsAndWarrantiesPage() {
     return (
         <div className="space-y-6">
             <div>
-                <h2 className="text-3xl font-bold tracking-tight">Devoluciones y garantias</h2>
+                <h2 className="text-3xl font-bold tracking-tight">Devoluciones y garantías</h2>
                 <p className="text-muted-foreground">Gestión de reclamos, devoluciones y notas de crédito.</p>
             </div>
 
@@ -89,140 +156,166 @@ export default function ReturnsAndWarrantiesPage() {
 }
 
 function WarrantiesTab() {
-    const [warranties, setWarranties] = useState<WarrantyRow[]>([]);
-    const [clients, setClients] = useState<Client[]>([]);
-    const [products, setProducts] = useState<Product[]>([]);
-    const [createOpen, setCreateOpen] = useState(false);
+    const queryClient = useQueryClient();
 
+    const [createOpen, setCreateOpen] = useState(false);
     const [clientId, setClientId] = useState("");
     const [productId, setProductId] = useState("");
     const [issueDescription, setIssueDescription] = useState("");
 
-    async function loadData() {
-        try {
-            const [warrantiesResponse, clientsResponse, productsResponse] = await Promise.all([
-                api.getWarranties(),
-                api.getClients(),
-                api.getProducts(),
-            ]);
-            setWarranties(
-                warrantiesResponse.map((row) => ({
-                    id: readText(row.id, crypto.randomUUID()),
-                    created_at: readText(row.created_at, new Date().toISOString()),
-                    client_name: readText(row.client_name),
-                    product_name: readText(row.product_name),
-                    issue_description: readText(row.issue_description),
-                    status: readText(row.status, "initiated"),
-                })),
-            );
-            setClients(clientsResponse);
-            setProducts(productsResponse);
-        } catch (error) {
-            showErrorToast("Error al cargar garantias", error);
-        }
-    }
+    const warrantiesQuery = useQuery({
+        queryKey: queryKeys.warranties.all,
+        queryFn: async () => mapWarrantyRows(await api.getWarranties()),
+    });
 
-    useEffect(() => {
-        void loadData();
-    }, []);
+    const clientsQuery = useQuery({
+        queryKey: queryKeys.clients.all,
+        queryFn: () => api.getClients(),
+    });
 
-    async function createWarranty() {
+    const productsQuery = useQuery({
+        queryKey: queryKeys.products.all,
+        queryFn: () => api.getProducts(),
+    });
+
+    const createWarrantyMutation = useMutation({
+        mutationFn: (payload: Parameters<typeof api.createWarranty>[0]) => api.createWarranty(payload),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: queryKeys.warranties.all });
+        },
+    });
+
+    const updateWarrantyStatusMutation = useMutation({
+        mutationFn: ({ id, status }: { id: string; status: Parameters<typeof api.updateWarrantyStatus>[1]["status"] }) =>
+            api.updateWarrantyStatus(id, { status }),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: queryKeys.warranties.all });
+        },
+    });
+
+    const warranties = warrantiesQuery.data ?? EMPTY_WARRANTIES;
+    const clients = clientsQuery.data ?? EMPTY_CLIENTS;
+    const products = productsQuery.data ?? EMPTY_PRODUCTS;
+
+    const loading = warrantiesQuery.isLoading || clientsQuery.isLoading || productsQuery.isLoading;
+    const hasLoadError = warrantiesQuery.isError || clientsQuery.isError || productsQuery.isError;
+
+    async function handleCreateWarranty() {
         if (!productId || !issueDescription) {
-            toast.error("Completa producto y descripción");
+            toast.error("Completá producto y descripción");
             return;
         }
+
         try {
-            await api.createWarranty({
+            await createWarrantyMutation.mutateAsync({
                 product_id: productId,
                 issue_description: issueDescription,
                 ...(clientId ? { client_id: clientId } : { customer_name: "Consumidor final" }),
             });
-            toast.success("Garantia registrada");
+            toast.success("Garantía registrada");
             setCreateOpen(false);
             setClientId("");
             setProductId("");
             setIssueDescription("");
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al crear garantia", error);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
-    async function updateWarrantyStatus(id: string, status: string) {
+    async function handleUpdateWarrantyStatus(
+        id: string,
+        status: Parameters<typeof api.updateWarrantyStatus>[1]["status"],
+    ) {
         try {
-            await api.updateWarrantyStatus(id, { status: status as Parameters<typeof api.updateWarrantyStatus>[1]["status"] });
+            await updateWarrantyStatusMutation.mutateAsync({ id, status });
             toast.success("Estado actualizado");
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al actualizar garantia", error);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
+    }
+
+    function retry() {
+        void Promise.all([warrantiesQuery.refetch(), clientsQuery.refetch(), productsQuery.refetch()]);
     }
 
     return (
         <Card>
             <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>Reclamos de garantia</CardTitle>
+                <CardTitle>Reclamos de garantía</CardTitle>
                 <Button onClick={() => setCreateOpen(true)}>
                     <Plus className="mr-2 h-4 w-4" />
-                    Nueva garantia
+                    Nueva garantía
                 </Button>
             </CardHeader>
-            <CardContent>
-                <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead>Fecha</TableHead>
-                            <TableHead>Cliente</TableHead>
-                            <TableHead>Producto</TableHead>
-                            <TableHead>Problema</TableHead>
-                            <TableHead>Estado</TableHead>
-                            <TableHead className="text-right">Acciones</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {warranties.length === 0 ? (
+            <CardContent className="space-y-4">
+                {hasLoadError ? <QueryErrorBanner onRetry={retry} /> : null}
+                {loading ? <QueryLoadingState /> : null}
+
+                {!loading ? (
+                    <Table>
+                        <TableHeader>
                             <TableRow>
-                                <TableCell colSpan={6} className="h-20 text-center text-muted-foreground">
-                                    Sin garantias.
-                                </TableCell>
+                                <TableHead>Fecha</TableHead>
+                                <TableHead>Cliente</TableHead>
+                                <TableHead>Producto</TableHead>
+                                <TableHead>Problema</TableHead>
+                                <TableHead>Estado</TableHead>
+                                <TableHead className="text-right">Acciones</TableHead>
                             </TableRow>
-                        ) : (
-                            warranties.map((warranty) => (
-                                <TableRow key={warranty.id}>
-                                    <TableCell>{new Date(warranty.created_at).toLocaleDateString("es-AR")}</TableCell>
-                                    <TableCell>{warranty.client_name}</TableCell>
-                                    <TableCell>{warranty.product_name}</TableCell>
-                                    <TableCell>{warranty.issue_description}</TableCell>
-                                    <TableCell>
-                                        <Badge variant="outline">{warranty.status}</Badge>
-                                    </TableCell>
-                                    <TableCell className="text-right">
-                                        <Select onValueChange={(value) => void updateWarrantyStatus(warranty.id, value)}>
-                                            <SelectTrigger className="ml-auto w-40">
-                                                <SelectValue placeholder="Cambiar estado" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="initiated">Iniciada</SelectItem>
-                                                <SelectItem value="received">Recibida</SelectItem>
-                                                <SelectItem value="in_progress">En proceso</SelectItem>
-                                                <SelectItem value="resolved">Resuelta</SelectItem>
-                                                <SelectItem value="rejected">Rechazada</SelectItem>
-                                                <SelectItem value="closed">Cerrada</SelectItem>
-                                            </SelectContent>
-                                        </Select>
+                        </TableHeader>
+                        <TableBody>
+                            {warranties.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={6} className="h-20 text-center text-muted-foreground">
+                                        Sin garantías.
                                     </TableCell>
                                 </TableRow>
-                            ))
-                        )}
-                    </TableBody>
-                </Table>
+                            ) : (
+                                warranties.map((warranty) => (
+                                    <TableRow key={warranty.id}>
+                                        <TableCell>{new Date(warranty.created_at).toLocaleDateString("es-AR")}</TableCell>
+                                        <TableCell>{warranty.client_name}</TableCell>
+                                        <TableCell>{warranty.product_name}</TableCell>
+                                        <TableCell>{warranty.issue_description}</TableCell>
+                                        <TableCell>
+                                            <Badge variant="outline">{warranty.status}</Badge>
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            <Select
+                                                disabled={updateWarrantyStatusMutation.isPending}
+                                                onValueChange={(value) =>
+                                                    void handleUpdateWarrantyStatus(
+                                                        warranty.id,
+                                                        value as Parameters<typeof api.updateWarrantyStatus>[1]["status"],
+                                                    )
+                                                }
+                                            >
+                                                <SelectTrigger className="ml-auto w-40">
+                                                    <SelectValue placeholder="Cambiar estado" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="initiated">Iniciada</SelectItem>
+                                                    <SelectItem value="received">Recibida</SelectItem>
+                                                    <SelectItem value="in_progress">En proceso</SelectItem>
+                                                    <SelectItem value="resolved">Resuelta</SelectItem>
+                                                    <SelectItem value="rejected">Rechazada</SelectItem>
+                                                    <SelectItem value="closed">Cerrada</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </TableCell>
+                                    </TableRow>
+                                ))
+                            )}
+                        </TableBody>
+                    </Table>
+                ) : null}
             </CardContent>
 
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Nueva garantia</DialogTitle>
-                        <DialogDescription>Registra el reclamo del cliente.</DialogDescription>
+                        <DialogTitle>Nueva garantía</DialogTitle>
+                        <DialogDescription>Registrá el reclamo del cliente.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
                         <div className="space-y-2">
@@ -264,7 +357,9 @@ function WarrantiesTab() {
                         <Button variant="outline" onClick={() => setCreateOpen(false)}>
                             Cancelar
                         </Button>
-                        <Button onClick={() => void createWarranty()}>Guardar</Button>
+                        <Button onClick={() => void handleCreateWarranty()} disabled={createWarrantyMutation.isPending}>
+                            Guardar
+                        </Button>
                     </div>
                 </DialogContent>
             </Dialog>
@@ -273,46 +368,56 @@ function WarrantiesTab() {
 }
 
 function ReturnsTab() {
-    const [returns, setReturns] = useState<ClientReturnRow[]>([]);
-    const [clients, setClients] = useState<Client[]>([]);
-    const [products, setProducts] = useState<Product[]>([]);
-    const [createOpen, setCreateOpen] = useState(false);
+    const queryClient = useQueryClient();
 
+    const [createOpen, setCreateOpen] = useState(false);
     const [clientId, setClientId] = useState("");
     const [productId, setProductId] = useState("");
     const [quantity, setQuantity] = useState(1);
     const [reason, setReason] = useState("");
 
-    async function loadData() {
-        try {
-            const [returnsResponse, clientsResponse, productsResponse] = await Promise.all([
-                api.getClientReturns(),
-                api.getClients(),
-                api.getProducts(),
+    const returnsQuery = useQuery({
+        queryKey: queryKeys.clientReturns.all,
+        queryFn: async () => mapClientReturnRows(await api.getClientReturns()),
+    });
+
+    const clientsQuery = useQuery({
+        queryKey: queryKeys.clients.all,
+        queryFn: () => api.getClients(),
+    });
+
+    const productsQuery = useQuery({
+        queryKey: queryKeys.products.all,
+        queryFn: () => api.getProducts(),
+    });
+
+    const createReturnMutation = useMutation({
+        mutationFn: (payload: Parameters<typeof api.createClientReturn>[0]) => api.createClientReturn(payload),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: queryKeys.clientReturns.all });
+        },
+    });
+
+    const approveReturnMutation = useMutation({
+        mutationFn: (id: string) => api.approveClientReturn(id),
+        onSuccess: async () => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: queryKeys.clientReturns.all }),
+                queryClient.invalidateQueries({ queryKey: queryKeys.creditNotes.all }),
             ]);
-            setReturns(
-                returnsResponse.map((row) => ({
-                    id: readText(row.id, crypto.randomUUID()),
-                    created_at: readText(row.created_at, new Date().toISOString()),
-                    client_name: readText(row.client_name),
-                    reason: readText(row.reason),
-                    status: readText(row.status, "draft"),
-                })),
-            );
-            setClients(clientsResponse);
-            setProducts(productsResponse);
-        } catch (error) {
-            showErrorToast("Error al cargar devoluciones", error);
-        }
-    }
+        },
+    });
 
-    useEffect(() => {
-        void loadData();
-    }, []);
+    const returns = returnsQuery.data ?? EMPTY_CLIENT_RETURNS;
+    const clients = clientsQuery.data ?? EMPTY_CLIENTS;
+    const products = productsQuery.data ?? EMPTY_PRODUCTS;
 
-    async function createReturn() {
+    const loading = returnsQuery.isLoading || clientsQuery.isLoading || productsQuery.isLoading;
+    const hasLoadError = returnsQuery.isError || clientsQuery.isError || productsQuery.isError;
+
+    async function handleCreateReturn() {
         if (!productId || quantity <= 0) {
-            toast.error("Completa producto y cantidad");
+            toast.error("Completá producto y cantidad");
             return;
         }
         try {
@@ -323,27 +428,30 @@ function ReturnsTab() {
                 items: [{ product_id: productId, quantity, condition_status: "sellable" }],
             };
             if (clientId) payload.client_id = clientId;
-            await api.createClientReturn(payload);
-            toast.success("Devolucion registrada");
+
+            await createReturnMutation.mutateAsync(payload);
+            toast.success("Devolución registrada");
             setCreateOpen(false);
             setClientId("");
             setProductId("");
             setQuantity(1);
             setReason("");
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al registrar devolución", error);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
     }
 
-    async function approveReturn(id: string) {
+    async function handleApproveReturn(id: string) {
         try {
-            await api.approveClientReturn(id);
-            toast.success("Devolucion aprobada");
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al aprobar devolución", error);
+            await approveReturnMutation.mutateAsync(id);
+            toast.success("Devolución aprobada");
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
+    }
+
+    function retry() {
+        void Promise.all([returnsQuery.refetch(), clientsQuery.refetch(), productsQuery.refetch()]);
     }
 
     return (
@@ -355,52 +463,62 @@ function ReturnsTab() {
                     Nueva devolución
                 </Button>
             </CardHeader>
-            <CardContent>
-                <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead>Fecha</TableHead>
-                            <TableHead>Cliente</TableHead>
-                            <TableHead>Motivo</TableHead>
-                            <TableHead>Estado</TableHead>
-                            <TableHead className="text-right">Acciones</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {returns.length === 0 ? (
+            <CardContent className="space-y-4">
+                {hasLoadError ? <QueryErrorBanner onRetry={retry} /> : null}
+                {loading ? <QueryLoadingState /> : null}
+
+                {!loading ? (
+                    <Table>
+                        <TableHeader>
                             <TableRow>
-                                <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
-                                    Sin devoluciones.
-                                </TableCell>
+                                <TableHead>Fecha</TableHead>
+                                <TableHead>Cliente</TableHead>
+                                <TableHead>Motivo</TableHead>
+                                <TableHead>Estado</TableHead>
+                                <TableHead className="text-right">Acciones</TableHead>
                             </TableRow>
-                        ) : (
-                            returns.map((row) => (
-                                <TableRow key={row.id}>
-                                    <TableCell>{new Date(row.created_at).toLocaleDateString("es-AR")}</TableCell>
-                                    <TableCell>{row.client_name}</TableCell>
-                                    <TableCell>{row.reason}</TableCell>
-                                    <TableCell>
-                                        <Badge variant={row.status === "approved" ? "default" : "outline"}>{row.status}</Badge>
-                                    </TableCell>
-                                    <TableCell className="text-right">
-                                        {row.status !== "approved" ? (
-                                            <Button size="sm" variant="outline" onClick={() => void approveReturn(row.id)}>
-                                                Aprobar
-                                            </Button>
-                                        ) : null}
+                        </TableHeader>
+                        <TableBody>
+                            {returns.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
+                                        Sin devoluciones.
                                     </TableCell>
                                 </TableRow>
-                            ))
-                        )}
-                    </TableBody>
-                </Table>
+                            ) : (
+                                returns.map((row) => (
+                                    <TableRow key={row.id}>
+                                        <TableCell>{new Date(row.created_at).toLocaleDateString("es-AR")}</TableCell>
+                                        <TableCell>{row.client_name}</TableCell>
+                                        <TableCell>{row.reason}</TableCell>
+                                        <TableCell>
+                                            <Badge variant={row.status === "approved" ? "default" : "outline"}>{row.status}</Badge>
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            {row.status !== "approved" ? (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    disabled={approveReturnMutation.isPending}
+                                                    onClick={() => void handleApproveReturn(row.id)}
+                                                >
+                                                    Aprobar
+                                                </Button>
+                                            ) : null}
+                                        </TableCell>
+                                    </TableRow>
+                                ))
+                            )}
+                        </TableBody>
+                    </Table>
+                ) : null}
             </CardContent>
 
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Nueva devolución</DialogTitle>
-                        <DialogDescription>Registra mercaderia devuelta por un cliente.</DialogDescription>
+                        <DialogDescription>Registrá mercadería devuelta por un cliente.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
                         <div className="space-y-2">
@@ -435,7 +553,12 @@ function ReturnsTab() {
                         </div>
                         <div className="space-y-2">
                             <Label>Cantidad</Label>
-                            <Input type="number" min="1" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
+                            <Input
+                                type="number"
+                                min="1"
+                                value={quantity}
+                                onChange={(event) => setQuantity(Number(event.target.value))}
+                            />
                         </div>
                         <div className="space-y-2">
                             <Label>Motivo</Label>
@@ -446,7 +569,9 @@ function ReturnsTab() {
                         <Button variant="outline" onClick={() => setCreateOpen(false)}>
                             Cancelar
                         </Button>
-                        <Button onClick={() => void createReturn()}>Guardar</Button>
+                        <Button onClick={() => void handleCreateReturn()} disabled={createReturnMutation.isPending}>
+                            Guardar
+                        </Button>
                     </div>
                 </DialogContent>
             </Dialog>
@@ -455,44 +580,43 @@ function ReturnsTab() {
 }
 
 function CreditNotesTab() {
-    const [creditNotes, setCreditNotes] = useState<CreditNoteRow[]>([]);
-    const [clients, setClients] = useState<Client[]>([]);
-    const [createOpen, setCreateOpen] = useState(false);
+    const queryClient = useQueryClient();
 
+    const [createOpen, setCreateOpen] = useState(false);
     const [clientId, setClientId] = useState("");
     const [amount, setAmount] = useState(0);
     const [reason, setReason] = useState("");
 
-    async function loadData() {
-        try {
-            const [creditResponse, clientsResponse] = await Promise.all([api.getCreditNotes(), api.getClients()]);
-            setCreditNotes(
-                creditResponse.map((row) => ({
-                    id: readText(row.id, crypto.randomUUID()),
-                    number: readText(row.number, "-"),
-                    created_at: readText(row.created_at, new Date().toISOString()),
-                    client_name: readText(row.client_name),
-                    amount: readNumber(row.amount),
-                    status: readText(row.status, "issued"),
-                })),
-            );
-            setClients(clientsResponse);
-        } catch (error) {
-            showErrorToast("Error al cargar notas de crédito", error);
-        }
-    }
+    const creditNotesQuery = useQuery({
+        queryKey: queryKeys.creditNotes.all,
+        queryFn: async () => mapCreditNoteRows(await api.getCreditNotes()),
+    });
 
-    useEffect(() => {
-        void loadData();
-    }, []);
+    const clientsQuery = useQuery({
+        queryKey: queryKeys.clients.all,
+        queryFn: () => api.getClients(),
+    });
 
-    async function createCreditNote() {
+    const createCreditNoteMutation = useMutation({
+        mutationFn: (payload: Parameters<typeof api.createCreditNote>[0]) => api.createCreditNote(payload),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: queryKeys.creditNotes.all });
+        },
+    });
+
+    const creditNotes = creditNotesQuery.data ?? EMPTY_CREDIT_NOTES;
+    const clients = clientsQuery.data ?? EMPTY_CLIENTS;
+    const loading = creditNotesQuery.isLoading || clientsQuery.isLoading;
+    const hasLoadError = creditNotesQuery.isError || clientsQuery.isError;
+
+    async function handleCreateCreditNote() {
         if (!clientId || amount <= 0) {
             toast.error("Cliente y monto son obligatorios");
             return;
         }
+
         try {
-            await api.createCreditNote({
+            await createCreditNoteMutation.mutateAsync({
                 client_id: clientId,
                 amount,
                 reason,
@@ -503,10 +627,13 @@ function CreditNotesTab() {
             setClientId("");
             setAmount(0);
             setReason("");
-            await loadData();
-        } catch (error) {
-            showErrorToast("Error al crear nota de crédito", error);
+        } catch {
+            // El manejo global de React Query ya informa el error.
         }
+    }
+
+    function retry() {
+        void Promise.all([creditNotesQuery.refetch(), clientsQuery.refetch()]);
     }
 
     return (
@@ -518,46 +645,51 @@ function CreditNotesTab() {
                     Nueva nota
                 </Button>
             </CardHeader>
-            <CardContent>
-                <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead>Fecha</TableHead>
-                            <TableHead>Número</TableHead>
-                            <TableHead>Cliente</TableHead>
-                            <TableHead>Estado</TableHead>
-                            <TableHead className="text-right">Monto</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {creditNotes.length === 0 ? (
+            <CardContent className="space-y-4">
+                {hasLoadError ? <QueryErrorBanner onRetry={retry} /> : null}
+                {loading ? <QueryLoadingState /> : null}
+
+                {!loading ? (
+                    <Table>
+                        <TableHeader>
                             <TableRow>
-                                <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
-                                    Sin notas de crédito.
-                                </TableCell>
+                                <TableHead>Fecha</TableHead>
+                                <TableHead>Número</TableHead>
+                                <TableHead>Cliente</TableHead>
+                                <TableHead>Estado</TableHead>
+                                <TableHead className="text-right">Monto</TableHead>
                             </TableRow>
-                        ) : (
-                            creditNotes.map((row) => (
-                                <TableRow key={row.id}>
-                                    <TableCell>{new Date(row.created_at).toLocaleDateString("es-AR")}</TableCell>
-                                    <TableCell>{row.number}</TableCell>
-                                    <TableCell>{row.client_name}</TableCell>
-                                    <TableCell>
-                                        <Badge variant="outline">{row.status}</Badge>
+                        </TableHeader>
+                        <TableBody>
+                            {creditNotes.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
+                                        Sin notas de crédito.
                                     </TableCell>
-                                    <TableCell className="text-right">${row.amount.toLocaleString("es-AR")}</TableCell>
                                 </TableRow>
-                            ))
-                        )}
-                    </TableBody>
-                </Table>
+                            ) : (
+                                creditNotes.map((row) => (
+                                    <TableRow key={row.id}>
+                                        <TableCell>{new Date(row.created_at).toLocaleDateString("es-AR")}</TableCell>
+                                        <TableCell>{row.number}</TableCell>
+                                        <TableCell>{row.client_name}</TableCell>
+                                        <TableCell>
+                                            <Badge variant="outline">{row.status}</Badge>
+                                        </TableCell>
+                                        <TableCell className="text-right">${row.amount.toLocaleString("es-AR")}</TableCell>
+                                    </TableRow>
+                                ))
+                            )}
+                        </TableBody>
+                    </Table>
+                ) : null}
             </CardContent>
 
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Nueva nota de crédito</DialogTitle>
-                        <DialogDescription>Emite una nota manual para el cliente seleccionado.</DialogDescription>
+                        <DialogDescription>Emití una nota manual para el cliente seleccionado.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
                         <div className="space-y-2">
@@ -577,7 +709,13 @@ function CreditNotesTab() {
                         </div>
                         <div className="space-y-2">
                             <Label>Monto</Label>
-                            <Input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(Number(event.target.value))} />
+                            <Input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={amount}
+                                onChange={(event) => setAmount(Number(event.target.value))}
+                            />
                         </div>
                         <div className="space-y-2">
                             <Label>Motivo</Label>
@@ -588,7 +726,9 @@ function CreditNotesTab() {
                         <Button variant="outline" onClick={() => setCreateOpen(false)}>
                             Cancelar
                         </Button>
-                        <Button onClick={() => void createCreditNote()}>Guardar</Button>
+                        <Button onClick={() => void handleCreateCreditNote()} disabled={createCreditNoteMutation.isPending}>
+                            Guardar
+                        </Button>
                     </div>
                 </DialogContent>
             </Dialog>

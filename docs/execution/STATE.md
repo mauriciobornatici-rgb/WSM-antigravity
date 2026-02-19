@@ -8,7 +8,7 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
 ## Resume From Here
 1. Validar en staging que la deduplicación de errores elimina toasts repetidos sin ocultar errores relevantes.
 2. Revisar regresión visual en Invoices/POS/Receptions luego de la modularización.
-3. Definir migración de `ReturnsAndWarranties` a React Query para remover el bypass lint temporal.
+3. Ejecutar smoke funcional de `ReturnsAndWarranties` (crear garantía, devolución y nota de crédito) en staging.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
@@ -424,6 +424,23 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
     - `packages/client/src/pages/ReturnsAndWarranties.tsx`
   - Validation:
     - `npm -w @wsm/client exec eslint src/context/AuthContext.tsx src/components/users/UserForm.tsx src/pages/Login.tsx src/pages/ReturnsAndWarranties.tsx src/pages/ClientDetail.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.6 partial progress (continued):
+  - Migrated `ReturnsAndWarranties` from manual `useEffect + loadData` flow to React Query:
+    - query-driven data loading per tab
+    - mutation-driven writes with cache invalidation
+    - explicit loading and retry states per section
+    - removed temporary lint bypass from the module
+  - Added shared query keys for this domain:
+    - `warranties`
+    - `client-returns`
+    - `credit-notes`
+  - Files:
+    - `packages/client/src/pages/ReturnsAndWarranties.tsx`
+    - `packages/client/src/lib/queryKeys.ts`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/ReturnsAndWarranties.tsx src/lib/queryKeys.ts`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):
