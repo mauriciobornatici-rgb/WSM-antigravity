@@ -50,16 +50,40 @@
 - `packages/client/src/pages/Picking.tsx.corrupt.bak`
 - `packages/client/src/pages/ReturnsAndWarranties.tsx.corrupt.bak`
   - Removed obsolete recovery copies from tracked source tree.
+- `packages/server/utils/pagination.js`
+  - Added shared pagination parser and header emitter utility.
+- `packages/server/middleware/validationMiddleware.js`
+  - Extended filter schemas with optional pagination fields:
+    - `orderFilters`
+    - `productFilters`
+    - `auditLogsFilters`
+- `packages/server/services/sales.service.js`
+  - `getOrders(...)` now supports optional `limit/offset` and `includeTotal` without breaking legacy return shape.
+- `packages/server/services/inventory.service.js`
+  - `getProductsWithInventoryStock(...)` now supports optional `limit/offset` and `includeTotal`.
+- `packages/server/services/audit.service.js`
+  - `getLogs(...)` now supports optional `limit/offset` and `includeTotal`.
+  - Preserved legacy behavior (`LIMIT 100`) when pagination is not requested.
+- `packages/server/controllers/salesController.js`
+- `packages/server/controllers/inventoryController.js`
+- `packages/server/controllers/settingsController.js`
+  - Added paginated endpoint behavior with backward-compatible JSON arrays.
+  - Added pagination metadata headers when pagination params are present.
+- `packages/client/src/services/api.ts`
+  - Expanded typings for paginated filters on `getOrders`, `getProducts`, and `getAuditLogs`.
+- `docs/execution/STATE.md`
+  - Updated state snapshot with pagination baseline completion and runtime validation constraints.
 
 ### Verified
 - Backend:
   - `npm -w @wsm/server run test`
-  - `npm -w @wsm/server run smoke:rbac`
-  - `npm -w @wsm/server run smoke:integrity`
 - Frontend:
   - `npm -w @wsm/client run lint`
   - `npm -w @wsm/client run test`
   - `npm -w @wsm/client run build`
+
+### Validation Notes
+- `smoke:rbac` and `smoke:integrity` cannot be completed in the current Codex runtime due local Node `fetch` restrictions (`fetch failed`) even when host-level health check is reachable.
 
 ## 2026-02-18
 

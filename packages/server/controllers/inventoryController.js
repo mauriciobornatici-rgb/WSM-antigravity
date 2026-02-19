@@ -2,6 +2,7 @@ import inventoryService from '../services/inventory.service.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
+import { applyPaginationHeaders, getPagination } from '../utils/pagination.js';
 
 export const getProducts = catchAsync(async (req, res) => {
     const filters = {};
@@ -9,8 +10,21 @@ export const getProducts = catchAsync(async (req, res) => {
         filters.supplier_id = req.query.supplier_id;
     }
 
-    const products = await inventoryService.getProductsWithInventoryStock(filters);
-    res.json(products);
+    const pagination = getPagination(req.query, { defaultLimit: 100, maxLimit: 500 });
+
+    if (!pagination.enabled) {
+        const products = await inventoryService.getProductsWithInventoryStock(filters);
+        return res.json(products);
+    }
+
+    const result = await inventoryService.getProductsWithInventoryStock(filters, {
+        limit: pagination.limit,
+        offset: pagination.offset,
+        includeTotal: true
+    });
+
+    applyPaginationHeaders(res, pagination, result.total);
+    res.json(result.rows);
 });
 
 export const getInventory = catchAsync(async (req, res) => {

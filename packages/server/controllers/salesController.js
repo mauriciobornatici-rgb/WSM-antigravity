@@ -2,14 +2,31 @@ import salesService from '../services/sales.service.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
+import { applyPaginationHeaders, getPagination } from '../utils/pagination.js';
 
 export const getOrders = catchAsync(async (req, res) => {
     const { client_id, status } = req.query;
     const filters = {};
     if (client_id) filters.client_id = client_id;
     if (status) filters.status = status;
-    const orders = await salesService.getOrders(filters, { orderBy: 'created_at', order: 'DESC' });
-    res.json(orders);
+
+    const pagination = getPagination(req.query, { defaultLimit: 50, maxLimit: 200 });
+    const options = { orderBy: 'created_at', order: 'DESC' };
+
+    if (!pagination.enabled) {
+        const orders = await salesService.getOrders(filters, options);
+        return res.json(orders);
+    }
+
+    const result = await salesService.getOrders(filters, {
+        ...options,
+        limit: pagination.limit,
+        offset: pagination.offset,
+        includeTotal: true
+    });
+
+    applyPaginationHeaders(res, pagination, result.total);
+    res.json(result.rows);
 });
 
 export const createOrder = catchAsync(async (req, res) => {

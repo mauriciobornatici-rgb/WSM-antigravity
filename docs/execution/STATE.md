@@ -587,6 +587,35 @@ Current task: P2.7 - Cierre de brechas combinadas (hardening backend + navegacio
   - Added guardrail in `.gitignore` to prevent re-committing `*.corrupt.bak` files.
   - Validation:
     - `npm -w @wsm/client run build`
+- P2.7 partial progress (scalability pagination baseline):
+  - Added backward-compatible pagination support (`page`, `limit`, `offset`) in high-volume endpoints:
+    - `GET /api/orders`
+    - `GET /api/products`
+    - `GET /api/settings/audit-logs`
+  - Response body contract remains backward-compatible (still arrays).
+  - When pagination params are present, API now emits metadata headers:
+    - `X-Total-Count`, `X-Page`, `X-Limit`, `X-Total-Pages`
+  - Backend shared utility added:
+    - `packages/server/utils/pagination.js`
+  - Validation schema updated for paginated filters:
+    - `orderFilters`, `productFilters`, `auditLogsFilters`
+  - Services extended with optional `includeTotal` + `limit/offset`:
+    - `packages/server/services/sales.service.js`
+    - `packages/server/services/inventory.service.js`
+    - `packages/server/services/audit.service.js`
+  - Controllers wired for pagination and headers:
+    - `packages/server/controllers/salesController.js`
+    - `packages/server/controllers/inventoryController.js`
+    - `packages/server/controllers/settingsController.js`
+  - Client API typings expanded (no contract break):
+    - `packages/client/src/services/api.ts`
+  - Validation:
+    - `npm -w @wsm/server run test` (PASS)
+    - `npm -w @wsm/client run lint` (PASS)
+    - `npm -w @wsm/client run test` (PASS)
+    - `npm -w @wsm/client run build` (PASS)
+  - Environment limitation:
+    - `smoke:rbac` / `smoke:integrity` cannot complete in current Codex runtime due local fetch restrictions (`fetch failed` from Node process), despite `api/health` reachable from host shell.
 
 ## Next After Current Task
 P2.7 continuation - limpieza controlada de artefactos legacy + cierre de idioma/UX residual + plan operativo de rotacion de secretos.

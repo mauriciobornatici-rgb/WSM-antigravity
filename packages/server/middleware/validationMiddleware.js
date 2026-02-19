@@ -49,6 +49,11 @@ const isoDate = Joi.date().iso();
 
 const orderPaymentMethod = Joi.string().valid('cash', 'transfer', 'credit_account', 'card', 'debit_card', 'credit_card', 'qr');
 const shiftPaymentMethod = Joi.string().valid('cash', 'debit_card', 'credit_card', 'card', 'transfer', 'qr', 'credit_account', 'other');
+const paginationQuery = {
+    page: Joi.number().integer().min(1),
+    limit: Joi.number().integer().min(1).max(500),
+    offset: Joi.number().integer().min(0)
+};
 const strongPassword = Joi.string()
     .min(passwordPolicy.minLength)
     .max(passwordPolicy.maxLength)
@@ -112,7 +117,8 @@ export const schemas = {
 
     productFilters: Joi.object({
         query: Joi.object({
-            supplier_id: optionalUuid
+            supplier_id: optionalUuid,
+            ...paginationQuery
         })
     }),
 
@@ -133,7 +139,8 @@ export const schemas = {
     orderFilters: Joi.object({
         query: Joi.object({
             client_id: optionalUuid,
-            status: Joi.string().valid('pending', 'confirmed', 'paid', 'packed', 'dispatched', 'delivered', 'completed', 'cancelled', 'returned')
+            status: Joi.string().valid('pending', 'confirmed', 'paid', 'packed', 'dispatched', 'delivered', 'completed', 'cancelled', 'returned'),
+            ...paginationQuery
         })
     }),
 
@@ -537,7 +544,8 @@ export const schemas = {
     auditLogsFilters: Joi.object({
         query: Joi.object({
             entity_type: Joi.string().max(100),
-            entity_id: Joi.string().max(100)
+            entity_id: Joi.string().max(100),
+            ...paginationQuery
         })
     }),
 

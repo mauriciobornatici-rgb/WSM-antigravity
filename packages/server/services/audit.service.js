@@ -29,7 +29,7 @@ class AuditService {
         }
     }
 
-    async getLogs(filters = {}) {
+    async getLogs(filters = {}, options = {}) {
         let sql = `
             SELECT al.*, u.name as user_name, u.email as user_email
             FROM audit_logs al
@@ -47,8 +47,33 @@ class AuditService {
             params.push(filters.entity_id);
         }
 
-        sql += ' ORDER BY al.created_at DESC LIMIT 100';
+        let total = null;
+        if (options.includeTotal) {
+            const countQuery = `SELECT COUNT(*) AS total FROM (${sql}) AS filtered_audit_logs`;
+            const [countRows] = await pool.query(countQuery, params);
+            total = Number(countRows[0]?.total || 0);
+        }
+
+        sql += ' ORDER BY al.created_at DESC';
+
+        if (options.limit != null) {
+            sql += ' LIMIT ?';
+            params.push(Number(options.limit));
+            if (options.offset != null) {
+                sql += ' OFFSET ?';
+                params.push(Number(options.offset));
+            }
+        } else {
+            // Backward compatibility: legacy endpoint returned latest 100 by default.
+            sql += ' LIMIT 100';
+        }
+
         const [rows] = await pool.query(sql, params);
+
+        if (options.includeTotal) {
+            return { rows, total: total ?? rows.length };
+        }
+
         return rows;
     }
 }

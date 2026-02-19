@@ -322,29 +322,51 @@ class SalesService extends BaseService {
     }
 
     async getOrders(filters = {}, options = {}) {
-        let query = `
+        let filteredQuery = `
             SELECT o.*, c.name AS client_name
             FROM orders o
             LEFT JOIN clients c ON o.client_id = c.id
             WHERE (o.deleted_at IS NULL)
         `;
-        const params = [];
+        const filterParams = [];
 
         if (filters.client_id) {
-            query += ' AND o.client_id = ?';
-            params.push(filters.client_id);
+            filteredQuery += ' AND o.client_id = ?';
+            filterParams.push(filters.client_id);
         }
         if (filters.status) {
-            query += ' AND o.status = ?';
-            params.push(filters.status);
+            filteredQuery += ' AND o.status = ?';
+            filterParams.push(filters.status);
+        }
+
+        let total = null;
+        if (options.includeTotal) {
+            const countQuery = `SELECT COUNT(*) AS total FROM (${filteredQuery}) AS filtered_orders`;
+            const [countRows] = await pool.query(countQuery, filterParams);
+            total = Number(countRows[0]?.total || 0);
         }
 
         const orderBy = this._sanitizeOrdersSortColumn(options.orderBy);
         const orderDir = options.order === 'ASC' ? 'ASC' : 'DESC';
-        query += ` ORDER BY o.${orderBy} ${orderDir}`;
+        let query = `${filteredQuery} ORDER BY o.${orderBy} ${orderDir}`;
+        const queryParams = [...filterParams];
 
-        const [orders] = await pool.query(query, params);
-        if (orders.length === 0) return [];
+        if (options.limit != null) {
+            query += ' LIMIT ?';
+            queryParams.push(Number(options.limit));
+            if (options.offset != null) {
+                query += ' OFFSET ?';
+                queryParams.push(Number(options.offset));
+            }
+        }
+
+        const [orders] = await pool.query(query, queryParams);
+        if (orders.length === 0) {
+            if (options.includeTotal) {
+                return { rows: [], total: total ?? 0 };
+            }
+            return [];
+        }
 
         const orderIds = orders.map((o) => o.id);
         const [items] = await pool.query(`
@@ -354,10 +376,16 @@ class SalesService extends BaseService {
             WHERE oi.order_id IN (?)
         `, [orderIds]);
 
-        return orders.map((o) => ({
+        const rows = orders.map((o) => ({
             ...o,
             items: items.filter((i) => i.order_id === o.id)
         }));
+
+        if (options.includeTotal) {
+            return { rows, total: total ?? rows.length };
+        }
+
+        return rows;
     }
 
     async dispatchOrder(orderId, data, userId) {

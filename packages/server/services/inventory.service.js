@@ -8,7 +8,7 @@ class InventoryService extends BaseService {
         super('products');
     }
 
-    async getProductsWithInventoryStock(filters = {}) {
+    async getProductsWithInventoryStock(filters = {}, options = {}) {
         let query = `
             SELECT
                 p.*,
@@ -28,15 +28,42 @@ class InventoryService extends BaseService {
             params.push(filters.supplier_id);
         }
 
+        let total = null;
+        if (options.includeTotal) {
+            let countQuery = 'SELECT COUNT(*) AS total FROM products p WHERE p.deleted_at IS NULL';
+            const countParams = [];
+            if (filters.supplier_id) {
+                countQuery += ' AND p.supplier_id = ?';
+                countParams.push(filters.supplier_id);
+            }
+            const [countRows] = await pool.query(countQuery, countParams);
+            total = Number(countRows[0]?.total || 0);
+        }
+
         query += ' ORDER BY p.created_at DESC';
+        if (options.limit != null) {
+            query += ' LIMIT ?';
+            params.push(Number(options.limit));
+            if (options.offset != null) {
+                query += ' OFFSET ?';
+                params.push(Number(options.offset));
+            }
+        }
+
         const [rows] = await pool.query(query, params);
-        return rows.map((row) => {
+        const mappedRows = rows.map((row) => {
             const { inventory_stock_current, ...product } = row;
             return {
                 ...product,
                 stock_current: Number(inventory_stock_current || 0)
             };
         });
+
+        if (options.includeTotal) {
+            return { rows: mappedRows, total: total ?? mappedRows.length };
+        }
+
+        return mappedRows;
     }
 
     async getInventoryWithDetails() {

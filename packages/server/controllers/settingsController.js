@@ -2,6 +2,7 @@ import pool from '../config/db.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
+import { applyPaginationHeaders, getPagination } from '../utils/pagination.js';
 
 const DEFAULT_TAX_RATE = 0.21;
 const DEFAULT_CURRENCY = 'ARS';
@@ -129,7 +130,23 @@ export const updateCompanySettings = catchAsync(async (req, res) => {
 });
 
 export const getAuditLogs = catchAsync(async (req, res) => {
-    const filters = req.query;
-    const logs = await auditService.getLogs(filters);
-    res.json(logs);
+    const { entity_type, entity_id } = req.query;
+    const filters = {
+        ...(entity_type ? { entity_type } : {}),
+        ...(entity_id ? { entity_id } : {})
+    };
+
+    const pagination = getPagination(req.query, { defaultLimit: 100, maxLimit: 500 });
+    if (!pagination.enabled) {
+        const logs = await auditService.getLogs(filters);
+        return res.json(logs);
+    }
+
+    const result = await auditService.getLogs(filters, {
+        limit: pagination.limit,
+        offset: pagination.offset,
+        includeTotal: true
+    });
+    applyPaginationHeaders(res, pagination, result.total);
+    res.json(result.rows);
 });

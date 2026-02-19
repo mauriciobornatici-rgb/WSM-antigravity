@@ -155,7 +155,7 @@ function withQuery(path: string, params?: QueryParams): string {
 
 export const api = {
     // ==================== PRODUCTS ====================
-    getProducts: (filters?: { supplier_id?: string }) =>
+    getProducts: (filters?: { supplier_id?: string; page?: number; limit?: number; offset?: number }) =>
         httpClient.get<Product[]>(withQuery("/api/products", filters)),
 
     createProduct: (data: ProductUpsertInput) =>
@@ -205,7 +205,7 @@ export const api = {
         httpClient.get<InventoryItem[]>("/api/inventory"),
 
     // ==================== ORDERS ====================
-    getOrders: (filters?: { client_id?: string; status?: string }) =>
+    getOrders: (filters?: { client_id?: string; status?: string; page?: number; limit?: number; offset?: number }) =>
         httpClient.get<Order[]>(withQuery("/api/orders", filters)),
 
     createOrder: (data: OrderCreateInput) =>
@@ -300,7 +300,7 @@ export const api = {
     updateCompanySettings: (settings: CompanySettings) =>
         httpClient.put<{ success: boolean }>("/api/settings/company", settings),
 
-    getAuditLogs: (filters?: { entity_type?: string; entity_id?: string }) =>
+    getAuditLogs: (filters?: { entity_type?: string; entity_id?: string; page?: number; limit?: number; offset?: number }) =>
         httpClient.get<AuditLogEntry[]>(withQuery("/api/settings/audit-logs", filters)),
 
     // ==================== USERS & AUTH ====================
