@@ -8,6 +8,42 @@ class InventoryService extends BaseService {
         super('products');
     }
 
+    normalizeBarcode(value) {
+        if (typeof value !== 'string') return null;
+        const sanitized = value.trim();
+        return sanitized.length > 0 ? sanitized : null;
+    }
+
+    normalizeLocation(value) {
+        if (typeof value !== 'string') return null;
+        const sanitized = value.trim();
+        return sanitized.length > 0 ? sanitized : null;
+    }
+
+    async ensureUniqueBarcode(rawBarcode, excludeId = null, connection = pool) {
+        const barcode = this.normalizeBarcode(rawBarcode);
+        if (!barcode) return null;
+
+        let query = 'SELECT id FROM products WHERE barcode = ? AND deleted_at IS NULL';
+        const params = [barcode];
+        if (excludeId) {
+            query += ' AND id <> ?';
+            params.push(excludeId);
+        }
+        query += ' LIMIT 1';
+
+        const [rows] = await connection.query(query, params);
+        if (rows.length > 0) {
+            const err = new Error('El codigo de barras ya existe en otro producto.');
+            err.statusCode = 409;
+            err.status = 'fail';
+            err.errorCode = 'DUPLICATE_BARCODE';
+            throw err;
+        }
+
+        return barcode;
+    }
+
     async getProductsWithInventoryStock(filters = {}, options = {}) {
         let query = `
             SELECT
@@ -87,16 +123,8 @@ class InventoryService extends BaseService {
             normalized.purchase_price = normalized.cost_price;
         }
         delete normalized.cost_price;
-
-        if (typeof normalized.barcode === 'string') {
-            const sanitizedBarcode = normalized.barcode.trim();
-            normalized.barcode = sanitizedBarcode.length > 0 ? sanitizedBarcode : null;
-        }
-
-        if (typeof normalized.location === 'string') {
-            const sanitizedLocation = normalized.location.trim();
-            normalized.location = sanitizedLocation.length > 0 ? sanitizedLocation : null;
-        }
+        normalized.barcode = await this.ensureUniqueBarcode(normalized.barcode);
+        normalized.location = this.normalizeLocation(normalized.location);
 
         const data = { id, ...normalized };
         const result = await this.create(data);

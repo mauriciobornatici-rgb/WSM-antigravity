@@ -3,6 +3,17 @@
 ## 2026-02-19
 
 ### Changed
+- `packages/server/services/inventory.service.js`
+  - Added product barcode/location normalization helpers.
+  - Added explicit unique-barcode guard (`DUPLICATE_BARCODE`, HTTP 409) for create/update workflows.
+- `packages/server/controllers/inventoryController.js`
+  - Update flow now validates barcode uniqueness before persist.
+  - Update flow now normalizes location input.
+- `packages/client/src/components/pos/ProductCatalogCard.tsx`
+  - Scanner button now opens a functional camera modal (not only hint text).
+  - Added session-safe scanner lifecycle and cleanup.
+  - Added manual fallback apply in scanner modal.
+  - Scanner capture now feeds exact POS submit path for add-to-cart by code.
 - `packages/server/migrations/004_add_products_barcode.sql`
   - Added incremental migration to include `products.barcode` for scan-driven catalog and POS workflows.
 - `packages/server/migrations/000_create_core_schema.sql`

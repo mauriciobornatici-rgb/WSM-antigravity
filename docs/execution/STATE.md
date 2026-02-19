@@ -3,7 +3,7 @@
 Last updated: 2026-02-19
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.9 - Validacion funcional de POS visual + alta de producto asistida
+Current task: P2.10 - Hardening operativo de escaneo y consistencia de codigos
 
 ## Resume From Here
 1. Validar en staging flujo de alta de producto con:
@@ -21,6 +21,19 @@ Current task: P2.9 - Validacion funcional de POS visual + alta de producto asist
 5. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
 
 ## Completed
+- P2.10 implemented:
+  - Backend hardening for product codes:
+    - normalized barcode/location on write paths
+    - enforced unique barcode validation in service layer (`409 DUPLICATE_BARCODE`)
+    - guarded update path with unique barcode validation before persistence
+  - POS scanner upgrade:
+    - camera scanner modal now functional in POS catalog
+    - fallback manual apply integrated
+    - scanner submit wired to exact add-to-cart flow
+  - Files:
+    - `packages/server/services/inventory.service.js`
+    - `packages/server/controllers/inventoryController.js`
+    - `packages/client/src/components/pos/ProductCatalogCard.tsx`
 - P2.9 implemented:
   - Product model/backend:
     - Added `barcode` support in validation and dynamic allowlists.

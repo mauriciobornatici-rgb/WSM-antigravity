@@ -46,6 +46,14 @@ export const updateProduct = catchAsync(async (req, res) => {
     }
     delete data.cost_price;
     delete data.stock_initial;
+
+    if (Object.prototype.hasOwnProperty.call(data, 'barcode')) {
+        data.barcode = await inventoryService.ensureUniqueBarcode(data.barcode, id);
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'location')) {
+        data.location = inventoryService.normalizeLocation(data.location);
+    }
+
     const updated = await inventoryService.update(id, data);
     if (updated) {
         await auditService.log({
