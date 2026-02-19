@@ -582,6 +582,11 @@ Current task: P2.7 - Cierre de brechas combinadas (hardening backend + navegacio
     - `npm -w @wsm/client run lint`
     - `npm -w @wsm/client run test`
     - `npm -w @wsm/client run build`
+- P2.7 partial progress (repository hygiene):
+  - Removed tracked recovery artifacts `*.corrupt.bak` from active frontend source tree.
+  - Added guardrail in `.gitignore` to prevent re-committing `*.corrupt.bak` files.
+  - Validation:
+    - `npm -w @wsm/client run build`
 
 ## Next After Current Task
 P2.7 continuation - limpieza controlada de artefactos legacy + cierre de idioma/UX residual + plan operativo de rotacion de secretos.

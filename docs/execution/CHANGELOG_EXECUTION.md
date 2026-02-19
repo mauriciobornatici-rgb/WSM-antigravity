@@ -39,6 +39,17 @@
   - Normalized `Receptions` lazy import to alias form (`@/pages/Receptions`).
 - `docs/execution/STATE.md`
   - Updated active task, resume plan and completion registry for this batch.
+- `.gitignore`
+  - Added `*.corrupt.bak` pattern to block accidental commit of recovery artifacts.
+- `packages/client/src/layout/AppLayout.tsx.corrupt.bak`
+- `packages/client/src/pages/ClientDetail.tsx.corrupt.bak`
+- `packages/client/src/pages/Dashboard.tsx.corrupt.bak`
+- `packages/client/src/pages/Inventory.tsx.corrupt.bak`
+- `packages/client/src/pages/Orders.tsx.corrupt.bak`
+- `packages/client/src/pages/POS.tsx.corrupt.bak`
+- `packages/client/src/pages/Picking.tsx.corrupt.bak`
+- `packages/client/src/pages/ReturnsAndWarranties.tsx.corrupt.bak`
+  - Removed obsolete recovery copies from tracked source tree.
 
 ### Verified
 - Backend:
