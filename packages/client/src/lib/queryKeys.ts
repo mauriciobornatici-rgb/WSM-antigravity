@@ -4,12 +4,18 @@ type ReceptionsFilter = "all" | "pending_qc" | "approved" | "rejected";
 export const queryKeys = {
     orders: {
         all: ["orders"] as const,
+        paged: (status: string, page: number, limit: number) => ["orders", "paged", status, page, limit] as const,
     },
     products: {
         all: ["products"] as const,
+        paged: (supplierId: string, page: number, limit: number) => ["products", "paged", supplierId, page, limit] as const,
     },
     clients: {
         all: ["clients"] as const,
+    },
+    auditLogs: {
+        all: ["audit-logs"] as const,
+        paged: (page: number, limit: number) => ["audit-logs", "paged", page, limit] as const,
     },
     purchaseOrders: {
         all: ["purchase-orders"] as const,

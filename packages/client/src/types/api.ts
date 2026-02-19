@@ -23,6 +23,18 @@ export interface LoginResponse {
 export type QueryPrimitive = string | number | boolean | null | undefined;
 export type QueryParams = Record<string, QueryPrimitive>;
 
+export interface PaginationMeta {
+    totalCount: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+}
+
+export interface PaginatedResponse<T> {
+    data: T;
+    pagination?: PaginationMeta;
+}
+
 export type ClientUpsertInput = Pick<Client, "name" | "email" | "phone" | "tax_id" | "address" | "credit_limit">;
 export type SupplierUpsertInput = Pick<Supplier, "name" | "tax_id" | "contact_name" | "email" | "phone" | "address">;
 

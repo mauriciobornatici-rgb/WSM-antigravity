@@ -1,4 +1,5 @@
 import { api } from "@/services/api";
+import type { PaginatedResponse, PaginationMeta } from "@/types/api";
 import type { Order, Product } from "@/types";
 
 export type ProductWithStock = Product & {
@@ -6,10 +7,21 @@ export type ProductWithStock = Product & {
     stock_immobilized: number;
 };
 
+export type InventorySnapshot = {
+    rows: ProductWithStock[];
+    pagination?: PaginationMeta;
+};
+
+type InventorySnapshotOptions = {
+    force?: boolean;
+    page?: number;
+    limit?: number;
+};
+
 const INVENTORY_CACHE_TTL_MS = 30_000;
 
-let inventorySnapshotCache: { data: ProductWithStock[]; timestamp: number } | null = null;
-let inventorySnapshotPromise: Promise<ProductWithStock[]> | null = null;
+const inventorySnapshotCache = new Map<string, { data: InventorySnapshot; timestamp: number }>();
+const inventorySnapshotPromises = new Map<string, Promise<InventorySnapshot>>();
 
 function computeImmobilizedStock(productId: string, orders: Order[]): number {
     return orders
@@ -19,38 +31,69 @@ function computeImmobilizedStock(productId: string, orders: Order[]): number {
         .reduce((sum, item) => sum + Number(item.quantity || 0), 0);
 }
 
-function isInventoryCacheFresh(): boolean {
-    if (!inventorySnapshotCache) return false;
-    return Date.now() - inventorySnapshotCache.timestamp < INVENTORY_CACHE_TTL_MS;
+function buildCacheKey(page?: number, limit?: number): string {
+    return `${page ?? "all"}:${limit ?? "all"}`;
+}
+
+function isCacheFresh(cacheKey: string): boolean {
+    const snapshot = inventorySnapshotCache.get(cacheKey);
+    if (!snapshot) return false;
+    return Date.now() - snapshot.timestamp < INVENTORY_CACHE_TTL_MS;
 }
 
 export function invalidateInventorySnapshotCache(): void {
-    inventorySnapshotCache = null;
+    inventorySnapshotCache.clear();
 }
 
-export async function fetchInventorySnapshot(force = false): Promise<ProductWithStock[]> {
-    if (!force && isInventoryCacheFresh() && inventorySnapshotCache) {
-        return inventorySnapshotCache.data;
+export async function fetchInventorySnapshot(options: InventorySnapshotOptions = {}): Promise<InventorySnapshot> {
+    const { force = false, page, limit } = options;
+    const cacheKey = buildCacheKey(page, limit);
+
+    if (!force && isCacheFresh(cacheKey)) {
+        const snapshot = inventorySnapshotCache.get(cacheKey);
+        if (snapshot) return snapshot.data;
     }
 
-    if (!force && inventorySnapshotPromise) {
-        return inventorySnapshotPromise;
+    if (!force) {
+        const inFlight = inventorySnapshotPromises.get(cacheKey);
+        if (inFlight) return inFlight;
     }
 
-    inventorySnapshotPromise = (async () => {
-        const [productsResponse, ordersResponse] = await Promise.all([api.getProducts(), api.getOrders()]);
-        return productsResponse.map((product) => ({
+    const promise = (async () => {
+        const [productsResponse, ordersResponse] = await Promise.all([
+            (async (): Promise<PaginatedResponse<Product[]>> => {
+                if (page != null || limit != null) {
+                    return api.getProductsPage({
+                        ...(page != null ? { page } : {}),
+                        ...(limit != null ? { limit } : {}),
+                    });
+                }
+                const data = await api.getProducts();
+                return { data };
+            })(),
+            api.getOrders(),
+        ]);
+
+        const rows = productsResponse.data.map((product) => ({
             ...product,
             stock_available: Number(product.stock_current ?? 0),
             stock_immobilized: computeImmobilizedStock(product.id, ordersResponse),
         }));
+
+        const snapshot: InventorySnapshot = {
+            rows,
+            ...(productsResponse.pagination ? { pagination: productsResponse.pagination } : {}),
+        };
+
+        inventorySnapshotCache.set(cacheKey, { data: snapshot, timestamp: Date.now() });
+        return snapshot;
     })();
 
+    inventorySnapshotPromises.set(cacheKey, promise);
+
     try {
-        const snapshot = await inventorySnapshotPromise;
-        inventorySnapshotCache = { data: snapshot, timestamp: Date.now() };
-        return snapshot;
+        return await promise;
     } finally {
-        inventorySnapshotPromise = null;
+        inventorySnapshotPromises.delete(cacheKey);
     }
 }

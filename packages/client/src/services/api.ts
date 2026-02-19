@@ -30,6 +30,7 @@ import type {
     InvoiceItem,
     LoginCredentials,
     LoginResponse,
+    PaginatedResponse,
     PurchaseOrderCreateInput,
     QualityCheckCreateInput,
     QueryParams,
@@ -157,6 +158,8 @@ export const api = {
     // ==================== PRODUCTS ====================
     getProducts: (filters?: { supplier_id?: string; page?: number; limit?: number; offset?: number }) =>
         httpClient.get<Product[]>(withQuery("/api/products", filters)),
+    getProductsPage: (filters?: { supplier_id?: string; page?: number; limit?: number; offset?: number }) =>
+        httpClient.getWithMeta<Product[]>(withQuery("/api/products", filters)) as Promise<PaginatedResponse<Product[]>>,
 
     createProduct: (data: ProductUpsertInput) =>
         httpClient.post<Product>("/api/products", data),
@@ -207,6 +210,8 @@ export const api = {
     // ==================== ORDERS ====================
     getOrders: (filters?: { client_id?: string; status?: string; page?: number; limit?: number; offset?: number }) =>
         httpClient.get<Order[]>(withQuery("/api/orders", filters)),
+    getOrdersPage: (filters?: { client_id?: string; status?: string; page?: number; limit?: number; offset?: number }) =>
+        httpClient.getWithMeta<Order[]>(withQuery("/api/orders", filters)) as Promise<PaginatedResponse<Order[]>>,
 
     createOrder: (data: OrderCreateInput) =>
         httpClient.post<{ id: string; total_amount: number }>("/api/orders", data),
@@ -302,6 +307,8 @@ export const api = {
 
     getAuditLogs: (filters?: { entity_type?: string; entity_id?: string; page?: number; limit?: number; offset?: number }) =>
         httpClient.get<AuditLogEntry[]>(withQuery("/api/settings/audit-logs", filters)),
+    getAuditLogsPage: (filters?: { entity_type?: string; entity_id?: string; page?: number; limit?: number; offset?: number }) =>
+        httpClient.getWithMeta<AuditLogEntry[]>(withQuery("/api/settings/audit-logs", filters)) as Promise<PaginatedResponse<AuditLogEntry[]>>,
 
     // ==================== USERS & AUTH ====================
     login: (credentials: LoginCredentials) =>

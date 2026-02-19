@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { api } from "@/services/api"
 import type { CompanySettings, SystemSettings, User } from "@/types"
-import type { AuditLogEntry, UserCreateInput, UserFormValues, UserUpdateInput } from "@/types/api"
+import type { AuditLogEntry, PaginationMeta, UserCreateInput, UserFormValues, UserUpdateInput } from "@/types/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -16,6 +16,7 @@ import { toast } from "sonner"
 import { useAuth } from "@/context/AuthContext"
 import { safeJsonParse, showErrorToast } from "@/lib/errorHandling"
 import { DEFAULT_COMPANY_SETTINGS, normalizeCompanySettings } from "@/lib/companySettings"
+import { PaginationControls } from "@/components/common/PaginationControls"
 
 const buildSystemSettings = (settings: CompanySettings): SystemSettings => ({
     regional: {
@@ -28,12 +29,17 @@ const buildSystemSettings = (settings: CompanySettings): SystemSettings => ({
     }
 })
 
+const AUDIT_PAGE_SIZE = 20
+
 export default function SettingsPage() {
     const { user: currentUser } = useAuth()
     const [company, setCompany] = useState<CompanySettings | null>(null)
     const [system, setSystem] = useState<SystemSettings | null>(null)
     const [users, setUsers] = useState<User[]>([])
     const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([])
+    const [auditPage, setAuditPage] = useState(1)
+    const [auditPagination, setAuditPagination] = useState<PaginationMeta | null>(null)
+    const [auditLoading, setAuditLoading] = useState(false)
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
 
@@ -44,10 +50,9 @@ export default function SettingsPage() {
 
     const loadData = useCallback(async () => {
         try {
-            const [c, u, logs] = await Promise.allSettled([
+            const [c, u] = await Promise.allSettled([
                 api.getCompanySettings(),
                 api.getUsers(),
-                api.getAuditLogs()
             ])
 
             if (c.status === 'fulfilled') {
@@ -59,7 +64,6 @@ export default function SettingsPage() {
                 setSystem(buildSystemSettings(DEFAULT_COMPANY_SETTINGS))
             }
             if (u.status === 'fulfilled') setUsers(u.value)
-            if (logs.status === 'fulfilled') setAuditLogs(logs.value)
 
             if (c.status === 'rejected') {
                 showErrorToast("Error al cargar configuracion de empresa", c.reason)
@@ -71,9 +75,39 @@ export default function SettingsPage() {
         }
     }, [])
 
+    const loadAuditLogs = useCallback(async (page: number) => {
+        if (currentUser?.role !== 'admin') return
+
+        setAuditLoading(true)
+        try {
+            const response = await api.getAuditLogsPage({
+                page,
+                limit: AUDIT_PAGE_SIZE
+            })
+            setAuditLogs(response.data)
+            setAuditPagination(response.pagination ?? null)
+        } catch (error) {
+            showErrorToast("Error al cargar auditoria", error)
+        } finally {
+            setAuditLoading(false)
+        }
+    }, [currentUser?.role])
+
     useEffect(() => {
         void loadData()
     }, [loadData])
+
+    useEffect(() => {
+        if (currentUser?.role !== 'admin') return
+        void loadAuditLogs(auditPage)
+    }, [currentUser?.role, auditPage, loadAuditLogs])
+
+    useEffect(() => {
+        const totalPages = Math.max(1, Number(auditPagination?.totalPages || 1))
+        if (auditPage > totalPages) {
+            setAuditPage(totalPages)
+        }
+    }, [auditPage, auditPagination?.totalPages])
 
     const handleSaveCompany = async () => {
         if (!company) return
@@ -367,7 +401,13 @@ export default function SettingsPage() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {auditLogs.length === 0 ? (
+                                        {auditLoading ? (
+                                            <TableRow>
+                                                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                                                    Cargando auditoria...
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : auditLogs.length === 0 ? (
                                             <TableRow>
                                                 <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                                                     No hay registros de auditoría disponibles.
@@ -439,6 +479,14 @@ export default function SettingsPage() {
                                         )}
                                     </TableBody>
                                 </Table>
+                                <PaginationControls
+                                    page={Math.max(1, Number(auditPagination?.page || auditPage))}
+                                    totalPages={Math.max(1, Number(auditPagination?.totalPages || 1))}
+                                    totalCount={Number(auditPagination?.totalCount || auditLogs.length)}
+                                    itemLabel="registro"
+                                    isLoading={auditLoading}
+                                    onPageChange={(nextPage) => setAuditPage(Math.max(1, nextPage))}
+                                />
                             </CardContent>
                         </Card>
                     </TabsContent>

@@ -3,13 +3,13 @@
 Last updated: 2026-02-19
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.7 - Cierre de brechas combinadas (hardening backend + navegacion UX base)
+Current task: P2.8 - Integracion de paginacion UI en modulos de alto volumen
 
 ## Resume From Here
-1. Ejecutar barrido final de textos visibles en espanol AR en vistas secundarias (incluye acentos pendientes heredados).
-2. Definir y ejecutar limpieza controlada de artefactos legacy (`*.corrupt.bak`, snapshot zip, scripts obsoletos) con respaldo previo.
+1. Validar en staging UX de paginacion en `Orders`, `Inventory` y `Settings` (Audit) con datos reales y navegacion entre paginas.
+2. Ejecutar barrido final de textos visibles en espanol AR en vistas secundarias (incluye acentos pendientes heredados).
 3. Cerrar plan de rotacion de secretos (JWT/DB) fuera de codigo y validar post-rotacion en staging.
-4. Evaluar paginacion incremental en listados de alto volumen (orders/products/audit).
+4. Definir si se migra `Settings` a React Query completo (hoy solo auditoria tiene paginacion activa con carga dedicada).
 5. Mantener validacion incremental completa (`server test + smokes`, `client lint/test/build`) en cada lote.
 
 ## Completed
@@ -616,9 +616,31 @@ Current task: P2.7 - Cierre de brechas combinadas (hardening backend + navegacio
     - `npm -w @wsm/client run build` (PASS)
   - Environment limitation:
     - `smoke:rbac` / `smoke:integrity` cannot complete in current Codex runtime due local fetch restrictions (`fetch failed` from Node process), despite `api/health` reachable from host shell.
+- P2.8 partial progress (frontend pagination adoption):
+  - Added client-side pagination metadata contract:
+    - `PaginationMeta` / `PaginatedResponse` in shared API types.
+  - Extended HTTP layer to read backend pagination headers:
+    - `httpClient.getWithMeta(...)` parses `X-Total-Count`, `X-Page`, `X-Limit`, `X-Total-Pages`.
+  - Added reusable UI controls:
+    - `packages/client/src/components/common/PaginationControls.tsx`.
+  - Orders page now uses server pagination (`20` rows/page) with filter-aware query keys:
+    - `packages/client/src/pages/Orders.tsx`
+    - `packages/client/src/lib/queryKeys.ts`
+  - Inventory page now consumes paginated products snapshot with preserved stock immobilization logic:
+    - `packages/client/src/lib/inventorySnapshot.ts`
+    - `packages/client/src/pages/Inventory.tsx`
+  - Settings page audit tab now loads paginated logs (`20` rows/page) with dedicated loading state:
+    - `packages/client/src/pages/Settings.tsx`
+  - API service expanded with explicit paged methods (backward compatible):
+    - `getOrdersPage`, `getProductsPage`, `getAuditLogsPage` in `packages/client/src/services/api.ts`
+  - Validation:
+    - `npm -w @wsm/server run test`
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
 
 ## Next After Current Task
-P2.7 continuation - limpieza controlada de artefactos legacy + cierre de idioma/UX residual + plan operativo de rotacion de secretos.
+P2.8 continuation - validacion funcional en staging de paginacion UI + cierre de idioma/UX residual + plan operativo de rotacion de secretos.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):

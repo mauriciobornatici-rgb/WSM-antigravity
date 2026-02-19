@@ -3,19 +3,24 @@ import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { Product } from "@/types";
+import type { PaginationMeta } from "@/types/api";
 import { getErrorMessage, showErrorToast } from "@/lib/errorHandling";
 import { fetchInventorySnapshot, invalidateInventorySnapshotCache, type ProductWithStock } from "@/lib/inventorySnapshot";
 import { ProductForm } from "@/components/products/ProductForm";
 import { InventoryTable } from "@/components/products/InventoryTable";
+import { PaginationControls } from "@/components/common/PaginationControls";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 
 export default function InventoryPage() {
+    const PRODUCTS_PAGE_SIZE = 20;
     const [products, setProducts] = useState<ProductWithStock[]>([]);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
+    const [productsPage, setProductsPage] = useState(1);
+    const [productsPagination, setProductsPagination] = useState<PaginationMeta | null>(null);
     const [search, setSearch] = useState("");
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<ProductWithStock | null>(null);
@@ -25,18 +30,30 @@ export default function InventoryPage() {
         try {
             setLoading(true);
             setLoadError(null);
-            const snapshot = await fetchInventorySnapshot(force);
-            setProducts(snapshot);
+            const snapshot = await fetchInventorySnapshot({
+                force,
+                page: productsPage,
+                limit: PRODUCTS_PAGE_SIZE,
+            });
+            setProducts(snapshot.rows);
+            setProductsPagination(snapshot.pagination ?? null);
         } catch (error) {
             setLoadError(getErrorMessage(error, "No se pudo cargar el inventario."));
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [productsPage]);
 
     useEffect(() => {
         void loadData();
     }, [loadData]);
+
+    useEffect(() => {
+        const totalPages = Math.max(1, Number(productsPagination?.totalPages || 1));
+        if (productsPage > totalPages) {
+            setProductsPage(totalPages);
+        }
+    }, [productsPage, productsPagination?.totalPages]);
 
     const filteredProducts = useMemo(() => {
         const query = search.trim().toLowerCase();
@@ -164,6 +181,14 @@ export default function InventoryPage() {
                             setDialogOpen(true);
                         }}
                         onDelete={(product) => setDeletingProduct(product)}
+                    />
+                    <PaginationControls
+                        page={Math.max(1, Number(productsPagination?.page || productsPage))}
+                        totalPages={Math.max(1, Number(productsPagination?.totalPages || 1))}
+                        totalCount={Number(productsPagination?.totalCount || products.length)}
+                        itemLabel="producto"
+                        isLoading={loading}
+                        onPageChange={(nextPage) => setProductsPage(Math.max(1, nextPage))}
                     />
                 </CardContent>
             </Card>

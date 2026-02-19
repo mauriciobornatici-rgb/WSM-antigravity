@@ -73,6 +73,29 @@
   - Expanded typings for paginated filters on `getOrders`, `getProducts`, and `getAuditLogs`.
 - `docs/execution/STATE.md`
   - Updated state snapshot with pagination baseline completion and runtime validation constraints.
+- `packages/client/src/types/api.ts`
+  - Added shared pagination types (`PaginationMeta`, `PaginatedResponse<T>`).
+- `packages/client/src/services/httpClient.ts`
+  - Added `getWithMeta` support that parses pagination headers and returns `{ data, pagination }`.
+- `packages/client/src/services/api.ts`
+  - Added explicit paginated methods (backward-compatible):
+    - `getOrdersPage`
+    - `getProductsPage`
+    - `getAuditLogsPage`
+- `packages/client/src/components/common/PaginationControls.tsx`
+  - Added reusable pagination controls component for table/list modules.
+- `packages/client/src/lib/queryKeys.ts`
+  - Added paginated query keys for `orders`, `products`, and `audit-logs` domains.
+- `packages/client/src/pages/Orders.tsx`
+  - Integrated server pagination into sales orders listing (`page/limit` with metadata-driven navigation).
+- `packages/client/src/lib/inventorySnapshot.ts`
+  - Extended inventory snapshot pipeline to consume paged product data while preserving stock immobilization calculation.
+- `packages/client/src/pages/Inventory.tsx`
+  - Integrated paginated inventory listing with shared controls and page-aware reload behavior.
+- `packages/client/src/pages/Settings.tsx`
+  - Audit tab now loads paged audit logs with independent loading state and navigation controls.
+- `docs/execution/STATE.md`
+  - Updated active task and resume checkpoint for UI pagination adoption block.
 
 ### Verified
 - Backend:

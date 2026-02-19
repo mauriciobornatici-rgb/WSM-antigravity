@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PaginationControls } from "@/components/common/PaginationControls";
 
 type OrderStatus = Order["status"];
 type OrderFilter = OrderStatus | "all";
@@ -31,6 +32,7 @@ const PAYMENT_METHODS = [
 const EMPTY_ORDERS: Order[] = [];
 const EMPTY_PRODUCTS: Product[] = [];
 const EMPTY_CLIENTS: Client[] = [];
+const ORDERS_PAGE_SIZE = 20;
 
 function statusLabel(status: OrderStatus): string {
     const labels: Record<OrderStatus, string> = {
@@ -59,6 +61,7 @@ export default function OrdersPage() {
 
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState<OrderFilter>("all");
+    const [ordersPage, setOrdersPage] = useState(1);
 
     const [createOpen, setCreateOpen] = useState(false);
     const [createClientId, setCreateClientId] = useState("");
@@ -87,8 +90,13 @@ export default function OrdersPage() {
     const [invoicePayments, setInvoicePayments] = useState<PaymentLine[]>([]);
 
     const ordersQuery = useQuery({
-        queryKey: queryKeys.orders.all,
-        queryFn: () => api.getOrders(),
+        queryKey: queryKeys.orders.paged(filter, ordersPage, ORDERS_PAGE_SIZE),
+        queryFn: () =>
+            api.getOrdersPage({
+                ...(filter !== "all" ? { status: filter } : {}),
+                page: ordersPage,
+                limit: ORDERS_PAGE_SIZE,
+            }),
     });
 
     const productsQuery = useQuery({
@@ -143,7 +151,11 @@ export default function OrdersPage() {
         },
     });
 
-    const orders: Order[] = ordersQuery.data ?? EMPTY_ORDERS;
+    const orders: Order[] = ordersQuery.data?.data ?? EMPTY_ORDERS;
+    const ordersPagination = ordersQuery.data?.pagination;
+    const totalOrders = Number(ordersPagination?.totalCount ?? orders.length);
+    const totalOrderPages = Number(ordersPagination?.totalPages ?? 1);
+    const currentOrdersPage = Number(ordersPagination?.page ?? ordersPage);
     const products: Product[] = productsQuery.data ?? EMPTY_PRODUCTS;
     const clients: Client[] = clientsQuery.data ?? EMPTY_CLIENTS;
     const loading = ordersQuery.isLoading || productsQuery.isLoading || clientsQuery.isLoading;
@@ -159,6 +171,11 @@ export default function OrdersPage() {
             return order.id.toLowerCase().includes(query) || clientText.includes(query);
         });
     }, [orders, search, filter]);
+
+    function handleFilterChange(nextFilter: OrderFilter) {
+        setFilter(nextFilter);
+        setOrdersPage(1);
+    }
 
     async function createOrder() {
         if (!createProductId || createQuantity <= 0) {
@@ -401,7 +418,7 @@ export default function OrdersPage() {
                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                             <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar" className="pl-8" />
                         </div>
-                        <Select value={filter} onValueChange={(value) => setFilter(value as OrderFilter)}>
+                        <Select value={filter} onValueChange={(value) => handleFilterChange(value as OrderFilter)}>
                             <SelectTrigger className="w-44">
                                 <SelectValue />
                             </SelectTrigger>
@@ -514,6 +531,14 @@ export default function OrdersPage() {
                             )}
                         </TableBody>
                     </Table>
+                    <PaginationControls
+                        page={Math.max(1, currentOrdersPage)}
+                        totalPages={Math.max(1, totalOrderPages)}
+                        totalCount={totalOrders}
+                        itemLabel="pedido"
+                        isLoading={ordersQuery.isFetching}
+                        onPageChange={(nextPage) => setOrdersPage(Math.max(1, nextPage))}
+                    />
                 </CardContent>
             </Card>
 
