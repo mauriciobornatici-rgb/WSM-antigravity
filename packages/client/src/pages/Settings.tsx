@@ -293,7 +293,7 @@ export default function SettingsPage() {
                                     <Input value={company.contact.email} onChange={e => setCompany({ ...company, contact: { ...company.contact, email: e.target.value } })} />
                                 </div>
                                 <div className="space-y-2">
-                                    <Label>Website</Label>
+                                    <Label>Sitio web</Label>
                                     <Input value={company.contact.website} onChange={e => setCompany({ ...company, contact: { ...company.contact, website: e.target.value } })} />
                                 </div>
                             </div>

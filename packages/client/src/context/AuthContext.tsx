@@ -106,10 +106,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const token = data?.token ?? null;
 
             if (!userObj) {
-                throw new Error("Invalid login response structure");
+                throw new Error("Respuesta de inicio de sesion invalida");
             }
             if (!token) {
-                throw new Error("El servidor no devolvió token de sesión");
+                throw new Error("El servidor no devolvio token de sesion");
             }
             if (userObj.status !== "active") {
                 clearSessionStorage();
@@ -122,7 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             toast.success(`Bienvenido, ${userObj.name}`);
         } catch (error) {
-            toast.error(getErrorMessage(error, "Error al iniciar sesión"));
+            toast.error(getErrorMessage(error, "Error al iniciar sesion"));
             throw error;
         }
     };
@@ -143,7 +143,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 export function useAuth() {
     const context = useContext(AuthContext);
     if (context === undefined) {
-        throw new Error("useAuth must be used within an AuthProvider");
+        throw new Error("useAuth debe usarse dentro de AuthProvider");
     }
     return context;
 }

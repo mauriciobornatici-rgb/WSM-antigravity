@@ -117,7 +117,7 @@ async function request<T = unknown>(
         } catch {
             body = { error: res.statusText };
         }
-        const message = getBodyMessage(body) || `HTTP Error ${res.status}`;
+        const message = getBodyMessage(body) || `Error HTTP ${res.status}`;
         throw new ApiError(message, res.status, body);
     }
 
@@ -163,7 +163,7 @@ async function requestWithMeta<T = unknown>(
         } catch {
             body = { error: res.statusText };
         }
-        const message = getBodyMessage(body) || `HTTP Error ${res.status}`;
+        const message = getBodyMessage(body) || `Error HTTP ${res.status}`;
         throw new ApiError(message, res.status, body);
     }
 

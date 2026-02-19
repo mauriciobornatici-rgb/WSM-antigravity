@@ -96,6 +96,14 @@
   - Audit tab now loads paged audit logs with independent loading state and navigation controls.
 - `docs/execution/STATE.md`
   - Updated active task and resume checkpoint for UI pagination adoption block.
+- `packages/client/src/context/AuthContext.tsx`
+  - Normalized residual auth messages to Spanish (`login` response validation and `useAuth` guard).
+- `packages/client/src/services/httpClient.ts`
+  - Localized generic HTTP fallback errors (`Error HTTP {status}`).
+- `packages/client/src/pages/Settings.tsx`
+  - Replaced remaining English field label (`Website` -> `Sitio web`).
+- `docs/execution/STATE.md`
+  - Added language-consistency checkpoint after pagination UI rollout.
 
 ### Verified
 - Backend:

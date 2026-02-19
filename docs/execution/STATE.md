@@ -7,7 +7,7 @@ Current task: P2.8 - Integracion de paginacion UI en modulos de alto volumen
 
 ## Resume From Here
 1. Validar en staging UX de paginacion en `Orders`, `Inventory` y `Settings` (Audit) con datos reales y navegacion entre paginas.
-2. Ejecutar barrido final de textos visibles en espanol AR en vistas secundarias (incluye acentos pendientes heredados).
+2. Completar ultimo barrido de idioma/terminologia en modulos secundarios aun no tocados por esta pasada.
 3. Cerrar plan de rotacion de secretos (JWT/DB) fuera de codigo y validar post-rotacion en staging.
 4. Definir si se migra `Settings` a React Query completo (hoy solo auditoria tiene paginacion activa con carga dedicada).
 5. Mantener validacion incremental completa (`server test + smokes`, `client lint/test/build`) en cada lote.
@@ -638,9 +638,23 @@ Current task: P2.8 - Integracion de paginacion UI en modulos de alto volumen
     - `npm -w @wsm/client run lint`
     - `npm -w @wsm/client run test`
     - `npm -w @wsm/client run build`
+- P2.8 partial progress (language consistency pass):
+  - Normalized residual user-facing wording to Spanish in core auth/http/settings flows:
+    - translated fallback/validation messages in auth context (`login`/`useAuth`).
+    - translated generic HTTP fallback from `HTTP Error` to `Error HTTP`.
+    - replaced `Website` label by `Sitio web` in settings company form.
+  - Files:
+    - `packages/client/src/context/AuthContext.tsx`
+    - `packages/client/src/services/httpClient.ts`
+    - `packages/client/src/pages/Settings.tsx`
+  - Validation:
+    - `npm -w @wsm/server run test`
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
 
 ## Next After Current Task
-P2.8 continuation - validacion funcional en staging de paginacion UI + cierre de idioma/UX residual + plan operativo de rotacion de secretos.
+P2.8 continuation - validacion funcional en staging de paginacion UI + plan operativo de rotacion de secretos.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):
