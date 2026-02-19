@@ -92,7 +92,7 @@ export function UserForm({ open, onOpenChange, onSubmit, initialData, isLoading 
                         />
                     </div>
                     <div className="grid gap-2">
-                        <Label htmlFor="email">Correo Electronico</Label>
+                        <Label htmlFor="email">Correo electronico</Label>
                         <Input
                             id="email"
                             type="email"
@@ -129,7 +129,7 @@ export function UserForm({ open, onOpenChange, onSubmit, initialData, isLoading 
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="admin">Administrador</SelectItem>
-                                    <SelectItem value="manager">Manager</SelectItem>
+                                    <SelectItem value="manager">Gerencia</SelectItem>
                                     <SelectItem value="cashier">Cajero</SelectItem>
                                     <SelectItem value="warehouse">Depósito</SelectItem>
                                 </SelectContent>

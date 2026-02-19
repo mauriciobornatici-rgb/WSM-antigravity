@@ -197,7 +197,7 @@ export default function SuppliersPage() {
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
-                                    <Label>Email</Label>
+                                    <Label>Correo electronico</Label>
                                     <Input value={newSupplier.email} onChange={e => setNewSupplier({ ...newSupplier, email: e.target.value })} />
                                 </div>
                                 <div className="space-y-2">
@@ -381,7 +381,7 @@ export default function SuppliersPage() {
                                             <p>{selectedSupplier.phone}</p>
                                         </div>
                                         <div className="space-y-1">
-                                            <Label className="text-muted-foreground">Email</Label>
+                                            <Label className="text-muted-foreground">Correo electronico</Label>
                                             <p>{selectedSupplier.email}</p>
                                         </div>
                                     </div>
@@ -463,7 +463,7 @@ export default function SuppliersPage() {
                                     <div className="flex gap-2">
                                         {supplier.email && (
                                             <Button variant="ghost" size="sm" className="h-8 flex-1 text-xs" asChild>
-                                                <a href={`mailto:${supplier.email}`}><Mail className="h-3 w-3 mr-2" /> Email</a>
+                                                <a href={`mailto:${supplier.email}`}><Mail className="h-3 w-3 mr-2" /> Correo</a>
                                             </Button>
                                         )}
                                         {supplier.phone && (
@@ -549,7 +549,7 @@ function EditSupplierDialog({ supplier, open, onOpenChange, onSubmit }: { suppli
                             <Input value={formData.contact_name} onChange={e => setFormData({ ...formData, contact_name: e.target.value })} />
                         </div>
                         <div className="space-y-2">
-                            <Label>Email</Label>
+                            <Label>Correo electronico</Label>
                             <Input value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
                         </div>
                     </div>

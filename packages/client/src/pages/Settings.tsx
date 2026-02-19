@@ -255,7 +255,7 @@ export default function SettingsPage() {
                                     <Input value={company.contact.phone} onChange={e => setCompany({ ...company, contact: { ...company.contact, phone: e.target.value } })} />
                                 </div>
                                 <div className="space-y-2">
-                                    <Label>Email</Label>
+                                    <Label>Correo electronico</Label>
                                     <Input value={company.contact.email} onChange={e => setCompany({ ...company, contact: { ...company.contact, email: e.target.value } })} />
                                 </div>
                                 <div className="space-y-2">
@@ -304,7 +304,7 @@ export default function SettingsPage() {
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead>Nombre</TableHead>
-                                        <TableHead>Email</TableHead>
+                                        <TableHead>Correo electronico</TableHead>
                                         <TableHead>Rol</TableHead>
                                         <TableHead>Estado</TableHead>
                                         <TableHead>Último Acceso</TableHead>

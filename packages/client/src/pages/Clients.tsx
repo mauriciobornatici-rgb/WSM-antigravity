@@ -148,7 +148,7 @@ export default function ClientsPage() {
                         <div className="relative w-full max-w-sm">
                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                             <Input
-                                placeholder="Buscar por nombre, CUIT o email..."
+                                placeholder="Buscar por nombre, CUIT o correo..."
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 className="pl-8"
@@ -339,7 +339,7 @@ function CreateClientDialog({ open, onOpenChange, onSubmit }: { open: boolean, o
                         <Input id="tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} className="col-span-3" required />
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
-                        <Label htmlFor="email" className="text-right">Email</Label>
+                        <Label htmlFor="email" className="text-right">Correo electronico</Label>
                         <Input id="email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="col-span-3" />
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
@@ -399,7 +399,7 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
                         <Input id="edit-tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} className="col-span-3" required />
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
-                        <Label htmlFor="edit-email" className="text-right">Email</Label>
+                        <Label htmlFor="edit-email" className="text-right">Correo electronico</Label>
                         <Input id="edit-email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="col-span-3" />
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">

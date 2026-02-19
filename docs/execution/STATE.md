@@ -6,11 +6,11 @@ Current block: P2
 Current task: P2.6 - Hardening final de frontend + normalizacion de texto (es-AR)
 
 ## Resume From Here
-1. Re-ejecutar smoke backend cuando venza la ventana de rate-limit del entorno activo (ultimo intento respondio `429` en `/api/health`).
-2. Validar en staging que la deduplicacion de errores elimina toasts repetidos sin ocultar errores relevantes.
-3. Revisar regresion visual en Invoices/POS/Receptions luego de la modularizacion.
-4. Ejecutar smoke funcional de `ReturnsAndWarranties` (crear garantia, devolucion y nota de credito) en staging.
-5. Validar en staging flujo de alta/edicion de usuarios con politica de contrasena fuerte (frontend + backend).
+1. Validar en staging que la deduplicacion de errores elimina toasts repetidos sin ocultar errores relevantes.
+2. Revisar regresion visual en Invoices/POS/Receptions luego de la modularizacion.
+3. Ejecutar smoke funcional de `ReturnsAndWarranties` (crear garantia, devolucion y nota de credito) en staging.
+4. Validar en staging flujo de alta/edicion de usuarios con politica de contrasena fuerte (frontend + backend).
+5. Completar barrido de idioma para etiquetas visibles pendientes en modulos secundarios.
 6. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
@@ -489,8 +489,6 @@ Current task: P2.6 - Hardening final de frontend + normalizacion de texto (es-AR
     - `npm -w @wsm/server run test`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
-  - Operational note:
-    - `npm -w @wsm/server run smoke:rbac` during this pass was blocked by environment limiter (`429` in health check), so smoke re-run remains pending.
 - Incident hotfix (staging availability):
   - Root cause:
     - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),
@@ -520,9 +518,33 @@ Current task: P2.6 - Hardening final de frontend + normalizacion de texto (es-AR
     - `npm -w @wsm/client exec eslint src/components/users/UserForm.tsx src/lib/passwordPolicy.ts`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
+- P2.6 validation checkpoint (smoke backend full):
+  - Re-run smoke validation completed in staging with previous rate-limit blocker resolved.
+  - Results:
+    - `npm -w @wsm/server run smoke:rbac` -> PASS
+    - `npm -w @wsm/server run smoke:integrity` -> PASS
+    - `SMOKE_MUTATION=1 SMOKE_RECEPTION_FLOW=1 SMOKE_CASH_FLOW=1 npm -w @wsm/server run smoke:integrity` -> PASS
+  - Notes:
+    - Full integrity run validated soft-delete, reception approval idempotency and cash balance invariants.
+- P2.6 partial progress (UX language consistency):
+  - Normalized visible labels to Spanish AR in key operational screens.
+  - Updated terms:
+    - `Manager` -> `Gerencia`
+    - `Close` (screen reader) -> `Cerrar`
+    - `Email` labels/headers/actions -> `Correo` / `Correo electronico`
+  - Files:
+    - `packages/client/src/components/users/UserForm.tsx`
+    - `packages/client/src/components/ui/dialog.tsx`
+    - `packages/client/src/pages/Clients.tsx`
+    - `packages/client/src/pages/Suppliers.tsx`
+    - `packages/client/src/pages/Settings.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/components/users/UserForm.tsx src/components/ui/dialog.tsx src/pages/Clients.tsx src/pages/Suppliers.tsx src/pages/Settings.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
 
 ## Next After Current Task
-P2.6 continuation - cerrar normalizacion de textos y aplicar estrategia anti-duplicacion de errores.
+P2.6 continuation - validacion funcional manual en staging y cierre del barrido final de textos.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):

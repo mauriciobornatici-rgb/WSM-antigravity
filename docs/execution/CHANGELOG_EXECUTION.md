@@ -674,3 +674,36 @@
   - `npm -w @wsm/client exec -- tsc --noEmit`
 - Frontend build passed:
   - `npm -w @wsm/client run build`
+
+### Verified (P2.6 Backend Smoke Re-run)
+- Staging smoke checks re-executed successfully after rate-limit tuning:
+  - `npm -w @wsm/server run smoke:rbac` -> PASS
+  - `npm -w @wsm/server run smoke:integrity` -> PASS
+- Full integrity path with optional flows enabled -> PASS:
+  - `SMOKE_MUTATION=1`
+  - `SMOKE_RECEPTION_FLOW=1`
+  - `SMOKE_CASH_FLOW=1`
+  - `SMOKE_SUPPLIER_ID=85714990-fe53-47a0-9121-2be0a331fdcc`
+  - `SMOKE_PRODUCT_ID=9af2b078-6ddb-4305-99e0-eb417ff72db9`
+  - `SMOKE_CASH_REGISTER_ID=00000000-0000-0000-0000-000000000001`
+
+### Changed (P2.6 UI Language Consistency - Spanish AR)
+- `packages/client/src/components/users/UserForm.tsx`
+  - Replaced `Manager` role label with `Gerencia`.
+  - Normalized email label wording to `Correo electronico`.
+- `packages/client/src/components/ui/dialog.tsx`
+  - Translated screen-reader close label from `Close` to `Cerrar`.
+- `packages/client/src/pages/Clients.tsx`
+  - Search placeholder and form labels normalized from `email`/`Email` to `correo`/`Correo electronico`.
+- `packages/client/src/pages/Suppliers.tsx`
+  - Replaced `Email` labels/action text with `Correo electronico` / `Correo`.
+- `packages/client/src/pages/Settings.tsx`
+  - Replaced user/company `Email` labels and table header with `Correo electronico`.
+
+### Verified (P2.6 UI Language Consistency - Spanish AR)
+- Frontend lint passed on touched files:
+  - `npm -w @wsm/client exec eslint src/components/users/UserForm.tsx src/components/ui/dialog.tsx src/pages/Clients.tsx src/pages/Suppliers.tsx src/pages/Settings.tsx`
+- Frontend typecheck passed:
+  - `npm -w @wsm/client exec -- tsc --noEmit`
+- Frontend build passed:
+  - `npm -w @wsm/client run build`
