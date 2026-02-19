@@ -466,6 +466,11 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
     - `npm -w @wsm/server run test`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
+- P2.6 validation checkpoint:
+  - Backend smoke scripts executed successfully against current staging runtime.
+  - Results:
+    - `npm -w @wsm/server run smoke:rbac` -> PASS
+    - `npm -w @wsm/server run smoke:integrity` -> PASS (mutation/reception/cash optional flows skipped by env flags)
 - Incident hotfix (staging availability):
   - Root cause:
     - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),

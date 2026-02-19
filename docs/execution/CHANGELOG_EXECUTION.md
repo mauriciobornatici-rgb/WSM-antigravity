@@ -280,6 +280,8 @@
   - Added baseline automated tests for password policy acceptance/rejection rules.
 - `docs/execution/STATE.md`
   - Updated snapshot after backend auth/password hardening pass.
+- `docs/execution/STATE.md`
+  - Added smoke validation checkpoint for current staging runtime.
 
 ### Verified
 - Frontend checks passed:
@@ -313,6 +315,8 @@
   - `node --check packages/server/config/env.js`
   - `node --check packages/server/utils/passwordPolicy.js`
   - `npm -w @wsm/server run test`
+  - `npm -w @wsm/server run smoke:rbac`
+  - `npm -w @wsm/server run smoke:integrity`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 
