@@ -1,8 +1,16 @@
+import crypto from 'crypto';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import inventoryService from '../services/inventory.service.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
 import { applyPaginationHeaders, getPagination } from '../utils/pagination.js';
+import { normalizeProductImageUrl, parseProductImageDataUrl } from '../utils/imagePolicy.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PRODUCT_UPLOADS_DIR = path.resolve(__dirname, '../uploads/products');
 
 export const getProducts = catchAsync(async (req, res) => {
     const filters = {};
@@ -53,6 +61,9 @@ export const updateProduct = catchAsync(async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(data, 'location')) {
         data.location = inventoryService.normalizeLocation(data.location);
     }
+    if (Object.prototype.hasOwnProperty.call(data, 'image_url')) {
+        data.image_url = normalizeProductImageUrl(data.image_url);
+    }
 
     const updated = await inventoryService.update(id, data);
     if (updated) {
@@ -67,6 +78,26 @@ export const updateProduct = catchAsync(async (req, res) => {
         });
     }
     res.json(updated);
+});
+
+export const uploadProductImage = catchAsync(async (req, res) => {
+    const { buffer, extension } = parseProductImageDataUrl(req.body?.data_url);
+
+    await fs.mkdir(PRODUCT_UPLOADS_DIR, { recursive: true });
+
+    const fileName = `${crypto.randomUUID()}.${extension}`;
+    const destinationPath = path.join(PRODUCT_UPLOADS_DIR, fileName);
+    await fs.writeFile(destinationPath, buffer, { flag: 'wx' });
+
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '')
+        .split(',')[0]
+        .trim();
+    const protocol = forwardedProto || req.protocol || 'http';
+    const host = req.get('host') || 'localhost:3001';
+
+    res.status(201).json({
+        image_url: `${protocol}://${host}/uploads/products/${fileName}`
+    });
 });
 
 export const deleteProduct = catchAsync(async (req, res) => {

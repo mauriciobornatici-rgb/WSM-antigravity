@@ -71,6 +71,7 @@ test('createProduct persists initial stock and inventory movement when stock_ini
             sale_price: 150,
             location: 'A-01',
             barcode: '  7790001112223 ',
+            image_url: ' https://cdn.example.com/pelota.jpg ',
             stock_initial: 7
         },
         'user-1'
@@ -81,6 +82,7 @@ test('createProduct persists initial stock and inventory movement when stock_ini
     assert.equal(createdPayload.stock_initial, undefined);
     assert.equal(createdPayload.barcode, '7790001112223');
     assert.equal(createdPayload.location, 'A-01');
+    assert.equal(createdPayload.image_url, 'https://cdn.example.com/pelota.jpg');
 
     assert.equal(poolCalls.length, 2);
     assert.match(poolCalls[0].sql, /INSERT INTO inventory/i);
@@ -97,3 +99,39 @@ test('createProduct persists initial stock and inventory movement when stock_ini
     assert.equal(auditPayload?.new_values?.stock_initial, 7);
 });
 
+test('createProduct rejects data URL image payloads with 400', async (t) => {
+    const originalCreate = inventoryService.create;
+    const originalEnsureUniqueBarcode = inventoryService.ensureUniqueBarcode;
+
+    let createCalled = false;
+    inventoryService.create = async () => {
+        createCalled = true;
+        return { id: 'unexpected' };
+    };
+    inventoryService.ensureUniqueBarcode = async (barcode) => inventoryService.normalizeBarcode(barcode);
+
+    t.after(() => {
+        inventoryService.create = originalCreate;
+        inventoryService.ensureUniqueBarcode = originalEnsureUniqueBarcode;
+    });
+
+    await assert.rejects(
+        () => inventoryService.createProduct(
+            {
+                name: 'Pelota Oficial',
+                sku: 'PEL-001',
+                purchase_price: 100,
+                sale_price: 150,
+                image_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA'
+            },
+            'user-1'
+        ),
+        (error) => {
+            assert.equal(error.statusCode, 400);
+            assert.equal(error.errorCode, 'DATA_URL_NOT_ALLOWED');
+            return true;
+        }
+    );
+
+    assert.equal(createCalled, false);
+});

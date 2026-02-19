@@ -10,6 +10,7 @@ const advancedInventoryRoles = authorizeRoles('admin', 'manager', 'warehouse');
 
 // Products
 router.get('/products', inventoryReadRoles, validate(schemas.productFilters), inventoryController.getProducts);
+router.post('/products/image-upload', inventoryWriteRoles, validate(schemas.uploadProductImage), inventoryController.uploadProductImage);
 router.post('/products', inventoryWriteRoles, validate(schemas.product), inventoryController.createProduct);
 router.put('/products/:id', inventoryWriteRoles, validate(schemas.product), inventoryController.updateProduct);
 router.delete('/products/:id', inventoryWriteRoles, validate(schemas.idParam), inventoryController.deleteProduct);

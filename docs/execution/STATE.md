@@ -10,7 +10,8 @@ Current task: P3.3 - Validacion funcional en staging (producto + POS visual + sc
 2. Validar en staging flujo de alta de producto con:
    - escaneo por lector optico (input + Enter)
    - escaneo por camara (BarcodeDetector)
-   - imagen URL y carga local (data URL)
+   - carga local de imagen via endpoint `/api/products/image-upload`
+   - imagen persistida como URL http(s) (sin data URL en `products.image_url`)
    - stock inicial con impacto real en `inventory` e `inventory_movements`.
 3. Validar en staging flujo POS visual:
    - cards con imagen
@@ -22,6 +23,41 @@ Current task: P3.3 - Validacion funcional en staging (producto + POS visual + sc
 6. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
 
 ## Completed
+- P3.4 implemented:
+  - Defined and enforced final product image storage policy:
+    - `products.image_url` now accepts only `http(s)` URLs.
+    - direct `data:image/...` payloads are rejected in create/update product flows.
+  - Added secure upload endpoint for product images:
+    - `POST /api/products/image-upload` (auth + inventory write roles)
+    - accepts base64 data URL payload
+    - validates type/size (max 1.5MB)
+    - stores files under `packages/server/uploads/products`
+    - returns canonical `image_url` for product persistence
+  - Kept strict JSON limits while supporting image upload:
+    - default API parser remains `10kb`
+    - route-specific parser (`2mb`) only for product image upload endpoint
+  - Frontend product onboarding aligned:
+    - local file selection now uploads to backend and stores returned URL
+    - form blocks invalid formats/oversize images and reports actionable errors
+    - fixed create flow that overwrote `image_url` to empty string
+  - Files:
+    - `packages/server/utils/imagePolicy.js`
+    - `packages/server/controllers/inventoryController.js`
+    - `packages/server/routes/inventoryRoutes.js`
+    - `packages/server/middleware/validationMiddleware.js`
+    - `packages/server/services/inventory.service.js`
+    - `packages/server/index.js`
+    - `packages/server/test/imagePolicy.test.js`
+    - `packages/server/test/inventory.service.test.js`
+    - `packages/client/src/services/api.ts`
+    - `packages/client/src/components/products/ProductForm.tsx`
+    - `packages/client/src/pages/Inventory.tsx`
+    - `.gitignore`
+  - Validation:
+    - `npm -w @wsm/server run test` (12/12)
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
 - P3.2 implemented:
   - Added focused backend business tests for critical integrity paths:
     - duplicate barcode guard (`409 DUPLICATE_BARCODE`)

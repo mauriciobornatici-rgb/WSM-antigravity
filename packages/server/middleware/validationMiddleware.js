@@ -107,13 +107,19 @@ export const schemas = {
             name: Joi.string().required(),
             description: Joi.string().allow('', null),
             category: Joi.string().allow('', null),
-            image_url: Joi.string().allow('', null),
+            image_url: Joi.string().max(2048).allow('', null),
             location: Joi.string().allow('', null),
             purchase_price: Joi.number().min(0),
             cost_price: Joi.number().min(0),
             sale_price: Joi.number().min(0),
             stock_initial: Joi.number().integer().min(0).optional(),
             status: Joi.string().valid('active', 'inactive').optional()
+        })
+    }),
+
+    uploadProductImage: Joi.object({
+        body: Joi.object({
+            data_url: Joi.string().max(2_200_000).required()
         })
     }),
 

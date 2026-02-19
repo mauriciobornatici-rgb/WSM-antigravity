@@ -30,3 +30,4 @@ dist-ssr
 
 *.zip
 *.corrupt.bak
+packages/server/uploads/

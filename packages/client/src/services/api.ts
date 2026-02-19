@@ -169,6 +169,9 @@ export const api = {
     updateProduct: (id: string, data: ProductUpsertInput) =>
         httpClient.put<Product>(`/api/products/${id}`, data),
 
+    uploadProductImage: (dataUrl: string) =>
+        httpClient.post<{ image_url: string }>("/api/products/image-upload", { data_url: dataUrl }),
+
     deleteProduct: (id: string) =>
         httpClient.del<{ success: boolean; message?: string }>(`/api/products/${id}`),
 

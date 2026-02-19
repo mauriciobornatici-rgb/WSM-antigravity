@@ -2,8 +2,10 @@ import { useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Camera, ScanLine, Upload } from "lucide-react";
 import { useForm, useWatch } from "react-hook-form";
+import { toast } from "sonner";
 import * as z from "zod";
 import type { Product } from "@/types";
+import { api } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import {
     Form,
@@ -15,6 +17,11 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
+const MAX_PRODUCT_IMAGE_FILE_BYTES = 1_500_000;
+const IMAGE_URL_PATTERN = /^https?:\/\/.+/i;
+const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const IMAGE_DATA_URL_PATTERN = /^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/i;
 
 const productSchema = z.object({
     sku: z.string().trim().min(2, "SKU requerido"),
@@ -34,7 +41,11 @@ const productSchema = z.object({
         .string()
         .trim()
         .refine((value) => value !== "" && Number.isInteger(Number(value)) && Number(value) >= 0, "Stock invalido"),
-    image_url: z.string().trim().optional().or(z.literal("")),
+    image_url: z
+        .string()
+        .trim()
+        .max(2048, "La URL de imagen es demasiado larga")
+        .refine((value) => value === "" || IMAGE_URL_PATTERN.test(value), "Debe ser una URL http(s) valida"),
 });
 
 type ProductFormSchema = z.infer<typeof productSchema>;
@@ -53,7 +64,7 @@ export type ProductFormSubmitData = {
 
 interface ProductFormProps {
     initialData?: Product;
-    onSubmit: (data: ProductFormSubmitData) => void;
+    onSubmit: (data: ProductFormSubmitData) => void | Promise<void>;
     onCancel: () => void;
 }
 
@@ -61,6 +72,28 @@ type ScanTarget = "barcode" | "location";
 type BarcodeDetectorLike = {
     detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue?: string }>>;
 };
+
+function canRenderProductImage(value: string): boolean {
+    const sanitized = value.trim();
+    if (!sanitized) return false;
+    if (IMAGE_URL_PATTERN.test(sanitized)) return true;
+    return IMAGE_DATA_URL_PATTERN.test(sanitized);
+}
+
+async function readFileAsDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (typeof reader.result === "string" && reader.result.trim()) {
+                resolve(reader.result);
+                return;
+            }
+            reject(new Error("No se pudo leer la imagen seleccionada."));
+        };
+        reader.onerror = () => reject(new Error("No se pudo leer la imagen seleccionada."));
+        reader.readAsDataURL(file);
+    });
+}
 
 export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProps) {
     const form = useForm<ProductFormSchema>({
@@ -87,6 +120,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     const [manualScanValue, setManualScanValue] = useState("");
     const [barcodeReaderMode, setBarcodeReaderMode] = useState(false);
     const [locationReaderMode, setLocationReaderMode] = useState(false);
+    const [isUploadingImage, setIsUploadingImage] = useState(false);
 
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -94,11 +128,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     const rafRef = useRef<number | null>(null);
     const scannerSessionRef = useRef(0);
 
-    const canRenderImage = useMemo(() => {
-        if (!imageValue) return false;
-        if (imageValue.startsWith("data:image/")) return true;
-        return /^https?:\/\//i.test(imageValue);
-    }, [imageValue]);
+    const canRenderImage = useMemo(() => canRenderProductImage(imageValue), [imageValue]);
 
     function stopScannerResources() {
         if (rafRef.current != null) {
@@ -234,22 +264,43 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
         form.setValue(target, value, { shouldDirty: true, shouldValidate: true });
     }
 
-    function handleImageFileChange(event: ChangeEvent<HTMLInputElement>) {
+    async function handleImageFileChange(event: ChangeEvent<HTMLInputElement>) {
         const file = event.target.files?.[0];
+        event.currentTarget.value = "";
         if (!file) return;
-        if (!file.type.startsWith("image/")) return;
-        if (file.size > 1_500_000) return;
 
-        const reader = new FileReader();
-        reader.onload = () => {
-            const result = typeof reader.result === "string" ? reader.result : "";
-            if (!result) return;
-            form.setValue("image_url", result, { shouldDirty: true, shouldValidate: true });
-        };
-        reader.readAsDataURL(file);
+        if (!IMAGE_MIME_TYPES.has(file.type)) {
+            form.setError("image_url", { type: "manual", message: "Formato no soportado. Use PNG, JPG, WEBP o GIF." });
+            return;
+        }
+
+        if (file.size > MAX_PRODUCT_IMAGE_FILE_BYTES) {
+            form.setError("image_url", { type: "manual", message: "La imagen supera el limite de 1.5MB." });
+            return;
+        }
+
+        try {
+            setIsUploadingImage(true);
+            form.clearErrors("image_url");
+            const dataUrl = await readFileAsDataUrl(file);
+            const response = await api.uploadProductImage(dataUrl);
+            form.setValue("image_url", response.image_url, { shouldDirty: true, shouldValidate: true });
+            toast.success("Imagen cargada correctamente");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "No se pudo cargar la imagen.";
+            form.setError("image_url", { type: "manual", message });
+            toast.error(message);
+        } finally {
+            setIsUploadingImage(false);
+        }
     }
 
-    function handleSubmit(values: ProductFormSchema) {
+    async function handleSubmit(values: ProductFormSchema) {
+        if (isUploadingImage) {
+            form.setError("image_url", { type: "manual", message: "Espere a que finalice la carga de imagen." });
+            return;
+        }
+
         const payload: ProductFormSubmitData = {
             sku: values.sku.trim(),
             barcode: values.barcode?.trim() ? values.barcode.trim() : null,
@@ -264,7 +315,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
         if (location) payload.location = location;
         if (!isEditMode) payload.stock_initial = Number(values.stock_initial || "0");
 
-        onSubmit(payload);
+        await onSubmit(payload);
     }
 
     return (
@@ -378,10 +429,10 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     <input type="file" accept="image/*" className="hidden" onChange={handleImageFileChange} />
                                     <span className="inline-flex items-center rounded-md border px-3 py-2 text-sm">
                                         <Upload className="mr-2 h-4 w-4" />
-                                        Subir imagen
+                                        {isUploadingImage ? "Subiendo..." : "Subir imagen"}
                                     </span>
                                 </label>
-                                <span className="text-xs text-muted-foreground">Se guarda como URL o data URL ligera.</span>
+                                <span className="text-xs text-muted-foreground">La imagen se sube al servidor y se guarda como URL segura.</span>
                             </div>
 
                             <div className="rounded-md border bg-muted/20 p-2">
@@ -497,7 +548,9 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         <Button type="button" variant="outline" onClick={onCancel}>
                             Cancelar
                         </Button>
-                        <Button type="submit">{isEditMode ? "Guardar cambios" : "Crear producto"}</Button>
+                        <Button type="submit" disabled={isUploadingImage || form.formState.isSubmitting}>
+                            {isEditMode ? "Guardar cambios" : "Crear producto"}
+                        </Button>
                     </div>
                 </form>
             </Form>
@@ -546,4 +599,3 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
         </>
     );
 }
-

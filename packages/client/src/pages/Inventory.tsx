@@ -79,7 +79,6 @@ export default function InventoryPage() {
                 await api.createProduct({
                     ...formData,
                     description: "",
-                    image_url: "",
                 });
                 toast.success("Producto creado");
             }

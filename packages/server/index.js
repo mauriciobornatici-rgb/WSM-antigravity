@@ -43,8 +43,19 @@ app.use(helmet());
 // CORS â€” restrict to allowed origins (default: Vite dev server)
 const corsOrigins = env.corsOrigins;
 app.use(cors({ origin: corsOrigins, credentials: true }));
-app.use(express.json({ limit: '10kb' })); // Body limit is security best practice
+
+const defaultJsonParser = express.json({ limit: '10kb' });
+const uploadsJsonParser = express.json({ limit: '2mb' });
+
+// Product image uploads require larger payload than default API json limit.
+app.use('/api/products/image-upload', uploadsJsonParser);
+app.use((req, res, next) => {
+    if (req.path === '/api/products/image-upload') return next();
+    return defaultJsonParser(req, res, next);
+});
+
 app.use(hpp()); // Prevent HTTP Parameter Pollution
+app.use('/uploads', express.static(path.resolve(__dirname, 'uploads')));
 
 // Rate Limiting
 const limiter = rateLimit({

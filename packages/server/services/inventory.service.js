@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import auditService from './audit.service.js';
+import { normalizeProductImageUrl } from '../utils/imagePolicy.js';
 
 class InventoryService extends BaseService {
     constructor() {
@@ -125,6 +126,7 @@ class InventoryService extends BaseService {
         delete normalized.cost_price;
         normalized.barcode = await this.ensureUniqueBarcode(normalized.barcode);
         normalized.location = this.normalizeLocation(normalized.location);
+        normalized.image_url = normalizeProductImageUrl(normalized.image_url);
 
         const data = { id, ...normalized };
         const result = await this.create(data);

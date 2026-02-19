@@ -3,6 +3,49 @@
 ## 2026-02-19
 
 ### Changed
+- `packages/server/utils/imagePolicy.js`
+  - Added centralized image policy utilities:
+    - `normalizeProductImageUrl` (only `http(s)` for persisted product images)
+    - `parseProductImageDataUrl` (secure decode/validation for upload payloads)
+    - explicit domain errors with status codes and error codes.
+- `packages/server/controllers/inventoryController.js`
+  - Product update now normalizes/validates `image_url` through shared image policy.
+  - Added `uploadProductImage` endpoint logic:
+    - validates base64 data URL payload
+    - persists file in `uploads/products`
+    - returns canonical `image_url` for product persistence.
+- `packages/server/routes/inventoryRoutes.js`
+  - Added authenticated upload route:
+    - `POST /api/products/image-upload`
+    - protected with inventory write roles + request validation.
+- `packages/server/middleware/validationMiddleware.js`
+  - Hardened `product.image_url` max length (`2048`).
+  - Added `uploadProductImage` schema (`data_url` with bounded payload size).
+- `packages/server/services/inventory.service.js`
+  - Product creation now normalizes/validates `image_url` with shared policy.
+- `packages/server/index.js`
+  - Added route-specific JSON parser (`2mb`) for `/api/products/image-upload`.
+  - Kept default API parser at `10kb` for all other endpoints.
+  - Added static serving for `/uploads` assets.
+- `packages/server/test/imagePolicy.test.js`
+  - Added tests for URL normalization and upload data URL parsing.
+- `packages/server/test/inventory.service.test.js`
+  - Extended create-product tests to verify image URL normalization.
+  - Added regression test to reject data URL payloads in product creation.
+- `packages/client/src/services/api.ts`
+  - Added `uploadProductImage(dataUrl)` client API.
+- `packages/client/src/components/products/ProductForm.tsx`
+  - Product image input now:
+    - validates URL as `http(s)`
+    - uploads local file to backend instead of persisting data URLs
+    - shows upload state and actionable errors
+    - prevents submit while upload is in progress.
+- `packages/client/src/pages/Inventory.tsx`
+  - Fixed create flow to persist `image_url` from form payload (removed forced empty override).
+- `.gitignore`
+  - Added `packages/server/uploads/` to avoid versioning runtime uploaded assets.
+- `docs/execution/STATE.md`
+  - Updated resume point and completion registry with image upload/storage policy block (`P3.4`).
 - `packages/server/test/inventory.service.test.js`
   - Added critical integrity tests for inventory service:
     - barcode normalization and duplicate guard (`409 DUPLICATE_BARCODE`)
