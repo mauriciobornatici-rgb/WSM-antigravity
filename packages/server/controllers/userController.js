@@ -4,14 +4,13 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
+import { getEnvConfig } from '../config/env.js';
+import { isStrongPassword, getPasswordPolicyMessage } from '../utils/passwordPolicy.js';
 
 const SALT_ROUNDS = 10;
-
-if (!process.env.JWT_SECRET) {
-    console.error('FATAL: JWT_SECRET environment variable is not set.');
-    process.exit(1);
-}
-const JWT_SECRET = process.env.JWT_SECRET;
+const env = getEnvConfig();
+const JWT_SECRET = env.jwtSecret;
+const JWT_EXPIRES_IN = env.jwtExpiresIn;
 
 function getRequestIp(req) {
     const forwarded = req.headers['x-forwarded-for'];
@@ -40,7 +39,7 @@ export const login = catchAsync(async (req, res) => {
             entity_type: 'user',
             entity_id: user.id,
             new_values: { email },
-            ip_address: req.ip
+            ip_address: getRequestIp(req)
         });
         return res.status(401).json({ error: 'invalid_credentials', message: 'Credenciales inválidas' });
     }
@@ -48,7 +47,7 @@ export const login = catchAsync(async (req, res) => {
     const token = jwt.sign(
         { id: user.id, email: user.email, role: user.role },
         JWT_SECRET,
-        { expiresIn: '8h' }
+        { expiresIn: JWT_EXPIRES_IN }
     );
 
     await pool.query('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
@@ -58,7 +57,7 @@ export const login = catchAsync(async (req, res) => {
         action: 'LOGIN_SUCCESS',
         entity_type: 'user',
         entity_id: user.id,
-        ip_address: req.ip
+        ip_address: getRequestIp(req)
     });
 
     const { password_hash, ...userBuffer } = user;
@@ -76,10 +75,10 @@ export const getUsers = catchAsync(async (req, res) => {
 export const createUser = catchAsync(async (req, res) => {
     const { name, email, password, role } = req.body;
 
-    if (!password || password.length < 6) {
+    if (!password || !isStrongPassword(password)) {
         return res.status(400).json({
             error: 'invalid_password',
-            message: 'La contraseña es obligatoria y debe tener al menos 6 caracteres'
+            message: getPasswordPolicyMessage()
         });
     }
 
@@ -124,6 +123,13 @@ export const updateUser = catchAsync(async (req, res) => {
     const [dupEmail] = await pool.query('SELECT id FROM users WHERE email = ? AND id != ?', [email, id]);
     if (dupEmail.length > 0) {
         return res.status(409).json({ error: 'duplicate_email', message: 'El correo electrónico ya está registrado por otro usuario' });
+    }
+
+    if (password && !isStrongPassword(password)) {
+        return res.status(400).json({
+            error: 'invalid_password',
+            message: getPasswordPolicyMessage()
+        });
     }
 
     let updateQuery = 'UPDATE users SET name = ?, email = ?, role = ?, status = ?';

@@ -258,6 +258,24 @@
     - `creditNotes.all`
 - `docs/execution/STATE.md`
   - Updated snapshot after React Query migration of Returns/Warranties domain.
+- `packages/server/utils/passwordPolicy.js`
+  - Added centralized strong password policy helper:
+    - complexity checks
+    - reusable policy message
+- `packages/server/middleware/validationMiddleware.js`
+  - Updated user creation/update schemas to enforce strong password policy.
+- `packages/server/controllers/userController.js`
+  - Enforced strong password policy in controller layer (defense in depth).
+  - Switched JWT signing expiration to env-driven config (`JWT_EXPIRES_IN`).
+  - Normalized login audit IP capture through shared request IP helper.
+- `packages/server/middleware/authMiddleware.js`
+  - Switched JWT secret source to validated env config.
+- `packages/server/config/env.js`
+  - Added `jwtExpiresIn` config field (`JWT_EXPIRES_IN`) with non-empty validation.
+- `.env.example`
+  - Added `JWT_EXPIRES_IN=8h`.
+- `docs/execution/STATE.md`
+  - Updated snapshot after backend auth/password hardening pass.
 
 ### Verified
 - Frontend checks passed:
@@ -285,6 +303,11 @@
   - `npm -w @wsm/client exec eslint src/App.tsx src/lib/errorHandling.ts src/layout/AppLayout.tsx src/context/AuthContext.tsx src/pages/Dashboard.tsx src/pages/Login.tsx src/pages/Picking.tsx src/pages/ReturnsAndWarranties.tsx src/pages/PurchaseOrders.tsx src/pages/Settings.tsx src/components/users/UserForm.tsx src/pages/ClientDetail.tsx src/components/pos/QuickClientDialog.tsx`
   - `npm -w @wsm/client exec eslint src/context/AuthContext.tsx src/components/users/UserForm.tsx src/pages/Login.tsx src/pages/ReturnsAndWarranties.tsx src/pages/ClientDetail.tsx`
   - `npm -w @wsm/client exec eslint src/pages/ReturnsAndWarranties.tsx src/lib/queryKeys.ts`
+  - `node --check packages/server/controllers/userController.js`
+  - `node --check packages/server/middleware/authMiddleware.js`
+  - `node --check packages/server/middleware/validationMiddleware.js`
+  - `node --check packages/server/config/env.js`
+  - `node --check packages/server/utils/passwordPolicy.js`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 

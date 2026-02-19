@@ -82,6 +82,7 @@ export function getEnvConfig() {
         port: parsePortEnv('PORT', 3001),
         dbPort: parsePortEnv('DB_PORT', 3306),
         jwtSecret: process.env.JWT_SECRET || '',
+        jwtExpiresIn: String(process.env.JWT_EXPIRES_IN || '8h').trim(),
         corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS, isDevelopment ? ['http://localhost:5173'] : []),
         trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
         dbSsl: parseBooleanEnv('DB_SSL', false),
@@ -101,6 +102,10 @@ export function getEnvConfig() {
 
     if (!config.jwtSecret) {
         errors.push('JWT_SECRET is required');
+    }
+
+    if (!config.jwtExpiresIn) {
+        errors.push('JWT_EXPIRES_IN is required');
     }
 
     if (config.isNonDevelopment) {

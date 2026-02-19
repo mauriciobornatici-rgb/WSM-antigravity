@@ -9,7 +9,8 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
 1. Validar en staging que la deduplicación de errores elimina toasts repetidos sin ocultar errores relevantes.
 2. Revisar regresión visual en Invoices/POS/Receptions luego de la modularización.
 3. Ejecutar smoke funcional de `ReturnsAndWarranties` (crear garantía, devolución y nota de crédito) en staging.
-4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
+4. Revisar impacto operativo de nueva política de contraseñas fuertes en alta/edición de usuarios.
+5. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
 - Consolidated gap list and priority order.
@@ -441,6 +442,27 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
     - `packages/client/src/lib/queryKeys.ts`
   - Validation:
     - `npm -w @wsm/client exec eslint src/pages/ReturnsAndWarranties.tsx src/lib/queryKeys.ts`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.6 partial progress (backend hardening):
+  - Enforced strong password policy for user create/update in backend (min length + complexity).
+  - Centralized JWT runtime settings usage in auth/controller layer:
+    - use validated env config (`jwtSecret`, `jwtExpiresIn`) instead of direct `process.env` checks.
+  - Added explicit env setting for token expiration:
+    - `JWT_EXPIRES_IN` in `.env.example`.
+  - Files:
+    - `packages/server/utils/passwordPolicy.js`
+    - `packages/server/middleware/validationMiddleware.js`
+    - `packages/server/controllers/userController.js`
+    - `packages/server/middleware/authMiddleware.js`
+    - `packages/server/config/env.js`
+    - `.env.example`
+  - Validation:
+    - `node --check packages/server/controllers/userController.js`
+    - `node --check packages/server/middleware/authMiddleware.js`
+    - `node --check packages/server/middleware/validationMiddleware.js`
+    - `node --check packages/server/config/env.js`
+    - `node --check packages/server/utils/passwordPolicy.js`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):

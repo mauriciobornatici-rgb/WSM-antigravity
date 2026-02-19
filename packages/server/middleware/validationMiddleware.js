@@ -1,4 +1,5 @@
 import Joi from 'joi';
+import { passwordPolicy, getPasswordPolicyMessage } from '../utils/passwordPolicy.js';
 
 export const validate = (schema) => (req, res, next) => {
     const { body, params, query } = req;
@@ -48,6 +49,15 @@ const isoDate = Joi.date().iso();
 
 const orderPaymentMethod = Joi.string().valid('cash', 'transfer', 'credit_account', 'card', 'debit_card', 'credit_card', 'qr');
 const shiftPaymentMethod = Joi.string().valid('cash', 'debit_card', 'credit_card', 'card', 'transfer', 'qr', 'credit_account', 'other');
+const strongPassword = Joi.string()
+    .min(passwordPolicy.minLength)
+    .max(passwordPolicy.maxLength)
+    .pattern(passwordPolicy.regex)
+    .messages({
+        'string.pattern.base': getPasswordPolicyMessage(),
+        'string.min': getPasswordPolicyMessage(),
+        'string.max': getPasswordPolicyMessage()
+    });
 
 export const schemas = {
     idParam: Joi.object({
@@ -67,7 +77,7 @@ export const schemas = {
         body: Joi.object({
             name: Joi.string().min(2).max(255).required(),
             email: Joi.string().email().required(),
-            password: Joi.string().min(6).max(128).required(),
+            password: strongPassword.required(),
             role: Joi.string().valid('admin', 'manager', 'cashier', 'warehouse').required()
         })
     }),
@@ -79,7 +89,7 @@ export const schemas = {
         body: Joi.object({
             name: Joi.string().min(2).max(255).required(),
             email: Joi.string().email().required(),
-            password: Joi.string().min(6).max(128).optional().allow('', null),
+            password: strongPassword.optional().allow('', null),
             role: Joi.string().valid('admin', 'manager', 'cashier', 'warehouse').required(),
             status: Joi.string().valid('active', 'inactive').required()
         })
