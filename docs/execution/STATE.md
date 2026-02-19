@@ -3,15 +3,14 @@
 Last updated: 2026-02-19
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.6 - Hardening final de frontend + normalizacion de texto (es-AR)
+Current task: P2.7 - Cierre de brechas combinadas (hardening backend + navegacion UX base)
 
 ## Resume From Here
-1. Validar en staging que la deduplicacion de errores elimina toasts repetidos sin ocultar errores relevantes.
-2. Revisar regresion visual en Invoices/POS/Receptions luego de la modularizacion.
-3. Ejecutar smoke funcional de `ReturnsAndWarranties` (crear garantia, devolucion y nota de credito) en staging.
-4. Validar en staging flujo de alta/edicion de usuarios con politica de contrasena fuerte (frontend + backend).
-5. Completar barrido de idioma para etiquetas visibles pendientes en modulos secundarios.
-6. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
+1. Ejecutar barrido final de textos visibles en espanol AR en vistas secundarias (incluye acentos pendientes heredados).
+2. Definir y ejecutar limpieza controlada de artefactos legacy (`*.corrupt.bak`, snapshot zip, scripts obsoletos) con respaldo previo.
+3. Cerrar plan de rotacion de secretos (JWT/DB) fuera de codigo y validar post-rotacion en staging.
+4. Evaluar paginacion incremental en listados de alto volumen (orders/products/audit).
+5. Mantener validacion incremental completa (`server test + smokes`, `client lint/test/build`) en cada lote.
 
 ## Completed
 - Consolidated gap list and priority order.
@@ -542,9 +541,50 @@ Current task: P2.6 - Hardening final de frontend + normalizacion de texto (es-AR
     - `npm -w @wsm/client exec eslint src/components/users/UserForm.tsx src/components/ui/dialog.tsx src/pages/Clients.tsx src/pages/Suppliers.tsx src/pages/Settings.tsx`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
+- P2.7 partial progress (combined hardening batch):
+  - Backend data integrity and auth hardening:
+    - `transitionOrderStatus` ahora opera en transaccion y restaura stock al cancelar ordenes.
+    - endurecimiento RBAC para notas de credito manuales (`admin|manager`).
+    - bootstrap de admin sin password por defecto ni log de credenciales; exige `ADMIN_DEFAULT_PASSWORD` robusta.
+  - Backend maintainability:
+    - `getRequestIp` centralizado en util unico y removida duplicacion en 8 controllers.
+  - Frontend UX/navigation:
+    - ruta 404 agregada con pagina dedicada.
+    - normalizado import alias de `Receptions` en `App.tsx`.
+  - Frontend lint stabilization:
+    - `PurchaseOrderDetails` con `useCallback`/deps estables.
+    - ajustes lint en componentes UI (`badge`, `button`, `form`, `input`, `textarea`).
+  - Files:
+    - `packages/server/services/sales.service.js`
+    - `packages/server/routes/warrantiesRoutes.js`
+    - `packages/server/config/initDb.js`
+    - `packages/server/utils/requestIp.js`
+    - `packages/server/controllers/inventoryController.js`
+    - `packages/server/controllers/salesController.js`
+    - `packages/server/controllers/procurementController.js`
+    - `packages/server/controllers/financeController.js`
+    - `packages/server/controllers/settingsController.js`
+    - `packages/server/controllers/supplierController.js`
+    - `packages/server/controllers/userController.js`
+    - `packages/server/controllers/warrantiesController.js`
+    - `packages/client/src/App.tsx`
+    - `packages/client/src/pages/NotFound.tsx`
+    - `packages/client/src/components/purchase-orders/PurchaseOrderDetails.tsx`
+    - `packages/client/src/components/ui/badge.tsx`
+    - `packages/client/src/components/ui/button.tsx`
+    - `packages/client/src/components/ui/form.tsx`
+    - `packages/client/src/components/ui/input.tsx`
+    - `packages/client/src/components/ui/textarea.tsx`
+  - Validation:
+    - `npm -w @wsm/server run test`
+    - `npm -w @wsm/server run smoke:rbac`
+    - `npm -w @wsm/server run smoke:integrity`
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
 
 ## Next After Current Task
-P2.6 continuation - validacion funcional manual en staging y cierre del barrido final de textos.
+P2.7 continuation - limpieza controlada de artefactos legacy + cierre de idioma/UX residual + plan operativo de rotacion de secretos.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):

@@ -1,17 +1,10 @@
 import pool from '../config/db.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
+import getRequestIp from '../utils/requestIp.js';
 
 const DEFAULT_TAX_RATE = 0.21;
 const DEFAULT_CURRENCY = 'ARS';
-
-function getRequestIp(req) {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded.length > 0) {
-        return forwarded.split(',')[0].trim();
-    }
-    return req.ip;
-}
 
 function normalizeTaxRate(value) {
     const parsed = Number(value);

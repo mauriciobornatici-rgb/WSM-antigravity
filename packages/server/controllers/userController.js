@@ -6,19 +6,12 @@ import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import { getEnvConfig } from '../config/env.js';
 import { isStrongPassword, getPasswordPolicyMessage } from '../utils/passwordPolicy.js';
+import getRequestIp from '../utils/requestIp.js';
 
 const SALT_ROUNDS = 10;
 const env = getEnvConfig();
 const JWT_SECRET = env.jwtSecret;
 const JWT_EXPIRES_IN = env.jwtExpiresIn;
-
-function getRequestIp(req) {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded.length > 0) {
-        return forwarded.split(',')[0].trim();
-    }
-    return req.ip;
-}
 
 // Unified login handler with full audit logging
 export const login = catchAsync(async (req, res) => {

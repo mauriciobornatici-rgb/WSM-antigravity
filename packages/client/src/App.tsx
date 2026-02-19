@@ -23,10 +23,11 @@ const ReturnsAndWarrantiesPage = lazy(() => import("@/pages/ReturnsAndWarranties
 const SettingsPage = lazy(() => import("@/pages/Settings"));
 const SuppliersPage = lazy(() => import("@/pages/Suppliers"));
 const PurchaseOrdersPage = lazy(() => import("@/pages/PurchaseOrders"));
-const ReceptionsPage = lazy(() => import("./pages/Receptions"));
+const ReceptionsPage = lazy(() => import("@/pages/Receptions"));
 const InvoicesPage = lazy(() => import("@/pages/Invoices"));
 const CashManagementPage = lazy(() => import("@/pages/CashManagement"));
 const PresentationPage = lazy(() => import("@/pages/Presentation"));
+const NotFoundPage = lazy(() => import("@/pages/NotFound"));
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -193,6 +194,14 @@ function App() {
                     element={
                       <ProtectedRoute allowedRoles={['admin', 'cashier']}>
                         <CashManagementPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="*"
+                    element={
+                      <ProtectedRoute>
+                        <NotFoundPage />
                       </ProtectedRoute>
                     }
                   />

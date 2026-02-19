@@ -2,14 +2,7 @@ import crypto from 'crypto';
 import pool from '../config/db.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
-
-function getRequestIp(req) {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded.length > 0) {
-        return forwarded.split(',')[0].trim();
-    }
-    return req.ip;
-}
+import getRequestIp from '../utils/requestIp.js';
 
 async function calculateShiftExpectedBalance(connection, shiftId) {
     const [payments] = await connection.query(`

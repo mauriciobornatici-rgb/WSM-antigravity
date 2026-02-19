@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Calendar, Loader2, Package, Truck, User } from "lucide-react";
 import { api } from "@/services/api";
 import type { PurchaseOrder } from "@/types";
@@ -49,11 +49,7 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
     const [loading, setLoading] = useState(true);
     const [updating, setUpdating] = useState(false);
 
-    useEffect(() => {
-        void loadOrder();
-    }, [orderId]);
-
-    async function loadOrder() {
+    const loadOrder = useCallback(async () => {
         try {
             setLoading(true);
             const response = await api.getPurchaseOrder(orderId);
@@ -64,7 +60,11 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
         } finally {
             setLoading(false);
         }
-    }
+    }, [orderId]);
+
+    useEffect(() => {
+        void loadOrder();
+    }, [loadOrder]);
 
     async function handleStatusUpdate(nextStatus: PurchaseStatus) {
         try {

@@ -129,6 +129,74 @@ class SalesService extends BaseService {
         }
     }
 
+    async _restoreInventoryForCancelledOrder(connection, orderId) {
+        const [deductionMovements] = await connection.query(
+            `SELECT product_id, from_location, quantity, unit_cost
+             FROM inventory_movements
+             WHERE reference_type = 'order'
+               AND reference_id = ?
+               AND type = 'sale'
+               AND reason = 'Order stock deduction'
+             FOR UPDATE`,
+            [orderId]
+        );
+
+        const restoreBuckets = new Map();
+        const addBucket = (productId, location, quantity, unitCost = 0) => {
+            const safeQty = Number.parseInt(String(quantity), 10);
+            if (!Number.isFinite(safeQty) || safeQty <= 0) return;
+            const safeLocation = location || 'General';
+            const key = `${productId}::${safeLocation}`;
+            const current = restoreBuckets.get(key) || { productId, location: safeLocation, quantity: 0, unitCost: 0 };
+            current.quantity += safeQty;
+            current.unitCost = Number(unitCost || 0);
+            restoreBuckets.set(key, current);
+        };
+
+        if (deductionMovements.length > 0) {
+            for (const movement of deductionMovements) {
+                addBucket(
+                    movement.product_id,
+                    movement.from_location,
+                    movement.quantity,
+                    movement.unit_cost
+                );
+            }
+        } else {
+            const [orderItems] = await connection.query(
+                'SELECT product_id, quantity FROM order_items WHERE order_id = ? FOR UPDATE',
+                [orderId]
+            );
+            for (const item of orderItems) {
+                addBucket(item.product_id, 'General', item.quantity, 0);
+            }
+        }
+
+        for (const bucket of restoreBuckets.values()) {
+            await connection.query(
+                `INSERT INTO inventory (id, product_id, location, quantity)
+                 VALUES (?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
+                [crypto.randomUUID(), bucket.productId, bucket.location, bucket.quantity]
+            );
+
+            await connection.query(
+                `INSERT INTO inventory_movements (
+                    id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id
+                ) VALUES (?, 'restock', ?, ?, ?, ?, ?, 'order', ?)`,
+                [
+                    crypto.randomUUID(),
+                    bucket.productId,
+                    bucket.location,
+                    bucket.quantity,
+                    Number(bucket.unitCost || 0),
+                    'Order cancellation restock',
+                    orderId
+                ]
+            );
+        }
+    }
+
     async createOrder(orderData, userId) {
         const orderId = crypto.randomUUID();
         const connection = await pool.getConnection();
@@ -207,27 +275,50 @@ class SalesService extends BaseService {
     }
 
     async transitionOrderStatus(orderId, requestedStatus) {
-        const [orders] = await pool.query('SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL', [orderId]);
-        if (orders.length === 0) {
-            const err = new Error('Order not found');
-            err.statusCode = 404;
-            err.status = 'fail';
-            err.errorCode = 'ORDER_NOT_FOUND';
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            const [orders] = await connection.query(
+                'SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+                [orderId]
+            );
+            if (orders.length === 0) {
+                const err = new Error('Order not found');
+                err.statusCode = 404;
+                err.status = 'fail';
+                err.errorCode = 'ORDER_NOT_FOUND';
+                throw err;
+            }
+
+            const order = orders[0];
+            const nextStatus = this._assertOrderTransition(order.status, requestedStatus);
+            if (this._normalizeOrderStatus(order.status) === nextStatus) {
+                await connection.commit();
+                return order;
+            }
+
+            if (nextStatus === 'cancelled') {
+                await this._restoreInventoryForCancelledOrder(connection, orderId);
+            }
+
+            await connection.query(
+                'UPDATE orders SET status = ? WHERE id = ? AND deleted_at IS NULL',
+                [nextStatus, orderId]
+            );
+            const [updated] = await connection.query(
+                'SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL',
+                [orderId]
+            );
+
+            await connection.commit();
+            return updated[0];
+        } catch (err) {
+            await connection.rollback();
             throw err;
+        } finally {
+            connection.release();
         }
-
-        const order = orders[0];
-        const nextStatus = this._assertOrderTransition(order.status, requestedStatus);
-        if (this._normalizeOrderStatus(order.status) === nextStatus) {
-            return order;
-        }
-
-        await pool.query(
-            'UPDATE orders SET status = ? WHERE id = ? AND deleted_at IS NULL',
-            [nextStatus, orderId]
-        );
-        const [updated] = await pool.query('SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL', [orderId]);
-        return updated[0];
     }
 
     async getOrders(filters = {}, options = {}) {

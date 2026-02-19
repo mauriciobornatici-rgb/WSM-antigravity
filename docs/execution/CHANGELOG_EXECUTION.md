@@ -1,5 +1,55 @@
 # Execution Changelog
 
+## 2026-02-19
+
+### Changed
+- `packages/server/services/sales.service.js`
+  - `transitionOrderStatus` now runs inside a transaction with row lock.
+  - Added cancellation rollback flow to restore inventory and log inverse inventory movements.
+- `packages/server/routes/warrantiesRoutes.js`
+  - Restricted manual credit-note creation to `admin` and `manager` roles.
+- `packages/server/config/initDb.js`
+  - Removed insecure default admin password behavior.
+  - Startup now requires `ADMIN_DEFAULT_PASSWORD` with strong policy when seeding first admin.
+  - Removed credential logging during bootstrap.
+- `packages/server/utils/requestIp.js`
+  - Added shared request IP resolver utility.
+- `packages/server/controllers/inventoryController.js`
+- `packages/server/controllers/salesController.js`
+- `packages/server/controllers/procurementController.js`
+- `packages/server/controllers/financeController.js`
+- `packages/server/controllers/settingsController.js`
+- `packages/server/controllers/supplierController.js`
+- `packages/server/controllers/userController.js`
+- `packages/server/controllers/warrantiesController.js`
+  - Removed duplicated `getRequestIp` implementations and switched to shared utility import.
+- `packages/client/src/components/purchase-orders/PurchaseOrderDetails.tsx`
+  - Stabilized loader dependency with `useCallback` and safe `useEffect` dependency array.
+- `packages/client/src/components/ui/badge.tsx`
+- `packages/client/src/components/ui/button.tsx`
+- `packages/client/src/components/ui/form.tsx`
+  - Added explicit lint suppression for `react-refresh/only-export-components` where component+helpers are intentionally co-located.
+- `packages/client/src/components/ui/input.tsx`
+- `packages/client/src/components/ui/textarea.tsx`
+  - Replaced empty interface extension with type aliases to satisfy strict TS lint rule (`no-empty-object-type`).
+- `packages/client/src/pages/NotFound.tsx`
+  - Added dedicated 404 page in Spanish AR.
+- `packages/client/src/App.tsx`
+  - Added lazy-loaded catch-all route (`path="*"`).
+  - Normalized `Receptions` lazy import to alias form (`@/pages/Receptions`).
+- `docs/execution/STATE.md`
+  - Updated active task, resume plan and completion registry for this batch.
+
+### Verified
+- Backend:
+  - `npm -w @wsm/server run test`
+  - `npm -w @wsm/server run smoke:rbac`
+  - `npm -w @wsm/server run smoke:integrity`
+- Frontend:
+  - `npm -w @wsm/client run lint`
+  - `npm -w @wsm/client run test`
+  - `npm -w @wsm/client run build`
+
 ## 2026-02-18
 
 ### Changed

@@ -2,6 +2,7 @@ import pool from './db.js';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { runMigrations } from './migrations_manager.js';
+import { isStrongPassword, getPasswordPolicyMessage } from '../utils/passwordPolicy.js';
 
 const SALT_ROUNDS = 10;
 const REQUIRED_TABLES = [
@@ -54,10 +55,12 @@ async function seedDefaultAdmin() {
     const [admins] = await pool.query("SELECT id FROM users WHERE role = 'admin'");
     if (admins.length > 0) return;
 
-    const adminPassword = process.env.ADMIN_DEFAULT_PASSWORD || crypto.randomBytes(8).toString('hex');
-    if (!process.env.ADMIN_DEFAULT_PASSWORD) {
-        console.log(`Generated admin password: ${adminPassword}`);
-        console.log('Set ADMIN_DEFAULT_PASSWORD in .env to use a fixed password.');
+    const adminPassword = String(process.env.ADMIN_DEFAULT_PASSWORD || '').trim();
+    if (!adminPassword) {
+        throw new Error('ADMIN_DEFAULT_PASSWORD is required when no admin user exists.');
+    }
+    if (!isStrongPassword(adminPassword)) {
+        throw new Error(`ADMIN_DEFAULT_PASSWORD invalida. ${getPasswordPolicyMessage()}`);
     }
 
     const adminId = crypto.randomUUID();

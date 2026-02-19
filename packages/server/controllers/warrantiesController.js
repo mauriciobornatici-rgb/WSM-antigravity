@@ -4,14 +4,7 @@ import crypto from 'crypto';
 import pool from '../config/db.js';
 import auditService from '../services/audit.service.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
-
-function getRequestIp(req) {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded.length > 0) {
-        return forwarded.split(',')[0].trim();
-    }
-    return req.ip;
-}
+import getRequestIp from '../utils/requestIp.js';
 
 // WARRANTIY CLAIMS
 export const getWarranties = catchAsync(async (req, res) => {
