@@ -207,6 +207,30 @@
   - Unified wording (`Error de operación`) and dedupe behavior between global/local handlers.
 - `docs/execution/STATE.md`
   - Updated active snapshot for P2.6 deduplication progress.
+- `packages/client/src/layout/AppLayout.tsx`
+  - Normalized sidebar labels to Spanish AR (`Órdenes`, `Facturación`, `Configuración`, `Gestión`, `Depósito`, etc.).
+- `packages/client/src/context/AuthContext.tsx`
+  - Normalized sesión/auth error messages (`sesión`, `expiró`, `devolvió`).
+- `packages/client/src/pages/Dashboard.tsx`
+  - Normalized status label (`Preparación`).
+- `packages/client/src/pages/Login.tsx`
+  - Normalized landing heading copy (`Gestioná`).
+- `packages/client/src/pages/Picking.tsx`
+  - Normalized validation copy (`SKU inválido`).
+- `packages/client/src/pages/ReturnsAndWarranties.tsx`
+  - Normalized multiple user-facing labels/messages (`gestión`, `garantías`, `crédito`, `descripción`, `devolución`, `número`).
+- `packages/client/src/pages/PurchaseOrders.tsx`
+  - Normalized heading/subtitle copy (`Órdenes`, `Gestión`, `recepción`).
+- `packages/client/src/pages/Settings.tsx`
+  - Normalized success toast wording (`Configuración`).
+- `packages/client/src/pages/ClientDetail.tsx`
+  - Normalized warranty/credit-note labels (`Garantías`, `Nota de crédito`).
+- `packages/client/src/components/users/UserForm.tsx`
+  - Normalized warehouse role label (`Depósito`).
+- `packages/client/src/components/pos/QuickClientDialog.tsx`
+  - Normalized placeholder wording (`Correo electrónico`).
+- `docs/execution/STATE.md`
+  - Updated snapshot after AR language normalization sweep.
 
 ### Verified
 - Frontend checks passed:
@@ -231,8 +255,15 @@
   - `npm -w @wsm/client exec eslint src/pages/POS.tsx src/components/pos/types.ts src/components/pos/ProductCatalogCard.tsx src/components/pos/CartPanelCard.tsx src/components/pos/PaymentDialog.tsx src/components/pos/QuickClientDialog.tsx src/components/pos/CheckoutSuccessDialog.tsx`
   - `npm -w @wsm/client exec eslint src/pages/Invoices.tsx src/components/invoices/types.ts src/components/invoices/invoiceUtils.tsx src/components/invoices/InvoiceCreateDialog.tsx src/components/invoices/InvoicesTable.tsx src/components/invoices/InvoiceDocument.tsx src/components/invoices/InvoicePreviewDialog.tsx src/components/invoices/PrintableInvoiceArea.tsx`
   - `npm -w @wsm/client exec eslint src/App.tsx src/lib/errorHandling.ts`
+  - `npm -w @wsm/client exec eslint src/App.tsx src/lib/errorHandling.ts src/layout/AppLayout.tsx src/context/AuthContext.tsx src/pages/Dashboard.tsx src/pages/Login.tsx src/pages/Picking.tsx src/pages/ReturnsAndWarranties.tsx src/pages/PurchaseOrders.tsx src/pages/Settings.tsx src/components/users/UserForm.tsx src/pages/ClientDetail.tsx src/components/pos/QuickClientDialog.tsx`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
+
+### Validation Notes
+- The extended lint command above reports pre-existing errors/warnings unrelated to this batch in:
+  - `packages/client/src/components/users/UserForm.tsx`
+  - `packages/client/src/context/AuthContext.tsx`
+  - `packages/client/src/pages/ReturnsAndWarranties.tsx`
 
 ## 2026-02-17
 

@@ -63,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(storedUser);
         } else {
             if (storedUser && token && isTokenExpired(token, 30_000)) {
-                toast.info("Tu sesion expiro. Vuelve a iniciar sesion.");
+                toast.info("Tu sesión expiró. Volvé a iniciar sesión.");
             } else if (storedUser && storedUser.status !== "active") {
                 toast.error("Usuario inactivo. Contacta a un administrador.");
             }
@@ -108,7 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 throw new Error("Invalid login response structure");
             }
             if (!token) {
-                throw new Error("El servidor no devolvio token de sesion");
+                throw new Error("El servidor no devolvió token de sesión");
             }
             if (userObj.status !== "active") {
                 clearSessionStorage();
@@ -121,7 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             toast.success(`Bienvenido, ${userObj.name}`);
         } catch (error) {
-            toast.error(getErrorMessage(error, "Error al iniciar sesion"));
+            toast.error(getErrorMessage(error, "Error al iniciar sesión"));
             throw error;
         }
     };

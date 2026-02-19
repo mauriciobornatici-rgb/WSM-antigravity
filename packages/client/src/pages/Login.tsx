@@ -50,7 +50,7 @@ export default function LoginPage() {
                     </div>
                 </div>
                 <div className="relative z-10 max-w-md">
-                    <h1 className="text-4xl font-bold mb-4">Gestiona tu negocio deportivo al siguiente nivel.</h1>
+                    <h1 className="text-4xl font-bold mb-4">Gestioná tu negocio deportivo al siguiente nivel.</h1>
                     <p className="text-slate-400 text-lg">Control de inventario, ventas POS, picking optimizado y contabilidad en una sola plataforma unificada.</p>
                 </div>
                 <div className="relative z-10 text-sm text-slate-500">

@@ -42,7 +42,7 @@ function parseMovements(
         id: String(credit.id || crypto.randomUUID()),
         date: String(credit.created_at || new Date().toISOString()),
         type: "credit_note",
-        description: `Nota de credito ${String(credit.number || credit.id || "-")}`,
+        description: `Nota de crédito ${String(credit.number || credit.id || "-")}`,
         amount: Number(credit.amount || 0),
     }));
 
@@ -205,7 +205,7 @@ export default function ClientDetailPage() {
                                         <TableCell>{movement.description}</TableCell>
                                         <TableCell>
                                             <Badge variant={movement.type === "credit_note" ? "secondary" : "outline"}>
-                                                {movement.type === "credit_note" ? "Nota de credito" : "Venta"}
+                                                {movement.type === "credit_note" ? "Nota de crédito" : "Venta"}
                                             </Badge>
                                         </TableCell>
                                         <TableCell className="text-right">${movement.amount.toLocaleString("es-AR")}</TableCell>
@@ -258,7 +258,7 @@ export default function ClientDetailPage() {
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                             <ShieldCheck className="h-5 w-5 text-indigo-500" />
-                            Garantias
+                            Garantías
                         </CardTitle>
                     </CardHeader>
                     <CardContent>

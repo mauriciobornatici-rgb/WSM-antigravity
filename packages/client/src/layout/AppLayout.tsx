@@ -30,23 +30,23 @@ export default function AppLayout() {
         admin: "Administrador",
         manager: "Gerencia",
         cashier: "Caja",
-        warehouse: "Deposito",
+        warehouse: "Depósito",
     };
 
     const navItems = [
         { name: "Inicio", href: "/", icon: LayoutDashboard, roles: ["admin", "manager", "cashier", "warehouse"] },
         { name: "Inventario (WMS)", href: "/inventory", icon: Package, roles: ["admin", "manager", "warehouse"] },
-        { name: "Ordenes de Compra", href: "/purchase-orders", icon: FileSpreadsheet, roles: ["admin", "manager"] },
+        { name: "Órdenes de compra", href: "/purchase-orders", icon: FileSpreadsheet, roles: ["admin", "manager"] },
         { name: "Recepciones", href: "/receptions", icon: ClipboardCheck, roles: ["admin", "manager", "warehouse"] },
         { name: "Proveedores", href: "/suppliers", icon: Truck, roles: ["admin", "manager"] },
-        { name: "Pedidos y Preparacion", href: "/orders", icon: ClipboardList, roles: ["admin", "manager", "cashier", "warehouse"] },
+        { name: "Pedidos y preparación", href: "/orders", icon: ClipboardList, roles: ["admin", "manager", "cashier", "warehouse"] },
         { name: "Clientes", href: "/clients", icon: Users, roles: ["admin", "manager", "cashier"] },
-        { name: "Reclamos y Garantias", href: "/returns-warranties", icon: BadgeAlert, roles: ["admin", "manager", "cashier"] },
+        { name: "Reclamos y garantías", href: "/returns-warranties", icon: BadgeAlert, roles: ["admin", "manager", "cashier"] },
         { name: "Punto de Venta", href: "/pos", icon: ShoppingCart, roles: ["admin", "cashier"] },
-        { name: "Facturacion", href: "/invoices", icon: Printer, roles: ["admin", "manager", "cashier"] },
-        { name: "Gestion de Caja", href: "/cash-management", icon: Landmark, roles: ["admin", "cashier"] },
+        { name: "Facturación", href: "/invoices", icon: Printer, roles: ["admin", "manager", "cashier"] },
+        { name: "Gestión de caja", href: "/cash-management", icon: Landmark, roles: ["admin", "cashier"] },
         { name: "Contabilidad", href: "/accounting", icon: FileText, roles: ["admin"] },
-        { name: "Configuracion", href: "/settings", icon: Settings, roles: ["admin"] },
+        { name: "Configuración", href: "/settings", icon: Settings, roles: ["admin"] },
     ];
 
     const filteredNavItems = navItems.filter((item) => !item.roles || (user && item.roles.includes(user.role)));

@@ -39,7 +39,7 @@ export function QuickClientDialog({
                         onChange={(event) => onNewClientChange({ tax_id: event.target.value })}
                     />
                     <Input
-                        placeholder="Email"
+                        placeholder="Correo electrónico"
                         value={newClient.email}
                         onChange={(event) => onNewClientChange({ email: event.target.value })}
                     />

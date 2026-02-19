@@ -101,7 +101,7 @@ export default function SettingsPage() {
             }
             await api.updateCompanySettings(updatedCompany)
             setCompany(updatedCompany)
-            toast.success("Configuracion de sistema actualizada")
+            toast.success("Configuración de sistema actualizada")
         } catch (error) {
             showErrorToast("Error al guardar configuracion de sistema", error)
         } finally {

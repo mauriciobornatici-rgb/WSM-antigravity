@@ -54,14 +54,14 @@ export default function ReturnsAndWarrantiesPage() {
         <div className="space-y-6">
             <div>
                 <h2 className="text-3xl font-bold tracking-tight">Devoluciones y garantias</h2>
-                <p className="text-muted-foreground">Gestion de reclamos, devoluciones y notas de credito.</p>
+                <p className="text-muted-foreground">Gestión de reclamos, devoluciones y notas de crédito.</p>
             </div>
 
             <Tabs defaultValue="warranties" className="space-y-4">
                 <TabsList>
                     <TabsTrigger value="warranties" className="gap-2">
                         <ShieldCheck className="h-4 w-4" />
-                        Garantias
+                        Garantías
                     </TabsTrigger>
                     <TabsTrigger value="returns" className="gap-2">
                         <RotateCcw className="h-4 w-4" />
@@ -69,7 +69,7 @@ export default function ReturnsAndWarrantiesPage() {
                     </TabsTrigger>
                     <TabsTrigger value="credits" className="gap-2">
                         <FileText className="h-4 w-4" />
-                        Notas de credito
+                        Notas de crédito
                     </TabsTrigger>
                 </TabsList>
 
@@ -127,7 +127,7 @@ function WarrantiesTab() {
 
     async function createWarranty() {
         if (!productId || !issueDescription) {
-            toast.error("Completa producto y descripcion");
+            toast.error("Completa producto y descripción");
             return;
         }
         try {
@@ -255,7 +255,7 @@ function WarrantiesTab() {
                             </Select>
                         </div>
                         <div className="space-y-2">
-                            <Label>Descripcion</Label>
+                            <Label>Descripción</Label>
                             <Input value={issueDescription} onChange={(event) => setIssueDescription(event.target.value)} />
                         </div>
                     </div>
@@ -331,7 +331,7 @@ function ReturnsTab() {
             setReason("");
             await loadData();
         } catch (error) {
-            showErrorToast("Error al registrar devolucion", error);
+            showErrorToast("Error al registrar devolución", error);
         }
     }
 
@@ -341,7 +341,7 @@ function ReturnsTab() {
             toast.success("Devolucion aprobada");
             await loadData();
         } catch (error) {
-            showErrorToast("Error al aprobar devolucion", error);
+            showErrorToast("Error al aprobar devolución", error);
         }
     }
 
@@ -351,7 +351,7 @@ function ReturnsTab() {
                 <CardTitle>Devoluciones de clientes</CardTitle>
                 <Button onClick={() => setCreateOpen(true)}>
                     <Plus className="mr-2 h-4 w-4" />
-                    Nueva devolucion
+                    Nueva devolución
                 </Button>
             </CardHeader>
             <CardContent>
@@ -398,7 +398,7 @@ function ReturnsTab() {
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Nueva devolucion</DialogTitle>
+                        <DialogTitle>Nueva devolución</DialogTitle>
                         <DialogDescription>Registra mercaderia devuelta por un cliente.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
@@ -481,7 +481,7 @@ function CreditNotesTab() {
             );
             setClients(clientsResponse);
         } catch (error) {
-            showErrorToast("Error al cargar notas de credito", error);
+            showErrorToast("Error al cargar notas de crédito", error);
         }
     }
 
@@ -497,21 +497,21 @@ function CreditNotesTab() {
                 reason,
                 reference_type: "manual",
             });
-            toast.success("Nota de credito creada");
+            toast.success("Nota de crédito creada");
             setCreateOpen(false);
             setClientId("");
             setAmount(0);
             setReason("");
             await loadData();
         } catch (error) {
-            showErrorToast("Error al crear nota de credito", error);
+            showErrorToast("Error al crear nota de crédito", error);
         }
     }
 
     return (
         <Card>
             <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>Notas de credito</CardTitle>
+                <CardTitle>Notas de crédito</CardTitle>
                 <Button onClick={() => setCreateOpen(true)}>
                     <Plus className="mr-2 h-4 w-4" />
                     Nueva nota
@@ -522,7 +522,7 @@ function CreditNotesTab() {
                     <TableHeader>
                         <TableRow>
                             <TableHead>Fecha</TableHead>
-                            <TableHead>Numero</TableHead>
+                            <TableHead>Número</TableHead>
                             <TableHead>Cliente</TableHead>
                             <TableHead>Estado</TableHead>
                             <TableHead className="text-right">Monto</TableHead>
@@ -532,7 +532,7 @@ function CreditNotesTab() {
                         {creditNotes.length === 0 ? (
                             <TableRow>
                                 <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
-                                    Sin notas de credito.
+                                    Sin notas de crédito.
                                 </TableCell>
                             </TableRow>
                         ) : (
@@ -555,7 +555,7 @@ function CreditNotesTab() {
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Nueva nota de credito</DialogTitle>
+                        <DialogTitle>Nueva nota de crédito</DialogTitle>
                         <DialogDescription>Emite una nota manual para el cliente seleccionado.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">

@@ -82,7 +82,7 @@ export default function PickingPage() {
 
         const itemIndex = selectedOrder.items.findIndex((item) => item.sku.toUpperCase() === scannedSku && !item.picked);
         if (itemIndex < 0) {
-            toast.error("SKU invalido o ya completado", {
+            toast.error("SKU inválido o ya completado", {
                 description: `El SKU ${scannedSku} no coincide con items pendientes.`,
             });
             setScannerInput("");

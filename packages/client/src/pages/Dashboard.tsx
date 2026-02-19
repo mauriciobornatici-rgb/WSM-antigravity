@@ -71,7 +71,7 @@ function formatRelativeTime(value: string | undefined): string {
 function orderStatusLabel(status: Order["status"]): string {
     const labels: Record<Order["status"], string> = {
         pending: "Pendiente",
-        picking: "Preparacion",
+        picking: "Preparación",
         packed: "Empaquetado",
         dispatched: "Despachado",
         delivered: "Entregado",

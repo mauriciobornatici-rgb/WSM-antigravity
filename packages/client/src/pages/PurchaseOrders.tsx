@@ -112,8 +112,8 @@ export default function PurchaseOrdersPage() {
         <div className="space-y-6 p-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-slate-900">Ordenes de compra</h1>
-                    <p className="mt-1 text-slate-600">Gestiona compras y seguimiento de recepcion.</p>
+                    <h1 className="text-3xl font-bold text-slate-900">Órdenes de compra</h1>
+                    <p className="mt-1 text-slate-600">Gestioná compras y seguimiento de recepción.</p>
                 </div>
                 <button
                     onClick={() => setIsCreateDialogOpen(true)}

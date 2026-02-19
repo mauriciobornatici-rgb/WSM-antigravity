@@ -6,9 +6,9 @@ Current block: P2
 Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido de error
 
 ## Resume From Here
-1. Ejecutar barrido final de textos UI pendientes en español AR en páginas auxiliares y diálogos.
-2. Validar en staging que la deduplicación de errores elimina toasts repetidos sin ocultar errores relevantes.
-3. Revisar regresión visual en Invoices/POS/Receptions luego de la modularización.
+1. Validar en staging que la deduplicación de errores elimina toasts repetidos sin ocultar errores relevantes.
+2. Revisar regresión visual en Invoices/POS/Receptions luego de la modularización.
+3. Definir tratamiento de deuda lint preexistente en `AuthContext`, `UserForm` y `ReturnsAndWarranties`.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
@@ -384,6 +384,31 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
     - `npm -w @wsm/client exec eslint src/App.tsx src/lib/errorHandling.ts`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
+- P2.6 partial progress (continued):
+  - UI language normalization pass (Spanish AR) in navigation/auth/core labels:
+    - sidebar labels (`Órdenes`, `Facturación`, `Configuración`, `Depósito`, etc.)
+    - auth/session user messages
+    - operational headings/messages (`garantías`, `crédito`, `recepción`, `descripción`, etc.)
+  - Files:
+    - `packages/client/src/layout/AppLayout.tsx`
+    - `packages/client/src/context/AuthContext.tsx`
+    - `packages/client/src/pages/Dashboard.tsx`
+    - `packages/client/src/pages/Login.tsx`
+    - `packages/client/src/pages/Picking.tsx`
+    - `packages/client/src/pages/ReturnsAndWarranties.tsx`
+    - `packages/client/src/pages/PurchaseOrders.tsx`
+    - `packages/client/src/pages/Settings.tsx`
+    - `packages/client/src/pages/ClientDetail.tsx`
+    - `packages/client/src/components/users/UserForm.tsx`
+    - `packages/client/src/components/pos/QuickClientDialog.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+  - Lint note:
+    - targeted lint run reveals pre-existing errors unrelated to this pass in:
+      - `packages/client/src/context/AuthContext.tsx`
+      - `packages/client/src/components/users/UserForm.tsx`
+      - `packages/client/src/pages/ReturnsAndWarranties.tsx`
 - Incident hotfix (staging availability):
   - Root cause:
     - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),

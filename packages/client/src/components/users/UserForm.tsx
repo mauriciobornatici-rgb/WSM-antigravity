@@ -116,7 +116,7 @@ export function UserForm({ open, onOpenChange, onSubmit, initialData, isLoading 
                                     <SelectItem value="admin">Administrador</SelectItem>
                                     <SelectItem value="manager">Manager</SelectItem>
                                     <SelectItem value="cashier">Cajero</SelectItem>
-                                    <SelectItem value="warehouse">Deposito</SelectItem>
+                                    <SelectItem value="warehouse">Depósito</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
