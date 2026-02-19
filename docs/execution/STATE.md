@@ -2,25 +2,42 @@
 
 Last updated: 2026-02-19
 Status: IN_PROGRESS
-Current block: P2
-Current task: P2.10 - Hardening operativo de escaneo y consistencia de codigos
+Current block: P3
+Current task: P3.1 - CI baseline y quality gates en GitHub Actions
 
 ## Resume From Here
-1. Validar en staging flujo de alta de producto con:
+1. Validar ejecucion de CI en GitHub (`push` y `pull_request`) con resultado verde.
+2. Extender cobertura de tests de negocio (prioridad):
+   - orden con control de stock transaccional
+   - barcode duplicado (`409`)
+   - alta con `stock_initial` reflejada en inventario y movimientos
+3. Validar en staging flujo de alta de producto con:
    - escaneo por lector optico (input + Enter)
    - escaneo por camara (BarcodeDetector)
    - imagen URL y carga local (data URL)
    - stock inicial con impacto real en `inventory` e `inventory_movements`.
-2. Validar en staging flujo POS visual:
+4. Validar en staging flujo POS visual:
    - cards con imagen
    - busqueda por nombre/SKU/barcode
    - alta por escaneo exacto desde buscador
    - checkout/factura/caja sin regresion funcional.
-3. Definir politica final de almacenamiento de imagenes (URL externa vs endpoint dedicado de uploads).
-4. Ejecutar `smoke:rbac` y `smoke:integrity` en entorno con acceso de red local.
-5. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
+5. Definir politica final de almacenamiento de imagenes (URL externa vs endpoint dedicado de uploads).
+6. Ejecutar `smoke:rbac` y `smoke:integrity` en entorno con acceso de red local.
+7. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
 
 ## Completed
+- P3.1 implemented:
+  - Added GitHub Actions baseline CI workflow:
+    - trigger on `push`/`pull_request` to `main` and `workflow_dispatch`
+    - quality gate job with:
+      - `npm ci`
+      - `npm -w @wsm/server run test`
+      - `npm -w @wsm/client run lint`
+      - `npm -w @wsm/client run test`
+      - `npm -w @wsm/client run build`
+    - concurrency cancellation enabled for redundant runs.
+  - File:
+    - `.github/workflows/ci.yml`
 - P2.10 implemented:
   - Backend hardening for product codes:
     - normalized barcode/location on write paths

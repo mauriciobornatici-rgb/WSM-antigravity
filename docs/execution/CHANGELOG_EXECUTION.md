@@ -3,6 +3,19 @@
 ## 2026-02-19
 
 ### Changed
+- `.github/workflows/ci.yml`
+  - Added baseline GitHub Actions CI for monorepo workspaces.
+  - Triggers:
+    - `push` to `main`
+    - `pull_request` to `main`
+    - manual `workflow_dispatch`
+  - Includes quality gates:
+    - `npm ci`
+    - `@wsm/server` tests
+    - `@wsm/client` lint
+    - `@wsm/client` tests
+    - `@wsm/client` production build
+  - Added workflow-level concurrency cancellation for superseded runs.
 - `packages/server/services/inventory.service.js`
   - Added product barcode/location normalization helpers.
   - Added explicit unique-barcode guard (`DUPLICATE_BARCODE`, HTTP 409) for create/update workflows.
