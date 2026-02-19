@@ -652,3 +652,25 @@
   - Result: no errors, 1 non-blocking warning (`react-hooks/exhaustive-deps` in `Receptions.tsx`).
 - Frontend typecheck passed:
   - `npm -w @wsm/client exec -- tsc --noEmit`
+
+### Changed (P2.6 Frontend Credential Hardening)
+- `packages/client/src/lib/passwordPolicy.ts`
+  - Added shared strong-password policy constants and regex aligned with backend:
+    - length `8..128`
+    - requires uppercase, lowercase, number, and symbol
+  - Added reusable policy text for UI hint/validation title.
+- `packages/client/src/components/users/UserForm.tsx`
+  - Password input now enforces client-side policy with:
+    - `minLength`, `maxLength`
+    - `pattern`
+    - `title` with policy details
+    - helper text shown below input
+  - Keeps create/edit behavior (password optional on edit).
+
+### Verified (P2.6 Frontend Credential Hardening)
+- Frontend lint passed on touched files:
+  - `npm -w @wsm/client exec eslint src/components/users/UserForm.tsx src/lib/passwordPolicy.ts`
+- Frontend typecheck passed:
+  - `npm -w @wsm/client exec -- tsc --noEmit`
+- Frontend build passed:
+  - `npm -w @wsm/client run build`

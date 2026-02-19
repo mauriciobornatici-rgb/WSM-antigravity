@@ -1,16 +1,16 @@
 # Execution State Snapshot
 
-Last updated: 2026-02-18
+Last updated: 2026-02-19
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido de error
+Current task: P2.6 - Hardening final de frontend + normalizacion de texto (es-AR)
 
 ## Resume From Here
-1. Re-ejecutar smoke backend cuando venza la ventana de rate-limit del entorno activo (último intento respondió `429` en `/api/health`).
-2. Validar en staging que la deduplicación de errores elimina toasts repetidos sin ocultar errores relevantes.
-3. Revisar regresión visual en Invoices/POS/Receptions luego de la modularización.
-4. Ejecutar smoke funcional de `ReturnsAndWarranties` (crear garantía, devolución y nota de crédito) en staging.
-5. Revisar impacto operativo de nueva política de contraseñas fuertes en alta/edición de usuarios.
+1. Re-ejecutar smoke backend cuando venza la ventana de rate-limit del entorno activo (ultimo intento respondio `429` en `/api/health`).
+2. Validar en staging que la deduplicacion de errores elimina toasts repetidos sin ocultar errores relevantes.
+3. Revisar regresion visual en Invoices/POS/Receptions luego de la modularizacion.
+4. Ejecutar smoke funcional de `ReturnsAndWarranties` (crear garantia, devolucion y nota de credito) en staging.
+5. Validar en staging flujo de alta/edicion de usuarios con politica de contrasena fuerte (frontend + backend).
 6. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
@@ -506,6 +506,20 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
     - `.env.example`
   - Validation:
     - server syntax checks + frontend typecheck/build passed.
+- P2.6 partial progress (frontend credential hardening):
+  - Politica de contrasena fuerte alineada en frontend con backend.
+  - Se agrego helper reutilizable de politica de contrasena para evitar duplicacion.
+  - `UserForm` ahora valida complejidad desde cliente con:
+    - `minLength=8`, `maxLength=128`
+    - `pattern` de mayuscula/minuscula/numero/simbolo
+    - texto de ayuda consistente para usuario operador
+  - Files:
+    - `packages/client/src/lib/passwordPolicy.ts`
+    - `packages/client/src/components/users/UserForm.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/components/users/UserForm.tsx src/lib/passwordPolicy.ts`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
 
 ## Next After Current Task
 P2.6 continuation - cerrar normalizacion de textos y aplicar estrategia anti-duplicacion de errores.

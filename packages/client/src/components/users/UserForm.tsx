@@ -20,6 +20,12 @@ import {
 import { Loader2 } from "lucide-react";
 import type { User } from "@/types";
 import type { UserFormValues, UserRole, UserStatus } from "@/types/api";
+import {
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+    PASSWORD_POLICY_PATTERN,
+    PASSWORD_POLICY_TEXT,
+} from "@/lib/passwordPolicy";
 
 interface UserFormProps {
     open: boolean;
@@ -103,8 +109,13 @@ export function UserForm({ open, onOpenChange, onSubmit, initialData, isLoading 
                             value={formData.password}
                             onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                             required={!initialData}
-                            minLength={6}
+                            minLength={PASSWORD_MIN_LENGTH}
+                            maxLength={PASSWORD_MAX_LENGTH}
+                            pattern={PASSWORD_POLICY_PATTERN}
+                            title={PASSWORD_POLICY_TEXT}
+                            autoComplete="new-password"
                         />
+                        <p className="text-xs text-muted-foreground">{PASSWORD_POLICY_TEXT}</p>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div className="grid gap-2">
