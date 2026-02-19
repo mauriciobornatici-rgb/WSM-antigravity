@@ -3,6 +3,16 @@
 ## 2026-02-19
 
 ### Changed
+- `packages/server/test/inventory.service.test.js`
+  - Added critical integrity tests for inventory service:
+    - barcode normalization and duplicate guard (`409 DUPLICATE_BARCODE`)
+    - product creation with `stock_initial` and expected side effects in inventory/movements.
+- `packages/server/test/sales.service.test.js`
+  - Added focused stock-deduction tests for order flow:
+    - insufficient stock rejection (`409 INSUFFICIENT_STOCK`)
+    - successful multi-location consumption with movement logging.
+- `docs/execution/STATE.md`
+  - Updated active checkpoint to `P3.3` and recorded completion of `P3.2` test coverage block.
 - `.github/workflows/ci.yml`
   - Added baseline GitHub Actions CI for monorepo workspaces.
   - Triggers:

@@ -3,29 +3,38 @@
 Last updated: 2026-02-19
 Status: IN_PROGRESS
 Current block: P3
-Current task: P3.1 - CI baseline y quality gates en GitHub Actions
+Current task: P3.3 - Validacion funcional en staging (producto + POS visual + scanner)
 
 ## Resume From Here
 1. Validar ejecucion de CI en GitHub (`push` y `pull_request`) con resultado verde.
-2. Extender cobertura de tests de negocio (prioridad):
-   - orden con control de stock transaccional
-   - barcode duplicado (`409`)
-   - alta con `stock_initial` reflejada en inventario y movimientos
-3. Validar en staging flujo de alta de producto con:
+2. Validar en staging flujo de alta de producto con:
    - escaneo por lector optico (input + Enter)
    - escaneo por camara (BarcodeDetector)
    - imagen URL y carga local (data URL)
    - stock inicial con impacto real en `inventory` e `inventory_movements`.
-4. Validar en staging flujo POS visual:
+3. Validar en staging flujo POS visual:
    - cards con imagen
    - busqueda por nombre/SKU/barcode
    - alta por escaneo exacto desde buscador
    - checkout/factura/caja sin regresion funcional.
-5. Definir politica final de almacenamiento de imagenes (URL externa vs endpoint dedicado de uploads).
-6. Ejecutar `smoke:rbac` y `smoke:integrity` en entorno con acceso de red local.
-7. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
+4. Definir politica final de almacenamiento de imagenes (URL externa vs endpoint dedicado de uploads).
+5. Ejecutar `smoke:rbac` y `smoke:integrity` en entorno con acceso de red local.
+6. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
 
 ## Completed
+- P3.2 implemented:
+  - Added focused backend business tests for critical integrity paths:
+    - duplicate barcode guard (`409 DUPLICATE_BARCODE`)
+    - product creation with `stock_initial` creating inventory + movement records
+    - transactional stock deduction per order with insufficient/sufficient stock scenarios
+  - Files:
+    - `packages/server/test/inventory.service.test.js`
+    - `packages/server/test/sales.service.test.js`
+  - Validation:
+    - `npm -w @wsm/server run test` (8/8)
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
 - P3.1 implemented:
   - Added GitHub Actions baseline CI workflow:
     - trigger on `push`/`pull_request` to `main` and `workflow_dispatch`
