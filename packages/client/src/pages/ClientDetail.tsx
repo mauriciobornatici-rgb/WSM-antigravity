@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CreditCard, History, Mail, MapPin, Phone, ShieldCheck, User } from "lucide-react";
 import { api } from "@/services/api";
@@ -58,11 +58,7 @@ export default function ClientDetailPage() {
     const [warranties, setWarranties] = useState<WarrantySummary[]>([]);
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        void loadClientData();
-    }, [id]);
-
-    async function loadClientData() {
+    const loadClientData = useCallback(async () => {
         if (!id) return;
         try {
             setLoading(true);
@@ -90,7 +86,11 @@ export default function ClientDetailPage() {
         } finally {
             setLoading(false);
         }
-    }
+    }, [id]);
+
+    useEffect(() => {
+        void loadClientData();
+    }, [loadClientData]);
 
     const balancePercent = useMemo(() => {
         if (!client || client.credit_limit <= 0) return 0;

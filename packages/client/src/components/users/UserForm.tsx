@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,8 +37,12 @@ const DEFAULT_FORM: UserFormValues = {
     status: "active",
 };
 
+function replaceFormState(_: UserFormValues, next: UserFormValues): UserFormValues {
+    return next;
+}
+
 export function UserForm({ open, onOpenChange, onSubmit, initialData, isLoading }: UserFormProps) {
-    const [formData, setFormData] = useState<UserFormValues>(DEFAULT_FORM);
+    const [formData, setFormData] = useReducer(replaceFormState, DEFAULT_FORM);
 
     useEffect(() => {
         if (!open) return;

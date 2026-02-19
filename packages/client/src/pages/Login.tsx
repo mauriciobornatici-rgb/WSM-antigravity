@@ -30,7 +30,7 @@ export default function LoginPage() {
         try {
             await login({ email, password })
             navigate(from, { replace: true })
-        } catch (error) {
+        } catch {
             // Error is surfaced by AuthContext's toast notification
         } finally {
             setIsLoading(false)

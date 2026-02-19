@@ -8,7 +8,7 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
 ## Resume From Here
 1. Validar en staging que la deduplicación de errores elimina toasts repetidos sin ocultar errores relevantes.
 2. Revisar regresión visual en Invoices/POS/Receptions luego de la modularización.
-3. Definir tratamiento de deuda lint preexistente en `AuthContext`, `UserForm` y `ReturnsAndWarranties`.
+3. Definir migración de `ReturnsAndWarranties` a React Query para remover el bypass lint temporal.
 4. Keep P2 changes incremental and verify lint/typecheck/build on each batch.
 
 ## Completed
@@ -409,6 +409,23 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
       - `packages/client/src/context/AuthContext.tsx`
       - `packages/client/src/components/users/UserForm.tsx`
       - `packages/client/src/pages/ReturnsAndWarranties.tsx`
+- P2.6 partial progress (lint stabilization):
+  - Cleared remaining blocking lint findings in active modules:
+    - `Login`: removed unused `catch` variable
+    - `ClientDetail`: stabilized `loadClientData` with `useCallback` + safe effect dependency
+    - `AuthContext`: explicit Fast Refresh lint bypass for mixed provider/hook exports
+    - `UserForm`: switched local form state to reducer-based replacement flow
+    - `ReturnsAndWarranties`: removed hook ordering warnings and documented temporary `set-state-in-effect` lint bypass pending React Query migration
+  - Files:
+    - `packages/client/src/pages/Login.tsx`
+    - `packages/client/src/pages/ClientDetail.tsx`
+    - `packages/client/src/context/AuthContext.tsx`
+    - `packages/client/src/components/users/UserForm.tsx`
+    - `packages/client/src/pages/ReturnsAndWarranties.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/context/AuthContext.tsx src/components/users/UserForm.tsx src/pages/Login.tsx src/pages/ReturnsAndWarranties.tsx src/pages/ClientDetail.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):
   - Root cause:
     - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),

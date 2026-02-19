@@ -231,6 +231,19 @@
   - Normalized placeholder wording (`Correo electrónico`).
 - `docs/execution/STATE.md`
   - Updated snapshot after AR language normalization sweep.
+- `packages/client/src/pages/Login.tsx`
+  - Removed unused `catch` variable in login flow (lint clean, behavior unchanged).
+- `packages/client/src/pages/ClientDetail.tsx`
+  - Stabilized async loader with `useCallback` and effect dependency on callback.
+- `packages/client/src/context/AuthContext.tsx`
+  - Added explicit Fast Refresh lint bypass for provider/hook mixed export pattern.
+- `packages/client/src/components/users/UserForm.tsx`
+  - Switched form state handling to reducer-based replacement flow.
+- `packages/client/src/pages/ReturnsAndWarranties.tsx`
+  - Reordered data-loading functions/effects for hook stability.
+  - Added temporary lint bypass for `react-hooks/set-state-in-effect` pending React Query migration.
+- `docs/execution/STATE.md`
+  - Updated active snapshot after lint stabilization pass.
 
 ### Verified
 - Frontend checks passed:
@@ -256,6 +269,7 @@
   - `npm -w @wsm/client exec eslint src/pages/Invoices.tsx src/components/invoices/types.ts src/components/invoices/invoiceUtils.tsx src/components/invoices/InvoiceCreateDialog.tsx src/components/invoices/InvoicesTable.tsx src/components/invoices/InvoiceDocument.tsx src/components/invoices/InvoicePreviewDialog.tsx src/components/invoices/PrintableInvoiceArea.tsx`
   - `npm -w @wsm/client exec eslint src/App.tsx src/lib/errorHandling.ts`
   - `npm -w @wsm/client exec eslint src/App.tsx src/lib/errorHandling.ts src/layout/AppLayout.tsx src/context/AuthContext.tsx src/pages/Dashboard.tsx src/pages/Login.tsx src/pages/Picking.tsx src/pages/ReturnsAndWarranties.tsx src/pages/PurchaseOrders.tsx src/pages/Settings.tsx src/components/users/UserForm.tsx src/pages/ClientDetail.tsx src/components/pos/QuickClientDialog.tsx`
+  - `npm -w @wsm/client exec eslint src/context/AuthContext.tsx src/components/users/UserForm.tsx src/pages/Login.tsx src/pages/ReturnsAndWarranties.tsx src/pages/ClientDetail.tsx`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 
