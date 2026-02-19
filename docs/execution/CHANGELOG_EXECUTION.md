@@ -274,6 +274,10 @@
   - Added `jwtExpiresIn` config field (`JWT_EXPIRES_IN`) with non-empty validation.
 - `.env.example`
   - Added `JWT_EXPIRES_IN=8h`.
+- `packages/server/package.json`
+  - Added backend test script using Node test runner (`node --test`).
+- `packages/server/test/passwordPolicy.test.js`
+  - Added baseline automated tests for password policy acceptance/rejection rules.
 - `docs/execution/STATE.md`
   - Updated snapshot after backend auth/password hardening pass.
 
@@ -308,6 +312,7 @@
   - `node --check packages/server/middleware/validationMiddleware.js`
   - `node --check packages/server/config/env.js`
   - `node --check packages/server/utils/passwordPolicy.js`
+  - `npm -w @wsm/server run test`
   - `npm -w @wsm/client exec -- tsc --noEmit`
   - `npm -w @wsm/client run build`
 

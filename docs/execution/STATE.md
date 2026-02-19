@@ -463,6 +463,7 @@ Current task: P2.6 - Normalizacion final de texto (es-AR) y reduccion de ruido d
     - `node --check packages/server/middleware/validationMiddleware.js`
     - `node --check packages/server/config/env.js`
     - `node --check packages/server/utils/passwordPolicy.js`
+    - `npm -w @wsm/server run test`
     - `npm -w @wsm/client exec -- tsc --noEmit`
     - `npm -w @wsm/client run build`
 - Incident hotfix (staging availability):
