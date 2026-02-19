@@ -45,6 +45,7 @@ export const updateProduct = catchAsync(async (req, res) => {
         data.purchase_price = data.cost_price;
     }
     delete data.cost_price;
+    delete data.stock_initial;
     const updated = await inventoryService.update(id, data);
     if (updated) {
         await auditService.log({

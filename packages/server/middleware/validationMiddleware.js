@@ -103,6 +103,7 @@ export const schemas = {
     product: Joi.object({
         body: Joi.object({
             sku: Joi.string().required(),
+            barcode: Joi.string().allow('', null),
             name: Joi.string().required(),
             description: Joi.string().allow('', null),
             category: Joi.string().allow('', null),
@@ -111,6 +112,7 @@ export const schemas = {
             purchase_price: Joi.number().min(0),
             cost_price: Joi.number().min(0),
             sale_price: Joi.number().min(0),
+            stock_initial: Joi.number().integer().min(0).optional(),
             status: Joi.string().valid('active', 'inactive').optional()
         })
     }),

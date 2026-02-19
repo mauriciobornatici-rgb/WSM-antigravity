@@ -1,10 +1,11 @@
 export interface Product {
     id: string
     sku: string
+    barcode?: string | null
     name: string
     description: string
     category: string
-    image_url: string
+    image_url?: string | null
     purchase_price: number
     sale_price: number
     stock_current?: number

@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS suppliers (
 CREATE TABLE IF NOT EXISTS products (
     id VARCHAR(36) PRIMARY KEY,
     sku VARCHAR(100) UNIQUE,
+    barcode VARCHAR(100),
     name VARCHAR(255) NOT NULL,
     description TEXT,
     category VARCHAR(100),

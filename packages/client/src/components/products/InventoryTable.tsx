@@ -15,7 +15,7 @@ type InventoryTableProps = {
 
 export function InventoryTable({ loading, products, onEdit, onDelete }: InventoryTableProps) {
     if (loading) {
-        return <TableSkeleton columns={8} rows={8} />;
+        return <TableSkeleton columns={9} rows={8} />;
     }
 
     return (
@@ -24,8 +24,9 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
                 <TableHeader>
                     <TableRow>
                         <TableHead>SKU</TableHead>
+                        <TableHead>Codigo</TableHead>
                         <TableHead>Producto</TableHead>
-                        <TableHead>Categoría</TableHead>
+                        <TableHead>Categoria</TableHead>
                         <TableHead className="text-right">Costo</TableHead>
                         <TableHead className="text-right">Venta</TableHead>
                         <TableHead className="text-right">Disponible</TableHead>
@@ -36,7 +37,7 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
                 <TableBody>
                     {products.length === 0 ? (
                         <TableRow>
-                            <TableCell colSpan={8} className="h-20 text-center text-muted-foreground">
+                            <TableCell colSpan={9} className="h-20 text-center text-muted-foreground">
                                 No se encontraron productos.
                             </TableCell>
                         </TableRow>
@@ -44,9 +45,23 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
                         products.map((product) => (
                             <TableRow key={product.id}>
                                 <TableCell className="font-mono text-xs">{product.sku}</TableCell>
+                                <TableCell className="font-mono text-xs">{product.barcode || "-"}</TableCell>
                                 <TableCell>
-                                    <div className="font-medium">{product.name}</div>
-                                    <div className="text-xs text-muted-foreground">{product.location || "Sin ubicacion"}</div>
+                                    <div className="flex items-center gap-3">
+                                        {product.image_url ? (
+                                            <img
+                                                src={product.image_url}
+                                                alt={product.name}
+                                                className="h-10 w-10 rounded-md object-cover"
+                                            />
+                                        ) : (
+                                            <div className="h-10 w-10 rounded-md border bg-muted/40" />
+                                        )}
+                                        <div>
+                                            <div className="font-medium">{product.name}</div>
+                                            <div className="text-xs text-muted-foreground">{product.location || "Sin ubicacion"}</div>
+                                        </div>
+                                    </div>
                                 </TableCell>
                                 <TableCell>
                                     <Badge variant="secondary">{product.category}</Badge>
@@ -92,3 +107,4 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
         </div>
     );
 }
+

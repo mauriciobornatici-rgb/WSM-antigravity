@@ -58,10 +58,12 @@ type GenericRecord = Record<string, unknown>;
 type ProductUpsertInput =
     Partial<Omit<Product, "id" | "created_at">> & {
         sku: string;
+        barcode?: string | null;
         name: string;
         sale_price: number;
         purchase_price?: number;
         cost_price?: number;
+        stock_initial?: number;
         status?: "active" | "inactive";
     };
 

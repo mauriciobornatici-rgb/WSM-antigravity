@@ -24,8 +24,8 @@ export function CartPanelCard({
     currentRegister,
 }: CartPanelProps) {
     return (
-        <Card>
-            <CardHeader className="space-y-3">
+        <Card className="border-blue-900/30 bg-gradient-to-b from-blue-950/30 to-background">
+            <CardHeader className="space-y-3 border-b border-blue-900/30">
                 <CardTitle>Carrito</CardTitle>
                 <div className="space-y-2">
                     <Label>Cliente</Label>
@@ -47,7 +47,7 @@ export function CartPanelCard({
                         </Button>
                     </div>
                     {selectedClient ? (
-                        <div className="rounded-md border bg-slate-50 p-2 text-xs">
+                        <div className="rounded-md border bg-muted/20 p-2 text-xs">
                             <div>{selectedClient.name}</div>
                             <div className="text-muted-foreground">{selectedClient.tax_id}</div>
                         </div>
@@ -55,17 +55,28 @@ export function CartPanelCard({
                 </div>
             </CardHeader>
 
-            <CardContent className="space-y-3">
+            <CardContent className="space-y-3 p-4">
                 {cart.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Aún no agregaste productos.</p>
+                    <p className="text-sm text-muted-foreground">Aun no agregaste productos.</p>
                 ) : (
                     cart.map((item) => (
                         <div key={item.id} className="rounded-md border p-2">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <div className="font-medium">{item.name}</div>
-                                    <div className="text-xs text-muted-foreground">
-                                        ${Number(item.sale_price).toLocaleString("es-AR")}
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                    {item.image_url ? (
+                                        <img
+                                            src={item.image_url}
+                                            alt={item.name}
+                                            className="h-10 w-10 rounded-md object-cover"
+                                        />
+                                    ) : (
+                                        <div className="h-10 w-10 rounded-md border bg-muted/30" />
+                                    )}
+                                    <div>
+                                        <div className="font-medium">{item.name}</div>
+                                        <div className="text-xs text-muted-foreground">
+                                            ${Number(item.sale_price).toLocaleString("es-AR")}
+                                        </div>
                                     </div>
                                 </div>
                                 <Button size="icon" variant="ghost" onClick={() => onRemoveFromCart(item.id)}>
@@ -85,7 +96,7 @@ export function CartPanelCard({
                     ))
                 )}
 
-                <div className="space-y-1 rounded-md border bg-slate-50 p-3 text-sm">
+                <div className="space-y-1 rounded-md border bg-muted/20 p-3 text-sm">
                     <div className="flex justify-between">
                         <span>Subtotal</span>
                         <span>${subtotal.toLocaleString("es-AR")}</span>
@@ -107,9 +118,9 @@ export function CartPanelCard({
 
                 {!currentShift ? (
                     <p className="text-xs text-red-600">
-                        Caja cerrada. Ábrela en{" "}
+                        Caja cerrada. Abrela en{" "}
                         <Link to="/cash-management" className="underline">
-                            Gestión de caja
+                            Gestion de caja
                         </Link>
                         .
                     </p>
@@ -121,3 +132,4 @@ export function CartPanelCard({
         </Card>
     );
 }
+

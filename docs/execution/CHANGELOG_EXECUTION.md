@@ -3,6 +3,58 @@
 ## 2026-02-19
 
 ### Changed
+- `packages/server/migrations/004_add_products_barcode.sql`
+  - Added incremental migration to include `products.barcode` for scan-driven catalog and POS workflows.
+- `packages/server/migrations/000_create_core_schema.sql`
+  - Updated baseline products schema with `barcode` for fresh installs.
+- `packages/server/services/base.service.js`
+  - Extended `products` column allowlist with `barcode`.
+- `packages/server/middleware/validationMiddleware.js`
+  - Product schema now supports:
+    - `barcode`
+    - `stock_initial` (integer >= 0)
+- `packages/server/services/inventory.service.js`
+  - `createProduct` now:
+    - normalizes `barcode` and `location`
+    - handles `stock_initial` on creation
+    - inserts/updates `inventory` with initial quantity
+    - records initial movement in `inventory_movements` (`initial_stock`)
+    - keeps audit payload aligned with onboarding data.
+- `packages/server/controllers/inventoryController.js`
+  - Guards `updateProduct` from `stock_initial` payload leakage (`stock_initial` dropped on update path).
+- `packages/client/src/types/index.ts`
+  - Extended `Product` contract:
+    - `barcode?: string | null`
+    - `image_url?: string | null`
+- `packages/client/src/services/api.ts`
+  - Product upsert payload now supports:
+    - `barcode`
+    - `stock_initial`
+- `packages/client/src/components/products/ProductForm.tsx`
+  - Rebuilt product onboarding form:
+    - barcode capture by camera and optical reader mode
+    - warehouse location capture by camera and optical reader mode
+    - image URL plus local image upload preview
+    - initial stock input (create mode only)
+    - strict typed validation compatible with current lint rules.
+- `packages/client/src/components/products/InventoryTable.tsx`
+  - Added columns and rendering for:
+    - barcode
+    - product thumbnail
+- `packages/client/src/pages/Inventory.tsx`
+  - Updated create/edit orchestration to consume new form payload.
+  - Search now includes barcode.
+- `packages/client/src/components/pos/ProductCatalogCard.tsx`
+  - Replaced compact list with visual product cards:
+    - image, SKU/barcode, location, stock badge
+    - category chips
+    - scanner-assisted search action.
+- `packages/client/src/components/pos/CartPanelCard.tsx`
+  - Improved cart rows with product image thumbnails while preserving checkout controls.
+- `packages/client/src/pages/POS.tsx`
+  - Added exact scan-to-cart flow from search (`SKU`/`barcode` + Enter).
+  - Search now includes barcode.
+  - Updated layout to visual POS variant while preserving checkout/invoice/cash-shift behavior.
 - `packages/server/services/sales.service.js`
   - `transitionOrderStatus` now runs inside a transaction with row lock.
   - Added cancellation rollback flow to restore inventory and log inverse inventory movements.

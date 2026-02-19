@@ -3,7 +3,7 @@ import pool from '../config/db.js';
 // Column allowlists per table — only these columns can be used in dynamic queries
 const TABLE_COLUMNS = {
     products: [
-        'id', 'sku', 'name', 'description', 'category', 'image_url', 'location',
+        'id', 'sku', 'barcode', 'name', 'description', 'category', 'image_url', 'location',
         'purchase_price', 'cost_price', 'sale_price',
         'brand', 'unit_measure', 'stock_current', 'stock_min', 'supplier_id', 'status',
         'created_at', 'updated_at', 'deleted_at'

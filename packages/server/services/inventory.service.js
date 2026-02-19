@@ -79,21 +79,60 @@ class InventoryService extends BaseService {
     async createProduct(productData, userId) {
         const id = crypto.randomUUID();
         const normalized = { ...productData };
+        const rawStockInitial = Number(normalized.stock_initial ?? 0);
+        const stockInitial = Number.isFinite(rawStockInitial) ? Math.max(0, Math.floor(rawStockInitial)) : 0;
+        delete normalized.stock_initial;
 
         if (normalized.cost_price != null && normalized.purchase_price == null) {
             normalized.purchase_price = normalized.cost_price;
         }
         delete normalized.cost_price;
 
+        if (typeof normalized.barcode === 'string') {
+            const sanitizedBarcode = normalized.barcode.trim();
+            normalized.barcode = sanitizedBarcode.length > 0 ? sanitizedBarcode : null;
+        }
+
+        if (typeof normalized.location === 'string') {
+            const sanitizedLocation = normalized.location.trim();
+            normalized.location = sanitizedLocation.length > 0 ? sanitizedLocation : null;
+        }
+
         const data = { id, ...normalized };
         const result = await this.create(data);
+
+        if (stockInitial > 0) {
+            const initialLocation = normalized.location || 'General';
+            await pool.query(
+                `INSERT INTO inventory (id, product_id, location, quantity)
+                 VALUES (?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
+                [crypto.randomUUID(), id, initialLocation, stockInitial]
+            );
+
+            await pool.query(
+                `INSERT INTO inventory_movements (
+                    id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
+                ) VALUES (?, 'initial_stock', ?, ?, ?, ?, ?, 'product', ?, ?)`,
+                [
+                    crypto.randomUUID(),
+                    id,
+                    initialLocation,
+                    stockInitial,
+                    Number(normalized.purchase_price || 0),
+                    'Initial stock on product creation',
+                    id,
+                    userId || null
+                ]
+            );
+        }
 
         await auditService.log({
             user_id: userId,
             action: 'CREATE_PRODUCT',
             entity_type: 'product',
             entity_id: id,
-            new_values: data
+            new_values: { ...data, stock_initial: stockInitial }
         });
 
         return result;

@@ -1,0 +1,816 @@
+﻿<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mockup C - Alta de Producto con Escaneo</title>
+  <style>
+    :root {
+      --bg: #07152b;
+      --surface: #0f2144;
+      --surface-2: #132b57;
+      --line: #2f518c;
+      --text: #eaf2ff;
+      --muted: #9db6de;
+      --brand: #3b82f6;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --radius: 14px;
+      --shadow: 0 16px 44px rgba(2, 10, 24, 0.5);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: "Manrope", "Segoe UI", Arial, sans-serif;
+      background: radial-gradient(circle at 0% 0%, #143369 0%, #081529 45%, #050e1d 100%);
+      min-height: 100vh;
+    }
+
+    .layout {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 14px;
+      min-height: 100vh;
+    }
+
+    .panel {
+      background: linear-gradient(165deg, rgba(15,33,68,0.96), rgba(9,21,45,0.97));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+
+    .form-panel {
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: .2px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      margin-top: 4px;
+      font-size: 13px;
+    }
+
+    .section {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      background: linear-gradient(160deg, rgba(19,43,87,0.5), rgba(12,28,57,0.5));
+    }
+
+    .section h2 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .section-note {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: -4px;
+    }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+      color: #c9dbfb;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+
+    input, select, textarea, button {
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.05);
+      color: var(--text);
+      padding: 10px;
+      font-size: 14px;
+    }
+
+    textarea { min-height: 92px; resize: vertical; }
+
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: #5a97f8;
+      box-shadow: 0 0 0 3px rgba(59,130,246,.18);
+    }
+
+    .scan-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .btn {
+      cursor: pointer;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .btn-primary {
+      background: linear-gradient(120deg, #3b82f6, #65beff);
+      color: #03152f;
+      border-color: transparent;
+    }
+
+    .btn-soft {
+      background: rgba(255,255,255,.06);
+      color: #dbe9ff;
+    }
+
+    .btn-soft.active {
+      border-color: #5a97f8;
+      background: rgba(59,130,246,.24);
+      color: #ebf4ff;
+    }
+
+    .drop {
+      border: 1px dashed #568adf;
+      border-radius: 12px;
+      min-height: 154px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      color: var(--muted);
+      padding: 12px;
+      cursor: pointer;
+      background: rgba(59,130,246,.08);
+    }
+
+    .drop strong { color: #e8f1ff; }
+
+    .drop img {
+      max-width: 100%;
+      max-height: 210px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .toolbar button {
+      min-width: 156px;
+      padding: 11px 12px;
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .side {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+      min-height: 0;
+    }
+
+    .status {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px;
+      background: rgba(255,255,255,.04);
+      display: grid;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .dot.ok { background: var(--ok); box-shadow: 0 0 0 4px rgba(34,197,94,.2); }
+    .dot.warn { background: var(--warn); box-shadow: 0 0 0 4px rgba(245,158,11,.2); }
+
+    .summary {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px;
+      background: rgba(19,43,87,.46);
+      display: grid;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .summary pre {
+      margin: 0;
+      font-size: 12px;
+      color: #d6e5ff;
+      background: rgba(3,12,29,.5);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      overflow: auto;
+      max-height: 290px;
+    }
+
+    .help {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 10, 23, 0.72);
+      display: none;
+      place-items: center;
+      padding: 18px;
+      z-index: 50;
+    }
+
+    .modal.show { display: grid; }
+
+    .dialog {
+      width: min(740px, 100%);
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: linear-gradient(165deg, #10254d, #0a1c3a);
+      box-shadow: var(--shadow);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .dialog-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .video-wrap {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #050f20;
+      min-height: 300px;
+      display: grid;
+      place-items: center;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .modal-tools {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+    }
+
+    .status-bar {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      background: rgba(255,255,255,.03);
+    }
+
+    .flash {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      background: #ecf4ff;
+      color: #042045;
+      border: 1px solid #b5d0ff;
+      border-radius: 11px;
+      padding: 10px 12px;
+      font-weight: 700;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(8px);
+      transition: all .2s ease;
+      pointer-events: none;
+    }
+
+    .flash.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 1140px) {
+      .layout { grid-template-columns: 1fr; }
+      .grid-2, .grid-3, .scan-row { grid-template-columns: 1fr; }
+      .modal-tools { grid-template-columns: 1fr; }
+      .toolbar { justify-content: stretch; }
+      .toolbar button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <section class="panel form-panel">
+      <header>
+        <h1>Alta de producto con escaneo</h1>
+        <div class="subtitle">Mockup C - incluye codigo de barras, imagen y ubicacion de almacen por escaneo.</div>
+      </header>
+
+      <section class="section">
+        <h2>Identificacion comercial</h2>
+        <div class="grid-2">
+          <label>Nombre del producto
+            <input id="name" placeholder="Ej: Zapatilla Running Pro" />
+          </label>
+          <label>Categoria
+            <select id="category">
+              <option value="">Seleccionar</option>
+              <option>Calzado</option>
+              <option>Ropa</option>
+              <option>Accesorios</option>
+              <option>Proteccion</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid-2">
+          <label>SKU interno
+            <input id="sku" placeholder="Ej: NK-732" />
+          </label>
+          <label>Proveedor
+            <input id="supplier" placeholder="Ej: Adidas" />
+          </label>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Codigo de barras</h2>
+        <div class="section-note">Compatible con lector optico (teclado) y camara de telefono.</div>
+
+        <div class="scan-row">
+          <input id="barcode" placeholder="Escanee o escriba el codigo" />
+          <button id="btnBarcodeCamera" class="btn btn-primary">Escanear con camara</button>
+          <button id="btnReaderMode" class="btn btn-soft">Modo lector optico</button>
+        </div>
+
+        <div class="grid-3">
+          <label>Tipo de codigo
+            <select id="barcodeType">
+              <option>EAN13</option>
+              <option>EAN8</option>
+              <option>CODE128</option>
+              <option>QR</option>
+            </select>
+          </label>
+
+          <label>Precio compra
+            <input id="purchasePrice" type="number" min="0" step="0.01" value="0" />
+          </label>
+
+          <label>Precio venta
+            <input id="salePrice" type="number" min="0" step="0.01" value="0" />
+          </label>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Imagen del producto</h2>
+        <div class="section-note">Puede subir archivo, arrastrar imagen o simular foto desde telefono.</div>
+        <div id="dropZone" class="drop">
+          <div>
+            <strong>Arrastre una imagen aqui o haga clic</strong>
+            <div>Formatos: JPG, PNG, WEBP</div>
+          </div>
+          <input id="imageInput" type="file" accept="image/*" style="display:none" />
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Ubicacion de almacen</h2>
+        <div class="section-note">Escaneo desde etiqueta de ubicacion o ingreso manual estructurado.</div>
+
+        <div class="scan-row">
+          <input id="location" placeholder="Ej: A1-R02-F03-C01" />
+          <button id="btnLocationCamera" class="btn btn-primary">Escanear ubicacion</button>
+          <button id="btnLocationReader" class="btn btn-soft">Modo lector ubicacion</button>
+        </div>
+
+        <div class="grid-3">
+          <label>Stock inicial
+            <input id="stock" type="number" min="0" step="1" value="0" />
+          </label>
+          <label>Stock minimo
+            <input id="stockMin" type="number" min="0" step="1" value="0" />
+          </label>
+          <label>Sector logistico
+            <input id="sector" placeholder="Ej: Picking rapido" />
+          </label>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Notas internas</h2>
+        <textarea id="notes" placeholder="Notas para operacion, trazabilidad o control de calidad"></textarea>
+      </section>
+
+      <div class="toolbar">
+        <button id="btnClear" class="btn btn-soft">Limpiar formulario</button>
+        <button id="btnSave" class="btn btn-primary">Guardar producto (simulacion)</button>
+      </div>
+    </section>
+
+    <aside class="panel side">
+      <div class="status">
+        <strong>Estado de captura</strong>
+        <div><span class="dot ok"></span><span id="barcodeStatus">Codigo: listo</span></div>
+        <div><span class="dot ok"></span><span id="locationStatus">Ubicacion: lista</span></div>
+        <div><span class="dot warn"></span><span id="cameraStatus">Camara: inactiva</span></div>
+      </div>
+
+      <div class="summary">
+        <strong>Payload esperado (preview)</strong>
+        <pre id="payloadPreview">{}</pre>
+      </div>
+
+      <div class="help">
+        Recomendacion de implementacion real:
+        <ul>
+          <li>Escaner optico como entrada por teclado con tecla Enter final.</li>
+          <li>Escaneo por camara con BarcodeDetector y fallback con libreria ZXing.</li>
+          <li>Imagen en storage y URL persistida en image_url.</li>
+          <li>Validar formato de ubicacion y evitar duplicados criticos.</li>
+        </ul>
+      </div>
+    </aside>
+  </div>
+
+  <div id="scanModal" class="modal" aria-hidden="true">
+    <div class="dialog">
+      <div class="dialog-top">
+        <strong id="modalTitle">Escaneo por camara</strong>
+        <button id="closeModal" class="btn btn-soft">Cerrar</button>
+      </div>
+
+      <div class="video-wrap">
+        <video id="video" autoplay playsinline muted></video>
+      </div>
+
+      <div class="modal-tools">
+        <input id="manualScan" placeholder="Fallback: escriba codigo y presione aplicar" />
+        <button id="applyManualScan" class="btn btn-soft">Aplicar manual</button>
+        <button id="simulateScan" class="btn btn-primary">Simular lectura</button>
+      </div>
+
+      <div id="scanFeedback" class="status-bar">Esperando lectura...</div>
+    </div>
+  </div>
+
+  <div id="flash" class="flash"></div>
+
+  <script>
+    const state = {
+      targetField: null,
+      stream: null,
+      detector: null,
+      rafId: null,
+      readerBarcode: false,
+      readerLocation: false,
+      imageDataUrl: "",
+      lastGenerated: 1000,
+    };
+
+    const ids = [
+      "name", "category", "sku", "supplier", "barcode", "barcodeType", "purchasePrice", "salePrice",
+      "location", "stock", "stockMin", "sector", "notes"
+    ];
+
+    const modal = document.getElementById("scanModal");
+    const video = document.getElementById("video");
+    const feedback = document.getElementById("scanFeedback");
+    const payloadPreview = document.getElementById("payloadPreview");
+
+    function flash(message) {
+      const el = document.getElementById("flash");
+      el.textContent = message;
+      el.classList.add("show");
+      clearTimeout(flash.timer);
+      flash.timer = setTimeout(() => el.classList.remove("show"), 1800);
+    }
+
+    function getValue(id) {
+      return document.getElementById(id).value.trim();
+    }
+
+    function setStatus(id, text) {
+      document.getElementById(id).textContent = text;
+    }
+
+    function currentPayload() {
+      return {
+        sku: getValue("sku"),
+        name: getValue("name"),
+        category: getValue("category"),
+        supplier: getValue("supplier"),
+        barcode: getValue("barcode"),
+        barcode_type: getValue("barcodeType"),
+        purchase_price: Number(getValue("purchasePrice") || 0),
+        sale_price: Number(getValue("salePrice") || 0),
+        stock_current: Number(getValue("stock") || 0),
+        stock_min: Number(getValue("stockMin") || 0),
+        location: getValue("location"),
+        logistic_sector: getValue("sector"),
+        image_url: state.imageDataUrl ? "(preview-local-dataurl)" : "",
+        notes: getValue("notes")
+      };
+    }
+
+    function renderPayload() {
+      payloadPreview.textContent = JSON.stringify(currentPayload(), null, 2);
+    }
+
+    ids.forEach((id) => {
+      document.getElementById(id).addEventListener("input", renderPayload);
+    });
+
+    const dropZone = document.getElementById("dropZone");
+    const imageInput = document.getElementById("imageInput");
+
+    function previewFile(file) {
+      if (!file) return;
+      if (!file.type.startsWith("image/")) {
+        flash("Archivo invalido: debe ser imagen");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        state.imageDataUrl = reader.result;
+        dropZone.innerHTML = `<img src="${state.imageDataUrl}" alt="Preview de producto" />`;
+        renderPayload();
+      };
+      reader.readAsDataURL(file);
+    }
+
+    dropZone.addEventListener("click", () => imageInput.click());
+    imageInput.addEventListener("change", (e) => previewFile(e.target.files[0]));
+
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = "#7cb0ff";
+    });
+
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.style.borderColor = "#568adf";
+    });
+
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = "#568adf";
+      previewFile(e.dataTransfer.files[0]);
+    });
+
+    function openModal(target, title) {
+      state.targetField = target;
+      document.getElementById("modalTitle").textContent = title;
+      modal.classList.add("show");
+      modal.setAttribute("aria-hidden", "false");
+      feedback.textContent = "Intentando abrir camara...";
+      document.getElementById("cameraStatus").textContent = "Camara: iniciando";
+      startCamera();
+    }
+
+    async function startCamera() {
+      stopDetection();
+      stopStream();
+
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("El navegador no soporta getUserMedia");
+        }
+
+        state.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        video.srcObject = state.stream;
+        feedback.textContent = "Camara activa. Enfoque el codigo para leer.";
+        setStatus("cameraStatus", "Camara: activa");
+
+        if ("BarcodeDetector" in window) {
+          try {
+            state.detector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "code_128", "qr_code"] });
+            detectLoop();
+          } catch {
+            feedback.textContent = "BarcodeDetector disponible, pero no pudo iniciar formatos. Use fallback.";
+          }
+        } else {
+          feedback.textContent = "BarcodeDetector no disponible. Use ingreso manual o simulacion.";
+        }
+      } catch (error) {
+        feedback.textContent = "No se pudo acceder a camara. Use fallback manual.";
+        setStatus("cameraStatus", "Camara: sin permisos");
+      }
+    }
+
+    async function detectLoop() {
+      if (!state.detector || !video || video.readyState < 2) {
+        state.rafId = requestAnimationFrame(detectLoop);
+        return;
+      }
+
+      try {
+        const barcodes = await state.detector.detect(video);
+        if (barcodes && barcodes.length > 0) {
+          const value = (barcodes[0].rawValue || "").trim();
+          if (value) {
+            applyScanValue(value, true);
+            return;
+          }
+        }
+      } catch {
+        // keep loop
+      }
+
+      state.rafId = requestAnimationFrame(detectLoop);
+    }
+
+    function stopDetection() {
+      if (state.rafId) {
+        cancelAnimationFrame(state.rafId);
+        state.rafId = null;
+      }
+      state.detector = null;
+    }
+
+    function stopStream() {
+      if (state.stream) {
+        state.stream.getTracks().forEach((track) => track.stop());
+        state.stream = null;
+      }
+      video.srcObject = null;
+    }
+
+    function closeModal() {
+      stopDetection();
+      stopStream();
+      modal.classList.remove("show");
+      modal.setAttribute("aria-hidden", "true");
+      setStatus("cameraStatus", "Camara: inactiva");
+      document.getElementById("manualScan").value = "";
+      feedback.textContent = "Esperando lectura...";
+      state.targetField = null;
+    }
+
+    function applyScanValue(value, fromCamera) {
+      if (!state.targetField) return;
+      const input = document.getElementById(state.targetField);
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+
+      if (state.targetField === "barcode") {
+        setStatus("barcodeStatus", `Codigo: capturado (${fromCamera ? "camara" : "lector/manual"})`);
+      }
+
+      if (state.targetField === "location") {
+        setStatus("locationStatus", `Ubicacion: capturada (${fromCamera ? "camara" : "lector/manual"})`);
+      }
+
+      renderPayload();
+      flash(`Capturado: ${value}`);
+      closeModal();
+    }
+
+    document.getElementById("btnBarcodeCamera").addEventListener("click", () => {
+      openModal("barcode", "Escanear codigo de barras");
+    });
+
+    document.getElementById("btnLocationCamera").addEventListener("click", () => {
+      openModal("location", "Escanear ubicacion de almacen");
+    });
+
+    document.getElementById("closeModal").addEventListener("click", closeModal);
+
+    document.getElementById("applyManualScan").addEventListener("click", () => {
+      const value = document.getElementById("manualScan").value.trim();
+      if (!value) return;
+      applyScanValue(value, false);
+    });
+
+    document.getElementById("simulateScan").addEventListener("click", () => {
+      state.lastGenerated += 1;
+      const simulated = state.targetField === "location"
+        ? `A${(state.lastGenerated % 4) + 1}-R0${(state.lastGenerated % 8) + 1}-F0${(state.lastGenerated % 5) + 1}-C0${(state.lastGenerated % 6) + 1}`
+        : `7790000${String(state.lastGenerated).padStart(6, "0")}`;
+      applyScanValue(simulated, false);
+    });
+
+    document.getElementById("manualScan").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const value = e.currentTarget.value.trim();
+        if (value) applyScanValue(value, false);
+      }
+    });
+
+    function toggleReaderMode(buttonId, stateKey, fieldId, statusId, labelOn, labelOff) {
+      const button = document.getElementById(buttonId);
+      state[stateKey] = !state[stateKey];
+      button.classList.toggle("active", state[stateKey]);
+      setStatus(statusId, state[stateKey] ? labelOn : labelOff);
+      if (state[stateKey]) document.getElementById(fieldId).focus();
+    }
+
+    document.getElementById("btnReaderMode").addEventListener("click", () => {
+      toggleReaderMode(
+        "btnReaderMode",
+        "readerBarcode",
+        "barcode",
+        "barcodeStatus",
+        "Codigo: esperando lectura de lector optico",
+        "Codigo: listo"
+      );
+    });
+
+    document.getElementById("btnLocationReader").addEventListener("click", () => {
+      toggleReaderMode(
+        "btnLocationReader",
+        "readerLocation",
+        "location",
+        "locationStatus",
+        "Ubicacion: esperando lectura de lector optico",
+        "Ubicacion: lista"
+      );
+    });
+
+    document.getElementById("barcode").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && state.readerBarcode) {
+        setStatus("barcodeStatus", "Codigo: capturado por lector optico");
+        renderPayload();
+        flash("Codigo capturado por lector optico");
+      }
+    });
+
+    document.getElementById("location").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && state.readerLocation) {
+        setStatus("locationStatus", "Ubicacion: capturada por lector optico");
+        renderPayload();
+        flash("Ubicacion capturada por lector optico");
+      }
+    });
+
+    document.getElementById("btnClear").addEventListener("click", () => {
+      ids.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el.tagName === "SELECT") {
+          el.selectedIndex = 0;
+        } else if (el.type === "number") {
+          el.value = "0";
+        } else {
+          el.value = "";
+        }
+      });
+      state.imageDataUrl = "";
+      dropZone.innerHTML = '<div><strong>Arrastre una imagen aqui o haga clic</strong><div>Formatos: JPG, PNG, WEBP</div></div><input id="imageInput" type="file" accept="image/*" style="display:none" />';
+      setStatus("barcodeStatus", "Codigo: listo");
+      setStatus("locationStatus", "Ubicacion: lista");
+      renderPayload();
+      location.reload();
+    });
+
+    document.getElementById("btnSave").addEventListener("click", () => {
+      const payload = currentPayload();
+      if (!payload.name || !payload.sku || !payload.barcode || !payload.location) {
+        flash("Complete nombre, SKU, codigo y ubicacion");
+        return;
+      }
+      flash("Producto validado para alta (simulacion)");
+      console.log("Payload de alta simulado:", payload);
+    });
+
+    window.addEventListener("beforeunload", () => {
+      stopDetection();
+      stopStream();
+    });
+
+    renderPayload();
+  </script>
+</body>
+</html>

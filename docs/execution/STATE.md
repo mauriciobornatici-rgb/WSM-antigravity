@@ -3,16 +3,56 @@
 Last updated: 2026-02-19
 Status: IN_PROGRESS
 Current block: P2
-Current task: P2.8 - Integracion de paginacion UI en modulos de alto volumen
+Current task: P2.9 - Validacion funcional de POS visual + alta de producto asistida
 
 ## Resume From Here
-1. Validar en staging UX de paginacion en `Orders`, `Inventory` y `Settings` (Audit) con datos reales y navegacion entre paginas.
-2. Completar ultimo barrido de idioma/terminologia en modulos secundarios aun no tocados por esta pasada.
-3. Cerrar plan de rotacion de secretos (JWT/DB) fuera de codigo y validar post-rotacion en staging.
-4. Definir si se migra `Settings` a React Query completo (hoy solo auditoria tiene paginacion activa con carga dedicada).
-5. Mantener validacion incremental completa (`server test + smokes`, `client lint/test/build`) en cada lote.
+1. Validar en staging flujo de alta de producto con:
+   - escaneo por lector optico (input + Enter)
+   - escaneo por camara (BarcodeDetector)
+   - imagen URL y carga local (data URL)
+   - stock inicial con impacto real en `inventory` e `inventory_movements`.
+2. Validar en staging flujo POS visual:
+   - cards con imagen
+   - busqueda por nombre/SKU/barcode
+   - alta por escaneo exacto desde buscador
+   - checkout/factura/caja sin regresion funcional.
+3. Definir politica final de almacenamiento de imagenes (URL externa vs endpoint dedicado de uploads).
+4. Ejecutar `smoke:rbac` y `smoke:integrity` en entorno con acceso de red local.
+5. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
 
 ## Completed
+- P2.9 implemented:
+  - Product model/backend:
+    - Added `barcode` support in validation and dynamic allowlists.
+    - Added migration `004_add_products_barcode.sql`.
+    - Product creation now accepts `stock_initial` and writes initial records in:
+      - `inventory`
+      - `inventory_movements` (`type='initial_stock'`)
+  - Inventory UI:
+    - Redesigned product form with assisted onboarding:
+      - barcode scan (camera + optical reader mode)
+      - location scan (camera + optical reader mode)
+      - image URL + local upload preview
+      - stock initial on create only
+    - Inventory listing now shows `barcode` and product image thumbnail.
+  - POS UI:
+    - Upgraded to visual catalog cards with product image, SKU/barcode/location and stock badge.
+    - Added scanner-assisted add flow from search input (exact SKU/barcode + Enter).
+    - Preserved existing checkout/payment/invoice/cash-shift logic.
+  - Files:
+    - `packages/server/migrations/004_add_products_barcode.sql`
+    - `packages/server/middleware/validationMiddleware.js`
+    - `packages/server/services/base.service.js`
+    - `packages/server/services/inventory.service.js`
+    - `packages/server/controllers/inventoryController.js`
+    - `packages/client/src/types/index.ts`
+    - `packages/client/src/services/api.ts`
+    - `packages/client/src/components/products/ProductForm.tsx`
+    - `packages/client/src/components/products/InventoryTable.tsx`
+    - `packages/client/src/pages/Inventory.tsx`
+    - `packages/client/src/components/pos/ProductCatalogCard.tsx`
+    - `packages/client/src/components/pos/CartPanelCard.tsx`
+    - `packages/client/src/pages/POS.tsx`
 - Consolidated gap list and priority order.
 - Created persistent execution docs:
   - `docs/execution/MASTER_PLAN.md`

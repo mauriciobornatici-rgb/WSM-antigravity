@@ -86,7 +86,7 @@ export default function POSPage() {
     const categories = useMemo(() => {
         const values = new Set<string>();
         for (const product of products) {
-            values.add(product.category || "Sin categoría");
+            values.add(product.category || "Sin categoria");
         }
         return ["all", ...Array.from(values)];
     }, [products]);
@@ -97,7 +97,11 @@ export default function POSPage() {
             const byCategory = categoryFilter === "all" || product.category === categoryFilter;
             if (!byCategory) return false;
             if (!query) return true;
-            return product.name.toLowerCase().includes(query) || product.sku.toLowerCase().includes(query);
+            return (
+                product.name.toLowerCase().includes(query)
+                || product.sku.toLowerCase().includes(query)
+                || (product.barcode ?? "").toLowerCase().includes(query)
+            );
         });
     }, [products, search, categoryFilter]);
 
@@ -117,11 +121,30 @@ export default function POSPage() {
             if (!found) return [...current, { ...product, quantity: 1 }];
 
             if (found.quantity >= product.stock) {
-                toast.warning("No hay más stock disponible");
+                toast.warning("No hay mas stock disponible");
                 return current;
             }
             return current.map((item) => (item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item));
         });
+    }
+
+    function handleCatalogScan(rawValue: string) {
+        const scannedValue = rawValue.trim().toLowerCase();
+        if (!scannedValue) return;
+
+        const product = products.find(
+            (item) =>
+                item.sku.toLowerCase() === scannedValue
+                || (item.barcode ?? "").toLowerCase() === scannedValue,
+        );
+
+        if (!product) {
+            toast.warning("Codigo no encontrado");
+            return;
+        }
+
+        addToCart(product);
+        setSearch("");
     }
 
     function updateQuantity(productId: string, delta: number) {
@@ -131,7 +154,7 @@ export default function POSPage() {
                     if (item.id !== productId) return item;
                     const nextQuantity = Math.max(0, item.quantity + delta);
                     if (nextQuantity > item.stock) {
-                        toast.warning("No hay más stock disponible");
+                        toast.warning("No hay mas stock disponible");
                         return item;
                     }
                     return { ...item, quantity: nextQuantity };
@@ -272,7 +295,7 @@ export default function POSPage() {
     }
 
     return (
-        <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_380px]">
             <div className="space-y-4">
                 <ProductCatalogCard
                     loading={loading}
@@ -283,6 +306,7 @@ export default function POSPage() {
                     categories={categories}
                     filteredProducts={filteredProducts}
                     onAddToCart={addToCart}
+                    onScanSubmit={handleCatalogScan}
                 />
             </div>
 
@@ -343,3 +367,4 @@ export default function POSPage() {
         </div>
     );
 }
+

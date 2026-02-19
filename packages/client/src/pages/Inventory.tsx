@@ -2,11 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
-import type { Product } from "@/types";
 import type { PaginationMeta } from "@/types/api";
 import { getErrorMessage, showErrorToast } from "@/lib/errorHandling";
 import { fetchInventorySnapshot, invalidateInventorySnapshotCache, type ProductWithStock } from "@/lib/inventorySnapshot";
-import { ProductForm } from "@/components/products/ProductForm";
+import { ProductForm, type ProductFormSubmitData } from "@/components/products/ProductForm";
 import { InventoryTable } from "@/components/products/InventoryTable";
 import { PaginationControls } from "@/components/common/PaginationControls";
 import { Button } from "@/components/ui/button";
@@ -61,19 +60,19 @@ export default function InventoryPage() {
         return products.filter((product) => {
             const byName = product.name.toLowerCase().includes(query);
             const bySku = product.sku.toLowerCase().includes(query);
+            const byBarcode = (product.barcode ?? "").toLowerCase().includes(query);
             const byCategory = product.category.toLowerCase().includes(query);
             const byLocation = (product.location ?? "").toLowerCase().includes(query);
-            return byName || bySku || byCategory || byLocation;
+            return byName || bySku || byBarcode || byCategory || byLocation;
         });
     }, [products, search]);
 
-    async function handleSaveProduct(formData: Omit<Product, "id" | "created_at" | "description" | "image_url">) {
+    async function handleSaveProduct(formData: ProductFormSubmitData) {
         try {
             if (editingProduct) {
                 await api.updateProduct(editingProduct.id, {
                     ...formData,
                     description: editingProduct.description || "",
-                    image_url: editingProduct.image_url || "",
                 });
                 toast.success("Producto actualizado");
             } else {
@@ -166,7 +165,7 @@ export default function InventoryPage() {
                     ) : null}
                     <div className="mb-4">
                         <Input
-                            placeholder="Buscar por nombre, SKU, categoria o ubicacion..."
+                            placeholder="Buscar por nombre, SKU, codigo, categoria o ubicacion..."
                             value={search}
                             onChange={(event) => setSearch(event.target.value)}
                             className="max-w-md"
