@@ -3,6 +3,18 @@
 ## 2026-02-19
 
 ### Changed
+- `packages/client/src/pages/Inventory.tsx`
+  - Product create/edit dialog now adapts to viewport:
+    - wider responsive max-width on desktop
+    - internal `max-height` + `overflow-y-auto` to prevent out-of-screen clipping.
+- `packages/client/src/components/products/ProductForm.tsx`
+  - Rebalanced form layout for modal constraints:
+    - updated breakpoints to avoid cramped horizontal groups in medium widths
+    - scanner controls (barcode/location) now stack safely in smaller widths
+    - reduced image preview height to improve visual proportion
+    - scanner modal also receives viewport-aware height/scroll behavior.
+- `docs/execution/STATE.md`
+  - Added checkpoint for product-form responsive fix in ongoing P3.3 staging block.
 - `packages/server/utils/imagePolicy.js`
   - Added centralized image policy utilities:
     - `normalizeProductImageUrl` (only `http(s)` for persisted product images)

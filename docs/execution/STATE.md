@@ -23,6 +23,19 @@ Current task: P3.3 - Validacion funcional en staging (producto + POS visual + sc
 6. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
 
 ## Completed
+- P3.3 partial progress (UI/UX product form):
+  - Fixed inventory product dialog responsiveness and visual density issues:
+    - product modal now uses viewport-aware width and internal vertical scroll
+    - form grid breakpoints adjusted to avoid forced 2-column layout in narrow modal widths
+    - barcode/location scanner controls now stack correctly on small/medium widths
+    - image preview area reduced to avoid oversized block and improve section balance
+  - Files:
+    - `packages/client/src/pages/Inventory.tsx`
+    - `packages/client/src/components/products/ProductForm.tsx`
+  - Validation:
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
 - P3.4 implemented:
   - Defined and enforced final product image storage policy:
     - `products.image_url` now accepts only `http(s)` URLs.

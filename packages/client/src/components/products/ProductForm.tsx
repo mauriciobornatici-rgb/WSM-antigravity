@@ -321,10 +321,10 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     return (
         <>
             <Form {...form}>
-                <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
-                    <div className="rounded-lg border p-3">
+                <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4 pb-1">
+                    <div className="rounded-lg border p-4">
                         <p className="text-sm font-semibold">Datos comerciales</p>
-                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="name"
@@ -353,7 +353,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                             />
                         </div>
 
-                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="mt-3 grid gap-3 lg:grid-cols-2">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="sku"
@@ -374,7 +374,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     <FormItem>
                                         <FormLabel>Codigo de barras</FormLabel>
                                         <FormControl>
-                                            <div className="grid gap-2 md:grid-cols-[1fr_auto_auto]">
+                                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
                                                 <Input
                                                     id="product-barcode-input"
                                                     placeholder="Escanee o ingrese codigo"
@@ -407,7 +407,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
                     </div>
 
-                    <div className="rounded-lg border p-3">
+                    <div className="rounded-lg border p-4">
                         <p className="text-sm font-semibold">Imagen del producto</p>
                         <div className="mt-3 grid gap-3">
                             <FormField<ProductFormSchema>
@@ -440,11 +440,11 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     <img
                                         src={imageValue}
                                         alt="Preview del producto"
-                                        className="h-40 w-full rounded-md object-cover"
+                                        className="h-32 w-full rounded-md object-cover sm:h-40"
                                         onError={() => form.setValue("image_url", "", { shouldDirty: true, shouldValidate: true })}
                                     />
                                 ) : (
-                                    <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
+                                    <div className="flex h-32 items-center justify-center text-sm text-muted-foreground sm:h-40">
                                         Sin imagen cargada
                                     </div>
                                 )}
@@ -452,9 +452,9 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
                     </div>
 
-                    <div className="rounded-lg border p-3">
+                    <div className="rounded-lg border p-4">
                         <p className="text-sm font-semibold">Ubicacion y precios</p>
-                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="location"
@@ -462,7 +462,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     <FormItem>
                                         <FormLabel>Ubicacion de almacen</FormLabel>
                                         <FormControl>
-                                            <div className="grid gap-2 md:grid-cols-[1fr_auto_auto]">
+                                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
                                                 <Input
                                                     id="product-location-input"
                                                     placeholder="Ej: A1-R02-F03-C01"
@@ -491,7 +491,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 )}
                             />
 
-                            <div className="grid gap-3 md:grid-cols-2">
+                            <div className="grid gap-3 sm:grid-cols-2">
                                 <FormField<ProductFormSchema>
                                     control={form.control}
                                     name="purchase_price"
@@ -522,7 +522,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
 
                         {!isEditMode ? (
-                            <div className="mt-3 grid gap-3 md:max-w-xs">
+                            <div className="mt-3 grid gap-3 sm:max-w-xs">
                                 <FormField<ProductFormSchema>
                                     control={form.control}
                                     name="stock_initial"
@@ -565,7 +565,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                     setScanDialogOpen(true);
                 }}
             >
-                <DialogContent className="max-w-2xl">
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>{scanTarget === "barcode" ? "Escanear codigo de barras" : "Escanear ubicacion"}</DialogTitle>
                         <DialogDescription>Enfoque el codigo con la camara o ingrese manualmente.</DialogDescription>
@@ -577,7 +577,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
                         <p className="text-xs text-muted-foreground">{scanStatus}</p>
 
-                        <div className="grid gap-2 md:grid-cols-[1fr_auto_auto]">
+                        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
                             <Input
                                 placeholder="Fallback manual"
                                 value={manualScanValue}

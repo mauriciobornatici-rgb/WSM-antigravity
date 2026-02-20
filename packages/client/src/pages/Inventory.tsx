@@ -130,7 +130,7 @@ export default function InventoryPage() {
                             Nuevo producto
                         </Button>
                     </DialogTrigger>
-                    <DialogContent>
+                    <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-4xl lg:max-w-5xl">
                         <DialogHeader>
                             <DialogTitle>{editingProduct ? "Editar producto" : "Agregar producto"}</DialogTitle>
                             <DialogDescription>
