@@ -3,6 +3,15 @@
 ## 2026-02-19
 
 ### Changed
+- `packages/client/src/components/products/ProductForm.tsx`
+  - Visual/UX polish for product onboarding modal:
+    - section headers with contextual microcopy
+    - scanner action buttons standardized (`h-10`, balanced spacing)
+    - image workflow now supports both upload and explicit remove action
+    - preview area redesigned to stable `4:3` frame with clearer empty-state hints
+    - action footer adapted to mobile-first stacking.
+- `docs/execution/STATE.md`
+  - Added checkpoint for product form visual polish in `P3.3`.
 - `packages/client/src/pages/Inventory.tsx`
   - Product create/edit dialog now adapts to viewport:
     - wider responsive max-width on desktop

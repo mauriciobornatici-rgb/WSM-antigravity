@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Camera, ScanLine, Upload } from "lucide-react";
+import { Camera, ImagePlus, ScanLine, Trash2, Upload } from "lucide-react";
 import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import * as z from "zod";
@@ -129,6 +129,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     const scannerSessionRef = useRef(0);
 
     const canRenderImage = useMemo(() => canRenderProductImage(imageValue), [imageValue]);
+    const hasImageValue = imageValue.trim().length > 0;
 
     function stopScannerResources() {
         if (rafRef.current != null) {
@@ -323,7 +324,10 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             <Form {...form}>
                 <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4 pb-1">
                     <div className="rounded-lg border p-4">
-                        <p className="text-sm font-semibold">Datos comerciales</p>
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold">Datos comerciales</p>
+                            <p className="text-[11px] text-muted-foreground">Nombre, categoria y codigos</p>
+                        </div>
                         <div className="mt-3 grid gap-3 sm:grid-cols-2">
                             <FormField<ProductFormSchema>
                                 control={form.control}
@@ -353,7 +357,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                             />
                         </div>
 
-                        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                        <div className="mt-3 grid gap-3 xl:grid-cols-2">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="sku"
@@ -381,11 +385,12 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                                     {...field}
                                                     onKeyDown={(event) => handleReaderKeyDown("barcode", event)}
                                                 />
-                                                <Button type="button" variant="outline" onClick={() => openScanner("barcode")}>
+                                                <Button className="h-10 px-3" type="button" variant="outline" onClick={() => openScanner("barcode")}>
                                                     <Camera className="mr-2 h-4 w-4" />
                                                     Camara
                                                 </Button>
                                                 <Button
+                                                    className="h-10 px-3"
                                                     type="button"
                                                     variant={barcodeReaderMode ? "default" : "outline"}
                                                     onClick={() => handleReaderModeToggle("barcode")}
@@ -408,7 +413,13 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                     </div>
 
                     <div className="rounded-lg border p-4">
-                        <p className="text-sm font-semibold">Imagen del producto</p>
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                            <div>
+                                <p className="text-sm font-semibold">Imagen del producto</p>
+                                <p className="text-[11px] text-muted-foreground">Visible en catalogo y POS</p>
+                            </div>
+                            <ImagePlus className="h-4 w-4 text-muted-foreground" />
+                        </div>
                         <div className="mt-3 grid gap-3">
                             <FormField<ProductFormSchema>
                                 control={form.control}
@@ -427,34 +438,50 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                             <div className="flex flex-wrap items-center gap-2">
                                 <label className="inline-flex cursor-pointer items-center">
                                     <input type="file" accept="image/*" className="hidden" onChange={handleImageFileChange} />
-                                    <span className="inline-flex items-center rounded-md border px-3 py-2 text-sm">
+                                    <span className="inline-flex h-10 items-center rounded-md border px-3 text-sm font-medium">
                                         <Upload className="mr-2 h-4 w-4" />
                                         {isUploadingImage ? "Subiendo..." : "Subir imagen"}
                                     </span>
                                 </label>
-                                <span className="text-xs text-muted-foreground">La imagen se sube al servidor y se guarda como URL segura.</span>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    className="h-10 px-3"
+                                    disabled={!hasImageValue}
+                                    onClick={() => form.setValue("image_url", "", { shouldDirty: true, shouldValidate: true })}
+                                >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Quitar
+                                </Button>
+                                <span className="basis-full text-xs text-muted-foreground">La imagen se sube al servidor y se guarda como URL segura.</span>
                             </div>
 
-                            <div className="rounded-md border bg-muted/20 p-2">
-                                {canRenderImage ? (
-                                    <img
-                                        src={imageValue}
-                                        alt="Preview del producto"
-                                        className="h-32 w-full rounded-md object-cover sm:h-40"
-                                        onError={() => form.setValue("image_url", "", { shouldDirty: true, shouldValidate: true })}
-                                    />
-                                ) : (
-                                    <div className="flex h-32 items-center justify-center text-sm text-muted-foreground sm:h-40">
-                                        Sin imagen cargada
-                                    </div>
-                                )}
+                            <div className="overflow-hidden rounded-md border bg-muted/20 p-2">
+                                <div className="flex aspect-[4/3] items-center justify-center rounded-md bg-background/60">
+                                    {canRenderImage ? (
+                                        <img
+                                            src={imageValue}
+                                            alt="Preview del producto"
+                                            className="h-full w-full rounded-md object-cover"
+                                            onError={() => form.setValue("image_url", "", { shouldDirty: true, shouldValidate: true })}
+                                        />
+                                    ) : (
+                                        <div className="text-center text-sm text-muted-foreground">
+                                            <p>Sin imagen cargada</p>
+                                            <p className="mt-1 text-xs">PNG, JPG, WEBP o GIF hasta 1.5MB</p>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <div className="rounded-lg border p-4">
-                        <p className="text-sm font-semibold">Ubicacion y precios</p>
-                        <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold">Ubicacion y precios</p>
+                            <p className="text-[11px] text-muted-foreground">Almacen y costos</p>
+                        </div>
+                        <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="location"
@@ -469,11 +496,12 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                                     {...field}
                                                     onKeyDown={(event) => handleReaderKeyDown("location", event)}
                                                 />
-                                                <Button type="button" variant="outline" onClick={() => openScanner("location")}>
+                                                <Button className="h-10 px-3" type="button" variant="outline" onClick={() => openScanner("location")}>
                                                     <Camera className="mr-2 h-4 w-4" />
                                                     Camara
                                                 </Button>
                                                 <Button
+                                                    className="h-10 px-3"
                                                     type="button"
                                                     variant={locationReaderMode ? "default" : "outline"}
                                                     onClick={() => handleReaderModeToggle("location")}
@@ -499,7 +527,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                         <FormItem>
                                             <FormLabel>Precio compra</FormLabel>
                                             <FormControl>
-                                                <Input type="number" min="0" step="0.01" {...field} />
+                                                <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>
@@ -512,7 +540,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                         <FormItem>
                                             <FormLabel>Precio venta</FormLabel>
                                             <FormControl>
-                                                <Input type="number" min="0" step="0.01" {...field} />
+                                                <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>
@@ -530,7 +558,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                         <FormItem>
                                             <FormLabel>Stock inicial</FormLabel>
                                             <FormControl>
-                                                <Input type="number" min="0" step="1" {...field} />
+                                                <Input inputMode="numeric" type="number" min="0" step="1" {...field} />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>
@@ -544,7 +572,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         )}
                     </div>
 
-                    <div className="flex justify-end gap-2 pt-2">
+                    <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
                         <Button type="button" variant="outline" onClick={onCancel}>
                             Cancelar
                         </Button>

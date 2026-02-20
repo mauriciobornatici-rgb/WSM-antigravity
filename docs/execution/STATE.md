@@ -23,6 +23,19 @@ Current task: P3.3 - Validacion funcional en staging (producto + POS visual + sc
 6. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
 
 ## Completed
+- P3.3 partial progress (UI polish product form):
+  - Applied visual/functional polish focused on operator clarity:
+    - section headers now include helper context labels
+    - barcode/location scanner controls with consistent height and spacing
+    - image block improved with explicit upload/remove actions
+    - proportional preview canvas (`4:3`) and better empty-state guidance
+    - action footer reorganized for mobile-first ergonomics
+  - Files:
+    - `packages/client/src/components/products/ProductForm.tsx`
+  - Validation:
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
 - P3.3 partial progress (UI/UX product form):
   - Fixed inventory product dialog responsiveness and visual density issues:
     - product modal now uses viewport-aware width and internal vertical scroll
