@@ -323,12 +323,13 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
         <>
             <Form {...form}>
                 <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4 pb-1">
-                    <div className="rounded-lg border p-4">
+                    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+                        <div className="rounded-lg border p-4">
                         <div className="mb-3 flex items-center justify-between gap-3">
                             <p className="text-sm font-semibold">Datos comerciales</p>
                             <p className="text-[11px] text-muted-foreground">Nombre, categoria y codigos</p>
                         </div>
-                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="name"
@@ -357,7 +358,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                             />
                         </div>
 
-                        <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="sku"
@@ -378,19 +379,19 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     <FormItem>
                                         <FormLabel>Codigo de barras</FormLabel>
                                         <FormControl>
-                                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+                                            <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
                                                 <Input
                                                     id="product-barcode-input"
                                                     placeholder="Escanee o ingrese codigo"
                                                     {...field}
                                                     onKeyDown={(event) => handleReaderKeyDown("barcode", event)}
                                                 />
-                                                <Button className="h-10 px-3" type="button" variant="outline" onClick={() => openScanner("barcode")}>
+                                                <Button className="h-10 w-full px-3 lg:w-auto" type="button" variant="outline" onClick={() => openScanner("barcode")}>
                                                     <Camera className="mr-2 h-4 w-4" />
                                                     Camara
                                                 </Button>
                                                 <Button
-                                                    className="h-10 px-3"
+                                                    className="h-10 w-full px-3 lg:w-auto"
                                                     type="button"
                                                     variant={barcodeReaderMode ? "default" : "outline"}
                                                     onClick={() => handleReaderModeToggle("barcode")}
@@ -410,9 +411,9 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 )}
                             />
                         </div>
-                    </div>
+                        </div>
 
-                    <div className="rounded-lg border p-4">
+                        <div className="rounded-lg border p-4">
                         <div className="mb-3 flex items-center justify-between gap-3">
                             <div>
                                 <p className="text-sm font-semibold">Imagen del producto</p>
@@ -457,12 +458,12 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                             </div>
 
                             <div className="overflow-hidden rounded-md border bg-muted/20 p-2">
-                                <div className="flex aspect-[4/3] items-center justify-center rounded-md bg-background/60">
+                                <div className="flex min-h-[180px] max-h-[220px] items-center justify-center rounded-md bg-background/60 sm:min-h-[220px]">
                                     {canRenderImage ? (
                                         <img
                                             src={imageValue}
                                             alt="Preview del producto"
-                                            className="h-full w-full rounded-md object-cover"
+                                            className="h-full w-full rounded-md object-contain p-2"
                                             onError={() => form.setValue("image_url", "", { shouldDirty: true, shouldValidate: true })}
                                         />
                                     ) : (
@@ -475,13 +476,14 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                             </div>
                         </div>
                     </div>
+                    </div>
 
                     <div className="rounded-lg border p-4">
                         <div className="mb-3 flex items-center justify-between gap-3">
                             <p className="text-sm font-semibold">Ubicacion y precios</p>
                             <p className="text-[11px] text-muted-foreground">Almacen y costos</p>
                         </div>
-                        <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+                        <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="location"
@@ -489,19 +491,19 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     <FormItem>
                                         <FormLabel>Ubicacion de almacen</FormLabel>
                                         <FormControl>
-                                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+                                            <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
                                                 <Input
                                                     id="product-location-input"
                                                     placeholder="Ej: A1-R02-F03-C01"
                                                     {...field}
                                                     onKeyDown={(event) => handleReaderKeyDown("location", event)}
                                                 />
-                                                <Button className="h-10 px-3" type="button" variant="outline" onClick={() => openScanner("location")}>
+                                                <Button className="h-10 w-full px-3 lg:w-auto" type="button" variant="outline" onClick={() => openScanner("location")}>
                                                     <Camera className="mr-2 h-4 w-4" />
                                                     Camara
                                                 </Button>
                                                 <Button
-                                                    className="h-10 px-3"
+                                                    className="h-10 w-full px-3 lg:w-auto"
                                                     type="button"
                                                     variant={locationReaderMode ? "default" : "outline"}
                                                     onClick={() => handleReaderModeToggle("location")}
@@ -519,7 +521,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 )}
                             />
 
-                            <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="grid gap-3 md:grid-cols-2">
                                 <FormField<ProductFormSchema>
                                     control={form.control}
                                     name="purchase_price"

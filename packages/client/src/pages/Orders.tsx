@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleDashed, FileText, Package, Plus, Search, Truck, XCircle } from "lucide-react";
+import { CircleDashed, FileText, Package, Plus, Search, Trash2, Truck, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { Client, Order, Product } from "@/types";
@@ -292,6 +292,13 @@ export default function OrdersPage() {
         );
     }
 
+    function removeInvoicePayment(index: number) {
+        setInvoicePayments((current) => {
+            if (current.length <= 1) return current;
+            return current.filter((_, currentIndex) => currentIndex !== index);
+        });
+    }
+
     async function submitInvoice() {
         if (!invoiceOrder) return;
         const totalToPay = getInvoiceTotal(invoiceOrder);
@@ -333,12 +340,18 @@ export default function OrdersPage() {
                             Nuevo pedido
                         </Button>
                     </DialogTrigger>
-                    <DialogContent>
+                    <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-3xl">
                         <DialogHeader>
                             <DialogTitle>Crear pedido</DialogTitle>
                             <DialogDescription>Carga cliente, producto y forma de pago.</DialogDescription>
                         </DialogHeader>
-                        <div className="space-y-3">
+                        <form
+                            className="space-y-4"
+                            onSubmit={(event) => {
+                                event.preventDefault();
+                                void createOrder();
+                            }}
+                        >
                             <div className="space-y-2">
                                 <Label>Cliente (opcional)</Label>
                                 <Select value={createClientId} onValueChange={setCreateClientId}>
@@ -397,15 +410,15 @@ export default function OrdersPage() {
                                     </SelectContent>
                                 </Select>
                             </div>
-                        </div>
-                        <div className="flex justify-end gap-2">
-                            <Button variant="outline" onClick={() => setCreateOpen(false)}>
-                                Cancelar
-                            </Button>
-                            <Button onClick={() => void createOrder()} disabled={createOrderMutation.isPending}>
-                                {createOrderMutation.isPending ? "Creando..." : "Crear"}
-                            </Button>
-                        </div>
+                            <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+                                <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
+                                    Cancelar
+                                </Button>
+                                <Button type="submit" disabled={createOrderMutation.isPending}>
+                                    {createOrderMutation.isPending ? "Creando..." : "Crear"}
+                                </Button>
+                            </div>
+                        </form>
                     </DialogContent>
                 </Dialog>
             </div>
@@ -617,7 +630,7 @@ export default function OrdersPage() {
                         </div>
                         {invoicePayments.map((line, index) => (
                             <div key={`line-${index}`} className="grid grid-cols-12 gap-2">
-                                <div className="col-span-7">
+                                <div className="col-span-12 sm:col-span-6">
                                     <Select value={line.method} onValueChange={(value) => updateInvoicePayment(index, { method: value })}>
                                         <SelectTrigger>
                                             <SelectValue />
@@ -631,8 +644,21 @@ export default function OrdersPage() {
                                         </SelectContent>
                                     </Select>
                                 </div>
-                                <div className="col-span-5">
+                                <div className="col-span-9 sm:col-span-4">
                                     <Input type="number" min="0" step="0.01" value={line.amount} onChange={(event) => updateInvoicePayment(index, { amount: Number(event.target.value) || 0 })} />
+                                </div>
+                                <div className="col-span-3 flex justify-end sm:col-span-2">
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="text-muted-foreground hover:text-red-500"
+                                        disabled={invoicePayments.length <= 1}
+                                        onClick={() => removeInvoicePayment(index)}
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                        <span className="sr-only">Quitar linea de pago</span>
+                                    </Button>
                                 </div>
                             </div>
                         ))}
