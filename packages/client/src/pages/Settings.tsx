@@ -232,7 +232,7 @@ export default function SettingsPage() {
 
     return (
         <div className="p-6 space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Configuración</h1>
                     <p className="text-muted-foreground">Gestión de identidad, usuarios y preferencias del sistema.</p>
@@ -240,12 +240,12 @@ export default function SettingsPage() {
             </div>
 
             <Tabs defaultValue="company" className="space-y-4">
-                <TabsList>
-                    <TabsTrigger value="company" className="flex gap-2"><Building2 className="h-4 w-4" /> Empresa</TabsTrigger>
-                    <TabsTrigger value="users" className="flex gap-2"><Users className="h-4 w-4" /> Usuarios</TabsTrigger>
-                    <TabsTrigger value="system" className="flex gap-2"><Settings2 className="h-4 w-4" /> Sistema</TabsTrigger>
+                <TabsList className="h-auto w-full justify-start gap-2 overflow-x-auto p-1">
+                    <TabsTrigger value="company" className="flex shrink-0 gap-2"><Building2 className="h-4 w-4" /> Empresa</TabsTrigger>
+                    <TabsTrigger value="users" className="flex shrink-0 gap-2"><Users className="h-4 w-4" /> Usuarios</TabsTrigger>
+                    <TabsTrigger value="system" className="flex shrink-0 gap-2"><Settings2 className="h-4 w-4" /> Sistema</TabsTrigger>
                     {currentUser?.role === 'admin' && (
-                        <TabsTrigger value="audit" className="flex gap-2"><History className="h-4 w-4" /> Auditoría</TabsTrigger>
+                        <TabsTrigger value="audit" className="flex shrink-0 gap-2"><History className="h-4 w-4" /> Auditoría</TabsTrigger>
                     )}
                 </TabsList>
 
@@ -297,8 +297,8 @@ export default function SettingsPage() {
                                     <Input value={company.contact.website} onChange={e => setCompany({ ...company, contact: { ...company.contact, website: e.target.value } })} />
                                 </div>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-                                <div className="col-span-4 space-y-2">
+                            <div className="grid grid-cols-1 gap-4 md:grid-cols-6">
+                                <div className="space-y-2 md:col-span-4">
                                     <Label>Calle y Altura</Label>
                                     <Input value={`${company.address.street} ${company.address.number}`}
                                         onChange={e => {
@@ -306,7 +306,7 @@ export default function SettingsPage() {
                                         }}
                                     />
                                 </div>
-                                <div className="col-span-2 space-y-2">
+                                <div className="space-y-2 md:col-span-2">
                                     <Label>Ciudad</Label>
                                     <Input value={company.address.city} onChange={e => setCompany({ ...company, address: { ...company.address, city: e.target.value } })} />
                                 </div>
@@ -326,15 +326,16 @@ export default function SettingsPage() {
                 {/* --- USERS TAB --- */}
                 <TabsContent value="users" className="space-y-6">
                     <Card>
-                        <CardHeader className="flex flex-row items-center justify-between">
+                        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                                 <CardTitle>Gestión de Usuarios</CardTitle>
                                 <CardDescription>Administre roles y accesos al sistema.</CardDescription>
                             </div>
-                            <Button onClick={openNewUserForm}><Plus className="mr-2 h-4 w-4" /> Nuevo Usuario</Button>
+                            <Button className="w-full sm:w-auto" onClick={openNewUserForm}><Plus className="mr-2 h-4 w-4" /> Nuevo Usuario</Button>
                         </CardHeader>
                         <CardContent>
-                            <Table>
+                            <div className="overflow-x-auto">
+                                <Table className="min-w-[820px]">
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead>Nombre</TableHead>
@@ -375,7 +376,8 @@ export default function SettingsPage() {
                                         </TableRow>
                                     ))}
                                 </TableBody>
-                            </Table>
+                                </Table>
+                            </div>
                         </CardContent>
                     </Card>
                 </TabsContent>
@@ -389,7 +391,8 @@ export default function SettingsPage() {
                                 <CardDescription>Registro completo de acciones realizadas por los usuarios en el sistema.</CardDescription>
                             </CardHeader>
                             <CardContent>
-                                <Table>
+                                <div className="overflow-x-auto">
+                                    <Table className="min-w-[900px]">
                                     <TableHeader>
                                         <TableRow>
                                             <TableHead>Fecha</TableHead>
@@ -478,7 +481,8 @@ export default function SettingsPage() {
                                             ))
                                         )}
                                     </TableBody>
-                                </Table>
+                                    </Table>
+                                </div>
                                 <PaginationControls
                                     page={Math.max(1, Number(auditPagination?.page || auditPage))}
                                     totalPages={Math.max(1, Number(auditPagination?.totalPages || 1))}
@@ -500,7 +504,7 @@ export default function SettingsPage() {
                             <CardDescription>Configuraciones globales que afectan el comportamiento del sistema.</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                            <div className="grid grid-cols-2 gap-6">
+                            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                                 <div className="space-y-2">
                                     <Label>Moneda Principal</Label>
                                     <Select

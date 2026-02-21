@@ -95,7 +95,7 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
 
     return (
         <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-4 rounded-lg border bg-slate-50 p-4 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 rounded-lg border bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="space-y-1">
                     <div className="flex items-center gap-1 text-xs text-muted-foreground">
                         <User className="h-3 w-3" />
@@ -133,7 +133,8 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
                 </h3>
 
                 <div className="rounded-md border">
-                    <Table>
+                    <div className="overflow-x-auto">
+                        <Table className="min-w-[680px]">
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Producto</TableHead>
@@ -173,7 +174,8 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
                                 })
                             )}
                         </TableBody>
-                    </Table>
+                        </Table>
+                    </div>
                 </div>
             </div>
 
@@ -184,8 +186,8 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
                 </div>
             ) : null}
 
-            <div className="flex items-center justify-between border-t pt-4">
-                <div className="flex gap-2">
+            <div className="flex flex-col gap-4 border-t pt-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-col gap-2 sm:flex-row">
                     {order.status === "draft" ? (
                         <>
                             <Button onClick={() => void handleStatusUpdate("sent")} disabled={updating} className="bg-green-600 hover:bg-green-700">
@@ -203,7 +205,7 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
                     ) : null}
                 </div>
 
-                <div className="flex items-center gap-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between lg:justify-end lg:gap-6">
                     <div className="text-right">
                         <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total OC</span>
                         <div className="text-2xl font-bold text-blue-600">${Number(order.total_amount ?? 0).toLocaleString("es-AR")}</div>
