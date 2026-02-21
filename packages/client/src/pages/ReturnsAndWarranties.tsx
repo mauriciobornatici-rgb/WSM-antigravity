@@ -312,7 +312,7 @@ function WarrantiesTab() {
             </CardContent>
 
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-                <DialogContent>
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-xl">
                     <DialogHeader>
                         <DialogTitle>Nueva garantía</DialogTitle>
                         <DialogDescription>Registrá el reclamo del cliente.</DialogDescription>
@@ -515,7 +515,7 @@ function ReturnsTab() {
             </CardContent>
 
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-                <DialogContent>
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-xl">
                     <DialogHeader>
                         <DialogTitle>Nueva devolución</DialogTitle>
                         <DialogDescription>Registrá mercadería devuelta por un cliente.</DialogDescription>
@@ -686,7 +686,7 @@ function CreditNotesTab() {
             </CardContent>
 
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-                <DialogContent>
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-xl">
                     <DialogHeader>
                         <DialogTitle>Nueva nota de crédito</DialogTitle>
                         <DialogDescription>Emití una nota manual para el cliente seleccionado.</DialogDescription>
@@ -735,3 +735,4 @@ function CreditNotesTab() {
         </Card>
     );
 }
+

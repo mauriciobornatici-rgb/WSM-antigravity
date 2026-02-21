@@ -322,7 +322,7 @@ function CreateClientDialog({ open, onOpenChange, onSubmit }: { open: boolean, o
                     <Plus className="h-4 w-4" /> Nuevo Cliente
                 </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[425px]">
                 <DialogHeader>
                     <DialogTitle>Registrar Nuevo Cliente</DialogTitle>
                     <DialogDescription>
@@ -382,7 +382,7 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[425px]">
                 <DialogHeader>
                     <DialogTitle>Editar Cliente</DialogTitle>
                     <DialogDescription>
@@ -427,7 +427,7 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
 function DeleteClientDialog({ client, open, onOpenChange, onConfirm }: { client: Client, open: boolean, onOpenChange: (open: boolean) => void, onConfirm: () => void }) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[425px]">
                 <DialogHeader>
                     <DialogTitle className="text-red-400">Eliminar cliente?</DialogTitle>
                     <DialogDescription>
@@ -450,3 +450,4 @@ function DeleteClientDialog({ client, open, onOpenChange, onConfirm }: { client:
         </Dialog>
     )
 }
+

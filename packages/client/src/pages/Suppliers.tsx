@@ -167,7 +167,7 @@ export default function SuppliersPage() {
                             <Plus className="mr-2 h-4 w-4" /> Nuevo Proveedor
                         </Button>
                     </DialogTrigger>
-                    <DialogContent className="sm:max-w-[500px]">
+                    <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[500px]">
                         <DialogHeader>
                             <DialogTitle>Agregar Nuevo Proveedor</DialogTitle>
                             <DialogDescription>
@@ -219,7 +219,7 @@ export default function SuppliersPage() {
 
             {/* Supplier Details Dialog */}
             <Dialog open={!!selectedSupplier} onOpenChange={(open) => !open && setSelectedSupplier(null)}>
-                <DialogContent className="sm:max-w-[800px]">
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[800px]">
                     <DialogHeader>
                         <DialogTitle>{selectedSupplier?.name}</DialogTitle>
                         <DialogDescription>{selectedSupplier?.tax_id} - {selectedSupplier?.category}</DialogDescription>
@@ -312,7 +312,7 @@ export default function SuppliersPage() {
 
                                     {/* Payment Form Dialog */}
                                     <Dialog open={showPaymentForm} onOpenChange={setShowPaymentForm}>
-                                        <DialogContent className="max-w-2xl">
+                                        <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
                                             <DialogHeader>
                                                 <DialogTitle>Registrar Pago a Proveedor</DialogTitle>
                                                 <DialogDescription>
@@ -525,7 +525,7 @@ function EditSupplierDialog({ supplier, open, onOpenChange, onSubmit }: { suppli
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[500px]">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[500px]">
                 <DialogHeader>
                     <DialogTitle>Editar Proveedor</DialogTitle>
                     <DialogDescription>
@@ -576,7 +576,7 @@ function EditSupplierDialog({ supplier, open, onOpenChange, onSubmit }: { suppli
 function DeleteSupplierDialog({ supplier, open, onOpenChange, onConfirm }: { supplier: Supplier, open: boolean, onOpenChange: (open: boolean) => void, onConfirm: () => void }) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[425px]">
                 <DialogHeader>
                     <DialogTitle className="text-red-400">Eliminar proveedor?</DialogTitle>
                     <DialogDescription>
@@ -599,3 +599,4 @@ function DeleteSupplierDialog({ supplier, open, onOpenChange, onConfirm }: { sup
         </Dialog>
     )
 }
+

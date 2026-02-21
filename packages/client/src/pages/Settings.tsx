@@ -446,7 +446,7 @@ export default function SettingsPage() {
                                                                     <Eye className="h-4 w-4" />
                                                                 </Button>
                                                             </DialogTrigger>
-                                                            <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                                                            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
                                                                 <DialogHeader>
                                                                     <DialogTitle>Detalles del Cambio</DialogTitle>
                                                                     <DialogDescription>
@@ -571,3 +571,4 @@ export default function SettingsPage() {
         </div>
     )
 }
+

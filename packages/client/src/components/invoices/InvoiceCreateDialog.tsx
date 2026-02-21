@@ -41,7 +41,7 @@ export function InvoiceCreateDialog({
                     Factura manual
                 </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[800px]">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[800px]">
                 <DialogHeader>
                     <DialogTitle>Nueva factura de venta</DialogTitle>
                 </DialogHeader>
@@ -166,3 +166,4 @@ export function InvoiceCreateDialog({
         </Dialog>
     )
 }
+

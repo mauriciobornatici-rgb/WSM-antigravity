@@ -33,7 +33,7 @@ export function UpdateStatusDialog({ warranty, onSuccess }: UpdateStatusDialogPr
             <DialogTrigger asChild>
                 <Button>Actualizar Estado</Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[425px]">
                 <DialogHeader>
                     <DialogTitle>Actualizar Estado - {warranty.id}</DialogTitle>
                     <DialogDescription>
@@ -84,3 +84,4 @@ export function UpdateStatusDialog({ warranty, onSuccess }: UpdateStatusDialogPr
         </Dialog>
     )
 }
+

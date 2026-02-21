@@ -72,7 +72,7 @@ export function UserForm({ open, onOpenChange, onSubmit, initialData, isLoading 
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[425px]">
                 <DialogHeader>
                     <DialogTitle>{initialData ? "Editar Usuario" : "Nuevo Usuario"}</DialogTitle>
                     <DialogDescription>
@@ -165,3 +165,4 @@ export function UserForm({ open, onOpenChange, onSubmit, initialData, isLoading 
         </Dialog>
     );
 }
+

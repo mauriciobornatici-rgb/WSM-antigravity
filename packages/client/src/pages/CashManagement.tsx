@@ -140,7 +140,7 @@ export default function CashManagementPage() {
 
             {/* Open Shift Dialog */}
             <Dialog open={isOpening} onOpenChange={setIsOpening}>
-                <DialogContent className="sm:max-w-md">
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle>Abrir Turno de Caja</DialogTitle>
                         <DialogDescription>Ingrese el monto inicial de efectivo disponible en la caja.</DialogDescription>
@@ -169,7 +169,7 @@ export default function CashManagementPage() {
 
             {/* Close Shift Dialog */}
             <Dialog open={isClosing} onOpenChange={setIsClosing}>
-                <DialogContent className="sm:max-w-lg">
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-lg">
                     <DialogHeader>
                         <DialogTitle>Cierre de Caja y Arqueo</DialogTitle>
                         <DialogDescription>Contabilice el efectivo físico en caja y compárelo con el sistema.</DialogDescription>
@@ -230,3 +230,4 @@ export default function CashManagementPage() {
         </div>
     )
 }
+
