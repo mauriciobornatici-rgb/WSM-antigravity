@@ -329,7 +329,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                             <p className="text-sm font-semibold">Datos comerciales</p>
                             <p className="text-[11px] text-muted-foreground">Nombre, categoria y codigos</p>
                         </div>
-                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="mt-3 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="name"
@@ -525,7 +525,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 )}
                             />
 
-                            <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]">
                                 <FormField<ProductFormSchema>
                                     control={form.control}
                                     name="purchase_price"
