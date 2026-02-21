@@ -151,7 +151,7 @@ export function UserForm({ open, onOpenChange, onSubmit, initialData, isLoading 
                             </Select>
                         </div>
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                             Cancelar
                         </Button>

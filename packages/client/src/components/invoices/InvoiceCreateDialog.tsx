@@ -159,7 +159,7 @@ export function InvoiceCreateDialog({
 
                     <div className="flex justify-end text-xl font-bold">Total: ${total.toFixed(2)}</div>
                 </div>
-                <DialogFooter>
+                <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                     <Button onClick={onCreateInvoice}>Emitir factura</Button>
                 </DialogFooter>
             </DialogContent>

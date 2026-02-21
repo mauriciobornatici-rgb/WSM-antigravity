@@ -75,7 +75,7 @@ export function UpdateStatusDialog({ warranty, onSuccess }: UpdateStatusDialogPr
                         />
                     </div>
                 </div>
-                <DialogFooter>
+                <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                     <Button type="submit" onClick={handleUpdate} disabled={loading || !notes}>
                         {loading ? "Guardando..." : "Guardar Cambios"}
                     </Button>

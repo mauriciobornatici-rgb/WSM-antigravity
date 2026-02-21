@@ -210,7 +210,7 @@ export default function SuppliersPage() {
                                 <Input value={newSupplier.address} onChange={e => setNewSupplier({ ...newSupplier, address: e.target.value })} />
                             </div>
                         </div>
-                        <DialogFooter>
+                        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                             <Button onClick={handleCreateSupplier} disabled={!newSupplier.name || !newSupplier.tax_id}>Guardar Proveedor</Button>
                         </DialogFooter>
                     </DialogContent>
@@ -563,7 +563,7 @@ function EditSupplierDialog({ supplier, open, onOpenChange, onSubmit }: { suppli
                             <Input value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
                         </div>
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
                         <Button type="submit" className="bg-blue-600 hover:bg-blue-500">Guardar Cambios</Button>
                     </DialogFooter>
@@ -588,7 +588,7 @@ function DeleteSupplierDialog({ supplier, open, onOpenChange, onConfirm }: { sup
                         )}
                     </DialogDescription>
                 </DialogHeader>
-                <DialogFooter className="gap-2">
+                <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                     <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
                     <Button variant="destructive" onClick={onConfirm} className="bg-red-600 hover:bg-red-500">
                         <Trash2 className="h-4 w-4 mr-2" />

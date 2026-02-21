@@ -414,7 +414,7 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
                         <Label htmlFor="edit-limit" className="text-right">Línea Crédito</Label>
                         <Input id="edit-limit" type="number" value={formData.credit_limit} onChange={(e) => setFormData({ ...formData, credit_limit: e.target.value })} className="col-span-3" />
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
                         <Button type="submit" className="bg-blue-600 hover:bg-blue-500">Guardar Cambios</Button>
                     </DialogFooter>
@@ -439,7 +439,7 @@ function DeleteClientDialog({ client, open, onOpenChange, onConfirm }: { client:
                         )}
                     </DialogDescription>
                 </DialogHeader>
-                <DialogFooter className="gap-2">
+                <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                     <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
                     <Button variant="destructive" onClick={onConfirm} className="bg-red-600 hover:bg-red-500">
                         <Trash2 className="h-4 w-4 mr-2" />

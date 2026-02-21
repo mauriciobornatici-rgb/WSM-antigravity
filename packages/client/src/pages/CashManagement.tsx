@@ -160,7 +160,7 @@ export default function CashManagementPage() {
                             </div>
                         </div>
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <Button variant="outline" onClick={() => setIsOpening(false)}>Cancelar</Button>
                         <Button className="bg-blue-600" onClick={handleOpenShift}>Confirmar Apertura</Button>
                     </DialogFooter>
@@ -219,7 +219,7 @@ export default function CashManagementPage() {
                             />
                         </div>
                     </div>
-                    <DialogFooter className="gap-2 sm:gap-0">
+                    <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <Button variant="outline" onClick={() => setIsClosing(false)} className="border-slate-700">Cancelar</Button>
                         <Button className="bg-red-600 hover:bg-red-700 font-bold h-12 px-8" onClick={handleCloseShift}>
                             <CheckCircle2 className="mr-2 h-5 w-5" /> Confirmar Cierre de Caja
