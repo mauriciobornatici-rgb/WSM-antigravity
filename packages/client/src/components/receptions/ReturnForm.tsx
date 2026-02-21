@@ -118,7 +118,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
 
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <div className="space-y-2">
                     <Label htmlFor="supplier">Proveedor</Label>
                     <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
@@ -149,11 +149,11 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
             </div>
 
             <div className="rounded-lg border bg-slate-50 p-4 dark:bg-slate-900">
-                <div className="mb-4 flex items-center justify-between">
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <h3 className="text-sm font-semibold">Productos a Devolver</h3>
-                    <div className="flex gap-2">
+                    <div className="flex w-full gap-2 sm:w-auto">
                         <Select onValueChange={handleAddItem} disabled={!selectedSupplierId || loading}>
-                            <SelectTrigger className="w-[250px]">
+                            <SelectTrigger className="w-full sm:w-[250px]">
                                 <SelectValue placeholder="Agregar producto a la lista..." />
                             </SelectTrigger>
                             <SelectContent>
@@ -174,7 +174,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                     </div>
                 ) : (
                     <div className="space-y-2">
-                        <div className="grid grid-cols-12 gap-2 px-2 text-xs font-semibold text-muted-foreground">
+                        <div className="hidden grid-cols-12 gap-2 px-2 text-xs font-semibold text-muted-foreground sm:grid">
                             <div className="col-span-5">Producto</div>
                             <div className="col-span-2 text-center">Cantidad</div>
                             <div className="col-span-2 text-right">Costo Unit.</div>
@@ -182,12 +182,13 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                             <div className="col-span-1" />
                         </div>
                         {items.map((item, index) => (
-                            <div key={`${item.product_id}-${index}`} className="grid grid-cols-12 items-center gap-2 rounded border bg-white p-2 dark:bg-slate-800">
-                                <div className="col-span-5">
+                            <div key={`${item.product_id}-${index}`} className="grid grid-cols-1 items-center gap-2 rounded border bg-white p-2 dark:bg-slate-800 sm:grid-cols-12">
+                                <div className="sm:col-span-5">
                                     <div className="text-sm font-medium">{item.product_name}</div>
                                     <div className="text-xs text-muted-foreground">{item.sku}</div>
                                 </div>
-                                <div className="col-span-2">
+                                <div className="sm:col-span-2">
+                                    <Label className="mb-1 text-xs sm:hidden">Cantidad</Label>
                                     <Input
                                         type="number"
                                         min="0.01"
@@ -197,7 +198,8 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                                         className="h-8 text-center"
                                     />
                                 </div>
-                                <div className="col-span-2">
+                                <div className="sm:col-span-2">
+                                    <Label className="mb-1 text-xs sm:hidden">Costo unitario</Label>
                                     <Input
                                         type="number"
                                         min="0"
@@ -207,7 +209,8 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                                         className="h-8 text-right"
                                     />
                                 </div>
-                                <div className="col-span-2">
+                                <div className="sm:col-span-2">
+                                    <Label className="mb-1 text-xs sm:hidden">Motivo</Label>
                                     <Input
                                         value={item.reason}
                                         onChange={(e) => handleUpdateItem(index, 'reason', e.target.value)}
@@ -215,7 +218,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                                         className="h-8"
                                     />
                                 </div>
-                                <div className="col-span-1 text-right">
+                                <div className="flex justify-end sm:col-span-1 sm:text-right">
                                     <Button
                                         variant="ghost"
                                         size="icon"
@@ -239,13 +242,13 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                 )}
             </div>
 
-            <div className="flex justify-end gap-3 pt-4">
+            <div className="flex flex-col-reverse gap-2 pt-4 sm:flex-row sm:justify-end">
                 <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
                     Cancelar
                 </Button>
                 <Button type="submit" disabled={isSubmitting || items.length === 0} className="bg-red-600 text-white hover:bg-red-700">
                     <Save className="mr-2 h-4 w-4" />
-                    {isSubmitting ? 'Guardando...' : 'Confirmar Devolución'}
+                    {isSubmitting ? 'Guardando...' : 'Confirmar devolucion'}
                 </Button>
             </div>
         </form>

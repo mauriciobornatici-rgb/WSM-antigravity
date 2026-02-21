@@ -140,7 +140,7 @@ export default function ReceptionsPage() {
     async function handleCreateReception(data: Parameters<typeof api.createReception>[0]) {
         try {
             await createReceptionMutation.mutateAsync(data);
-            toast.success("Recepción registrada correctamente");
+            toast.success("Recepcion registrada correctamente");
             setIsCreateDialogOpen(false);
             setPrefilledOrderId(undefined);
             setPrefilledSupplierId(undefined);
@@ -152,7 +152,7 @@ export default function ReceptionsPage() {
     async function handleCreateReturn(data: Parameters<typeof api.createReturn>[0]) {
         try {
             await createReturnMutation.mutateAsync(data);
-            toast.success("Devolución registrada en borrador");
+            toast.success("Devolucion registrada en borrador");
             setIsReturnDialogOpen(false);
         } catch {
             // El manejo global de React Query ya informa el error.
@@ -162,8 +162,8 @@ export default function ReceptionsPage() {
     async function handleApproveReception(id: string, receptionNumber: string) {
         try {
             await approveReceptionMutation.mutateAsync(id);
-            toast.success("Recepción aprobada", {
-                description: `${receptionNumber} fue aprobada y el stock se actualizó.`,
+            toast.success("Recepcion aprobada", {
+                description: `${receptionNumber} fue aprobada y el stock se actualizo.`,
             });
         } catch {
             // El manejo global de React Query ya informa el error.
@@ -173,7 +173,7 @@ export default function ReceptionsPage() {
     async function handleApproveReturn(id: string, returnNumber: string) {
         try {
             await approveReturnMutation.mutateAsync(id);
-            toast.success("Devolución aprobada", {
+            toast.success("Devolucion aprobada", {
                 description: `${returnNumber} fue procesada correctamente.`,
             });
         } catch {
@@ -183,10 +183,10 @@ export default function ReceptionsPage() {
 
     return (
         <div className="space-y-6 p-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-slate-900">Mercadería entrante</h1>
-                    <p className="mt-1 text-slate-600">Gestión de recepciones y devoluciones a proveedor.</p>
+                    <h1 className="text-3xl font-bold text-slate-900">Mercaderia entrante</h1>
+                    <p className="mt-1 text-slate-600">Gestion de recepciones y devoluciones a proveedor.</p>
                 </div>
 
                 <button
@@ -199,19 +199,19 @@ export default function ReceptionsPage() {
                         setPrefilledSupplierId(undefined);
                         setIsCreateDialogOpen(true);
                     }}
-                    className={`flex items-center gap-2 rounded-lg px-4 py-2 text-white transition ${
+                    className={`flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-white transition sm:w-auto ${
                         activeTab === "returns" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"
                     }`}
                 >
                     {activeTab === "returns" ? <RotateCcw className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
-                    {activeTab === "returns" ? "Nueva devolución" : "Nueva recepción"}
+                    {activeTab === "returns" ? "Nueva devolucion" : "Nueva recepcion"}
                 </button>
             </div>
 
-            <div className="flex border-b border-slate-200">
+            <div className="flex gap-1 overflow-x-auto border-b border-slate-200">
                 <button
                     onClick={() => setActiveTab("pending")}
-                    className={`px-6 py-3 text-sm font-medium ${
+                    className={`shrink-0 px-6 py-3 text-sm font-medium ${
                         activeTab === "pending" ? "border-b-2 border-blue-600 text-blue-600" : "text-slate-600 hover:text-slate-800"
                     }`}
                 >
@@ -219,7 +219,7 @@ export default function ReceptionsPage() {
                 </button>
                 <button
                     onClick={() => setActiveTab("history")}
-                    className={`px-6 py-3 text-sm font-medium ${
+                    className={`shrink-0 px-6 py-3 text-sm font-medium ${
                         activeTab === "history" ? "border-b-2 border-blue-600 text-blue-600" : "text-slate-600 hover:text-slate-800"
                     }`}
                 >
@@ -227,7 +227,7 @@ export default function ReceptionsPage() {
                 </button>
                 <button
                     onClick={() => setActiveTab("returns")}
-                    className={`px-6 py-3 text-sm font-medium ${
+                    className={`shrink-0 px-6 py-3 text-sm font-medium ${
                         activeTab === "returns" ? "border-b-2 border-red-600 text-red-600" : "text-slate-600 hover:text-slate-800"
                     }`}
                 >
@@ -288,10 +288,10 @@ export default function ReceptionsPage() {
             ) : null}
 
             <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-4xl">
                     <DialogHeader>
-                        <DialogTitle>Registrar ingreso de mercadería</DialogTitle>
-                        <DialogDescription>Confirma cantidades recibidas y estado de cada ítem.</DialogDescription>
+                        <DialogTitle>Registrar ingreso de mercaderia</DialogTitle>
+                        <DialogDescription>Confirma cantidades recibidas y estado de cada item.</DialogDescription>
                     </DialogHeader>
                     <ReceptionForm
                         onSubmit={handleCreateReception}
@@ -303,10 +303,10 @@ export default function ReceptionsPage() {
             </Dialog>
 
             <Dialog open={isReturnDialogOpen} onOpenChange={setIsReturnDialogOpen}>
-                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-4xl">
                     <DialogHeader>
-                        <DialogTitle>Nueva devolución a proveedor</DialogTitle>
-                        <DialogDescription>Registra la salida de mercadería y su motivo.</DialogDescription>
+                        <DialogTitle>Nueva devolucion a proveedor</DialogTitle>
+                        <DialogDescription>Registra la salida de mercaderia y su motivo.</DialogDescription>
                     </DialogHeader>
                     <ReturnForm onSubmit={handleCreateReturn} onCancel={() => setIsReturnDialogOpen(false)} />
                 </DialogContent>
@@ -314,3 +314,5 @@ export default function ReceptionsPage() {
         </div>
     );
 }
+
+

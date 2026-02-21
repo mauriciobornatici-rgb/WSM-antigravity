@@ -140,7 +140,7 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
                 </div>
 
                 <div className="space-y-2">
-                    <Label htmlFor="orderDate">Fecha de Orden *</Label>
+                    <Label htmlFor="orderDate">Fecha de orden *</Label>
                     <Input
                         id="orderDate"
                         type="date"
@@ -151,7 +151,7 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
                 </div>
 
                 <div className="space-y-2">
-                    <Label htmlFor="expectedDelivery">Fecha de Entrega Esperada</Label>
+                    <Label htmlFor="expectedDelivery">Fecha de entrega esperada</Label>
                     <Input
                         id="expectedDelivery"
                         type="date"
@@ -162,7 +162,7 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
             </div>
 
             <div className="border-t pt-4">
-                <h3 className="mb-4 text-lg font-semibold">Agregar Productos</h3>
+                <h3 className="mb-4 text-lg font-semibold">Agregar productos</h3>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                     <div className="md:col-span-2">
                         <Label htmlFor="product">Producto</Label>
@@ -204,15 +204,16 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
                         />
                     </div>
                 </div>
-                <Button type="button" onClick={handleAddProduct} className="mt-3" variant="outline">
+                <Button type="button" onClick={handleAddProduct} className="mt-3 w-full sm:w-auto" variant="outline">
                     <Plus className="mr-2 h-4 w-4" />
-                    Agregar Producto
+                    Agregar producto
                 </Button>
             </div>
 
             {items.length > 0 && (
                 <div className="overflow-hidden rounded-lg border">
-                    <table className="w-full">
+                    <div className="overflow-x-auto">
+                        <table className="w-full min-w-[760px]">
                         <thead className="bg-gray-50">
                             <tr>
                                 <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Producto</th>
@@ -251,7 +252,8 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
                                 <td />
                             </tr>
                         </tfoot>
-                    </table>
+                        </table>
+                    </div>
                 </div>
             )}
 
@@ -266,12 +268,12 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
                 />
             </div>
 
-            <div className="flex justify-end gap-3 border-t pt-4">
+            <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
                 <Button type="button" variant="outline" onClick={onCancel}>
                     Cancelar
                 </Button>
                 <Button type="submit" disabled={items.length === 0}>
-                    Crear Orden de Compra
+                    Crear orden de compra
                 </Button>
             </div>
         </form>

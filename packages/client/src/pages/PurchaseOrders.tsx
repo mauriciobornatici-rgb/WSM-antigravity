@@ -110,26 +110,26 @@ export default function PurchaseOrdersPage() {
 
     return (
         <div className="space-y-6 p-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-slate-900">Órdenes de compra</h1>
-                    <p className="mt-1 text-slate-600">Gestioná compras y seguimiento de recepción.</p>
+                    <h1 className="text-3xl font-bold text-slate-900">Ordenes de compra</h1>
+                    <p className="mt-1 text-slate-600">Gestiona compras y seguimiento de recepcion.</p>
                 </div>
                 <button
                     onClick={() => setIsCreateDialogOpen(true)}
-                    className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 sm:w-auto"
                 >
                     <Plus className="h-5 w-5" />
                     Nueva orden
                 </button>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 overflow-x-auto pb-1">
                 {(["all", "draft", "sent", "partial", "received"] as const).map((statusFilter) => (
                     <button
                         key={statusFilter}
                         onClick={() => setFilter(statusFilter)}
-                        className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                        className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition ${
                             filter === statusFilter
                                 ? "bg-blue-600 text-white focus-visible:ring-blue-500"
                                 : "bg-slate-100 text-slate-700 hover:bg-slate-200 focus-visible:ring-slate-400"
@@ -205,7 +205,8 @@ export default function PurchaseOrdersPage() {
                         </p>
                     </div>
                 ) : (
-                    <table className="w-full text-slate-900">
+                    <div className="overflow-x-auto">
+                        <table className="w-full min-w-[900px] text-slate-900">
                         <thead className="border-b border-slate-200 bg-slate-50">
                             <tr>
                                 <th className={tableHeadClass}>Numero OC</th>
@@ -263,12 +264,13 @@ export default function PurchaseOrdersPage() {
                                 </tr>
                             ))}
                         </tbody>
-                    </table>
+                        </table>
+                    </div>
                 )}
             </div>
 
             <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-4xl">
                     <DialogHeader>
                         <DialogTitle>Nueva orden de compra</DialogTitle>
                         <DialogDescription>Completa los datos para crear una nueva orden.</DialogDescription>
@@ -278,7 +280,7 @@ export default function PurchaseOrdersPage() {
             </Dialog>
 
             <Dialog open={Boolean(selectedOrderId)} onOpenChange={(open) => !open && setSelectedOrderId(null)}>
-                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-4xl">
                     <DialogHeader>
                         <DialogTitle>
                             Detalles de orden: {orders.find((order) => order.id === selectedOrderId)?.po_number ?? selectedOrderId ?? "-"}
@@ -290,3 +292,4 @@ export default function PurchaseOrdersPage() {
         </div>
     );
 }
+
