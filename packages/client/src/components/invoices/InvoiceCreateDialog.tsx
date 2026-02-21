@@ -46,7 +46,7 @@ export function InvoiceCreateDialog({
                     <DialogTitle>Nueva factura de venta</DialogTitle>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <div className="space-y-2">
                             <Label>Cliente</Label>
                             <Select
@@ -65,7 +65,7 @@ export function InvoiceCreateDialog({
                                 </SelectContent>
                             </Select>
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                             <div className="space-y-2">
                                 <Label>Tipo</Label>
                                 <Select
@@ -89,7 +89,8 @@ export function InvoiceCreateDialog({
                     </div>
 
                     <div className="space-y-4 rounded-md border bg-slate-50 p-4 dark:bg-slate-900/50">
-                        <Table>
+                        <div className="overflow-x-auto">
+                        <Table className="min-w-[560px]">
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>Descripción</TableHead>
@@ -111,9 +112,10 @@ export function InvoiceCreateDialog({
                                 ))}
                             </TableBody>
                         </Table>
+                        </div>
 
-                        <div className="grid grid-cols-12 gap-2">
-                            <div className="col-span-6">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
+                            <div className="col-span-1 sm:col-span-6">
                                 <Input
                                     placeholder="Descripción..."
                                     value={manualItem.description}
@@ -125,7 +127,7 @@ export function InvoiceCreateDialog({
                                     }
                                 />
                             </div>
-                            <div className="col-span-2">
+                            <div className="col-span-1 sm:col-span-2">
                                 <Input
                                     type="number"
                                     value={manualItem.quantity}
@@ -137,7 +139,7 @@ export function InvoiceCreateDialog({
                                     }
                                 />
                             </div>
-                            <div className="col-span-2">
+                            <div className="col-span-1 sm:col-span-2">
                                 <Input
                                     type="number"
                                     value={manualItem.unit_price}
@@ -149,7 +151,7 @@ export function InvoiceCreateDialog({
                                     }
                                 />
                             </div>
-                            <div className="col-span-2">
+                            <div className="col-span-1 sm:col-span-2">
                                 <Button variant="secondary" className="w-full" onClick={onAddItem}>
                                     Agregar
                                 </Button>

@@ -155,7 +155,7 @@ export default function SuppliersPage() {
 
     return (
         <div className="p-6 space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Proveedores</h1>
                     <p className="text-muted-foreground">Gestión de proveedores y socios comerciales.</p>
@@ -163,7 +163,7 @@ export default function SuppliersPage() {
                 {/* Add Dialog Trigger... same as before */}
                 <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
                     <DialogTrigger asChild>
-                        <Button className="bg-blue-600 hover:bg-blue-700">
+                        <Button className="w-full bg-blue-600 hover:bg-blue-700 sm:w-auto">
                             <Plus className="mr-2 h-4 w-4" /> Nuevo Proveedor
                         </Button>
                     </DialogTrigger>
@@ -175,7 +175,7 @@ export default function SuppliersPage() {
                             </DialogDescription>
                         </DialogHeader>
                         <div className="grid gap-4 py-4">
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                 <div className="space-y-2">
                                     <Label>Nombre / Razón Social *</Label>
                                     <Input value={newSupplier.name} onChange={e => setNewSupplier({ ...newSupplier, name: e.target.value })} placeholder="Ej: Nike Dist" />
@@ -185,7 +185,7 @@ export default function SuppliersPage() {
                                     <Input value={newSupplier.tax_id} onChange={e => setNewSupplier({ ...newSupplier, tax_id: e.target.value })} placeholder="30-12345678-9" />
                                 </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                 <div className="space-y-2">
                                     <Label>Contacto</Label>
                                     <Input value={newSupplier.contact_name} onChange={e => setNewSupplier({ ...newSupplier, contact_name: e.target.value })} placeholder="Nombre de contacto" />
@@ -195,7 +195,7 @@ export default function SuppliersPage() {
                                     <Input value={newSupplier.category} onChange={e => setNewSupplier({ ...newSupplier, category: e.target.value })} placeholder="Ej: Calzado, Logística" />
                                 </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                 <div className="space-y-2">
                                     <Label>Correo electronico</Label>
                                     <Input value={newSupplier.email} onChange={e => setNewSupplier({ ...newSupplier, email: e.target.value })} />
@@ -235,7 +235,7 @@ export default function SuppliersPage() {
                                 </TabsList>
 
                                 <TabsContent value="account" className="space-y-4 pt-4">
-                                    <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                         <Card>
                                             <CardHeader className="pb-2">
                                                 <CardTitle className="text-sm font-medium text-muted-foreground">Saldo Pendiente</CardTitle>
@@ -263,7 +263,7 @@ export default function SuppliersPage() {
                                     </div>
 
                                     <div className="mt-6 border rounded-lg">
-                                        <div className="flex justify-between items-center p-4 border-b">
+                                        <div className="flex flex-col gap-2 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
                                             <h4 className="text-sm font-semibold">Movimientos de Cuenta (Libro Mayor)</h4>
                                             <Button onClick={() => setShowPaymentForm(true)} size="sm">
                                                 <Plus className="h-4 w-4 mr-2" />
@@ -359,7 +359,7 @@ export default function SuppliersPage() {
                                 </TabsContent>
 
                                 <TabsContent value="info" className="space-y-4 pt-4">
-                                    <div className="grid grid-cols-2 gap-4 text-sm">
+                                    <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
                                         <div className="space-y-1">
                                             <Label className="text-muted-foreground">Razón Social</Label>
                                             <p>{selectedSupplier.name}</p>
@@ -533,7 +533,7 @@ function EditSupplierDialog({ supplier, open, onOpenChange, onSubmit }: { suppli
                     </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleSubmit} className="grid gap-4 py-4">
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div className="space-y-2">
                             <Label>Nombre / Razón Social *</Label>
                             <Input value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} required />
@@ -543,7 +543,7 @@ function EditSupplierDialog({ supplier, open, onOpenChange, onSubmit }: { suppli
                             <Input value={formData.tax_id} onChange={e => setFormData({ ...formData, tax_id: e.target.value })} required />
                         </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div className="space-y-2">
                             <Label>Contacto</Label>
                             <Input value={formData.contact_name} onChange={e => setFormData({ ...formData, contact_name: e.target.value })} />
@@ -553,7 +553,7 @@ function EditSupplierDialog({ supplier, open, onOpenChange, onSubmit }: { suppli
                             <Input value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
                         </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div className="space-y-2">
                             <Label>Teléfono</Label>
                             <Input value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} />

@@ -80,12 +80,12 @@ export default function CashManagementPage() {
 
     return (
         <div className="p-6 space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Gestión de Cajas</h1>
                     <p className="text-muted-foreground">Apertura, cierre y arqueo de turnos de caja.</p>
                 </div>
-                <Button variant="outline" onClick={loadRegisters} disabled={loading}><History className="mr-2 h-4 w-4" /> Historial de Turnos</Button>
+                <Button className="w-full sm:w-auto" variant="outline" onClick={loadRegisters} disabled={loading}><History className="mr-2 h-4 w-4" /> Historial de Turnos</Button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -177,7 +177,7 @@ export default function CashManagementPage() {
                     <div className="grid gap-6 py-4">
                         <div className="bg-slate-900 p-4 rounded-lg border border-slate-800 space-y-3">
                             <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-wider text-center">Resumen de Ventas del Turno</h4>
-                            <div className="grid grid-cols-2 gap-4 text-center">
+                            <div className="grid grid-cols-1 gap-4 text-center sm:grid-cols-2">
                                 <div className="p-3 bg-slate-800/50 rounded-md border border-slate-700">
                                     <p className="text-xs text-slate-500 mb-1">Efectivo Sistema</p>
                                     <p className="text-xl font-black text-white">${Number(shiftSummary?.expected_balance || 0).toLocaleString()}</p>

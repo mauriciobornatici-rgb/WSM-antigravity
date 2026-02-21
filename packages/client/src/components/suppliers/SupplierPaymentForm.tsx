@@ -97,7 +97,7 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
         <form onSubmit={handleSubmit} className="space-y-6">
             {/* Balance Info */}
             <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-lg border border-slate-200 dark:border-slate-800">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
                         <p className="text-sm text-muted-foreground">Saldo Actual</p>
                         <p className="text-2xl font-bold">
@@ -114,7 +114,7 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
             </div>
 
             <div className="space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <Label className="text-lg font-semibold">Desglose de Pago</Label>
                     <Button type="button" variant="outline" size="sm" onClick={addPaymentLine} className="text-blue-600 border-blue-200 hover:bg-blue-50">
                         <Plus className="h-4 w-4 mr-2" /> Agregar Método
@@ -206,11 +206,11 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
             </div>
 
             {/* Footer Actions */}
-            <div className="flex justify-between items-center pt-4 border-t">
+            <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-sm font-medium">
                     Total a Registrar: <span className="text-blue-600 text-lg ml-1 font-bold">${totalAmount.toLocaleString()}</span>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
                     <Button type="button" variant="outline" onClick={onCancel} disabled={submitting}>
                         Cancelar
                     </Button>

@@ -72,7 +72,7 @@ export function UserForm({ open, onOpenChange, onSubmit, initialData, isLoading 
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[425px]">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[520px]">
                 <DialogHeader>
                     <DialogTitle>{initialData ? "Editar Usuario" : "Nuevo Usuario"}</DialogTitle>
                     <DialogDescription>
@@ -117,7 +117,7 @@ export function UserForm({ open, onOpenChange, onSubmit, initialData, isLoading 
                         />
                         <p className="text-xs text-muted-foreground">{PASSWORD_POLICY_TEXT}</p>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div className="grid gap-2">
                             <Label htmlFor="role">Rol</Label>
                             <Select
