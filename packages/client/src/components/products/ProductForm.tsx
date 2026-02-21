@@ -322,14 +322,14 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     return (
         <>
             <Form {...form}>
-                <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4 pb-1">
-                    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-                        <div className="rounded-lg border p-4">
-                        <div className="mb-3 flex items-center justify-between gap-3">
+                <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-5 pb-1">
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.95fr)]">
+                        <div className="rounded-xl border p-4 sm:p-5">
+                        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                             <p className="text-sm font-semibold">Datos comerciales</p>
                             <p className="text-[11px] text-muted-foreground">Nombre, categoria y codigos</p>
                         </div>
-                        <div className="mt-3 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="name"
@@ -358,7 +358,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                             />
                         </div>
 
-                        <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="sku"
@@ -386,7 +386,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                                     {...field}
                                                     onKeyDown={(event) => handleReaderKeyDown("barcode", event)}
                                                 />
-                                                <div className="grid gap-2 sm:grid-cols-2">
+                                                <div className="grid gap-2 md:grid-cols-2">
                                                     <Button className="h-10 w-full px-3" type="button" variant="outline" onClick={() => openScanner("barcode")}>
                                                         <Camera className="mr-2 h-4 w-4" />
                                                         Camara
@@ -415,7 +415,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
                         </div>
 
-                        <div className="rounded-lg border p-4">
+                        <div className="rounded-xl border p-4 sm:p-5">
                         <div className="mb-3 flex items-center justify-between gap-3">
                             <div>
                                 <p className="text-sm font-semibold">Imagen del producto</p>
@@ -459,8 +459,8 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 <span className="basis-full text-xs text-muted-foreground">La imagen se sube al servidor y se guarda como URL segura.</span>
                             </div>
 
-                            <div className="overflow-hidden rounded-md border bg-muted/20 p-2">
-                                <div className="flex min-h-[140px] max-h-[190px] items-center justify-center rounded-md bg-background/60 sm:min-h-[190px] sm:max-h-[230px]">
+                            <div className="overflow-hidden rounded-lg border bg-muted/20 p-2">
+                                <div className="flex min-h-[120px] max-h-[150px] items-center justify-center rounded-md bg-background/60 md:min-h-[180px] md:max-h-[220px]">
                                     {canRenderImage ? (
                                         <img
                                             src={imageValue}
@@ -480,12 +480,12 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                     </div>
                     </div>
 
-                    <div className="rounded-lg border p-4">
-                        <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="rounded-xl border p-4 sm:p-5">
+                        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                             <p className="text-sm font-semibold">Ubicacion y precios</p>
                             <p className="text-[11px] text-muted-foreground">Almacen y costos</p>
                         </div>
-                        <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+                        <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
                             <FormField<ProductFormSchema>
                                 control={form.control}
                                 name="location"
@@ -500,7 +500,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                                     {...field}
                                                     onKeyDown={(event) => handleReaderKeyDown("location", event)}
                                                 />
-                                                <div className="grid gap-2 sm:grid-cols-2">
+                                                <div className="grid gap-2 md:grid-cols-2">
                                                     <Button className="h-10 w-full px-3" type="button" variant="outline" onClick={() => openScanner("location")}>
                                                         <Camera className="mr-2 h-4 w-4" />
                                                         Camara
@@ -525,7 +525,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 )}
                             />
 
-                            <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]">
+                            <div className="grid gap-3 md:grid-cols-2">
                                 <FormField<ProductFormSchema>
                                     control={form.control}
                                     name="purchase_price"
@@ -556,7 +556,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
 
                         {!isEditMode ? (
-                            <div className="mt-3 grid gap-3 sm:max-w-xs">
+                            <div className="mt-3 grid gap-3 md:max-w-xs">
                                 <FormField<ProductFormSchema>
                                     control={form.control}
                                     name="stock_initial"
@@ -611,7 +611,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
                         <p className="text-xs text-muted-foreground">{scanStatus}</p>
 
-                        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+                        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
                             <Input
                                 placeholder="Fallback manual"
                                 value={manualScanValue}
@@ -620,10 +620,10 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     if (event.key === "Enter") handleManualScanApply();
                                 }}
                             />
-                            <Button type="button" variant="outline" onClick={handleManualScanApply}>
+                            <Button type="button" variant="outline" className="w-full md:w-auto" onClick={handleManualScanApply}>
                                 Aplicar
                             </Button>
-                            <Button type="button" variant="outline" onClick={closeScannerDialog}>
+                            <Button type="button" variant="outline" className="w-full md:w-auto" onClick={closeScannerDialog}>
                                 Cerrar
                             </Button>
                         </div>
