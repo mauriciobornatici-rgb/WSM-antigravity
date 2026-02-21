@@ -556,75 +556,115 @@ export default function OrdersPage() {
             </Card>
 
             <Dialog open={dispatchOpen} onOpenChange={setDispatchOpen}>
-                <DialogContent>
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-xl">
                     <DialogHeader>
                         <DialogTitle>Despachar pedido</DialogTitle>
+                        <DialogDescription>Completa datos segun metodo logistico.</DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-3">
+                    <form
+                        className="space-y-4"
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            void submitDispatch();
+                        }}
+                    >
                         <div className="space-y-2">
-                            <Label>Método</Label>
+                            <Label>Metodo logistico</Label>
                             <Select value={shippingMethod} onValueChange={(value) => setShippingMethod(value as ShippingMethod)}>
                                 <SelectTrigger>
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="delivery">Envío</SelectItem>
+                                    <SelectItem value="delivery">Envio</SelectItem>
                                     <SelectItem value="pickup">Retiro</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
                         {shippingMethod === "delivery" ? (
-                            <>
-                                <Input placeholder="Tracking" value={trackingNumber} onChange={(event) => setTrackingNumber(event.target.value)} />
-                                <Input placeholder="Dirección" value={shippingAddress} onChange={(event) => setShippingAddress(event.target.value)} />
-                                <Input type="date" value={estimatedDelivery} onChange={(event) => setEstimatedDelivery(event.target.value)} />
-                            </>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="space-y-2 sm:col-span-2">
+                                    <Label>Codigo de seguimiento (opcional)</Label>
+                                    <Input placeholder="Ej: TRACK-0001" value={trackingNumber} onChange={(event) => setTrackingNumber(event.target.value)} />
+                                </div>
+                                <div className="space-y-2 sm:col-span-2">
+                                    <Label>Direccion de entrega</Label>
+                                    <Input placeholder="Calle, numero, localidad" value={shippingAddress} onChange={(event) => setShippingAddress(event.target.value)} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Fecha estimada</Label>
+                                    <Input type="date" value={estimatedDelivery} onChange={(event) => setEstimatedDelivery(event.target.value)} />
+                                </div>
+                            </div>
                         ) : (
-                            <>
-                                <Input placeholder="Nombre receptor" value={dispatchRecipientName} onChange={(event) => setDispatchRecipientName(event.target.value)} />
-                                <Input placeholder="DNI receptor" value={dispatchRecipientDni} onChange={(event) => setDispatchRecipientDni(event.target.value)} />
-                            </>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="space-y-2">
+                                    <Label>Nombre de quien retira</Label>
+                                    <Input placeholder="Nombre completo" value={dispatchRecipientName} onChange={(event) => setDispatchRecipientName(event.target.value)} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>DNI de quien retira</Label>
+                                    <Input placeholder="Solo numeros" value={dispatchRecipientDni} onChange={(event) => setDispatchRecipientDni(event.target.value)} />
+                                </div>
+                            </div>
                         )}
-                    </div>
-                    <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setDispatchOpen(false)}>
-                            Cancelar
-                        </Button>
-                        <Button onClick={() => void submitDispatch()} disabled={dispatchOrderMutation.isPending}>
-                            {dispatchOrderMutation.isPending ? "Guardando..." : "Confirmar"}
-                        </Button>
-                    </div>
+                        <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+                            <Button type="button" variant="outline" onClick={() => setDispatchOpen(false)}>
+                                Cancelar
+                            </Button>
+                            <Button type="submit" disabled={dispatchOrderMutation.isPending}>
+                                {dispatchOrderMutation.isPending ? "Guardando..." : "Confirmar"}
+                            </Button>
+                        </div>
+                    </form>
                 </DialogContent>
             </Dialog>
 
             <Dialog open={deliverOpen} onOpenChange={setDeliverOpen}>
-                <DialogContent>
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-xl">
                     <DialogHeader>
                         <DialogTitle>Confirmar entrega</DialogTitle>
+                        <DialogDescription>Registra quien recibio el pedido y observaciones.</DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-3">
-                        <Input placeholder="Nombre receptor" value={deliverRecipientName} onChange={(event) => setDeliverRecipientName(event.target.value)} />
-                        <Input placeholder="DNI receptor" value={deliverRecipientDni} onChange={(event) => setDeliverRecipientDni(event.target.value)} />
-                        <Input placeholder="Notas" value={deliveryNotes} onChange={(event) => setDeliveryNotes(event.target.value)} />
-                    </div>
-                    <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setDeliverOpen(false)}>
-                            Cancelar
-                        </Button>
-                        <Button onClick={() => void submitDelivery()} disabled={deliverOrderMutation.isPending}>
-                            {deliverOrderMutation.isPending ? "Guardando..." : "Confirmar"}
-                        </Button>
-                    </div>
+                    <form
+                        className="space-y-4"
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            void submitDelivery();
+                        }}
+                    >
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="space-y-2">
+                                <Label>Nombre receptor</Label>
+                                <Input placeholder="Nombre completo" value={deliverRecipientName} onChange={(event) => setDeliverRecipientName(event.target.value)} />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>DNI receptor</Label>
+                                <Input placeholder="Solo numeros" value={deliverRecipientDni} onChange={(event) => setDeliverRecipientDni(event.target.value)} />
+                            </div>
+                            <div className="space-y-2 sm:col-span-2">
+                                <Label>Notas de entrega (opcional)</Label>
+                                <Input placeholder="Observaciones" value={deliveryNotes} onChange={(event) => setDeliveryNotes(event.target.value)} />
+                            </div>
+                        </div>
+                        <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+                            <Button type="button" variant="outline" onClick={() => setDeliverOpen(false)}>
+                                Cancelar
+                            </Button>
+                            <Button type="submit" disabled={deliverOrderMutation.isPending}>
+                                {deliverOrderMutation.isPending ? "Guardando..." : "Confirmar"}
+                            </Button>
+                        </div>
+                    </form>
                 </DialogContent>
             </Dialog>
 
             <Dialog open={invoiceOpen} onOpenChange={setInvoiceOpen}>
-                <DialogContent>
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>Facturar pedido</DialogTitle>
                         <DialogDescription>Configura pagos para generar la factura.</DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                         <div className="rounded-md border bg-slate-50 p-3 text-sm">
                             Total: <strong>${Number(invoiceOrder ? getInvoiceTotal(invoiceOrder) : 0).toLocaleString("es-AR")}</strong>
                         </div>
@@ -662,15 +702,15 @@ export default function OrdersPage() {
                                 </div>
                             </div>
                         ))}
-                        <Button variant="outline" onClick={() => setInvoicePayments((current) => [...current, { method: "cash", amount: 0 }])}>
+                        <Button type="button" variant="outline" onClick={() => setInvoicePayments((current) => [...current, { method: "cash", amount: 0 }])}>
                             Agregar pago
                         </Button>
                     </div>
-                    <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setInvoiceOpen(false)}>
+                    <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+                        <Button type="button" variant="outline" onClick={() => setInvoiceOpen(false)}>
                             Cancelar
                         </Button>
-                        <Button onClick={() => void submitInvoice()} disabled={createInvoiceMutation.isPending}>
+                        <Button type="button" onClick={() => void submitInvoice()} disabled={createInvoiceMutation.isPending}>
                             {createInvoiceMutation.isPending ? "Facturando..." : "Emitir factura"}
                         </Button>
                     </div>
@@ -690,3 +730,4 @@ function SummaryCard({ title, count }: { title: string; count: number }) {
         </Card>
     );
 }
+
