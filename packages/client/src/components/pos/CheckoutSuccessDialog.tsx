@@ -11,11 +11,11 @@ export function CheckoutSuccessDialog({
 }: CheckoutSuccessDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent>
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-md">
                 <DialogHeader>
                     <DialogTitle>Venta registrada</DialogTitle>
                 </DialogHeader>
-                <div className="space-y-2 text-sm">
+                <div className="space-y-2 rounded-md border bg-muted/20 p-3 text-sm">
                     <p>
                         Orden: <strong>{lastOrderId || "-"}</strong>
                     </p>
@@ -26,8 +26,10 @@ export function CheckoutSuccessDialog({
                         Total: <strong>${grandTotal.toLocaleString("es-AR")}</strong>
                     </p>
                 </div>
-                <div className="flex justify-end">
-                    <Button onClick={() => onOpenChange(false)}>Cerrar</Button>
+                <div className="flex justify-end border-t pt-3">
+                    <Button type="button" onClick={() => onOpenChange(false)}>
+                        Cerrar
+                    </Button>
                 </div>
             </DialogContent>
         </Dialog>

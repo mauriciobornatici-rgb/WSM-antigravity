@@ -22,12 +22,12 @@ export function QuickClientDialog({
 }: QuickClientDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent>
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-lg">
                 <DialogHeader>
-                    <DialogTitle>Crear cliente rápido</DialogTitle>
-                    <DialogDescription>Alta mínima para operar en POS.</DialogDescription>
+                    <DialogTitle>Crear cliente rapido</DialogTitle>
+                    <DialogDescription>Alta minima para operar en POS.</DialogDescription>
                 </DialogHeader>
-                <div className="space-y-2">
+                <div className="space-y-3">
                     <Input
                         placeholder="Nombre"
                         value={newClient.name}
@@ -39,32 +39,32 @@ export function QuickClientDialog({
                         onChange={(event) => onNewClientChange({ tax_id: event.target.value })}
                     />
                     <Input
-                        placeholder="Correo electrónico"
+                        placeholder="Correo electronico"
                         value={newClient.email}
                         onChange={(event) => onNewClientChange({ email: event.target.value })}
                     />
                     <Input
-                        placeholder="Teléfono"
+                        placeholder="Telefono"
                         value={newClient.phone}
                         onChange={(event) => onNewClientChange({ phone: event.target.value })}
                     />
                     <Input
-                        placeholder="Dirección"
+                        placeholder="Direccion"
                         value={newClient.address}
                         onChange={(event) => onNewClientChange({ address: event.target.value })}
                     />
                     <Input
                         type="number"
-                        placeholder="Límite crédito"
+                        placeholder="Limite de credito"
                         value={newClient.credit_limit}
                         onChange={(event) => onNewClientChange({ credit_limit: Number(event.target.value) || 0 })}
                     />
                 </div>
-                <div className="flex justify-end gap-2">
-                    <Button variant="outline" onClick={() => onOpenChange(false)}>
+                <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+                    <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                         Cancelar
                     </Button>
-                    <Button onClick={onCreateClient} disabled={creatingClient}>
+                    <Button type="button" onClick={onCreateClient} disabled={creatingClient}>
                         {creatingClient ? "Guardando..." : "Crear cliente"}
                     </Button>
                 </div>

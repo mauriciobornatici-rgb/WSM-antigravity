@@ -106,7 +106,7 @@ export default function InventoryPage() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">Inventario</h2>
                     <p className="text-muted-foreground">Gestión de productos, stock disponible y stock comprometido.</p>
@@ -120,7 +120,7 @@ export default function InventoryPage() {
                 >
                     <DialogTrigger asChild>
                         <Button
-                            className="gap-2"
+                            className="w-full gap-2 sm:w-auto"
                             onClick={() => {
                                 setEditingProduct(null);
                                 setDialogOpen(true);
@@ -167,7 +167,7 @@ export default function InventoryPage() {
                             placeholder="Buscar por nombre, SKU, codigo, categoria o ubicacion..."
                             value={search}
                             onChange={(event) => setSearch(event.target.value)}
-                            className="max-w-md"
+                            className="w-full sm:max-w-md"
                         />
                     </div>
 
@@ -192,14 +192,14 @@ export default function InventoryPage() {
             </Card>
 
             <Dialog open={Boolean(deletingProduct)} onOpenChange={(open) => !open && setDeletingProduct(null)}>
-                <DialogContent>
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle>Eliminar producto</DialogTitle>
                         <DialogDescription>
                             Esta acción eliminará el producto <strong>{deletingProduct?.name}</strong>.
                         </DialogDescription>
                     </DialogHeader>
-                    <DialogFooter className="gap-2">
+                    <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <Button variant="outline" onClick={() => setDeletingProduct(null)}>
                             Cancelar
                         </Button>

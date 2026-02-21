@@ -19,8 +19,9 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
     }
 
     return (
-        <div className="rounded-md border">
-            <Table>
+        <div className="overflow-hidden rounded-md border">
+            <div className="overflow-x-auto">
+                <Table className="min-w-[1080px]">
                 <TableHeader>
                     <TableRow>
                         <TableHead>SKU</TableHead>
@@ -103,8 +104,8 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
                         ))
                     )}
                 </TableBody>
-            </Table>
+                </Table>
+            </div>
         </div>
     );
 }
-
