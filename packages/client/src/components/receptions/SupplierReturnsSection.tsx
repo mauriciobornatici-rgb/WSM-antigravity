@@ -22,7 +22,8 @@ export function SupplierReturnsSection({ returns, approving, onApproveReturn }: 
                     <h3 className="mb-2 text-lg font-medium text-slate-900">No hay devoluciones</h3>
                 </div>
             ) : (
-                <table className="w-full text-slate-900">
+                <div className="overflow-x-auto">
+                    <table className="w-full min-w-[760px] text-slate-900">
                     <thead className="border-b border-slate-200 bg-slate-50">
                         <tr>
                             <th className={tableHeadClass}>Referencia</th>
@@ -55,7 +56,8 @@ export function SupplierReturnsSection({ returns, approving, onApproveReturn }: 
                             </tr>
                         ))}
                     </tbody>
-                </table>
+                    </table>
+                </div>
             )}
         </div>
     );
