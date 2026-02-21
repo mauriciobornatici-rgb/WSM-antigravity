@@ -228,7 +228,7 @@ export default function SuppliersPage() {
                     {selectedSupplier && (
                         <div className="py-4">
                             <Tabs defaultValue="account">
-                                <TabsList className="grid w-full grid-cols-3">
+                                <TabsList className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3">
                                     <TabsTrigger value="account">Cuenta Corriente</TabsTrigger>
                                     <TabsTrigger value="orders">Historial Compras</TabsTrigger>
                                     <TabsTrigger value="info">Información</TabsTrigger>
@@ -275,7 +275,8 @@ export default function SuppliersPage() {
                                                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                                             </div>
                                         ) : supplierTransactions.length > 0 ? (
-                                            <Table>
+                                            <div className="overflow-x-auto">
+                                                <Table className="min-w-[680px]">
                                                 <TableHeader>
                                                     <TableRow>
                                                         <TableHead>Fecha</TableHead>
@@ -301,7 +302,8 @@ export default function SuppliersPage() {
                                                         </TableRow>
                                                     ))}
                                                 </TableBody>
-                                            </Table>
+                                                </Table>
+                                            </div>
                                         ) : (
                                             <div className="p-8 text-center text-muted-foreground">
                                                 <CreditCard className="h-12 w-12 mx-auto mb-2 opacity-50" />
@@ -330,7 +332,8 @@ export default function SuppliersPage() {
 
                                 <TabsContent value="orders" className="space-y-4 pt-4">
                                     <div className="border rounded-md">
-                                        <Table>
+                                        <div className="overflow-x-auto">
+                                            <Table className="min-w-[520px]">
                                             <TableHeader>
                                                 <TableRow>
                                                     <TableHead>ID Orden</TableHead>
@@ -354,7 +357,8 @@ export default function SuppliersPage() {
                                                     <TableRow><TableCell colSpan={4} className="text-center h-16">No hay órdenes registradas</TableCell></TableRow>
                                                 )}
                                             </TableBody>
-                                        </Table>
+                                            </Table>
+                                        </div>
                                     </div>
                                 </TabsContent>
 
