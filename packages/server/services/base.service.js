@@ -1,5 +1,7 @@
 import pool from '../config/db.js';
 
+const SQL_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 // Column allowlists per table — only these columns can be used in dynamic queries
 const TABLE_COLUMNS = {
     products: [
@@ -49,10 +51,32 @@ class BaseService {
      * Prevents SQL injection through dynamic column names.
      */
     _validateColumn(col) {
-        if (!this.allowedColumns.has(col)) {
+        const normalized = String(col || '').trim();
+        if (!SQL_IDENTIFIER_PATTERN.test(normalized)) {
+            throw new Error(`Invalid SQL identifier '${col}'`);
+        }
+        if (!this.allowedColumns.has(normalized)) {
             throw new Error(`Column '${col}' is not allowed for table '${this.tableName}'`);
         }
-        return `\`${col}\``;
+        return `\`${normalized}\``;
+    }
+
+    _parseLimit(rawLimit) {
+        if (rawLimit == null || rawLimit === '') return null;
+        const limit = Number(rawLimit);
+        if (!Number.isInteger(limit) || limit <= 0 || limit > 500) {
+            throw new Error('Invalid limit. Must be an integer between 1 and 500.');
+        }
+        return limit;
+    }
+
+    _parseOffset(rawOffset) {
+        if (rawOffset == null || rawOffset === '') return null;
+        const offset = Number(rawOffset);
+        if (!Number.isInteger(offset) || offset < 0) {
+            throw new Error('Invalid offset. Must be an integer greater than or equal to 0.');
+        }
+        return offset;
     }
 
     async findAll(filters = {}, options = {}) {
@@ -67,13 +91,20 @@ class BaseService {
 
         if (options.orderBy) {
             const safeCol = this._validateColumn(options.orderBy);
-            const order = options.order === 'DESC' ? 'DESC' : 'ASC';
+            const order = String(options.order || 'ASC').trim().toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
             query += ` ORDER BY ${safeCol} ${order}`;
         }
 
-        if (options.limit) {
+        const parsedLimit = this._parseLimit(options.limit);
+        const parsedOffset = this._parseOffset(options.offset);
+
+        if (parsedLimit != null) {
             query += ` LIMIT ?`;
-            params.push(parseInt(options.limit));
+            params.push(parsedLimit);
+            if (parsedOffset != null) {
+                query += ` OFFSET ?`;
+                params.push(parsedOffset);
+            }
         }
 
         const [rows] = await pool.query(query, params);
@@ -114,9 +145,10 @@ class BaseService {
 
     async hardDelete(id) {
         await pool.query(`DELETE FROM \`${this.tableName}\` WHERE id = ?`, [id]);
-        return { success: true, message: 'Registro eliminado físicamente' };
+        return { success: true, message: 'Registro eliminado fisicamente' };
     }
 }
 
 export default BaseService;
+
 
