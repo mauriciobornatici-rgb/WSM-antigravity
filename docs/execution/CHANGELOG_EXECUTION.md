@@ -1,5 +1,36 @@
 # Execution Changelog
 
+## 2026-02-21
+
+### Changed
+- `packages/client/src/components/invoices/InvoiceCreateDialog.tsx`
+- `packages/client/src/components/returns/UpdateStatusDialog.tsx`
+- `packages/client/src/components/users/UserForm.tsx`
+- `packages/client/src/pages/CashManagement.tsx`
+- `packages/client/src/pages/Clients.tsx`
+- `packages/client/src/pages/Suppliers.tsx`
+  - Standardized dialog action footers to mobile-first layout:
+    - `flex-col-reverse gap-2 sm:flex-row sm:justify-end`
+  - Goal: avoid crowded/overflowed action rows in narrow resolutions.
+- `packages/client/src/components/products/ProductForm.tsx`
+  - Improved product create/edit UX for narrow modal widths:
+    - scanner controls reorganized to prevent compressed input+buttons
+    - image preview block resized for better visual proportion
+    - container-aware grids (`auto-fit/minmax`) for commercial and price sections
+  - Goal: prevent out-of-screen clipping and crowded fields in inventory product modal.
+- `packages/server/scripts/legacy/README.md`
+- `packages/server/scripts/legacy/add-location-migration.js`
+- `packages/server/scripts/legacy/migration_add_deleted_at.js`
+- `packages/server/scripts/legacy/debug_columns.js`
+- `packages/server/scripts/legacy/debug_inventory.js`
+- `packages/server/scripts/legacy/debug_schema.js`
+- `packages/server/scripts/legacy/debug_service.js`
+- `packages/server/scripts/legacy/debug_warranties.js`
+  - Reorganized legacy/debug scripts from `packages/server/` root to `packages/server/scripts/legacy/`.
+  - Goal: keep backend runtime root clean and reduce accidental execution risk.
+- `docs/execution/STATE.md`
+  - Updated active task, resume steps, and completed checkpoints for this execution batch.
+
 ## 2026-02-19
 
 ### Changed

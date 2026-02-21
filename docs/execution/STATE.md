@@ -1,12 +1,15 @@
 # Execution State Snapshot
 
-Last updated: 2026-02-19
+Last updated: 2026-02-21
 Status: IN_PROGRESS
-Current block: P3
-Current task: P3.3 - Validacion funcional en staging (producto + POS visual + scanner)
+Current block: P2/P3
+Current task: P3.3 - Validacion en staging del nuevo layout de alta/edicion de productos + cierre UX responsive
 
 ## Resume From Here
-1. Validar ejecucion de CI en GitHub (`push` y `pull_request`) con resultado verde.
+1. Validar en staging flujo de alta/edicion de producto con el layout actualizado:
+   - sin cortes horizontales en modal
+   - botones de escaneo (camara/lector) correctamente apilados en resoluciones angostas
+   - bloque de imagen con proporcion visual equilibrada y sin ocupar exceso de alto
 2. Validar en staging flujo de alta de producto con:
    - escaneo por lector optico (input + Enter)
    - escaneo por camara (BarcodeDetector)
@@ -18,11 +21,35 @@ Current task: P3.3 - Validacion funcional en staging (producto + POS visual + sc
    - busqueda por nombre/SKU/barcode
    - alta por escaneo exacto desde buscador
    - checkout/factura/caja sin regresion funcional.
-4. Definir politica final de almacenamiento de imagenes (URL externa vs endpoint dedicado de uploads).
-5. Ejecutar `smoke:rbac` y `smoke:integrity` en entorno con acceso de red local.
-6. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
+4. Ejecutar `smoke:rbac` y `smoke:integrity` en entorno con acceso de red local.
+5. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
+6. Continuar barrido UX responsive restante en dialogos/flows secundarios.
 
 ## Completed
+- P2/P3 partial progress (responsive dialogs hardening + inventory product UX):
+  - Standardized mobile-first dialog footer actions across client dialogs:
+    - `packages/client/src/components/invoices/InvoiceCreateDialog.tsx`
+    - `packages/client/src/components/returns/UpdateStatusDialog.tsx`
+    - `packages/client/src/components/users/UserForm.tsx`
+    - `packages/client/src/pages/CashManagement.tsx`
+    - `packages/client/src/pages/Clients.tsx`
+    - `packages/client/src/pages/Suppliers.tsx`
+  - Improved product form layout to avoid cramped controls in narrow modal widths:
+    - scanner controls (barcode/location) reorganized to stable vertical+2-action layout
+    - image preview height reduced for better visual balance
+    - container-aware grids via `auto-fit/minmax` to prevent forced crowded columns
+  - Files:
+    - `packages/client/src/components/products/ProductForm.tsx`
+  - Validation:
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run build`
+- P2.7 partial progress (backend repository hygiene):
+  - Moved legacy debug/one-off migration scripts out of server root into:
+    - `packages/server/scripts/legacy/`
+  - Added operational note:
+    - `packages/server/scripts/legacy/README.md`
+  - Validation:
+    - `npm -w @wsm/server run test` (12/12)
 - P3.3 partial progress (UI polish product form):
   - Applied visual/functional polish focused on operator clarity:
     - section headers now include helper context labels
