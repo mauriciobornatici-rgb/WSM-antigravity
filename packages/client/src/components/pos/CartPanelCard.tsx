@@ -24,7 +24,7 @@ export function CartPanelCard({
     currentRegister,
 }: CartPanelProps) {
     return (
-        <Card className="border-blue-900/30 bg-gradient-to-b from-blue-950/30 to-background">
+        <Card className="border-blue-900/30 bg-gradient-to-b from-blue-950/30 to-background xl:sticky xl:top-4">
             <CardHeader className="space-y-3 border-b border-blue-900/30">
                 <CardTitle>Carrito</CardTitle>
                 <div className="space-y-2">
@@ -55,45 +55,52 @@ export function CartPanelCard({
                 </div>
             </CardHeader>
 
-            <CardContent className="space-y-3 p-4">
+            <CardContent className="space-y-4 p-4 sm:p-5">
                 {cart.length === 0 ? (
                     <p className="text-sm text-muted-foreground">Aun no agregaste productos.</p>
                 ) : (
-                    cart.map((item) => (
-                        <div key={item.id} className="rounded-md border p-2">
-                            <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2">
-                                    {item.image_url ? (
-                                        <img
-                                            src={item.image_url}
-                                            alt={item.name}
-                                            className="h-10 w-10 rounded-md object-cover"
-                                        />
-                                    ) : (
-                                        <div className="h-10 w-10 rounded-md border bg-muted/30" />
-                                    )}
-                                    <div>
-                                        <div className="font-medium">{item.name}</div>
-                                        <div className="text-xs text-muted-foreground">
-                                            ${Number(item.sale_price).toLocaleString("es-AR")}
+                    <div className="max-h-[44vh] space-y-2 overflow-y-auto pr-1">
+                        {cart.map((item) => (
+                            <div key={item.id} className="rounded-md border p-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="flex min-w-0 items-center gap-2">
+                                        {item.image_url ? (
+                                            <img
+                                                src={item.image_url}
+                                                alt={item.name}
+                                                className="h-10 w-10 shrink-0 rounded-md object-cover"
+                                            />
+                                        ) : (
+                                            <div className="h-10 w-10 shrink-0 rounded-md border bg-muted/30" />
+                                        )}
+                                        <div className="min-w-0">
+                                            <div className="truncate font-medium">{item.name}</div>
+                                            <div className="text-xs text-muted-foreground">
+                                                ${Number(item.sale_price).toLocaleString("es-AR")}
+                                            </div>
                                         </div>
                                     </div>
+                                    <Button size="icon" variant="ghost" onClick={() => onRemoveFromCart(item.id)}>
+                                        <Trash2 className="h-4 w-4 text-red-500" />
+                                    </Button>
                                 </div>
-                                <Button size="icon" variant="ghost" onClick={() => onRemoveFromCart(item.id)}>
-                                    <Trash2 className="h-4 w-4 text-red-500" />
-                                </Button>
+                                <div className="mt-2 flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2">
+                                        <Button size="sm" variant="outline" onClick={() => onUpdateQuantity(item.id, -1)}>
+                                            -
+                                        </Button>
+                                        <span className="w-8 text-center">{item.quantity}</span>
+                                        <Button size="sm" variant="outline" onClick={() => onUpdateQuantity(item.id, 1)}>
+                                            <Plus className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                    <div className="text-sm font-semibold">
+                                        ${(Number(item.sale_price) * item.quantity).toLocaleString("es-AR")}
+                                    </div>
+                                </div>
                             </div>
-                            <div className="mt-2 flex items-center gap-2">
-                                <Button size="sm" variant="outline" onClick={() => onUpdateQuantity(item.id, -1)}>
-                                    -
-                                </Button>
-                                <span className="w-8 text-center">{item.quantity}</span>
-                                <Button size="sm" variant="outline" onClick={() => onUpdateQuantity(item.id, 1)}>
-                                    <Plus className="h-3 w-3" />
-                                </Button>
-                            </div>
-                        </div>
-                    ))
+                        ))}
+                    </div>
                 )}
 
                 <div className="space-y-1 rounded-md border bg-muted/20 p-3 text-sm">
@@ -132,4 +139,3 @@ export function CartPanelCard({
         </Card>
     );
 }
-

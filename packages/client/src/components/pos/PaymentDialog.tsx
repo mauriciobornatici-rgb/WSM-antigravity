@@ -34,12 +34,12 @@ export function PaymentDialog({
 }: PaymentDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent>
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-lg">
                 <DialogHeader>
                     <DialogTitle>Confirmar cobro</DialogTitle>
                     <DialogDescription>Define forma de pago y opción de factura.</DialogDescription>
                 </DialogHeader>
-                <div className="space-y-3">
+                <div className="space-y-4">
                     <div className="space-y-2">
                         <Label>Método</Label>
                         <Select value={paymentMethod} onValueChange={(value) => onPaymentMethodChange(value as PaymentMethod)}>
@@ -87,11 +87,11 @@ export function PaymentDialog({
                         Total: ${grandTotal.toLocaleString("es-AR")}
                     </div>
                 </div>
-                <div className="flex justify-end gap-2">
-                    <Button variant="outline" onClick={() => onOpenChange(false)}>
+                <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+                    <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                         Cancelar
                     </Button>
-                    <Button onClick={onConfirm} disabled={processing}>
+                    <Button type="button" onClick={onConfirm} disabled={processing}>
                         {processing ? "Procesando..." : "Confirmar venta"}
                     </Button>
                 </div>

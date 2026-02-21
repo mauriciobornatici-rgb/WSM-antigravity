@@ -295,7 +295,7 @@ export default function POSPage() {
     }
 
     return (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_380px]">
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2fr)_380px]">
             <div className="space-y-4">
                 <ProductCatalogCard
                     loading={loading}
@@ -367,4 +367,3 @@ export default function POSPage() {
         </div>
     );
 }
-

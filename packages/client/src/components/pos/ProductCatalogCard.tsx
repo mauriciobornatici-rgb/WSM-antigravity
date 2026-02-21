@@ -166,12 +166,12 @@ export function ProductCatalogCard({
     return (
         <>
             <Card className="overflow-hidden border-blue-900/30 bg-gradient-to-b from-blue-950/30 to-background">
-                <CardHeader className="border-b border-blue-900/30">
+                <CardHeader className="space-y-4 border-b border-blue-900/30">
                     <CardTitle className="flex items-center gap-2">
                         <ShoppingCart className="h-5 w-5 text-blue-500" />
                         Punto de venta
                     </CardTitle>
-                    <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                    <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
                         <div className="relative">
                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                             <Input
@@ -204,10 +204,11 @@ export function ProductCatalogCard({
                         </p>
                     ) : null}
 
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex gap-2 overflow-x-auto pb-1">
                         <Button
                             type="button"
                             size="sm"
+                            className="shrink-0"
                             variant={categoryFilter === "all" ? "default" : "outline"}
                             onClick={() => onCategoryFilterChange("all")}
                         >
@@ -218,6 +219,7 @@ export function ProductCatalogCard({
                                 key={category}
                                 type="button"
                                 size="sm"
+                                className="shrink-0"
                                 variant={categoryFilter === category ? "default" : "outline"}
                                 onClick={() => onCategoryFilterChange(category)}
                             >
@@ -227,23 +229,28 @@ export function ProductCatalogCard({
                     </div>
                 </CardHeader>
 
-                <CardContent className="p-4">
+                <CardContent className="p-4 sm:p-5">
                     {loading ? (
                         <div className="py-8 text-center text-muted-foreground">Cargando productos...</div>
+                    ) : filteredProducts.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-blue-900/40 bg-blue-950/10 px-4 py-10 text-center">
+                            <p className="text-sm font-medium">No encontramos productos para ese filtro.</p>
+                            <p className="mt-1 text-xs text-muted-foreground">Proba con otra categoria o cambia el termino de busqueda.</p>
+                        </div>
                     ) : (
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
                             {filteredProducts.map((product) => (
                                 <button
                                     key={product.id}
                                     onClick={() => onAddToCart(product)}
-                                    className="group rounded-xl border border-blue-900/30 bg-card/80 text-left transition hover:border-blue-700/50 hover:bg-blue-950/20"
+                                    className="group flex h-full flex-col rounded-xl border border-blue-900/30 bg-card/80 text-left transition hover:border-blue-700/50 hover:bg-blue-950/20"
                                 >
                                     <div className="aspect-video overflow-hidden rounded-t-xl bg-muted/20">
                                         {product.image_url ? (
                                             <img
                                                 src={product.image_url}
                                                 alt={product.name}
-                                                className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                                                className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.03]"
                                             />
                                         ) : (
                                             <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
@@ -251,14 +258,14 @@ export function ProductCatalogCard({
                                             </div>
                                         )}
                                     </div>
-                                    <div className="space-y-2 p-3">
+                                    <div className="flex flex-1 flex-col space-y-2 p-3">
                                         <div className="font-semibold leading-tight">{product.name}</div>
                                         <div className="text-xs text-muted-foreground">
                                             {product.sku}
                                             {product.barcode ? ` | ${product.barcode}` : ""}
                                         </div>
                                         <div className="text-xs text-muted-foreground">{product.location || "Sin ubicacion"}</div>
-                                        <div className="flex items-center justify-between">
+                                        <div className="mt-auto flex items-center justify-between gap-2 pt-1">
                                             <span className="text-base font-bold">
                                                 ${Number(product.sale_price).toLocaleString("es-AR")}
                                             </span>
@@ -284,7 +291,7 @@ export function ProductCatalogCard({
                     setScanDialogOpen(true);
                 }}
             >
-                <DialogContent className="max-w-2xl">
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>Escanear producto</DialogTitle>
                         <DialogDescription>Enfoque el codigo con camara o ingrese manualmente.</DialogDescription>
@@ -292,7 +299,7 @@ export function ProductCatalogCard({
 
                     <div className="space-y-3">
                         <div className="overflow-hidden rounded-md border bg-black">
-                            <video ref={videoRef} className="h-64 w-full object-cover" muted playsInline />
+                            <video ref={videoRef} className="h-56 w-full object-cover sm:h-64" muted playsInline />
                         </div>
                         <p className="text-xs text-muted-foreground">{scanStatus}</p>
 
