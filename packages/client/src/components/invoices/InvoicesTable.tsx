@@ -24,15 +24,16 @@ export function InvoicesTable({
 }: InvoicesTableProps) {
     return (
         <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>Comprobantes y tickets</CardTitle>
-                <Button variant="outline" onClick={onRefresh} disabled={loading} title="Actualizar lista">
+                <Button className="w-full sm:w-auto" variant="outline" onClick={onRefresh} disabled={loading} title="Actualizar lista">
                     <Download className="mr-2 h-4 w-4" />
                     Actualizar
                 </Button>
             </CardHeader>
             <CardContent>
-                <Table>
+                <div className="overflow-x-auto">
+                    <Table className="min-w-[820px]">
                     <TableHeader>
                         <TableRow>
                             <TableHead>Fecha</TableHead>
@@ -94,7 +95,8 @@ export function InvoicesTable({
                             </TableRow>
                         )}
                     </TableBody>
-                </Table>
+                    </Table>
+                </div>
             </CardContent>
         </Card>
     )

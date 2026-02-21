@@ -126,16 +126,16 @@ export default function ReturnsAndWarrantiesPage() {
             </div>
 
             <Tabs defaultValue="warranties" className="space-y-4">
-                <TabsList>
-                    <TabsTrigger value="warranties" className="gap-2">
+                <TabsList className="h-auto w-full justify-start gap-2 overflow-x-auto p-1">
+                    <TabsTrigger value="warranties" className="shrink-0 gap-2">
                         <ShieldCheck className="h-4 w-4" />
                         Garantías
                     </TabsTrigger>
-                    <TabsTrigger value="returns" className="gap-2">
+                    <TabsTrigger value="returns" className="shrink-0 gap-2">
                         <RotateCcw className="h-4 w-4" />
                         Devoluciones
                     </TabsTrigger>
-                    <TabsTrigger value="credits" className="gap-2">
+                    <TabsTrigger value="credits" className="shrink-0 gap-2">
                         <FileText className="h-4 w-4" />
                         Notas de crédito
                     </TabsTrigger>
@@ -240,9 +240,9 @@ function WarrantiesTab() {
 
     return (
         <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>Reclamos de garantía</CardTitle>
-                <Button onClick={() => setCreateOpen(true)}>
+                <Button className="w-full sm:w-auto" onClick={() => setCreateOpen(true)}>
                     <Plus className="mr-2 h-4 w-4" />
                     Nueva garantía
                 </Button>
@@ -252,7 +252,8 @@ function WarrantiesTab() {
                 {loading ? <QueryLoadingState /> : null}
 
                 {!loading ? (
-                    <Table>
+                    <div className="overflow-x-auto">
+                        <Table className="min-w-[760px]">
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Fecha</TableHead>
@@ -307,7 +308,8 @@ function WarrantiesTab() {
                                 ))
                             )}
                         </TableBody>
-                    </Table>
+                        </Table>
+                    </div>
                 ) : null}
             </CardContent>
 
@@ -353,7 +355,7 @@ function WarrantiesTab() {
                             <Input value={issueDescription} onChange={(event) => setIssueDescription(event.target.value)} />
                         </div>
                     </div>
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <Button variant="outline" onClick={() => setCreateOpen(false)}>
                             Cancelar
                         </Button>
@@ -456,9 +458,9 @@ function ReturnsTab() {
 
     return (
         <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>Devoluciones de clientes</CardTitle>
-                <Button onClick={() => setCreateOpen(true)}>
+                <Button className="w-full sm:w-auto" onClick={() => setCreateOpen(true)}>
                     <Plus className="mr-2 h-4 w-4" />
                     Nueva devolución
                 </Button>
@@ -468,7 +470,8 @@ function ReturnsTab() {
                 {loading ? <QueryLoadingState /> : null}
 
                 {!loading ? (
-                    <Table>
+                    <div className="overflow-x-auto">
+                        <Table className="min-w-[760px]">
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Fecha</TableHead>
@@ -510,7 +513,8 @@ function ReturnsTab() {
                                 ))
                             )}
                         </TableBody>
-                    </Table>
+                        </Table>
+                    </div>
                 ) : null}
             </CardContent>
 
@@ -565,7 +569,7 @@ function ReturnsTab() {
                             <Input value={reason} onChange={(event) => setReason(event.target.value)} />
                         </div>
                     </div>
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <Button variant="outline" onClick={() => setCreateOpen(false)}>
                             Cancelar
                         </Button>
@@ -638,9 +642,9 @@ function CreditNotesTab() {
 
     return (
         <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>Notas de crédito</CardTitle>
-                <Button onClick={() => setCreateOpen(true)}>
+                <Button className="w-full sm:w-auto" onClick={() => setCreateOpen(true)}>
                     <Plus className="mr-2 h-4 w-4" />
                     Nueva nota
                 </Button>
@@ -650,7 +654,8 @@ function CreditNotesTab() {
                 {loading ? <QueryLoadingState /> : null}
 
                 {!loading ? (
-                    <Table>
+                    <div className="overflow-x-auto">
+                        <Table className="min-w-[760px]">
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Fecha</TableHead>
@@ -681,7 +686,8 @@ function CreditNotesTab() {
                                 ))
                             )}
                         </TableBody>
-                    </Table>
+                        </Table>
+                    </div>
                 ) : null}
             </CardContent>
 
@@ -722,7 +728,7 @@ function CreditNotesTab() {
                             <Input value={reason} onChange={(event) => setReason(event.target.value)} />
                         </div>
                     </div>
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <Button variant="outline" onClick={() => setCreateOpen(false)}>
                             Cancelar
                         </Button>

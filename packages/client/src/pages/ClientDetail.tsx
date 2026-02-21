@@ -182,7 +182,8 @@ export default function ClientDetailPage() {
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <Table>
+                    <div className="overflow-x-auto">
+                    <Table className="min-w-[620px]">
                         <TableHeader>
                             <TableRow>
                                 <TableHead>Fecha</TableHead>
@@ -214,6 +215,7 @@ export default function ClientDetailPage() {
                             )}
                         </TableBody>
                     </Table>
+                    </div>
                 </CardContent>
             </Card>
 
@@ -223,7 +225,8 @@ export default function ClientDetailPage() {
                         <CardTitle>Pedidos recientes</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <Table>
+                        <div className="overflow-x-auto">
+                        <Table className="min-w-[420px]">
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>ID</TableHead>
@@ -251,6 +254,7 @@ export default function ClientDetailPage() {
                                 )}
                             </TableBody>
                         </Table>
+                        </div>
                     </CardContent>
                 </Card>
 
@@ -262,7 +266,8 @@ export default function ClientDetailPage() {
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <Table>
+                        <div className="overflow-x-auto">
+                        <Table className="min-w-[420px]">
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>Fecha</TableHead>
@@ -293,6 +298,7 @@ export default function ClientDetailPage() {
                                 )}
                             </TableBody>
                         </Table>
+                        </div>
                     </CardContent>
                 </Card>
             </div>

@@ -328,14 +328,14 @@ export default function OrdersPage() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">Pedidos de venta</h2>
                     <p className="text-muted-foreground">Gestión de ciclo comercial desde alta hasta entrega.</p>
                 </div>
                 <Dialog open={createOpen} onOpenChange={setCreateOpen}>
                     <DialogTrigger asChild>
-                        <Button className="gap-2">
+                        <Button className="w-full gap-2 sm:w-auto">
                             <Plus className="h-4 w-4" />
                             Nuevo pedido
                         </Button>
@@ -473,7 +473,8 @@ export default function OrdersPage() {
                         <SummaryCard title="En picking" count={orders.filter((o) => o.status === "picking").length} />
                         <SummaryCard title="Completos/Despachados" count={orders.filter((o) => ["packed", "dispatched", "delivered", "completed"].includes(o.status)).length} />
                     </div>
-                    <Table>
+                    <div className="overflow-x-auto">
+                        <Table className="min-w-[900px]">
                         <TableHeader>
                             <TableRow>
                                 <TableHead>ID</TableHead>
@@ -543,7 +544,8 @@ export default function OrdersPage() {
                                 ))
                             )}
                         </TableBody>
-                    </Table>
+                        </Table>
+                    </div>
                     <PaginationControls
                         page={Math.max(1, currentOrdersPage)}
                         totalPages={Math.max(1, totalOrderPages)}
