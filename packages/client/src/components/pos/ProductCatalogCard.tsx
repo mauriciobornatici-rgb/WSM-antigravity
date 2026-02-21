@@ -51,6 +51,7 @@ export function ProductCatalogCard({
         () => categories.filter((category) => category !== "all"),
         [categories],
     );
+    const totalItemsLabel = `${filteredProducts.length} producto${filteredProducts.length === 1 ? "" : "s"}`;
 
     function stopScannerResources() {
         if (rafRef.current != null) {
@@ -167,10 +168,15 @@ export function ProductCatalogCard({
         <>
             <Card className="overflow-hidden border-blue-900/30 bg-gradient-to-b from-blue-950/30 to-background">
                 <CardHeader className="space-y-4 border-b border-blue-900/30">
-                    <CardTitle className="flex items-center gap-2">
-                        <ShoppingCart className="h-5 w-5 text-blue-500" />
-                        Punto de venta
-                    </CardTitle>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <CardTitle className="flex items-center gap-2">
+                            <ShoppingCart className="h-5 w-5 text-blue-500" />
+                            Punto de venta
+                        </CardTitle>
+                        <Badge variant="outline" className="w-fit">
+                            {totalItemsLabel}
+                        </Badge>
+                    </div>
                     <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
                         <div className="relative">
                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -190,7 +196,7 @@ export function ProductCatalogCard({
                         <Button
                             type="button"
                             variant="outline"
-                            className="gap-2"
+                            className="w-full gap-2 md:w-auto"
                             onClick={openScannerDialog}
                         >
                             <Camera className="h-4 w-4" />
@@ -243,7 +249,10 @@ export function ProductCatalogCard({
                                 <button
                                     key={product.id}
                                     onClick={() => onAddToCart(product)}
-                                    className="group flex h-full flex-col rounded-xl border border-blue-900/30 bg-card/80 text-left transition hover:border-blue-700/50 hover:bg-blue-950/20"
+                                    disabled={product.stock <= 0}
+                                    className={`group flex h-full flex-col rounded-xl border border-blue-900/30 bg-card/80 text-left transition hover:border-blue-700/50 hover:bg-blue-950/20 ${
+                                        product.stock <= 0 ? "cursor-not-allowed opacity-60 hover:border-blue-900/30 hover:bg-card/80" : ""
+                                    }`}
                                 >
                                     <div className="aspect-video overflow-hidden rounded-t-xl bg-muted/20">
                                         {product.image_url ? (
@@ -305,7 +314,7 @@ export function ProductCatalogCard({
 
                         <div className="grid gap-2 md:grid-cols-[1fr_auto_auto]">
                             <Input
-                                placeholder="Fallback manual"
+                                placeholder="Ingreso manual"
                                 value={manualScanValue}
                                 onChange={(event) => setManualScanValue(event.target.value)}
                                 onKeyDown={(event) => {
@@ -314,10 +323,10 @@ export function ProductCatalogCard({
                                     }
                                 }}
                             />
-                            <Button type="button" variant="outline" onClick={() => applyScanValue(manualScanValue)}>
+                            <Button type="button" variant="outline" className="w-full md:w-auto" onClick={() => applyScanValue(manualScanValue)}>
                                 Aplicar
                             </Button>
-                            <Button type="button" variant="outline" onClick={closeScannerDialog}>
+                            <Button type="button" variant="outline" className="w-full md:w-auto" onClick={closeScannerDialog}>
                                 Cerrar
                             </Button>
                         </div>
