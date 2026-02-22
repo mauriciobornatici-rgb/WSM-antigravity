@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Box, Check, ScanLine } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Box, Check, ScanLine } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { Order } from "@/types";
@@ -10,6 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 function sortItemsByLocation(order: Order): Order {
     const sortedItems = [...order.items].sort((left, right) => (left.location || "").localeCompare(right.location || ""));
@@ -33,6 +35,34 @@ function isPickableStatus(status: string): boolean {
     return status === "pending" || status === "picking";
 }
 
+function itemRemainingQuantity(item: Order["items"][number]): number {
+    return Math.max(0, Number(item.quantity || 0) - Number(item.picked_quantity || 0));
+}
+
+function itemIsComplete(item: Order["items"][number]): boolean {
+    return itemRemainingQuantity(item) === 0;
+}
+
+function itemIsPartial(item: Order["items"][number]): boolean {
+    return Number(item.picked_quantity || 0) > 0 && itemRemainingQuantity(item) > 0;
+}
+
+function orderTotalQuantity(order: Order): number {
+    return order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+}
+
+function orderPickedQuantity(order: Order): number {
+    return order.items.reduce((sum, item) => sum + Number(item.picked_quantity || 0), 0);
+}
+
+function orderMissingQuantity(order: Order): number {
+    return Math.max(0, orderTotalQuantity(order) - orderPickedQuantity(order));
+}
+
+function orderHasShortage(order: Order): boolean {
+    return orderMissingQuantity(order) > 0;
+}
+
 function statusLabel(status: Order["status"]): string {
     const labels: Record<Order["status"], string> = {
         pending: "Pendiente",
@@ -52,6 +82,8 @@ export default function PickingPage() {
     const [orders, setOrders] = useState<Order[]>([]);
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
     const [scannerInput, setScannerInput] = useState("");
+    const [pendingScanItemId, setPendingScanItemId] = useState<string | null>(null);
+    const [pendingScanQuantity, setPendingScanQuantity] = useState<number>(1);
     const [loading, setLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -80,69 +112,132 @@ export default function PickingPage() {
 
     const completion = useMemo(() => {
         if (!selectedOrder) return 0;
-        const total = selectedOrder.items.length;
+        const total = orderTotalQuantity(selectedOrder);
         if (total === 0) return 0;
-        const picked = selectedOrder.items.filter((item) => item.picked).length;
+        const picked = orderPickedQuantity(selectedOrder);
         return Math.round((picked / total) * 100);
     }, [selectedOrder]);
+
+    const pendingScanItem = useMemo(() => {
+        if (!selectedOrder || !pendingScanItemId) return null;
+        return selectedOrder.items.find((item) => item.id === pendingScanItemId) ?? null;
+    }, [pendingScanItemId, selectedOrder]);
+
+    const pendingScanRemaining = pendingScanItem ? itemRemainingQuantity(pendingScanItem) : 0;
+    const canPick = selectedOrder ? isPickableStatus(selectedOrder.status) : false;
+
+    useEffect(() => {
+        if (!pendingScanItem) return;
+        if (pendingScanQuantity > pendingScanRemaining) {
+            setPendingScanQuantity(Math.max(1, pendingScanRemaining));
+        }
+    }, [pendingScanItem, pendingScanQuantity, pendingScanRemaining]);
 
     async function handleScan(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!selectedOrder) return;
+        if (!canPick) {
+            toast.warning("Este picking ya esta cerrado.");
+            return;
+        }
 
         const scannedSku = scannerInput.toUpperCase().trim();
         if (!scannedSku) return;
 
-        const itemIndex = selectedOrder.items.findIndex((item) => item.sku.toUpperCase() === scannedSku && !item.picked);
-        if (itemIndex < 0) {
-            toast.error("SKU inválido o ya completado", {
-                description: `El SKU ${scannedSku} no coincide con items pendientes.`,
+        const foundItem = selectedOrder.items.find(
+            (item) => item.sku.toUpperCase() === scannedSku && itemRemainingQuantity(item) > 0,
+        );
+        if (!foundItem) {
+            toast.error("SKU invalido o ya completo", {
+                description: `El SKU ${scannedSku} no tiene pendiente en este pedido.`,
             });
             setScannerInput("");
             return;
         }
 
-        const item = selectedOrder.items[itemIndex];
-        if (!item) return;
-
-        const nextPicked = Math.min(Number(item.quantity || 0), Number(item.picked_quantity || 0) + 1);
-        const updatedItem = {
-            ...item,
-            picked_quantity: nextPicked,
-            picked: nextPicked >= Number(item.quantity || 0),
-        };
-        const nextItems = selectedOrder.items.map((current, index) => (index === itemIndex ? updatedItem : current));
-        const nextOrder: Order = { ...selectedOrder, items: nextItems };
-        setSelectedOrder(nextOrder);
+        const remaining = itemRemainingQuantity(foundItem);
+        setPendingScanItemId(foundItem.id);
+        setPendingScanQuantity(Math.max(1, remaining));
         setScannerInput("");
+    }
+
+    async function confirmPendingScan() {
+        if (!selectedOrder || !pendingScanItem) return;
+        if (!canPick) {
+            toast.warning("El pedido ya no admite picking.");
+            return;
+        }
+
+        const currentPicked = Number(pendingScanItem.picked_quantity || 0);
+        const remaining = itemRemainingQuantity(pendingScanItem);
+        if (remaining <= 0) {
+            toast.info("Este item ya esta completo.");
+            setPendingScanItemId(null);
+            setPendingScanQuantity(1);
+            return;
+        }
+
+        const quantityToAdd = Math.max(1, Math.min(Number(pendingScanQuantity || 1), remaining));
+        const nextPicked = currentPicked + quantityToAdd;
+
+        const nextItems = selectedOrder.items.map((item) =>
+            item.id === pendingScanItem.id
+                ? {
+                    ...item,
+                    picked_quantity: nextPicked,
+                    picked: nextPicked >= Number(item.quantity || 0),
+                }
+                : item,
+        );
+        const nextOrder: Order = { ...selectedOrder, items: nextItems };
+        const allPicked = nextItems.every((item) => itemIsComplete(item));
+
+        setSelectedOrder(nextOrder);
+        setPendingScanItemId(null);
+        setPendingScanQuantity(1);
 
         try {
-            await api.pickOrderItem(item.id, nextPicked);
-            const allPicked = nextItems.every((current) => current.picked);
+            await api.pickOrderItem(pendingScanItem.id, nextPicked);
             if (allPicked) {
                 await api.updateOrderStatus(selectedOrder.id, "packed");
-                toast.success("Picking completado", { description: `Pedido ${selectedOrder.id} listo para despacho.` });
+                toast.success("Picking completo", {
+                    description: `Pedido ${selectedOrder.id} listo para despacho.`,
+                });
                 await loadOrders();
-                navigate("/orders");
                 return;
             }
-            toast.success("Item registrado", {
-                description: `${item.product_name} (${nextPicked}/${item.quantity})`,
+            toast.success("Cantidad registrada", {
+                description: `${pendingScanItem.product_name} (${nextPicked}/${pendingScanItem.quantity})`,
             });
         } catch (error) {
             showErrorToast("Error al guardar picking", error);
+            await loadOrders();
         }
     }
 
     async function closeWithMissing() {
         if (!selectedOrder) return;
-        const confirmed = window.confirm("Se cerrara el picking con faltantes. Deseas continuar?");
+        if (!canPick) {
+            toast.info("El picking ya estaba cerrado.");
+            return;
+        }
+
+        const missing = orderMissingQuantity(selectedOrder);
+        if (missing <= 0) {
+            toast.info("No hay faltantes para cerrar.");
+            return;
+        }
+
+        const confirmed = window.confirm(`Se cerrara el picking con faltantes (${missing} unidades). Deseas continuar?`);
         if (!confirmed) return;
         try {
             await api.updateOrderStatus(selectedOrder.id, "packed");
-            toast.warning("Picking cerrado con faltantes");
+            setPendingScanItemId(null);
+            setPendingScanQuantity(1);
+            toast.warning("Picking cerrado con faltantes", {
+                description: `Quedaron ${missing} unidades pendientes.`,
+            });
             await loadOrders();
-            navigate("/orders");
         } catch (error) {
             showErrorToast("Error al cerrar picking", error);
         }
@@ -168,7 +263,12 @@ export default function PickingPage() {
     }
 
     if (selectedOrder) {
-        const completed = selectedOrder.items.every((item) => item.picked);
+        const completed = selectedOrder.items.every((item) => itemIsComplete(item));
+        const hasShortage = orderHasShortage(selectedOrder);
+        const missingQuantity = orderMissingQuantity(selectedOrder);
+        const packedWithShortage = selectedOrder.status === "packed" && hasShortage;
+        const packedComplete = selectedOrder.status === "packed" && !hasShortage;
+
         return (
             <div className="space-y-6">
                 <div className="flex items-center gap-4">
@@ -177,16 +277,28 @@ export default function PickingPage() {
                         Volver a pedidos
                     </Button>
                     <h2 className="text-2xl font-bold">Picking: {selectedOrder.id}</h2>
-                    <Badge variant="outline">{statusLabel(selectedOrder.status)}</Badge>
+                    {packedWithShortage ? (
+                        <Badge className="bg-amber-600 text-white hover:bg-amber-600">
+                            Completo con faltante
+                        </Badge>
+                    ) : packedComplete ? (
+                        <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
+                            Completo
+                        </Badge>
+                    ) : (
+                        <Badge variant="outline">{statusLabel(selectedOrder.status)}</Badge>
+                    )}
                     <Badge className="bg-blue-600">{completion}%</Badge>
                 </div>
 
                 <Card
                     className={cn(
                         "border",
-                        completed
-                            ? "border-green-500/40 bg-green-500/5 dark:border-green-500/50 dark:bg-green-500/10"
-                            : "border-blue-500/30 bg-blue-500/5 dark:border-blue-500/40 dark:bg-blue-950/30",
+                        packedWithShortage
+                            ? "border-amber-500/50 bg-amber-500/10 dark:border-amber-400/50 dark:bg-amber-500/10"
+                            : completed || packedComplete
+                                ? "border-green-500/40 bg-green-500/5 dark:border-green-500/50 dark:bg-green-500/10"
+                                : "border-blue-500/30 bg-blue-500/5 dark:border-blue-500/40 dark:bg-blue-950/30",
                     )}
                 >
                     <CardHeader>
@@ -195,7 +307,11 @@ export default function PickingPage() {
                             Escaner de productos
                         </CardTitle>
                         <CardDescription>
-                            Escanea SKU o ingresa manualmente para validar cada item.
+                            {canPick
+                                ? "Escanea SKU, selecciona cantidad y confirma cada item."
+                                : packedWithShortage
+                                    ? "Pedido cerrado con faltantes. Los items pendientes quedan en naranja."
+                                    : "Pedido cerrado. Ya no admite nuevas lecturas."}
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -205,69 +321,139 @@ export default function PickingPage() {
                                 onChange={(event) => setScannerInput(event.target.value)}
                                 placeholder="Ej: NK-AIR-001"
                                 className="font-mono"
+                                disabled={!canPick}
                                 autoFocus
                             />
-                            <Button type="submit" disabled={completed}>
-                                Verificar
+                            <Button type="submit" disabled={!canPick}>
+                                Buscar SKU
                             </Button>
-                            {!completed ? (
+                            {canPick ? (
                                 <Button type="button" variant="outline" onClick={() => void closeWithMissing()}>
                                     Cerrar con faltantes
                                 </Button>
                             ) : null}
                         </form>
+
+                        {pendingScanItem && canPick ? (
+                            <div className="mt-4 space-y-3 rounded-md border border-blue-500/30 bg-blue-500/10 p-3">
+                                <div className="space-y-1">
+                                    <p className="text-sm font-semibold">{pendingScanItem.product_name}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        SKU: {pendingScanItem.sku} | Solicitado: {pendingScanItem.quantity} | Recolectado: {Number(pendingScanItem.picked_quantity || 0)} | Pendiente: {pendingScanRemaining}
+                                    </p>
+                                </div>
+                                <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)] md:items-end">
+                                    <div className="space-y-2">
+                                        <Label>Cantidad a registrar</Label>
+                                        <Select
+                                            value={String(pendingScanQuantity)}
+                                            onValueChange={(value) => setPendingScanQuantity(Number(value))}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {Array.from({ length: Math.max(1, pendingScanRemaining) }, (_, index) => index + 1).map((value) => (
+                                                    <SelectItem key={value} value={String(value)}>
+                                                        {value}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                                        <Button type="button" variant="outline" onClick={() => setPendingScanItemId(null)}>
+                                            Cancelar
+                                        </Button>
+                                        <Button type="button" onClick={() => void confirmPendingScan()}>
+                                            Confirmar cantidad
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                            <div className="rounded-md border bg-background/70 p-3">
+                                <p className="text-xs text-muted-foreground">Unidades solicitadas</p>
+                                <p className="text-lg font-semibold">{orderTotalQuantity(selectedOrder)}</p>
+                            </div>
+                            <div className="rounded-md border bg-background/70 p-3">
+                                <p className="text-xs text-muted-foreground">Unidades recolectadas</p>
+                                <p className="text-lg font-semibold">{orderPickedQuantity(selectedOrder)}</p>
+                            </div>
+                            <div className={cn("rounded-md border p-3", missingQuantity > 0 ? "border-amber-500/50 bg-amber-500/10" : "bg-background/70")}>
+                                <p className="text-xs text-muted-foreground">Faltante</p>
+                                <p className={cn("text-lg font-semibold", missingQuantity > 0 ? "text-amber-400" : "")}>{missingQuantity}</p>
+                            </div>
+                        </div>
                     </CardContent>
                 </Card>
 
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {selectedOrder.items.map((item, index) => (
-                        <Card
-                            key={`${item.id}-${index}`}
-                            className={cn(
-                                "transition",
-                                item.picked
-                                    ? "border-emerald-500/40 bg-emerald-500/10 dark:border-emerald-500/50 dark:bg-emerald-500/10"
-                                    : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/70",
-                            )}
-                        >
-                            <CardContent className="space-y-3 p-4">
-                                <div className="flex items-center justify-between">
-                                    <Badge variant="outline">{item.location || "Sin ubicacion"}</Badge>
-                                    <span className="font-mono text-xs text-slate-500 dark:text-slate-300">{item.sku}</span>
-                                </div>
-                                <h3
-                                    className={cn(
-                                        "font-semibold",
-                                        item.picked
-                                            ? "text-emerald-700 line-through dark:text-emerald-300"
-                                            : "text-slate-900 dark:text-slate-100",
-                                    )}
-                                >
-                                    {item.product_name}
-                                </h3>
-                                <div className="flex items-center justify-between text-sm text-slate-700 dark:text-slate-200">
-                                    <span>
-                                        Cantidad: <strong>{item.quantity}</strong>
-                                    </span>
-                                    <span>
-                                        Recolectado: <strong>{item.picked_quantity || 0}</strong>
-                                    </span>
-                                </div>
-                                <div className="flex justify-end">
-                                    <div
+                    {selectedOrder.items.map((item, index) => {
+                        const remaining = itemRemainingQuantity(item);
+                        const complete = itemIsComplete(item);
+                        const warning = itemIsPartial(item) || (!canPick && remaining > 0);
+
+                        return (
+                            <Card
+                                key={`${item.id}-${index}`}
+                                className={cn(
+                                    "transition",
+                                    complete
+                                        ? "border-emerald-500/40 bg-emerald-500/10 dark:border-emerald-500/50 dark:bg-emerald-500/10"
+                                        : warning
+                                            ? "border-amber-500/40 bg-amber-500/10 dark:border-amber-400/50 dark:bg-amber-500/10"
+                                            : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/70",
+                                )}
+                            >
+                                <CardContent className="space-y-3 p-4">
+                                    <div className="flex items-center justify-between">
+                                        <Badge variant="outline">{item.location || "Sin ubicacion"}</Badge>
+                                        <span className="font-mono text-xs text-slate-500 dark:text-slate-300">{item.sku}</span>
+                                    </div>
+                                    <h3
                                         className={cn(
-                                            "flex h-8 w-8 items-center justify-center rounded-full",
-                                            item.picked
-                                                ? "bg-emerald-600 text-white"
-                                                : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300",
+                                            "font-semibold",
+                                            complete
+                                                ? "text-emerald-700 line-through dark:text-emerald-300"
+                                                : warning
+                                                    ? "text-amber-200"
+                                                    : "text-slate-900 dark:text-slate-100",
                                         )}
                                     >
-                                        {item.picked ? <Check className="h-4 w-4" /> : <Box className="h-4 w-4" />}
+                                        {item.product_name}
+                                    </h3>
+                                    <div className="flex items-center justify-between text-sm text-slate-700 dark:text-slate-200">
+                                        <span>
+                                            Cantidad: <strong>{item.quantity}</strong>
+                                        </span>
+                                        <span>
+                                            Recolectado: <strong>{item.picked_quantity || 0}</strong>
+                                        </span>
                                     </div>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    ))}
+                                    <div className={cn("text-xs", remaining > 0 ? "text-amber-300" : "text-emerald-300")}>
+                                        {remaining > 0 ? `Faltante: ${remaining}` : "Item completo"}
+                                    </div>
+                                    <div className="flex justify-end">
+                                        <div
+                                            className={cn(
+                                                "flex h-8 w-8 items-center justify-center rounded-full",
+                                                complete
+                                                    ? "bg-emerald-600 text-white"
+                                                    : warning
+                                                        ? "bg-amber-500 text-slate-950"
+                                                        : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300",
+                                            )}
+                                        >
+                                            {complete ? <Check className="h-4 w-4" /> : warning ? <AlertTriangle className="h-4 w-4" /> : <Box className="h-4 w-4" />}
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        );
+                    })}
                 </div>
             </div>
         );

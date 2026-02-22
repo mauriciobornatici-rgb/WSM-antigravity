@@ -77,6 +77,10 @@ function getInvoiceTotal(order: Order): number {
     return order.items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_price || 0), 0);
 }
 
+function orderHasShortage(order: Order): boolean {
+    return order.items.some((item) => Number(item.picked_quantity || 0) < Number(item.quantity || 0));
+}
+
 export default function OrdersPage() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
@@ -907,7 +911,15 @@ export default function OrdersPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            <Badge variant={order.status === "cancelled" ? "destructive" : "outline"}>{statusLabel(order.status)}</Badge>
+                                            {order.status === "packed" && orderHasShortage(order) ? (
+                                                <Badge className="bg-amber-600 text-white hover:bg-amber-600">
+                                                    Empaquetado c/faltante
+                                                </Badge>
+                                            ) : (
+                                                <Badge variant={order.status === "cancelled" ? "destructive" : "outline"}>
+                                                    {statusLabel(order.status)}
+                                                </Badge>
+                                            )}
                                         </TableCell>
                                         <TableCell className="text-right">${Number(order.total_amount || 0).toLocaleString("es-AR")}</TableCell>
                                         <TableCell>
@@ -926,10 +938,10 @@ export default function OrdersPage() {
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-2">
-                                                {(order.status === "pending" || order.status === "picking") ? (
+                                                {(order.status === "pending" || order.status === "picking" || (order.status === "packed" && orderHasShortage(order))) ? (
                                                     <Button size="sm" variant="outline" onClick={() => void startPicking(order)}>
                                                         <CircleDashed className="mr-1 h-4 w-4" />
-                                                        Picking
+                                                        {order.status === "packed" ? "Ver faltante" : "Picking"}
                                                     </Button>
                                                 ) : null}
                                                 {order.status === "packed" ? (
