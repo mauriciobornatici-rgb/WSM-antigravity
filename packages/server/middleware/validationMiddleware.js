@@ -215,6 +215,21 @@ export const schemas = {
         })
     }),
 
+    invoicePayment: Joi.object({
+        params: Joi.object({
+            id: uuid.required()
+        }),
+        body: Joi.object({
+            payments: Joi.array().items(
+                Joi.object({
+                    method: orderPaymentMethod.required(),
+                    amount: Joi.number().positive().required()
+                })
+            ).min(1).required(),
+            notes: Joi.string().allow('', null)
+        })
+    }),
+
     orderItemPick: Joi.object({
         params: Joi.object({
             id: uuid.required()

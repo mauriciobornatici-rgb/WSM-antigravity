@@ -23,6 +23,7 @@ router.put('/order-items/:id/pick', orderRoles, validate(schemas.orderItemPick),
 router.get('/invoices', invoicingRoles, validate(schemas.invoiceFilters), salesController.getInvoices);
 router.post('/invoices', invoicingRoles, validate(schemas.manualInvoice), salesController.createManualInvoice);
 router.post('/invoices/:id/authorize', invoicingRoles, validate(schemas.idParam), salesController.authorizeInvoice);
+router.post('/invoices/:id/payments', invoicingRoles, validate(schemas.invoicePayment), salesController.registerInvoicePayments);
 router.get('/invoice-items', invoicingRoles, validate(schemas.invoiceItemsQuery), salesController.getInvoiceItems);
 
 // Tax data

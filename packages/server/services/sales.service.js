@@ -592,6 +592,32 @@ class SalesService extends BaseService {
         return 'paid';
     }
 
+    _normalizePaymentLines(payments, fallbackMethod = 'cash') {
+        if (!Array.isArray(payments) || payments.length === 0) {
+            throw this._buildValidationError('Debe incluir al menos una linea de pago', 'MISSING_PAYMENTS');
+        }
+
+        return payments.map((payment, index) => {
+            const amount = this._roundMoney(payment?.amount);
+            if (!Number.isFinite(amount) || amount <= 0) {
+                throw this._buildValidationError(
+                    `Monto de pago invalido en posicion ${index + 1}`,
+                    'INVALID_PAYMENT_AMOUNT'
+                );
+            }
+
+            const method = String(payment?.method || fallbackMethod || 'cash').trim().toLowerCase();
+            if (!method) {
+                throw this._buildValidationError(
+                    `Metodo de pago invalido en posicion ${index + 1}`,
+                    'INVALID_PAYMENT_METHOD'
+                );
+            }
+
+            return { method, amount };
+        });
+    }
+
     _normalizePayments(payments, totalAmount, fallbackMethod = 'cash') {
         const safeTotal = this._roundMoney(totalAmount);
         const source = Array.isArray(payments) && payments.length > 0
@@ -782,6 +808,18 @@ class SalesService extends BaseService {
                 payments: paymentData.payments
             });
 
+            if (client.client_id) {
+                const outstanding = this._roundMoney(totalAmount - paymentData.paidAmount);
+                if (outstanding > 0) {
+                    await connection.query(
+                        `UPDATE clients
+                         SET current_account_balance = COALESCE(current_account_balance, 0) + ?
+                         WHERE id = ?`,
+                        [outstanding, client.client_id]
+                    );
+                }
+            }
+
             const nextOrderStatus = paymentData.paymentStatus === 'paid' ? 'completed' : order.status;
             await connection.query(
                 'UPDATE orders SET invoice_id = ?, status = ?, payment_status = ? WHERE id = ?',
@@ -939,6 +977,18 @@ class SalesService extends BaseService {
                 payments: paymentData.payments
             });
 
+            if (client.client_id) {
+                const outstanding = this._roundMoney(totalAmount - paymentData.paidAmount);
+                if (outstanding > 0) {
+                    await connection.query(
+                        `UPDATE clients
+                         SET current_account_balance = COALESCE(current_account_balance, 0) + ?
+                         WHERE id = ?`,
+                        [outstanding, client.client_id]
+                    );
+                }
+            }
+
             if (invoiceData.order_id) {
                 await connection.query(
                     `UPDATE orders
@@ -977,6 +1027,136 @@ class SalesService extends BaseService {
                 client_name: client.client_name,
                 paid_amount: paymentData.paidAmount,
                 payment_status: paymentData.paymentStatus
+            };
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async registerInvoicePayments(invoiceId, payload, userId) {
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            const [invoices] = await connection.query(
+                'SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+                [invoiceId]
+            );
+            if (invoices.length === 0) {
+                const err = new Error('Invoice not found');
+                err.statusCode = 404;
+                err.status = 'fail';
+                err.errorCode = 'INVOICE_NOT_FOUND';
+                throw err;
+            }
+
+            const invoice = invoices[0];
+            const totalAmount = this._roundMoney(invoice.total_amount || 0);
+            if (totalAmount <= 0) {
+                throw this._buildValidationError('La factura no tiene monto pendiente', 'INVALID_INVOICE_TOTAL');
+            }
+
+            const [paymentRows] = await connection.query(
+                `SELECT COALESCE(SUM(amount), 0) AS paid_amount
+                 FROM transactions
+                 WHERE reference_id = ? AND type = 'sale'`,
+                [invoiceId]
+            );
+            const paidBefore = this._roundMoney(paymentRows[0]?.paid_amount || 0);
+
+            const normalizedPayments = this._normalizePaymentLines(
+                payload?.payments,
+                invoice.payment_method || 'cash'
+            );
+            const paidNow = this._roundMoney(
+                normalizedPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+            );
+            const paidAfter = this._roundMoney(paidBefore + paidNow);
+
+            if (paidAfter > totalAmount + 0.01) {
+                throw this._buildValidationError(
+                    `El total de pagos (${paidAfter}) supera el total de la factura (${totalAmount})`,
+                    'PAYMENTS_EXCEED_TOTAL'
+                );
+            }
+
+            const invoiceLabel = `${invoice.invoice_type}-${String(invoice.point_of_sale).padStart(4, '0')}-${String(invoice.invoice_number).padStart(8, '0')}`;
+            await this._registerInvoicePayments(connection, {
+                invoiceId,
+                clientId: invoice.client_id || null,
+                invoiceLabel,
+                payments: normalizedPayments
+            });
+
+            const paymentStatus = this._resolvePaymentStatus(totalAmount, paidAfter);
+            const paymentMethod = normalizedPayments.length > 1
+                ? 'multiple'
+                : normalizedPayments[0]?.method || invoice.payment_method || null;
+
+            await connection.query(
+                'UPDATE invoices SET payment_status = ?, payment_method = ? WHERE id = ?',
+                [paymentStatus, paymentMethod, invoiceId]
+            );
+
+            if (invoice.order_id) {
+                const [orders] = await connection.query(
+                    'SELECT id, status FROM orders WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+                    [invoice.order_id]
+                );
+                if (orders.length > 0) {
+                    const currentOrderStatus = this._normalizeOrderStatus(orders[0].status);
+                    const shouldComplete =
+                        paymentStatus === 'paid'
+                        && currentOrderStatus !== 'completed'
+                        && currentOrderStatus !== 'cancelled'
+                        && currentOrderStatus !== 'returned';
+                    const nextOrderStatus = shouldComplete ? 'completed' : currentOrderStatus;
+
+                    await connection.query(
+                        'UPDATE orders SET payment_status = ?, status = ? WHERE id = ?',
+                        [paymentStatus, nextOrderStatus, invoice.order_id]
+                    );
+                }
+            }
+
+            if (invoice.client_id) {
+                await connection.query(
+                    `UPDATE clients
+                     SET current_account_balance = GREATEST(COALESCE(current_account_balance, 0) - ?, 0)
+                     WHERE id = ?`,
+                    [paidNow, invoice.client_id]
+                );
+            }
+
+            await auditService.log({
+                user_id: userId,
+                action: 'REGISTER_INVOICE_PAYMENT',
+                entity_type: 'invoice',
+                entity_id: invoiceId,
+                new_values: {
+                    paid_now: paidNow,
+                    paid_before: paidBefore,
+                    paid_after: paidAfter,
+                    total_amount: totalAmount,
+                    payment_status: paymentStatus,
+                    payment_method: paymentMethod,
+                    payments: normalizedPayments,
+                    notes: payload?.notes || null
+                }
+            });
+
+            await connection.commit();
+            return {
+                id: invoiceId,
+                total_amount: totalAmount,
+                paid_before: paidBefore,
+                paid_now: paidNow,
+                paid_amount: paidAfter,
+                pending_amount: this._roundMoney(totalAmount - paidAfter),
+                payment_status: paymentStatus
             };
         } catch (err) {
             await connection.rollback();

@@ -211,6 +211,8 @@ export type Invoice = {
     point_of_sale?: number;
     invoice_number?: number;
     total_amount: number;
+    payment_status?: "pending" | "partial" | "paid";
+    payment_method?: string | null;
     issue_date?: string;
     customer_name?: string;
     items?: InvoiceItem[];
@@ -231,6 +233,26 @@ export type InvoiceItem = {
 };
 
 export type InvoiceCreateInput = Record<string, unknown>;
+
+export type InvoicePaymentLineInput = {
+    method: "cash" | "transfer" | "credit_account" | "card" | "debit_card" | "credit_card" | "qr";
+    amount: number;
+};
+
+export type InvoicePaymentRegisterInput = {
+    payments: InvoicePaymentLineInput[];
+    notes?: string;
+};
+
+export type InvoicePaymentRegisterResponse = {
+    id: string;
+    total_amount: number;
+    paid_before: number;
+    paid_now: number;
+    paid_amount: number;
+    pending_amount: number;
+    payment_status: "pending" | "partial" | "paid";
+};
 
 export type CashRegister = {
     id: string;

@@ -111,6 +111,12 @@ export const authorizeInvoice = catchAsync(async (req, res) => {
     res.json(result);
 });
 
+export const registerInvoicePayments = catchAsync(async (req, res) => {
+    const { id } = req.params;
+    const result = await salesService.registerInvoicePayments(id, req.body, req.user?.id);
+    res.json(result);
+});
+
 export const getInvoiceItems = catchAsync(async (req, res) => {
     const { invoice_id } = req.query;
     if (!invoice_id) {

@@ -408,8 +408,18 @@ export default function OrdersPage() {
         }
     }
 
-    function startPicking(order: Order) {
-        navigate(`/picking/${order.id}`);
+    async function startPicking(order: Order) {
+        try {
+            const summary = await api.getOrderSummary(order.id);
+            const realStatus = String(summary.order?.status || order.status).toLowerCase();
+            await queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
+            navigate(`/picking/${order.id}`);
+            if (realStatus !== "pending" && realStatus !== "picking") {
+                toast.info("Este pedido ya no esta pendiente de picking. Se abre en modo consulta.");
+            }
+        } catch {
+            navigate(`/picking/${order.id}`);
+        }
     }
 
     function openDispatch(order: Order) {

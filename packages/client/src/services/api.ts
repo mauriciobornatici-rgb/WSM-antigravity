@@ -50,6 +50,8 @@ import type {
     UserUpdateInput,
     InventoryMovement,
     InventoryMovementInput,
+    InvoicePaymentRegisterInput,
+    InvoicePaymentRegisterResponse,
 } from "@/types/api";
 import { httpClient, isApiError } from "./httpClient";
 
@@ -431,6 +433,9 @@ export const api = {
 
     authorizeInvoice: (id: string) =>
         httpClient.post<Invoice>(`/api/invoices/${id}/authorize`),
+
+    registerInvoicePayment: (invoiceId: string, data: InvoicePaymentRegisterInput) =>
+        httpClient.post<InvoicePaymentRegisterResponse>(`/api/invoices/${invoiceId}/payments`, data),
 
     // ==================== CASH MANAGEMENT ====================
     getCashRegisters: () =>

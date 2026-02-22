@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, Box, Check, ScanLine } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { isApiError } from "@/services/httpClient";
+import { queryKeys } from "@/lib/queryKeys";
 import type { Order } from "@/types";
 import { showErrorToast } from "@/lib/errorHandling";
 import { cn } from "@/lib/utils";
@@ -86,6 +88,7 @@ function statusLabel(status: Order["status"]): string {
 export default function PickingPage() {
     const { id } = useParams<{ id?: string }>();
     const navigate = useNavigate();
+    const queryClient = useQueryClient();
     const [orders, setOrders] = useState<Order[]>([]);
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
     const [scannerInput, setScannerInput] = useState("");
@@ -247,6 +250,7 @@ export default function PickingPage() {
                 toast.success("Picking finalizado", {
                     description: `Pedido ${selectedOrder.id}: ${readyStatusLabel(selectedOrder)}.`,
                 });
+                await queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
                 await loadOrders();
                 return;
             } catch (error) {
@@ -283,6 +287,7 @@ export default function PickingPage() {
             toast.warning("Picking cerrado con faltantes", {
                 description: `${readyStatusLabel(selectedOrder)} con ${missing} unidades pendientes.`,
             });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
             await loadOrders();
         } catch (error) {
             showErrorToast("Error al cerrar picking", error);
@@ -309,6 +314,7 @@ export default function PickingPage() {
             toast.success("Picking finalizado", {
                 description: `Pedido ${selectedOrder.id}: ${readyStatusLabel(selectedOrder)}.`,
             });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
             await loadOrders();
             navigate("/orders");
         } catch (error) {
