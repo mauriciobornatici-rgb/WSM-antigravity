@@ -280,6 +280,33 @@ export default function PickingPage() {
         }
     }
 
+    async function finalizePicking() {
+        if (!selectedOrder) return;
+        if (!canPick) {
+            toast.info("El picking ya estaba cerrado.");
+            return;
+        }
+
+        const missing = orderMissingQuantity(selectedOrder);
+        if (missing > 0) {
+            toast.error(`Todavia hay faltantes (${missing}). Usa "Cerrar con faltantes" o completa el picking.`);
+            return;
+        }
+
+        try {
+            await transitionToPacked(selectedOrder);
+            setPendingScanItemId(null);
+            setPendingScanQuantity(1);
+            toast.success("Picking finalizado", {
+                description: `Pedido ${selectedOrder.id}: ${readyStatusLabel(selectedOrder)}.`,
+            });
+            await loadOrders();
+            navigate("/orders");
+        } catch (error) {
+            showErrorToast("No se pudo finalizar el picking", error);
+        }
+    }
+
     if (loading) {
         return (
             <div className="flex h-64 items-center justify-center">
@@ -303,6 +330,7 @@ export default function PickingPage() {
         const completed = selectedOrder.items.every((item) => itemIsComplete(item));
         const hasShortage = orderHasShortage(selectedOrder);
         const missingQuantity = orderMissingQuantity(selectedOrder);
+        const canFinalizeNow = canPick && missingQuantity === 0;
         const packedWithShortage = selectedOrder.status === "packed" && hasShortage;
         const packedComplete = selectedOrder.status === "packed" && !hasShortage;
 
@@ -321,6 +349,10 @@ export default function PickingPage() {
                     ) : packedComplete ? (
                         <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
                             {readyStatusLabel(selectedOrder)}
+                        </Badge>
+                    ) : canFinalizeNow ? (
+                        <Badge className="bg-blue-600 text-white hover:bg-blue-600">
+                            Listo para cerrar
                         </Badge>
                     ) : (
                         <Badge variant="outline">{statusLabel(selectedOrder.status)}</Badge>
@@ -364,7 +396,12 @@ export default function PickingPage() {
                             <Button type="submit" disabled={!canPick}>
                                 Buscar SKU
                             </Button>
-                            {canPick ? (
+                            {canFinalizeNow ? (
+                                <Button type="button" onClick={() => void finalizePicking()}>
+                                    Finalizar picking
+                                </Button>
+                            ) : null}
+                            {canPick && missingQuantity > 0 ? (
                                 <Button type="button" variant="outline" onClick={() => void closeWithMissing()}>
                                     Cerrar con faltantes
                                 </Button>
