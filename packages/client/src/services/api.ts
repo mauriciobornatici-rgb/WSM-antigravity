@@ -70,8 +70,16 @@ type ProductUpsertInput =
 type OrderCreateInput = {
     client_id?: string;
     customer_name?: string;
+    counter_user_id?: string;
+    counter_name?: string;
     payment_method?: string;
+    shipping_method?: "pickup" | "delivery";
     shipping_address?: string;
+    estimated_delivery?: string;
+    recipient_name?: string;
+    recipient_dni?: string;
+    delivery_notes?: string;
+    notes?: string;
     total_amount?: number;
     items: Array<{ product_id: string; quantity: number }>;
     [key: string]: unknown;

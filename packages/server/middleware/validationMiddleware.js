@@ -138,9 +138,17 @@ export const schemas = {
         body: Joi.object({
             client_id: optionalUuid,
             customer_name: Joi.string().allow('', null),
+            counter_user_id: optionalUuid,
+            counter_name: Joi.string().allow('', null),
             total_amount: Joi.number().min(0).optional(),
             payment_method: orderPaymentMethod.optional(),
+            shipping_method: Joi.string().valid('pickup', 'delivery').optional(),
             shipping_address: Joi.string().allow('', null),
+            estimated_delivery: isoDate.allow('', null),
+            recipient_name: Joi.string().allow('', null),
+            recipient_dni: Joi.string().allow('', null),
+            delivery_notes: Joi.string().allow('', null),
+            notes: Joi.string().allow('', null),
             items: Joi.array().items(Joi.object({
                 product_id: uuid.required(),
                 quantity: Joi.number().integer().min(1).required()

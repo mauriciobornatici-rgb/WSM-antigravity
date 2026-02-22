@@ -223,17 +223,38 @@ class SalesService extends BaseService {
                 0
             );
 
+            let counterName = String(orderData.counter_name || '').trim();
+            if (!counterName && userId) {
+                const [users] = await connection.query(
+                    'SELECT name FROM users WHERE id = ? LIMIT 1',
+                    [userId]
+                );
+                counterName = String(users[0]?.name || '').trim();
+            }
+            const resolvedCounterName = counterName || null;
+
             await connection.query(
                 `INSERT INTO orders (
-                    id, client_id, customer_name, total_amount, status, payment_status, payment_method, shipping_address
-                ) VALUES (?, ?, ?, ?, 'pending', 'pending', ?, ?)`,
+                    id, client_id, counter_user_id, customer_name, counter_name,
+                    total_amount, status, payment_status, payment_method,
+                    shipping_method, shipping_address, estimated_delivery,
+                    recipient_name, recipient_dni, delivery_notes, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     orderId,
                     orderData.client_id || null,
+                    userId || orderData.counter_user_id || null,
                     orderData.customer_name || null,
+                    resolvedCounterName,
                     computedTotal,
                     orderData.payment_method || 'cash',
-                    orderData.shipping_address || null
+                    orderData.shipping_method || null,
+                    orderData.shipping_address || null,
+                    orderData.estimated_delivery || null,
+                    orderData.recipient_name || null,
+                    orderData.recipient_dni || null,
+                    orderData.delivery_notes || null,
+                    orderData.notes || null
                 ]
             );
 

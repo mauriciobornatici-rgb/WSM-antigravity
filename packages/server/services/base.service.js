@@ -11,10 +11,11 @@ const TABLE_COLUMNS = {
         'created_at', 'updated_at', 'deleted_at'
     ],
     orders: [
-        'id', 'client_id', 'customer_name', 'total_amount', 'status', 'payment_status', 'payment_method',
+        'id', 'client_id', 'counter_user_id', 'customer_name', 'counter_name',
+        'total_amount', 'status', 'payment_status', 'payment_method',
         'shipping_method', 'shipping_address', 'tracking_number', 'estimated_delivery',
         'dispatched_at', 'delivered_at', 'recipient_name', 'recipient_dni', 'delivery_notes',
-        'invoice_id', 'created_at', 'updated_at', 'deleted_at'
+        'notes', 'invoice_id', 'created_at', 'updated_at', 'deleted_at'
     ],
     clients: [
         'id', 'name', 'email', 'phone', 'tax_id', 'address', 'credit_limit', 'current_account_balance',

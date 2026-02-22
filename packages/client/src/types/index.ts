@@ -66,6 +66,8 @@ export interface OrderItem {
 export interface Order {
     id: string
     customer_name: string
+    counter_name?: string
+    counter_user_id?: string
     client_name?: string
     client_id?: string
     status: 'pending' | 'picking' | 'packed' | 'dispatched' | 'delivered' | 'completed' | 'cancelled'
@@ -86,6 +88,7 @@ export interface Order {
     recipient_name?: string
     recipient_dni?: string
     delivery_notes?: string
+    notes?: string
 }
 
 export interface Transaction {

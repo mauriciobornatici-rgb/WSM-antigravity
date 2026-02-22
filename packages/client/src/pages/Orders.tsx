@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleDashed, FileText, Package, Plus, Search, Trash2, Truck, XCircle } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/context/AuthContext";
 import { api } from "@/services/api";
 import type { Client, Order, Product } from "@/types";
 import { queryKeys } from "@/lib/queryKeys";
+import { QuickClientDialog } from "@/components/pos/QuickClientDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,12 +16,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import { PaginationControls } from "@/components/common/PaginationControls";
 
 type OrderStatus = Order["status"];
 type OrderFilter = OrderStatus | "all";
 type ShippingMethod = "pickup" | "delivery";
 type PaymentLine = { method: string; amount: number };
+type CreateOrderItem = { product_id: string; quantity: number };
+type NewClientForm = {
+    name: string;
+    tax_id: string;
+    email: string;
+    phone: string;
+    address: string;
+    credit_limit: number;
+};
 
 const PAYMENT_METHODS = [
     { value: "cash", label: "Efectivo" },
@@ -32,7 +44,9 @@ const PAYMENT_METHODS = [
 const EMPTY_ORDERS: Order[] = [];
 const EMPTY_PRODUCTS: Product[] = [];
 const EMPTY_CLIENTS: Client[] = [];
+const EMPTY_CREATE_ITEMS: CreateOrderItem[] = [];
 const ORDERS_PAGE_SIZE = 20;
+const CONSUMIDOR_FINAL_VALUE = "__consumidor_final__";
 
 function statusLabel(status: OrderStatus): string {
     const labels: Record<OrderStatus, string> = {
@@ -58,6 +72,7 @@ function getInvoiceTotal(order: Order): number {
 export default function OrdersPage() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
+    const { user } = useAuth();
 
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState<OrderFilter>("all");
@@ -65,10 +80,27 @@ export default function OrdersPage() {
 
     const [createOpen, setCreateOpen] = useState(false);
     const [createClientId, setCreateClientId] = useState("");
-    const [createProductId, setCreateProductId] = useState("");
-    const [createQuantity, setCreateQuantity] = useState(1);
+    const [createCounterName, setCreateCounterName] = useState("");
     const [createPaymentMethod, setCreatePaymentMethod] = useState("cash");
-    const [createCustomerName, setCreateCustomerName] = useState("");
+    const [createShippingMethod, setCreateShippingMethod] = useState<ShippingMethod>("pickup");
+    const [createEstimatedDelivery, setCreateEstimatedDelivery] = useState("");
+    const [createShippingAddress, setCreateShippingAddress] = useState("");
+    const [createRecipientName, setCreateRecipientName] = useState("");
+    const [createRecipientDni, setCreateRecipientDni] = useState("");
+    const [createNotes, setCreateNotes] = useState("");
+    const [createItems, setCreateItems] = useState<CreateOrderItem[]>(EMPTY_CREATE_ITEMS);
+    const [productSearch, setProductSearch] = useState("");
+
+    const [clientDialogOpen, setClientDialogOpen] = useState(false);
+    const [creatingClient, setCreatingClient] = useState(false);
+    const [newClient, setNewClient] = useState<NewClientForm>({
+        name: "",
+        tax_id: "",
+        email: "",
+        phone: "",
+        address: "",
+        credit_limit: 0,
+    });
 
     const [dispatchOpen, setDispatchOpen] = useState(false);
     const [dispatchOrder, setDispatchOrder] = useState<Order | null>(null);
@@ -172,33 +204,188 @@ export default function OrdersPage() {
         });
     }, [orders, search, filter]);
 
+    const selectedCreateClient = useMemo(
+        () => clients.find((client) => client.id === createClientId) ?? null,
+        [clients, createClientId],
+    );
+
+    const productById = useMemo(() => {
+        return new Map(products.map((product) => [product.id, product]));
+    }, [products]);
+
+    const createProductsSearchResults = useMemo(() => {
+        const query = productSearch.trim().toLowerCase();
+        if (!query) return [];
+        return products
+            .filter((product) => {
+                return (
+                    product.name.toLowerCase().includes(query)
+                    || product.sku.toLowerCase().includes(query)
+                    || (product.barcode ?? "").toLowerCase().includes(query)
+                );
+            })
+            .slice(0, 30);
+    }, [products, productSearch]);
+
+    const createOrderTotal = useMemo(() => {
+        return createItems.reduce((sum, item) => {
+            const product = productById.get(item.product_id);
+            return sum + Number(item.quantity || 0) * Number(product?.sale_price || 0);
+        }, 0);
+    }, [createItems, productById]);
+
+    useEffect(() => {
+        if (!createOpen) return;
+        setCreateCounterName(user?.name || "");
+    }, [createOpen, user?.name]);
+
     function handleFilterChange(nextFilter: OrderFilter) {
         setFilter(nextFilter);
         setOrdersPage(1);
     }
 
-    async function createOrder() {
-        if (!createProductId || createQuantity <= 0) {
-            toast.error("Selecciona producto y cantidad válida");
+    function resetCreateForm() {
+        setCreateClientId("");
+        setCreateCounterName(user?.name || "");
+        setCreatePaymentMethod("cash");
+        setCreateShippingMethod("pickup");
+        setCreateEstimatedDelivery("");
+        setCreateShippingAddress("");
+        setCreateRecipientName("");
+        setCreateRecipientDni("");
+        setCreateNotes("");
+        setCreateItems([]);
+        setProductSearch("");
+    }
+
+    function handleCreateDialogOpenChange(open: boolean) {
+        setCreateOpen(open);
+        if (!open) resetCreateForm();
+    }
+
+    function addProductToCreateOrder(productId: string) {
+        setCreateItems((current) => {
+            const existing = current.find((item) => item.product_id === productId);
+            if (existing) {
+                return current.map((item) =>
+                    item.product_id === productId
+                        ? { ...item, quantity: item.quantity + 1 }
+                        : item,
+                );
+            }
+            return [...current, { product_id: productId, quantity: 1 }];
+        });
+    }
+
+    function updateCreateItemQuantity(productId: string, quantity: number) {
+        const safeQuantity = Math.max(1, Number(quantity || 1));
+        setCreateItems((current) =>
+            current.map((item) =>
+                item.product_id === productId
+                    ? { ...item, quantity: safeQuantity }
+                    : item,
+            ),
+        );
+    }
+
+    function removeCreateItem(productId: string) {
+        setCreateItems((current) => current.filter((item) => item.product_id !== productId));
+    }
+
+    async function createQuickClient() {
+        if (!newClient.name || !newClient.tax_id) {
+            toast.error("Nombre y CUIT/DNI son obligatorios");
             return;
         }
+
         try {
-            const selectedClient = clients.find((client) => client.id === createClientId);
+            setCreatingClient(true);
+            const created = await api.createClient({
+                name: newClient.name,
+                tax_id: newClient.tax_id,
+                email: newClient.email,
+                phone: newClient.phone,
+                address: newClient.address,
+                credit_limit: Number(newClient.credit_limit || 0),
+            });
+            queryClient.setQueryData<Client[]>(queryKeys.clients.all, (current) =>
+                current ? [created, ...current] : [created],
+            );
+            setCreateClientId(created.id);
+            setClientDialogOpen(false);
+            setNewClient({
+                name: "",
+                tax_id: "",
+                email: "",
+                phone: "",
+                address: "",
+                credit_limit: 0,
+            });
+            toast.success("Cliente creado");
+        } catch {
+            // El manejo global de httpClient ya informa el error.
+        } finally {
+            setCreatingClient(false);
+        }
+    }
+
+    async function createOrder() {
+        if (createItems.length === 0) {
+            toast.error("Agrega al menos un producto al pedido");
+            return;
+        }
+        if (createPaymentMethod === "credit_account" && !createClientId) {
+            toast.error("Cuenta corriente requiere cliente");
+            return;
+        }
+        if (!createEstimatedDelivery) {
+            toast.error("Debes indicar la fecha de entrega o retiro");
+            return;
+        }
+        if (!createRecipientName) {
+            toast.error("Debes registrar quien retira o recibe");
+            return;
+        }
+        if (createShippingMethod === "delivery" && !createShippingAddress) {
+            toast.error("Completa la direccion para envio");
+            return;
+        }
+
+        const invalidItem = createItems.find((item) => {
+            const product = productById.get(item.product_id);
+            if (!product) return true;
+            const available = Number(product.stock_current ?? 0);
+            return available <= 0 || Number(item.quantity || 0) > available;
+        });
+        if (invalidItem) {
+            const product = productById.get(invalidItem.product_id);
+            const available = Number(product?.stock_current ?? 0);
+            toast.error(`Stock insuficiente para ${product?.name || invalidItem.product_id}. Disponible: ${available}`);
+            return;
+        }
+
+        try {
             const payload: Parameters<typeof api.createOrder>[0] = {
-                customer_name: selectedClient?.name || createCustomerName || "Consumidor final",
+                customer_name: selectedCreateClient?.name || "Consumidor final",
+                counter_name: createCounterName || user?.name || "",
                 payment_method: createPaymentMethod,
-                items: [{ product_id: createProductId, quantity: createQuantity }],
+                shipping_method: createShippingMethod,
+                estimated_delivery: createEstimatedDelivery,
+                shipping_address: createShippingMethod === "delivery" ? createShippingAddress : "",
+                recipient_name: createRecipientName,
+                recipient_dni: createRecipientDni,
+                notes: createNotes,
+                items: createItems.map((item) => ({
+                    product_id: item.product_id,
+                    quantity: Number(item.quantity || 1),
+                })),
             };
             if (createClientId) payload.client_id = createClientId;
+            if (user?.id) payload.counter_user_id = user.id;
 
             await createOrderMutation.mutateAsync(payload);
             toast.success("Pedido creado");
-            setCreateOpen(false);
-            setCreateClientId("");
-            setCreateProductId("");
-            setCreateQuantity(1);
-            setCreatePaymentMethod("cash");
-            setCreateCustomerName("");
+            handleCreateDialogOpenChange(false);
         } catch {
             // El manejo global de React Query ya informa el error.
         }
@@ -333,7 +520,7 @@ export default function OrdersPage() {
                     <h2 className="text-3xl font-bold tracking-tight">Pedidos de venta</h2>
                     <p className="text-muted-foreground">Gestión de ciclo comercial desde alta hasta entrega.</p>
                 </div>
-                <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+                <Dialog open={createOpen} onOpenChange={handleCreateDialogOpenChange}>
                     <DialogTrigger asChild>
                         <Button className="w-full gap-2 sm:w-auto">
                             <Plus className="h-4 w-4" />
@@ -343,7 +530,9 @@ export default function OrdersPage() {
                     <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-3xl">
                         <DialogHeader>
                             <DialogTitle>Crear pedido</DialogTitle>
-                            <DialogDescription>Carga cliente, producto y forma de pago.</DialogDescription>
+                            <DialogDescription>
+                                Registra cliente, productos y trazabilidad logistica del pedido.
+                            </DialogDescription>
                         </DialogHeader>
                         <form
                             className="space-y-4"
@@ -352,13 +541,30 @@ export default function OrdersPage() {
                                 void createOrder();
                             }}
                         >
-                            <div className="space-y-2">
-                                <Label>Cliente (opcional)</Label>
-                                <Select value={createClientId} onValueChange={setCreateClientId}>
+                            <div className="space-y-3 rounded-md border p-3">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                    <Label>Cliente</Label>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full sm:w-auto"
+                                        onClick={() => setClientDialogOpen(true)}
+                                    >
+                                        Nuevo cliente
+                                    </Button>
+                                </div>
+                                <Select
+                                    value={createClientId || CONSUMIDOR_FINAL_VALUE}
+                                    onValueChange={(value) =>
+                                        setCreateClientId(value === CONSUMIDOR_FINAL_VALUE ? "" : value)
+                                    }
+                                >
                                     <SelectTrigger>
-                                        <SelectValue placeholder="Consumidor final" />
+                                        <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
+                                        <SelectItem value={CONSUMIDOR_FINAL_VALUE}>Consumidor final</SelectItem>
                                         {clients.map((client) => (
                                             <SelectItem key={client.id} value={client.id}>
                                                 {client.name}
@@ -366,52 +572,193 @@ export default function OrdersPage() {
                                         ))}
                                     </SelectContent>
                                 </Select>
+                                {selectedCreateClient ? (
+                                    <div className="rounded-md border bg-muted/20 p-2 text-xs">
+                                        <div>{selectedCreateClient.name}</div>
+                                        <div className="text-muted-foreground">{selectedCreateClient.tax_id}</div>
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-muted-foreground">Se registrara como consumidor final.</p>
+                                )}
                             </div>
+
                             <div className="space-y-2">
                                 <Label>Nombre mostrador</Label>
-                                <Input value={createCustomerName} onChange={(event) => setCreateCustomerName(event.target.value)} />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Producto</Label>
-                                <Select value={createProductId} onValueChange={setCreateProductId}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Seleccionar producto" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {products.map((product) => (
-                                            <SelectItem key={product.id} value={product.id}>
-                                                {product.sku} - {product.name}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Cantidad</Label>
                                 <Input
-                                    type="number"
-                                    min="1"
-                                    value={createQuantity}
-                                    onChange={(event) => setCreateQuantity(Math.max(1, Number(event.target.value) || 1))}
+                                    value={createCounterName}
+                                    onChange={(event) => setCreateCounterName(event.target.value)}
+                                    placeholder="Se completa segun usuario logueado"
                                 />
                             </div>
-                            <div className="space-y-2">
-                                <Label>Método de pago</Label>
-                                <Select value={createPaymentMethod} onValueChange={setCreatePaymentMethod}>
-                                    <SelectTrigger>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {PAYMENT_METHODS.map((method) => (
-                                            <SelectItem key={method.value} value={method.value}>
-                                                {method.label}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+
+                            <div className="space-y-3 rounded-md border p-3">
+                                <Label>Productos del pedido</Label>
+                                <Input
+                                    value={productSearch}
+                                    onChange={(event) => setProductSearch(event.target.value)}
+                                    placeholder="Buscar por nombre, SKU o codigo de barras"
+                                />
+                                {productSearch.trim().length === 0 ? (
+                                    <p className="text-xs text-muted-foreground">
+                                        Escribe para buscar rapido y agregar productos.
+                                    </p>
+                                ) : null}
+                                {productSearch.trim().length > 0 ? (
+                                    <div className="max-h-52 overflow-y-auto rounded-md border">
+                                        {createProductsSearchResults.length === 0 ? (
+                                            <p className="px-3 py-2 text-sm text-muted-foreground">
+                                                Sin coincidencias para la busqueda.
+                                            </p>
+                                        ) : (
+                                            createProductsSearchResults.map((product) => {
+                                                const alreadyAdded = createItems.some((item) => item.product_id === product.id);
+                                                return (
+                                                    <button
+                                                        key={product.id}
+                                                        type="button"
+                                                        className="flex w-full items-center justify-between gap-2 border-b px-3 py-2 text-left hover:bg-muted/30"
+                                                        onClick={() => addProductToCreateOrder(product.id)}
+                                                    >
+                                                        <span className="min-w-0">
+                                                            <span className="block truncate text-sm font-medium">
+                                                                {product.sku} - {product.name}
+                                                            </span>
+                                                            <span className="block text-xs text-muted-foreground">
+                                                                Stock: {Number(product.stock_current ?? 0)}
+                                                                {alreadyAdded ? " | Ya agregado" : ""}
+                                                            </span>
+                                                        </span>
+                                                        <Plus className="h-4 w-4 shrink-0" />
+                                                    </button>
+                                                );
+                                            })
+                                        )}
+                                    </div>
+                                ) : null}
+
+                                {createItems.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">Aun no agregaste productos.</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {createItems.map((item) => {
+                                            const product = productById.get(item.product_id);
+                                            return (
+                                                <div key={item.product_id} className="grid gap-2 rounded-md border p-2 md:grid-cols-[minmax(0,1fr)_120px_130px_auto]">
+                                                    <div className="min-w-0">
+                                                        <p className="truncate text-sm font-medium">
+                                                            {product ? `${product.sku} - ${product.name}` : item.product_id}
+                                                        </p>
+                                                        <p className="text-xs text-muted-foreground">
+                                                            Stock disponible: {Number(product?.stock_current ?? 0)}
+                                                        </p>
+                                                    </div>
+                                                    <Input
+                                                        type="number"
+                                                        min="1"
+                                                        value={item.quantity}
+                                                        onChange={(event) =>
+                                                            updateCreateItemQuantity(item.product_id, Number(event.target.value))
+                                                        }
+                                                    />
+                                                    <div className="flex items-center text-sm font-semibold">
+                                                        $
+                                                        {(
+                                                            Number(product?.sale_price || 0) * Number(item.quantity || 0)
+                                                        ).toLocaleString("es-AR")}
+                                                    </div>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        className="w-full md:w-auto"
+                                                        onClick={() => removeCreateItem(item.product_id)}
+                                                    >
+                                                        <Trash2 className="h-4 w-4 text-red-500" />
+                                                    </Button>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
+                                <div className="space-y-2">
+                                    <Label>Metodo de pago</Label>
+                                    <Select value={createPaymentMethod} onValueChange={setCreatePaymentMethod}>
+                                        <SelectTrigger>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {PAYMENT_METHODS.map((method) => (
+                                                <SelectItem key={method.value} value={method.value}>
+                                                    {method.label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Metodo logistico</Label>
+                                    <Select value={createShippingMethod} onValueChange={(value) => setCreateShippingMethod(value as ShippingMethod)}>
+                                        <SelectTrigger>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="pickup">Retiro en local</SelectItem>
+                                            <SelectItem value="delivery">Envio</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Fecha estimada entrega/retiro</Label>
+                                    <Input
+                                        type="date"
+                                        value={createEstimatedDelivery}
+                                        onChange={(event) => setCreateEstimatedDelivery(event.target.value)}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Nombre de quien retira/recibe</Label>
+                                    <Input
+                                        value={createRecipientName}
+                                        onChange={(event) => setCreateRecipientName(event.target.value)}
+                                        placeholder="Nombre completo"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>DNI de quien retira/recibe</Label>
+                                    <Input
+                                        value={createRecipientDni}
+                                        onChange={(event) => setCreateRecipientDni(event.target.value)}
+                                        placeholder="Opcional"
+                                    />
+                                </div>
+                                {createShippingMethod === "delivery" ? (
+                                    <div className="space-y-2 sm:col-span-2">
+                                        <Label>Direccion de entrega</Label>
+                                        <Input
+                                            value={createShippingAddress}
+                                            onChange={(event) => setCreateShippingAddress(event.target.value)}
+                                            placeholder="Calle, numero, localidad"
+                                        />
+                                    </div>
+                                ) : null}
+                                <div className="space-y-2 sm:col-span-2">
+                                    <Label>Observaciones</Label>
+                                    <Textarea
+                                        value={createNotes}
+                                        onChange={(event) => setCreateNotes(event.target.value)}
+                                        placeholder="Notas internas, instrucciones, referencia de remito, etc."
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="rounded-md border bg-muted/20 p-3 text-right text-sm">
+                                Total pedido:{" "}
+                                <strong>${createOrderTotal.toLocaleString("es-AR")}</strong>
                             </div>
                             <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
-                                <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
+                                <Button type="button" variant="outline" onClick={() => handleCreateDialogOpenChange(false)}>
                                     Cancelar
                                 </Button>
                                 <Button type="submit" disabled={createOrderMutation.isPending}>
@@ -479,6 +826,8 @@ export default function OrdersPage() {
                             <TableRow>
                                 <TableHead>ID</TableHead>
                                 <TableHead>Cliente</TableHead>
+                                <TableHead>Mostrador</TableHead>
+                                <TableHead>Logistica</TableHead>
                                 <TableHead>Estado</TableHead>
                                 <TableHead className="text-right">Total</TableHead>
                                 <TableHead className="text-right">Acciones</TableHead>
@@ -487,13 +836,13 @@ export default function OrdersPage() {
                         <TableBody>
                             {loading ? (
                                 <TableRow>
-                                    <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
+                                    <TableCell colSpan={7} className="h-20 text-center text-muted-foreground">
                                         Cargando...
                                     </TableCell>
                                 </TableRow>
                             ) : filteredOrders.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
+                                    <TableCell colSpan={7} className="h-20 text-center text-muted-foreground">
                                         Sin resultados.
                                     </TableCell>
                                 </TableRow>
@@ -502,6 +851,17 @@ export default function OrdersPage() {
                                     <TableRow key={order.id}>
                                         <TableCell className="font-mono text-xs">{order.id}</TableCell>
                                         <TableCell>{order.client_name || order.customer_name || "-"}</TableCell>
+                                        <TableCell>{order.counter_name || "-"}</TableCell>
+                                        <TableCell>
+                                            <div className="text-xs">
+                                                <div>{order.shipping_method === "delivery" ? "Envio" : order.shipping_method === "pickup" ? "Retiro" : "-"}</div>
+                                                <div className="text-muted-foreground">
+                                                    {order.estimated_delivery
+                                                        ? new Date(order.estimated_delivery).toLocaleDateString("es-AR")
+                                                        : "-"}
+                                                </div>
+                                            </div>
+                                        </TableCell>
                                         <TableCell>
                                             <Badge variant={order.status === "cancelled" ? "destructive" : "outline"}>{statusLabel(order.status)}</Badge>
                                         </TableCell>
@@ -556,6 +916,17 @@ export default function OrdersPage() {
                     />
                 </CardContent>
             </Card>
+
+            <QuickClientDialog
+                open={clientDialogOpen}
+                onOpenChange={setClientDialogOpen}
+                newClient={newClient}
+                onNewClientChange={(patch) => setNewClient((current) => ({ ...current, ...patch }))}
+                creatingClient={creatingClient}
+                onCreateClient={() => {
+                    void createQuickClient();
+                }}
+            />
 
             <Dialog open={dispatchOpen} onOpenChange={setDispatchOpen}>
                 <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-xl">
