@@ -78,7 +78,7 @@
       color: black !important;
   }
   
-  #printable-ticket, #printable-invoice {
+  #printable-ticket, #printable-invoice, #printable-client-document {
       display: block !important;
       width: 100% !important;
       margin: 0 !important;
@@ -86,6 +86,6 @@
   }
 }
 
-#printable-ticket, #printable-invoice {
+#printable-ticket, #printable-invoice, #printable-client-document {
     display: none;
 }

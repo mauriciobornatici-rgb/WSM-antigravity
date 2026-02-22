@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, CreditCard, History, Mail, MapPin, Phone, Plus, ShieldCheck, Trash2, User } from "lucide-react";
+import { ArrowLeft, CreditCard, History, Mail, MapPin, Phone, Plus, Printer, ShieldCheck, Trash2, User } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { Client, Order, Transaction } from "@/types";
@@ -23,6 +23,8 @@ type ClientMovement = {
     type: "sale" | "credit_note" | "return" | "payment" | "adjustment";
     description: string;
     amount: number;
+    document_id?: string;
+    related_invoice_id?: string;
 };
 
 type WarrantySummary = {
@@ -197,6 +199,21 @@ function formatInvoiceLabel(invoice: Pick<InvoiceSummary, "invoice_type" | "poin
     return `${type}-${pos}-${number}`;
 }
 
+function formatMoney(value: number): string {
+    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(value || 0));
+}
+
+function canPrintMovement(movement: ClientMovement): boolean {
+    return movement.type === "sale" || movement.type === "credit_note" || movement.type === "payment";
+}
+
+function movementPrintTitle(movement: ClientMovement): string {
+    if (movement.type === "sale") return "Comprobante de factura";
+    if (movement.type === "credit_note") return "Comprobante de nota de credito";
+    if (movement.type === "payment") return "Recibo de pago";
+    return "Comprobante";
+}
+
 function parseMovements(
     invoices: Awaited<ReturnType<typeof api.getInvoices>>,
     creditNotes: Awaited<ReturnType<typeof api.getCreditNotes>>,
@@ -210,6 +227,7 @@ function parseMovements(
         type: "sale",
         description: `Factura ${String(invoice.invoice_number || invoice.id)}`,
         amount: Number(invoice.total_amount || 0),
+        document_id: String(invoice.id),
     }));
 
     const creditRows: ClientMovement[] = creditNotes.map((credit) => ({
@@ -218,6 +236,7 @@ function parseMovements(
         type: "credit_note",
         description: `Nota de credito ${String(credit.number || credit.id || "-")}`,
         amount: -Math.abs(Number(credit.amount || 0)),
+        document_id: String(credit.id || ""),
     }));
 
     const transactionRows: ClientMovement[] = transactions.flatMap<ClientMovement>((tx) => {
@@ -234,6 +253,8 @@ function parseMovements(
                 type: "payment" as const,
                 description: txDescription,
                 amount: -Math.abs(txAmount),
+                document_id: txId,
+                ...(txReferenceId ? { related_invoice_id: txReferenceId } : {}),
             }];
         }
 
@@ -247,6 +268,7 @@ function parseMovements(
                 type: "adjustment" as const,
                 description: txDescription,
                 amount: txAmount,
+                document_id: txId,
             }];
         }
 
@@ -256,6 +278,8 @@ function parseMovements(
             type: "payment" as const,
             description: txDescription,
             amount: txAmount,
+            document_id: String(tx.id || ""),
+            ...(txReferenceId ? { related_invoice_id: txReferenceId } : {}),
         }];
     });
 
@@ -280,6 +304,7 @@ export default function ClientDetailPage() {
     const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([createPaymentLine()]);
     const [paymentNotes, setPaymentNotes] = useState("");
     const [registeringPayment, setRegisteringPayment] = useState(false);
+    const [printMovement, setPrintMovement] = useState<ClientMovement | null>(null);
     const [loading, setLoading] = useState(true);
 
     const loadClientData = useCallback(async () => {
@@ -491,6 +516,14 @@ export default function ClientDetailPage() {
         }
     }
 
+    function printMovementVoucher(movement: ClientMovement) {
+        if (!canPrintMovement(movement)) return;
+        setPrintMovement(movement);
+        window.setTimeout(() => {
+            window.print();
+        }, 120);
+    }
+
     if (loading) {
         return <div className="p-8 text-center text-muted-foreground">Cargando cliente...</div>;
     }
@@ -507,7 +540,8 @@ export default function ClientDetailPage() {
     }
 
     return (
-        <div className="space-y-6">
+        <>
+        <div className="space-y-6 print:hidden">
             <div className="flex items-center gap-3">
                 <Button variant="ghost" onClick={() => navigate("/clients")}>
                     <ArrowLeft className="mr-2 h-4 w-4" />
@@ -632,7 +666,7 @@ export default function ClientDetailPage() {
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <div className="overflow-x-auto">
+                    <div className="max-h-[430px] overflow-auto">
                         <Table className="min-w-[720px]">
                             <TableHeader>
                                 <TableRow>
@@ -640,12 +674,13 @@ export default function ClientDetailPage() {
                                     <TableHead>Descripcion</TableHead>
                                     <TableHead>Tipo</TableHead>
                                     <TableHead className="text-right">Monto</TableHead>
+                                    <TableHead className="text-right">Acciones</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {movements.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                                        <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
                                             Sin movimientos.
                                         </TableCell>
                                     </TableRow>
@@ -661,6 +696,21 @@ export default function ClientDetailPage() {
                                             </TableCell>
                                             <TableCell className={cn("text-right", movement.amount < 0 ? "text-emerald-500" : "text-amber-500")}>
                                                 ${movement.amount.toLocaleString("es-AR")}
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                {canPrintMovement(movement) ? (
+                                                    <Button
+                                                        type="button"
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => printMovementVoucher(movement)}
+                                                    >
+                                                        <Printer className="mr-1 h-4 w-4" />
+                                                        Imprimir
+                                                    </Button>
+                                                ) : (
+                                                    <span className="text-muted-foreground">-</span>
+                                                )}
                                             </TableCell>
                                         </TableRow>
                                     ))
@@ -774,7 +824,7 @@ export default function ClientDetailPage() {
                         <CardTitle>Facturas</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="overflow-x-auto">
+                        <div className="max-h-[380px] overflow-auto">
                             <Table className="min-w-[760px]">
                                 <TableHeader>
                                     <TableRow>
@@ -784,12 +834,13 @@ export default function ClientDetailPage() {
                                         <TableHead className="text-right">Total</TableHead>
                                         <TableHead className="text-right">Pagado</TableHead>
                                         <TableHead className="text-right">Pendiente</TableHead>
+                                        <TableHead className="text-right">Acciones</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
                                     {invoices.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={6} className="h-20 text-center text-muted-foreground">
+                                            <TableCell colSpan={7} className="h-20 text-center text-muted-foreground">
                                                 Sin facturas.
                                             </TableCell>
                                         </TableRow>
@@ -812,6 +863,24 @@ export default function ClientDetailPage() {
                                                     <TableCell className="text-right">${invoice.total_amount.toLocaleString("es-AR")}</TableCell>
                                                     <TableCell className="text-right text-emerald-500">${paid.toLocaleString("es-AR")}</TableCell>
                                                     <TableCell className="text-right font-semibold">${pending.toLocaleString("es-AR")}</TableCell>
+                                                    <TableCell className="text-right">
+                                                        <Button
+                                                            type="button"
+                                                            size="sm"
+                                                            variant="outline"
+                                                            onClick={() => printMovementVoucher({
+                                                                id: `inv-${invoice.id}`,
+                                                                date: invoice.issue_date,
+                                                                type: "sale",
+                                                                description: `Factura ${formatInvoiceLabel(invoice)}`,
+                                                                amount: Number(invoice.total_amount || 0),
+                                                                document_id: invoice.id,
+                                                            })}
+                                                        >
+                                                            <Printer className="mr-1 h-4 w-4" />
+                                                            Imprimir
+                                                        </Button>
+                                                    </TableCell>
                                                 </TableRow>
                                             );
                                         })
@@ -827,7 +896,7 @@ export default function ClientDetailPage() {
                         <CardTitle>Notas de credito</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="overflow-x-auto">
+                        <div className="max-h-[380px] overflow-auto">
                             <Table className="min-w-[560px]">
                                 <TableHeader>
                                     <TableRow>
@@ -835,12 +904,13 @@ export default function ClientDetailPage() {
                                         <TableHead>Comprobante</TableHead>
                                         <TableHead>Estado</TableHead>
                                         <TableHead className="text-right">Monto</TableHead>
+                                        <TableHead className="text-right">Acciones</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
                                     {creditNotes.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                                            <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
                                                 Sin notas de credito.
                                             </TableCell>
                                         </TableRow>
@@ -853,6 +923,24 @@ export default function ClientDetailPage() {
                                                     <Badge variant="outline">{note.status}</Badge>
                                                 </TableCell>
                                                 <TableCell className="text-right text-amber-500">-${note.amount.toLocaleString("es-AR")}</TableCell>
+                                                <TableCell className="text-right">
+                                                    <Button
+                                                        type="button"
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => printMovementVoucher({
+                                                            id: `cn-${note.id}`,
+                                                            date: note.created_at,
+                                                            type: "credit_note",
+                                                            description: `Nota de credito ${note.number}`,
+                                                            amount: -Math.abs(note.amount),
+                                                            document_id: note.id,
+                                                        })}
+                                                    >
+                                                        <Printer className="mr-1 h-4 w-4" />
+                                                        Imprimir
+                                                    </Button>
+                                                </TableCell>
                                             </TableRow>
                                         ))
                                     )}
@@ -911,7 +999,7 @@ export default function ClientDetailPage() {
                         <CardTitle>Pagos y ajustes</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="overflow-x-auto">
+                        <div className="max-h-[380px] overflow-auto">
                             <Table className="min-w-[560px]">
                                 <TableHeader>
                                     <TableRow>
@@ -919,12 +1007,13 @@ export default function ClientDetailPage() {
                                         <TableHead>Tipo</TableHead>
                                         <TableHead>Descripcion</TableHead>
                                         <TableHead className="text-right">Monto</TableHead>
+                                        <TableHead className="text-right">Acciones</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
                                     {payments.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                                            <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
                                                 Sin pagos o ajustes.
                                             </TableCell>
                                         </TableRow>
@@ -943,6 +1032,29 @@ export default function ClientDetailPage() {
                                                     <TableCell>{tx.description}</TableCell>
                                                     <TableCell className={cn("text-right", isPayment ? "text-emerald-500" : "")}>
                                                         {isPayment ? "-" : ""}${tx.amount.toLocaleString("es-AR")}
+                                                    </TableCell>
+                                                    <TableCell className="text-right">
+                                                        {isPayment ? (
+                                                            <Button
+                                                                type="button"
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={() => printMovementVoucher({
+                                                                    id: `pay-${tx.id}`,
+                                                                    date: tx.date,
+                                                                    type: "payment",
+                                                                    description: tx.description,
+                                                                    amount: -Math.abs(Number(tx.amount || 0)),
+                                                                    document_id: tx.id,
+                                                                    ...(tx.reference_id ? { related_invoice_id: tx.reference_id } : {}),
+                                                                })}
+                                                            >
+                                                                <Printer className="mr-1 h-4 w-4" />
+                                                                Imprimir
+                                                            </Button>
+                                                        ) : (
+                                                            <span className="text-muted-foreground">-</span>
+                                                        )}
                                                     </TableCell>
                                                 </TableRow>
                                             );
@@ -1114,5 +1226,45 @@ export default function ClientDetailPage() {
                 </DialogContent>
             </Dialog>
         </div>
+
+        <div id="printable-client-document" className="hidden print:block">
+            {printMovement ? (
+                <div className="mx-auto max-w-[800px] p-8 text-black">
+                    <div className="mb-6 border-b border-black pb-4">
+                        <h1 className="text-2xl font-bold">{movementPrintTitle(printMovement)}</h1>
+                        <p className="text-sm">Emitido: {new Date(printMovement.date).toLocaleDateString("es-AR")}</p>
+                    </div>
+
+                    <div className="mb-6 grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                            <p className="font-semibold">Cliente</p>
+                            <p>{client.name}</p>
+                            <p>CUIT/DNI: {client.tax_id || "-"}</p>
+                            <p>Telefono: {client.phone || "-"}</p>
+                        </div>
+                        <div>
+                            <p className="font-semibold">Referencia</p>
+                            <p>ID mov.: {printMovement.id}</p>
+                            <p>Documento: {printMovement.document_id || "-"}</p>
+                            <p>Factura ref.: {printMovement.related_invoice_id || "-"}</p>
+                        </div>
+                    </div>
+
+                    <div className="rounded border border-black p-4">
+                        <p className="mb-2 text-sm font-semibold">Detalle</p>
+                        <p className="mb-4 text-sm">{printMovement.description}</p>
+                        <div className="flex items-center justify-between border-t border-black pt-3">
+                            <span className="text-sm font-semibold">Importe</span>
+                            <span className="text-lg font-bold">{formatMoney(printMovement.amount)}</span>
+                        </div>
+                    </div>
+
+                    <div className="mt-8 text-xs">
+                        <p>Este comprobante fue generado por WSM SportsERP.</p>
+                    </div>
+                </div>
+            ) : null}
+        </div>
+        </>
     );
 }
