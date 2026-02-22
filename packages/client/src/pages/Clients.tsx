@@ -15,6 +15,11 @@ import { cn } from "@/lib/utils"
 import { showErrorToast } from "@/lib/errorHandling"
 import type { ClientUpsertInput } from "@/types/api"
 
+function toSafeMoney(value: unknown): number {
+    const num = Number(value)
+    return Number.isFinite(num) ? num : 0
+}
+
 export default function ClientsPage() {
     const navigate = useNavigate()
     const [clients, setClients] = useState<Client[]>([])
@@ -30,7 +35,17 @@ export default function ClientsPage() {
         setErrorMessage(null)
         try {
             const data = await api.getClients()
-            setClients(data)
+            const normalized = data.map((client) => {
+                const row = client as Client & { computed_balance?: unknown }
+                return {
+                    ...client,
+                    current_account_balance: toSafeMoney(
+                        row.current_account_balance ?? row.computed_balance ?? 0
+                    ),
+                    credit_limit: toSafeMoney(client.credit_limit),
+                }
+            })
+            setClients(normalized)
         } catch (error) {
             setErrorMessage("No se pudo cargar la cartera de clientes.")
             showErrorToast("Error al cargar clientes", error)
@@ -130,7 +145,7 @@ export default function ClientsPage() {
                 />
                 <StatusCard
                     title="Cartera Total"
-                    count={new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(clients.reduce((acc, c) => acc + c.current_account_balance, 0))}
+                    count={clients.reduce((acc, c) => acc + toSafeMoney(c.current_account_balance), 0)}
                     icon={Building}
                     description="Deuda total exigible"
                     color="text-green-500"

@@ -367,11 +367,6 @@ export default function ClientDetailPage() {
         void loadClientData();
     }, [loadClientData]);
 
-    const balancePercent = useMemo(() => {
-        if (!client || client.credit_limit <= 0) return 0;
-        return Math.min(100, (client.current_account_balance / client.credit_limit) * 100);
-    }, [client]);
-
     const invoicePaidById = useMemo(() => {
         const map = new Map<string, number>();
         for (const tx of payments) {
@@ -569,8 +564,8 @@ export default function ClientDetailPage() {
                     <CardContent className="space-y-3">
                         <div>
                             <p className="text-sm text-muted-foreground">Saldo</p>
-                            <p className={cn("text-3xl font-bold", client.current_account_balance > 0 ? "text-amber-500" : "text-emerald-500")}>
-                                ${client.current_account_balance.toLocaleString("es-AR")}
+                            <p className={cn("text-3xl font-bold", accountTotals.balance > 0 ? "text-amber-500" : "text-emerald-500")}>
+                                ${accountTotals.balance.toLocaleString("es-AR")}
                             </p>
                         </div>
                         <div>
@@ -578,7 +573,12 @@ export default function ClientDetailPage() {
                             <p className="font-semibold">${client.credit_limit.toLocaleString("es-AR")}</p>
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-                            <div className="h-full bg-blue-600" style={{ width: `${balancePercent}%` }} />
+                            <div
+                                className="h-full bg-blue-600"
+                                style={{
+                                    width: `${client.credit_limit > 0 ? Math.min(100, (accountTotals.balance / client.credit_limit) * 100) : 0}%`
+                                }}
+                            />
                         </div>
                         <p className="text-xs text-muted-foreground">
                             Facturado: ${accountTotals.billed.toLocaleString("es-AR")} | NC: ${accountTotals.credited.toLocaleString("es-AR")} | Cobrado: ${accountTotals.paid.toLocaleString("es-AR")}
@@ -784,13 +784,12 @@ export default function ClientDetailPage() {
                                         <TableHead className="text-right">Total</TableHead>
                                         <TableHead className="text-right">Pagado</TableHead>
                                         <TableHead className="text-right">Pendiente</TableHead>
-                                        <TableHead className="text-right">Accion</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
                                     {invoices.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={7} className="h-20 text-center text-muted-foreground">
+                                            <TableCell colSpan={6} className="h-20 text-center text-muted-foreground">
                                                 Sin facturas.
                                             </TableCell>
                                         </TableRow>
@@ -813,17 +812,6 @@ export default function ClientDetailPage() {
                                                     <TableCell className="text-right">${invoice.total_amount.toLocaleString("es-AR")}</TableCell>
                                                     <TableCell className="text-right text-emerald-500">${paid.toLocaleString("es-AR")}</TableCell>
                                                     <TableCell className="text-right font-semibold">${pending.toLocaleString("es-AR")}</TableCell>
-                                                    <TableCell className="text-right">
-                                                        <Button
-                                                            type="button"
-                                                            size="sm"
-                                                            variant="outline"
-                                                            disabled={pending <= 0.009}
-                                                            onClick={() => openPaymentDialog(invoice.id)}
-                                                        >
-                                                            Cobrar
-                                                        </Button>
-                                                    </TableCell>
                                                 </TableRow>
                                             );
                                         })
