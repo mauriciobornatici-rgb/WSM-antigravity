@@ -613,7 +613,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
 
                         <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
                             <Input
-                                placeholder="Fallback manual"
+                                placeholder="Ingreso manual"
                                 value={manualScanValue}
                                 onChange={(event) => setManualScanValue(event.target.value)}
                                 onKeyDown={(event) => {
