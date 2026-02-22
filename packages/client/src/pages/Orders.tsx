@@ -5,6 +5,7 @@ import { CircleDashed, FileText, Package, Plus, Search, Trash2, Truck, XCircle }
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/services/api";
+import { isApiError } from "@/services/httpClient";
 import type { Client, Order, Product } from "@/types";
 import { queryKeys } from "@/lib/queryKeys";
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog";
@@ -397,7 +398,23 @@ export default function OrdersPage() {
                 await updateOrderStatusMutation.mutateAsync({ orderId: order.id, status: "picking" });
             }
             navigate(`/picking/${order.id}`);
-        } catch {
+        } catch (error) {
+            const payload =
+                isApiError(error) && error.body && typeof error.body === "object"
+                    ? (error.body as Record<string, unknown>)
+                    : null;
+            const recoverable =
+                isApiError(error)
+                && (
+                    (error.status === 400 && payload?.error === "validation_error")
+                    || error.status === 409
+                );
+
+            if (recoverable) {
+                toast.warning("No se pudo actualizar estado automaticamente, continuamos en picking");
+                navigate(`/picking/${order.id}`);
+                return;
+            }
             // El manejo global de React Query ya informa el error.
         }
     }
