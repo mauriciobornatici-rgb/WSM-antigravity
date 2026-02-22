@@ -5,6 +5,7 @@ export type POSProduct = Product & { stock: number };
 export type CartItem = POSProduct & { quantity: number };
 export type PaymentMethod = "cash" | "debit_card" | "credit_card" | "qr" | "transfer" | "credit_account";
 export type InvoiceType = "A" | "B";
+export type PaymentSplit = { id: string; method: PaymentMethod; amount: number };
 
 export type NewClientForm = {
     name: string;

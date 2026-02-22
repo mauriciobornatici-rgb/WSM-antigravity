@@ -12,8 +12,16 @@ import { CheckoutSuccessDialog } from "@/components/pos/CheckoutSuccessDialog";
 import { PaymentDialog } from "@/components/pos/PaymentDialog";
 import { ProductCatalogCard } from "@/components/pos/ProductCatalogCard";
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog";
-import type { CartItem, InvoiceType, NewClientForm, PaymentMethod, POSProduct } from "@/components/pos/types";
+import type { CartItem, InvoiceType, NewClientForm, PaymentSplit, POSProduct } from "@/components/pos/types";
 import { Button } from "@/components/ui/button";
+
+function roundMoney(value: number): number {
+    return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
+function defaultPaymentSplit(amount = 0): PaymentSplit {
+    return { id: crypto.randomUUID(), method: "cash", amount: roundMoney(amount) };
+}
 
 export default function POSPage() {
     const navigate = useNavigate();
@@ -27,7 +35,7 @@ export default function POSPage() {
     const [selectedClientId, setSelectedClientId] = useState("");
 
     const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-    const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+    const [paymentSplits, setPaymentSplits] = useState<PaymentSplit[]>([defaultPaymentSplit(0)]);
     const [emitInvoice, setEmitInvoice] = useState(false);
     const [invoiceType, setInvoiceType] = useState<InvoiceType>("B");
     const [processing, setProcessing] = useState(false);
@@ -219,9 +227,37 @@ export default function POSPage() {
             toast.error("No hay caja abierta");
             return;
         }
-        if (paymentMethod === "credit_account" && !selectedClientId) {
+
+        const positiveSplits = paymentSplits
+            .map((line) => ({
+                method: line.method,
+                amount: roundMoney(Number(line.amount || 0)),
+            }))
+            .filter((line) => line.amount > 0);
+
+        if (positiveSplits.length === 0) {
+            toast.error("Debes cargar al menos un monto de pago");
+            return;
+        }
+
+        const assignedTotal = roundMoney(positiveSplits.reduce((sum, line) => sum + line.amount, 0));
+        if (Math.abs(assignedTotal - grandTotal) > 0.01) {
+            toast.error("La suma de medios de pago debe coincidir con el total");
+            return;
+        }
+
+        if (positiveSplits.some((line) => line.method === "credit_account") && !selectedClientId) {
             toast.error("Cuenta corriente requiere cliente");
             return;
+        }
+
+        let primaryPaymentMethod = positiveSplits[0]?.method ?? "cash";
+        let primaryAmount = positiveSplits[0]?.amount ?? 0;
+        for (const line of positiveSplits) {
+            if (line.amount > primaryAmount) {
+                primaryAmount = line.amount;
+                primaryPaymentMethod = line.method;
+            }
         }
 
         try {
@@ -230,7 +266,7 @@ export default function POSPage() {
 
             const orderPayload: Parameters<typeof api.createOrder>[0] = {
                 customer_name: selectedClient?.name || "Consumidor final",
-                payment_method: paymentMethod,
+                payment_method: primaryPaymentMethod,
                 items: cart.map((item) => ({
                     product_id: item.id,
                     quantity: item.quantity,
@@ -248,8 +284,8 @@ export default function POSPage() {
                         customer_name: selectedClient?.name || "Consumidor final",
                         invoice_type: invoiceType,
                         point_of_sale: 1,
-                        payment_method: paymentMethod,
-                        payments: [{ method: paymentMethod, amount: grandTotal }],
+                        payment_method: primaryPaymentMethod,
+                        payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
                         items: cart.map((item) => ({
                             product_id: item.id,
                             description: item.name,
@@ -266,12 +302,14 @@ export default function POSPage() {
                 }
             }
 
-            await api.addShiftPayment(currentShift.id, {
-                order_id: order.id,
-                payment_method: paymentMethod,
-                amount: grandTotal,
-                type: "sale",
-            });
+            for (const line of positiveSplits) {
+                await api.addShiftPayment(currentShift.id, {
+                    order_id: order.id,
+                    payment_method: line.method,
+                    amount: line.amount,
+                    type: "sale",
+                });
+            }
 
             const soldByProduct = cart.reduce<Record<string, number>>((acc, item) => {
                 acc[item.id] = (acc[item.id] || 0) + item.quantity;
@@ -288,6 +326,7 @@ export default function POSPage() {
             setCart([]);
             setSelectedClientId("");
             setEmitInvoice(false);
+            setPaymentSplits([defaultPaymentSplit(0)]);
             setPaymentDialogOpen(false);
             setSuccessDialogOpen(true);
             toast.success("Venta registrada");
@@ -342,7 +381,15 @@ export default function POSPage() {
                         taxLabel={taxLabel}
                         taxAmount={taxAmount}
                         grandTotal={grandTotal}
-                        onOpenPaymentDialog={() => setPaymentDialogOpen(true)}
+                        onOpenPaymentDialog={() => {
+                            setPaymentSplits((current) => {
+                                const currentTotal = roundMoney(current.reduce((sum, line) => sum + Number(line.amount || 0), 0));
+                                const shouldReset = current.length === 0 || Math.abs(currentTotal - grandTotal) > 0.01;
+                                if (shouldReset) return [defaultPaymentSplit(grandTotal)];
+                                return current;
+                            });
+                            setPaymentDialogOpen(true);
+                        }}
                         currentShift={currentShift}
                         currentRegister={currentRegister}
                     />
@@ -352,8 +399,8 @@ export default function POSPage() {
             <PaymentDialog
                 open={paymentDialogOpen}
                 onOpenChange={setPaymentDialogOpen}
-                paymentMethod={paymentMethod}
-                onPaymentMethodChange={setPaymentMethod}
+                paymentSplits={paymentSplits}
+                onPaymentSplitsChange={setPaymentSplits}
                 emitInvoice={emitInvoice}
                 onEmitInvoiceChange={setEmitInvoice}
                 invoiceType={invoiceType}
