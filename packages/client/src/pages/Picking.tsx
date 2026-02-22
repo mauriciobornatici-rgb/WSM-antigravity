@@ -33,6 +33,19 @@ function isPickableStatus(status: string): boolean {
     return status === "pending" || status === "picking";
 }
 
+function statusLabel(status: Order["status"]): string {
+    const labels: Record<Order["status"], string> = {
+        pending: "Pendiente",
+        picking: "En picking",
+        packed: "Empaquetado",
+        dispatched: "Despachado",
+        delivered: "Entregado",
+        completed: "Completado",
+        cancelled: "Cancelado",
+    };
+    return labels[status] ?? status;
+}
+
 export default function PickingPage() {
     const { id } = useParams<{ id?: string }>();
     const navigate = useNavigate();
@@ -164,11 +177,18 @@ export default function PickingPage() {
                         Volver a pedidos
                     </Button>
                     <h2 className="text-2xl font-bold">Picking: {selectedOrder.id}</h2>
-                    <Badge variant="outline">{selectedOrder.status}</Badge>
+                    <Badge variant="outline">{statusLabel(selectedOrder.status)}</Badge>
                     <Badge className="bg-blue-600">{completion}%</Badge>
                 </div>
 
-                <Card className={cn("border", completed ? "border-green-500/40 bg-green-500/5" : "border-blue-500/30")}>
+                <Card
+                    className={cn(
+                        "border",
+                        completed
+                            ? "border-green-500/40 bg-green-500/5 dark:border-green-500/50 dark:bg-green-500/10"
+                            : "border-blue-500/30 bg-blue-500/5 dark:border-blue-500/40 dark:bg-blue-950/30",
+                    )}
+                >
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                             <ScanLine className="h-5 w-5" />
@@ -205,30 +225,41 @@ export default function PickingPage() {
                             key={`${item.id}-${index}`}
                             className={cn(
                                 "transition",
-                                item.picked ? "border-emerald-400 bg-emerald-50/70" : "border-slate-200 bg-white",
+                                item.picked
+                                    ? "border-emerald-500/40 bg-emerald-500/10 dark:border-emerald-500/50 dark:bg-emerald-500/10"
+                                    : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/70",
                             )}
                         >
                             <CardContent className="space-y-3 p-4">
                                 <div className="flex items-center justify-between">
                                     <Badge variant="outline">{item.location || "Sin ubicacion"}</Badge>
-                                    <span className="font-mono text-xs text-slate-500">{item.sku}</span>
+                                    <span className="font-mono text-xs text-slate-500 dark:text-slate-300">{item.sku}</span>
                                 </div>
-                                <h3 className={cn("font-semibold", item.picked ? "text-emerald-700 line-through" : "text-slate-900")}>
+                                <h3
+                                    className={cn(
+                                        "font-semibold",
+                                        item.picked
+                                            ? "text-emerald-700 line-through dark:text-emerald-300"
+                                            : "text-slate-900 dark:text-slate-100",
+                                    )}
+                                >
                                     {item.product_name}
                                 </h3>
-                                <div className="flex items-center justify-between text-sm">
+                                <div className="flex items-center justify-between text-sm text-slate-700 dark:text-slate-200">
                                     <span>
                                         Cantidad: <strong>{item.quantity}</strong>
                                     </span>
                                     <span>
-                                        Picked: <strong>{item.picked_quantity || 0}</strong>
+                                        Recolectado: <strong>{item.picked_quantity || 0}</strong>
                                     </span>
                                 </div>
                                 <div className="flex justify-end">
                                     <div
                                         className={cn(
                                             "flex h-8 w-8 items-center justify-center rounded-full",
-                                            item.picked ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-500",
+                                            item.picked
+                                                ? "bg-emerald-600 text-white"
+                                                : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300",
                                         )}
                                     >
                                         {item.picked ? <Check className="h-4 w-4" /> : <Box className="h-4 w-4" />}
@@ -260,11 +291,16 @@ export default function PickingPage() {
                     </Card>
                 ) : (
                     pickableOrders.map((order) => (
-                        <Card key={order.id} className="cursor-pointer border-l-4 border-l-blue-500 transition hover:bg-slate-50">
+                        <Card
+                            key={order.id}
+                            className="cursor-pointer border-l-4 border-l-blue-500 transition hover:bg-slate-50 dark:border-l-blue-400 dark:hover:bg-slate-900/70"
+                        >
                             <CardHeader>
                                 <div className="flex items-start justify-between">
                                     <CardTitle>{order.id}</CardTitle>
-                                    <Badge variant={order.status === "pending" ? "default" : "secondary"}>{order.status}</Badge>
+                                    <Badge variant={order.status === "pending" ? "default" : "secondary"}>
+                                        {statusLabel(order.status)}
+                                    </Badge>
                                 </div>
                                 <CardDescription>{order.customer_name || order.client_name || "Sin cliente"}</CardDescription>
                             </CardHeader>
