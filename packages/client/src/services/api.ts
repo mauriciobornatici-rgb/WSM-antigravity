@@ -258,7 +258,12 @@ export const api = {
 
     createInvoiceFromOrder: (
         orderId: string,
-        data: { payments: Array<{ method: string; amount: number }>; notes?: string }
+        data: {
+            invoice_type?: "A" | "B" | "C" | "TK";
+            point_of_sale?: number;
+            payments: Array<{ method: string; amount: number }>;
+            notes?: string;
+        }
     ) => httpClient.post<Invoice>(`/api/orders/${orderId}/invoice`, data),
 
     getOrderSummary: (id: string) =>

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { api } from "@/services/api"
 import { showErrorToast } from "@/lib/errorHandling"
@@ -19,6 +20,7 @@ import { calculateDraftTotal } from "@/components/invoices/invoiceUtils"
 import type { DraftInvoice, DraftInvoiceItem, InvoiceView } from "@/components/invoices/types"
 
 export default function InvoicesPage() {
+    const [searchParams, setSearchParams] = useSearchParams()
     const [invoices, setInvoices] = useState<InvoiceView[]>([])
     const [loading, setLoading] = useState(true)
     const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -40,6 +42,11 @@ export default function InvoicesPage() {
         vat_rate: getTaxRatePercentage(DEFAULT_COMPANY_SETTINGS),
     })
     const emailFeatureEnabled = import.meta.env.VITE_ENABLE_INVOICE_EMAIL === "true"
+    const invoiceIdFilter = (searchParams.get("invoice_id") || "").trim()
+    const visibleInvoices = useMemo(() => {
+        if (!invoiceIdFilter) return invoices
+        return invoices.filter((invoice) => String(invoice.id) === invoiceIdFilter)
+    }, [invoices, invoiceIdFilter])
 
     useEffect(() => {
         void loadData()
@@ -170,13 +177,33 @@ export default function InvoicesPage() {
             </div>
 
             <InvoicesTable
-                invoices={invoices}
+                invoices={visibleInvoices}
                 loading={loading}
                 onRefresh={loadData}
                 onPreview={handleOpenPreview}
                 onSendEmail={handleSendEmail}
                 onPrint={handlePrintInvoice}
             />
+            {invoiceIdFilter ? (
+                <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <span>
+                            Mostrando factura puntual para el comprobante: <strong>{invoiceIdFilter}</strong>
+                        </span>
+                        <button
+                            type="button"
+                            className="text-sm underline underline-offset-2"
+                            onClick={() => {
+                                const next = new URLSearchParams(searchParams)
+                                next.delete("invoice_id")
+                                setSearchParams(next)
+                            }}
+                        >
+                            Ver todas
+                        </button>
+                    </div>
+                </div>
+            ) : null}
 
             <InvoicePreviewDialog
                 open={isPreviewOpen}

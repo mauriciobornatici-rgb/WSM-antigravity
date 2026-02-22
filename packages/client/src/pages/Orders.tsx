@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleDashed, FileText, Package, Plus, Search, Trash2, Truck, XCircle } from "lucide-react";
+import { CircleDashed, Eye, FileText, Package, Plus, Search, Trash2, Truck, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/services/api";
@@ -24,6 +24,7 @@ type OrderStatus = Order["status"];
 type OrderFilter = OrderStatus | "all";
 type ShippingMethod = "pickup" | "delivery";
 type PaymentLine = { method: string; amount: number };
+type InvoiceType = "A" | "B" | "C" | "TK";
 type CreateOrderItem = { product_id: string; quantity: number };
 type NewClientForm = {
     name: string;
@@ -41,6 +42,12 @@ const PAYMENT_METHODS = [
     { value: "transfer", label: "Transferencia" },
     { value: "qr", label: "QR" },
     { value: "credit_account", label: "Cuenta corriente" },
+];
+const INVOICE_TYPES: Array<{ value: InvoiceType; label: string }> = [
+    { value: "A", label: "Factura A" },
+    { value: "B", label: "Factura B" },
+    { value: "C", label: "Factura C" },
+    { value: "TK", label: "Ticket" },
 ];
 const EMPTY_ORDERS: Order[] = [];
 const EMPTY_PRODUCTS: Product[] = [];
@@ -121,6 +128,7 @@ export default function OrdersPage() {
     const [invoiceOpen, setInvoiceOpen] = useState(false);
     const [invoiceOrder, setInvoiceOrder] = useState<Order | null>(null);
     const [invoicePayments, setInvoicePayments] = useState<PaymentLine[]>([]);
+    const [invoiceType, setInvoiceType] = useState<InvoiceType>("B");
 
     const ordersQuery = useQuery({
         queryKey: queryKeys.orders.paged(filter, ordersPage, ORDERS_PAGE_SIZE),
@@ -193,6 +201,9 @@ export default function OrdersPage() {
     const clients: Client[] = clientsQuery.data ?? EMPTY_CLIENTS;
     const loading = ordersQuery.isLoading || productsQuery.isLoading || clientsQuery.isLoading;
     const hasLoadError = ordersQuery.isError || productsQuery.isError || clientsQuery.isError;
+    const invoiceTotalAmount = Number(invoiceOrder ? getInvoiceTotal(invoiceOrder) : 0);
+    const invoiceAssignedAmount = invoicePayments.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+    const invoiceDifference = invoiceTotalAmount - invoiceAssignedAmount;
 
     const filteredOrders = useMemo(() => {
         const query = search.trim().toLowerCase();
@@ -487,7 +498,12 @@ export default function OrdersPage() {
         const total = getInvoiceTotal(order);
         setInvoiceOrder(order);
         setInvoicePayments([{ method: "cash", amount: total }]);
+        setInvoiceType("B");
         setInvoiceOpen(true);
+    }
+
+    function goToInvoice(invoiceId: string) {
+        navigate(`/invoices?invoice_id=${encodeURIComponent(invoiceId)}`);
     }
 
     function updateInvoicePayment(index: number, patch: Partial<PaymentLine>) {
@@ -512,10 +528,20 @@ export default function OrdersPage() {
             return;
         }
         try {
-            await createInvoiceMutation.mutateAsync({ orderId: invoiceOrder.id, payload: { payments: invoicePayments } });
+            const createdInvoice = await createInvoiceMutation.mutateAsync({
+                orderId: invoiceOrder.id,
+                payload: {
+                    invoice_type: invoiceType,
+                    payments: invoicePayments,
+                },
+            });
             toast.success("Factura creada");
             setInvoiceOpen(false);
             setInvoiceOrder(null);
+            setInvoicePayments([]);
+            if (createdInvoice?.id) {
+                goToInvoice(String(createdInvoice.id));
+            }
         } catch {
             // El manejo global de React Query ya informa el error.
         }
@@ -847,19 +873,20 @@ export default function OrdersPage() {
                                 <TableHead>Logistica</TableHead>
                                 <TableHead>Estado</TableHead>
                                 <TableHead className="text-right">Total</TableHead>
+                                <TableHead>Factura</TableHead>
                                 <TableHead className="text-right">Acciones</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {loading ? (
                                 <TableRow>
-                                    <TableCell colSpan={7} className="h-20 text-center text-muted-foreground">
+                                    <TableCell colSpan={8} className="h-20 text-center text-muted-foreground">
                                         Cargando...
                                     </TableCell>
                                 </TableRow>
                             ) : filteredOrders.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={7} className="h-20 text-center text-muted-foreground">
+                                    <TableCell colSpan={8} className="h-20 text-center text-muted-foreground">
                                         Sin resultados.
                                     </TableCell>
                                 </TableRow>
@@ -883,6 +910,20 @@ export default function OrdersPage() {
                                             <Badge variant={order.status === "cancelled" ? "destructive" : "outline"}>{statusLabel(order.status)}</Badge>
                                         </TableCell>
                                         <TableCell className="text-right">${Number(order.total_amount || 0).toLocaleString("es-AR")}</TableCell>
+                                        <TableCell>
+                                            {order.invoice_id ? (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => goToInvoice(String(order.invoice_id))}
+                                                >
+                                                    <Eye className="mr-1 h-4 w-4" />
+                                                    Ver factura
+                                                </Button>
+                                            ) : (
+                                                <span className="text-muted-foreground">-</span>
+                                            )}
+                                        </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-2">
                                                 {(order.status === "pending" || order.status === "picking") ? (
@@ -1052,11 +1093,45 @@ export default function OrdersPage() {
                 <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>Facturar pedido</DialogTitle>
-                        <DialogDescription>Configura pagos para generar la factura.</DialogDescription>
+                        <DialogDescription>Configura tipo de comprobante y pagos para emitir la factura.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
-                        <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                            Total: <strong>${Number(invoiceOrder ? getInvoiceTotal(invoiceOrder) : 0).toLocaleString("es-AR")}</strong>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="space-y-2">
+                                <Label>Tipo de factura</Label>
+                                <Select value={invoiceType} onValueChange={(value) => setInvoiceType(value as InvoiceType)}>
+                                    <SelectTrigger>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {INVOICE_TYPES.map((invoiceTypeOption) => (
+                                            <SelectItem key={invoiceTypeOption.value} value={invoiceTypeOption.value}>
+                                                {invoiceTypeOption.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+                        <div className="space-y-2 rounded-md border bg-muted/30 p-3 text-sm">
+                            <div className="flex items-center justify-between">
+                                <span className="text-muted-foreground">Total venta</span>
+                                <strong className="text-foreground">
+                                    ${invoiceTotalAmount.toLocaleString("es-AR")}
+                                </strong>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <span className="text-muted-foreground">Total asignado</span>
+                                <strong className="text-foreground">
+                                    ${invoiceAssignedAmount.toLocaleString("es-AR")}
+                                </strong>
+                            </div>
+                            <div className="flex items-center justify-between border-t pt-2">
+                                <span className="text-muted-foreground">Diferencia</span>
+                                <strong className={Math.abs(invoiceDifference) <= 0.01 ? "text-emerald-500" : "text-amber-500"}>
+                                    ${invoiceDifference.toLocaleString("es-AR")}
+                                </strong>
+                            </div>
                         </div>
                         {invoicePayments.map((line, index) => (
                             <div key={`line-${index}`} className="grid grid-cols-12 gap-2">

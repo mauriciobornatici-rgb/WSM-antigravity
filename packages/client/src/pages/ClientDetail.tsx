@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CreditCard, History, Mail, MapPin, Phone, ShieldCheck, User } from "lucide-react";
 import { api } from "@/services/api";
 import type { Client, Order, Transaction } from "@/types";
+import type { Invoice } from "@/types/api";
 import { showErrorToast } from "@/lib/errorHandling";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +43,16 @@ type PaymentSummary = {
     type: string;
     description: string;
     amount: number;
+};
+
+type InvoiceSummary = {
+    id: string;
+    issue_date: string;
+    invoice_type: string;
+    point_of_sale: number;
+    invoice_number: number;
+    status: string;
+    total_amount: number;
 };
 
 function readText(value: unknown, fallback = "-"): string {
@@ -104,6 +115,40 @@ function paymentTypeLabel(type: string): string {
     }
 }
 
+function orderStatusLabel(status: string): string {
+    const normalized = String(status || "").toLowerCase();
+    const labels: Record<string, string> = {
+        pending: "Pendiente",
+        picking: "En picking",
+        packed: "Empaquetado",
+        dispatched: "Despachado",
+        delivered: "Entregado",
+        completed: "Completado",
+        cancelled: "Cancelado",
+    };
+    return labels[normalized] || normalized || "-";
+}
+
+function invoiceStatusLabel(status: string): string {
+    const normalized = String(status || "").toLowerCase();
+    const labels: Record<string, string> = {
+        draft: "Borrador",
+        issued: "Emitida",
+        authorized: "Autorizada",
+        rejected: "Rechazada",
+        cancelled: "Anulada",
+    };
+    return labels[normalized] || normalized || "-";
+}
+
+function formatInvoiceLabel(invoice: Pick<InvoiceSummary, "invoice_type" | "point_of_sale" | "invoice_number" | "id">): string {
+    if (!invoice.invoice_number) return invoice.id;
+    const type = String(invoice.invoice_type || "B");
+    const pos = String(Number(invoice.point_of_sale || 1)).padStart(4, "0");
+    const number = String(Number(invoice.invoice_number || 0)).padStart(8, "0");
+    return `${type}-${pos}-${number}`;
+}
+
 function parseMovements(
     invoices: Awaited<ReturnType<typeof api.getInvoices>>,
     creditNotes: Awaited<ReturnType<typeof api.getCreditNotes>>,
@@ -159,6 +204,7 @@ export default function ClientDetailPage() {
     const [warranties, setWarranties] = useState<WarrantySummary[]>([]);
     const [returns, setReturns] = useState<ReturnSummary[]>([]);
     const [payments, setPayments] = useState<PaymentSummary[]>([]);
+    const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
     const [loading, setLoading] = useState(true);
 
     const loadClientData = useCallback(async () => {
@@ -186,6 +232,17 @@ export default function ClientDetailPage() {
             setClient(clientResponse);
             setOrders(ordersResponse);
             setMovements(parseMovements(invoicesResponse, creditNotesResponse, returnsResponse, transactionsResponse));
+            setInvoices(
+                (invoicesResponse as Invoice[]).map((invoice) => ({
+                    id: String(invoice.id || crypto.randomUUID()),
+                    issue_date: String(invoice.issue_date || invoice.created_at || new Date().toISOString()),
+                    invoice_type: String(invoice.invoice_type || "B"),
+                    point_of_sale: Number(invoice.point_of_sale || 1),
+                    invoice_number: Number(invoice.invoice_number || 0),
+                    status: String(invoice.status || "issued"),
+                    total_amount: Number(invoice.total_amount || 0),
+                })),
+            );
             setWarranties(
                 warrantiesResponse.map((warranty) => ({
                     id: String(warranty.id || crypto.randomUUID()),
@@ -366,12 +423,13 @@ export default function ClientDetailPage() {
                                         <TableHead>ID</TableHead>
                                         <TableHead>Estado</TableHead>
                                         <TableHead className="text-right">Total</TableHead>
+                                        <TableHead>Factura</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
                                     {orders.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={3} className="h-20 text-center text-muted-foreground">
+                                            <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
                                                 Sin pedidos.
                                             </TableCell>
                                         </TableRow>
@@ -380,9 +438,23 @@ export default function ClientDetailPage() {
                                             <TableRow key={order.id}>
                                                 <TableCell className="font-mono text-xs">{order.id}</TableCell>
                                                 <TableCell>
-                                                    <Badge variant="outline">{order.status}</Badge>
+                                                    <Badge variant="outline">{orderStatusLabel(order.status)}</Badge>
                                                 </TableCell>
                                                 <TableCell className="text-right">${Number(order.total_amount || 0).toLocaleString("es-AR")}</TableCell>
+                                                <TableCell>
+                                                    {order.invoice_id ? (
+                                                        <Button
+                                                            type="button"
+                                                            size="sm"
+                                                            variant="outline"
+                                                            onClick={() => navigate(`/invoices?invoice_id=${encodeURIComponent(String(order.invoice_id))}`)}
+                                                        >
+                                                            Ver
+                                                        </Button>
+                                                    ) : (
+                                                        <span className="text-muted-foreground">-</span>
+                                                    )}
+                                                </TableCell>
                                             </TableRow>
                                         ))
                                     )}
@@ -426,6 +498,48 @@ export default function ClientDetailPage() {
                                                 </TableCell>
                                                 <TableCell>
                                                     <Badge variant="outline">{warranty.status}</Badge>
+                                                </TableCell>
+                                            </TableRow>
+                                        ))
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Facturas</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="overflow-x-auto">
+                            <Table className="min-w-[620px]">
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Fecha</TableHead>
+                                        <TableHead>Comprobante</TableHead>
+                                        <TableHead>Estado</TableHead>
+                                        <TableHead className="text-right">Monto</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {invoices.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                                                Sin facturas.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : (
+                                        invoices.map((invoice) => (
+                                            <TableRow key={invoice.id}>
+                                                <TableCell>{new Date(invoice.issue_date).toLocaleDateString("es-AR")}</TableCell>
+                                                <TableCell className="font-mono">{formatInvoiceLabel(invoice)}</TableCell>
+                                                <TableCell>
+                                                    <Badge variant="outline">{invoiceStatusLabel(invoice.status)}</Badge>
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                    ${invoice.total_amount.toLocaleString("es-AR")}
                                                 </TableCell>
                                             </TableRow>
                                         ))

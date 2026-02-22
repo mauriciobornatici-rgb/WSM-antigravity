@@ -203,6 +203,8 @@ export const schemas = {
             id: uuid.required()
         }),
         body: Joi.object({
+            invoice_type: Joi.string().valid('A', 'B', 'C', 'TK').optional(),
+            point_of_sale: Joi.number().integer().min(1).optional(),
             payments: Joi.array().items(
                 Joi.object({
                     method: orderPaymentMethod.required(),
