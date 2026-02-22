@@ -1,31 +1,55 @@
 # Execution State Snapshot
 
-Last updated: 2026-02-21
+Last updated: 2026-02-22
 Status: IN_PROGRESS
-Current block: P2/P3
-Current task: P3.3 - Validacion en staging del nuevo layout de alta/edicion de productos + cierre UX responsive
+Current block: P2 - Operacion comercial (Picking/Facturacion/Cobranza)
+Current task: Estabilizar flujo Picking + Factura a cuenta corriente + registro de cobros parciales/mixtos
+Branch: `main`
+Head: `7f92656`
 
 ## Resume From Here
-1. Validar en staging flujo de alta/edicion de producto con el layout actualizado:
-   - sin cortes horizontales en modal
-   - botones de escaneo (camara/lector) correctamente apilados en resoluciones angostas
-   - bloque de imagen con proporcion visual equilibrada y sin ocupar exceso de alto
-2. Validar en staging flujo de alta de producto con:
-   - escaneo por lector optico (input + Enter)
-   - escaneo por camara (BarcodeDetector)
-   - carga local de imagen via endpoint `/api/products/image-upload`
-   - imagen persistida como URL http(s) (sin data URL en `products.image_url`)
-   - stock inicial con impacto real en `inventory` e `inventory_movements`.
-3. Validar en staging flujo POS visual:
-   - cards con imagen
-   - busqueda por nombre/SKU/barcode
-   - alta por escaneo exacto desde buscador
-   - checkout/factura/caja sin regresion funcional.
-4. Ejecutar `smoke:rbac` y `smoke:integrity` en entorno con acceso de red local.
-5. Mantener validacion incremental completa (`server test`, `client lint/test/build`) en cada lote.
-6. Continuar barrido UX responsive restante en dialogos/flows secundarios.
+1. Validar en staging el flujo completo de picking:
+   - ingreso a `/picking/:id` sin errores de validacion al abrir
+   - `Finalizar picking` con faltante `0` cambia estado a `packed` (listo para retiro/envio)
+   - `Cerrar con faltantes` deja estado visible y trazable (badge naranja)
+2. Confirmar que `Pedidos` refleja estado post-picking en tiempo real:
+   - no quedan pedidos en `pending` luego de finalizar correctamente
+   - badges de listo para retiro/envio se muestran segun `shipping_method`
+3. Validar nueva regla de facturacion:
+   - al emitir factura desde pedido NO registra cobro automatico
+   - la factura queda con `payment_status = pending`
+   - el saldo se gestiona luego en cuenta corriente (pagos parciales/mixtos)
+4. Implementar siguiente bloque funcional:
+   - pantalla/flujo de registro de cobros de facturas pendientes (con split de medios de pago)
+   - impacto en `transactions` + `orders/invoices.payment_status`
+5. Mantener validacion incremental completa en cada lote:
+   - `npm -w @wsm/server run test`
+   - `npm -w @wsm/client run lint`
+   - `npm -w @wsm/client run build`
 
 ## Completed
+- 2026-02-22 checkpoint (operacion comercial):
+  - Picking hardening:
+    - cantidad por SKU mediante combo de confirmacion antes de persistir
+    - estados visuales por item:
+      - verde = completo
+      - naranja = faltante/parcial
+    - cierre explicito con botones:
+      - `Finalizar picking` (faltante 0)
+      - `Cerrar con faltantes` (faltante > 0)
+    - cierre basado en estado real de backend (`getOrderSummary`) con transicion segura:
+      - `pending -> picking -> packed`
+  - Pedidos:
+    - estado `packed` traducido operativamente a:
+      - `Listo para retiro` (pickup)
+      - `Listo para envio` (delivery)
+    - etiqueta especial para faltantes: `... c/faltante`
+  - Facturacion de pedidos alineada al proceso contable:
+    - eliminada captura de pago dentro de `Emitir factura` desde pedidos
+    - factura se emite con deuda pendiente (sin cobro automatico)
+    - cobro se posterga a cuenta corriente para pagos parciales/mixtos
+  - Commit set clave:
+    - `9af7871`, `fa94e29`, `5143d0c`, `4d3eeff`, `f54fddb`, `7f92656`
 - P2/P3 partial progress (responsive dialogs hardening + inventory product UX):
   - Standardized mobile-first dialog footer actions across client dialogs:
     - `packages/client/src/components/invoices/InvoiceCreateDialog.tsx`

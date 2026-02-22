@@ -16,6 +16,15 @@ Monorepo con frontend React/Vite y backend Node/Express para gestión comercial,
 - `npm run dev:all` inicia frontend + backend
 - `npm run build` build de frontend
 
+## Continuidad de trabajo (importante)
+
+Para retomar tareas sin reanalizar todo el proyecto:
+
+- Estado vivo: `docs/execution/STATE.md`
+- Plan maestro: `docs/execution/MASTER_PLAN.md`
+- Historial de ejecucion: `docs/execution/CHANGELOG_EXECUTION.md`
+- Punto rapido de reanudacion: `docs/execution/HANDOFF.md`
+
 ## Variables de entorno
 
 Separadas por paquete para evitar mezclar frontend y backend:

@@ -1,5 +1,53 @@
 # Execution Changelog
 
+## 2026-02-22
+
+### Changed
+- `packages/client/src/pages/Orders.tsx`
+  - Removed automatic status transition when entering Picking from Orders.
+  - Updated operational status labels for `packed`:
+    - `Listo para retiro` (pickup)
+    - `Listo para envio` (delivery)
+  - Updated invoicing modal from orders:
+    - now emits invoice without registering payment
+    - removed payment lines from this flow
+    - explicit message that payment is handled later via current account.
+- `packages/client/src/pages/Picking.tsx`
+  - Reworked picking confirmation flow:
+    - scan SKU -> choose quantity -> confirm
+    - per-item visual states (complete/partial/missing)
+  - Added explicit close actions:
+    - `Finalizar picking` when missing = 0
+    - `Cerrar con faltantes` when missing > 0
+  - Hardened close transition using backend real state (`getOrderSummary`) before status updates.
+  - Added safe state transition guard:
+    - `pending -> picking -> packed`
+    - prevents stale UI from trying invalid direct transitions.
+- `packages/client/src/services/api.ts`
+  - `createInvoiceFromOrder` now allows invoicing without `payments`.
+- `packages/server/services/sales.service.js`
+  - `createInvoice(orderId, invoiceData, userId)` no longer forces auto-payment when `payments` are omitted.
+  - When no explicit payments are sent:
+    - `payment_status = pending`
+    - no payment transactions inserted
+    - invoice remains pending for later partial/mixed collections.
+- `docs/execution/STATE.md`
+  - Updated active checkpoint, resume steps and completion registry.
+- `docs/execution/MASTER_PLAN.md`
+  - Updated active focus and planning scope for commercial operation flows.
+
+### Verified
+- Backend:
+  - `npm -w @wsm/server run test`
+- Frontend:
+  - `npm -w @wsm/client run lint`
+  - `npm -w @wsm/client run build`
+
+### Notes
+- Commercial policy aligned:
+  - Invoice issuance and payment registration are now decoupled in order workflow.
+  - Collections should be registered in a dedicated current-account/cash flow (partial and mixed payments).
+
 ## 2026-02-21
 
 ### Changed

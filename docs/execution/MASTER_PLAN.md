@@ -1,6 +1,6 @@
 # WSM SportsERP - Master Execution Plan (Living Document)
 
-Last updated: 2026-02-17
+Last updated: 2026-02-22
 Owner: Codex + Mauri
 Environment: Staging
 
@@ -14,6 +14,17 @@ Stabilize and modernize the app to production-grade quality ("10/10") with stric
   - `docs/execution/STATE.md`
 - No destructive migrations without rollback plan.
 - Prefer transactional, typed, testable, and observable implementations.
+
+## Current Focus (2026-02-22)
+- Picking:
+  - no cambio de estado al ingresar; cierre siempre manual por operador
+  - cierre robusto contra estado desfasado (consulta estado real antes de transicionar)
+- Pedidos:
+  - visualizacion operativa del estado `packed` (listo para retiro/envio)
+- Facturacion:
+  - emision sin cobro automatico; deuda pendiente para registrar luego en cuenta corriente
+- Proximo hito:
+  - flujo de cobranza de facturas pendientes con pagos parciales/mixtos
 
 ## Priority Blocks
 
@@ -41,6 +52,8 @@ Stabilize and modernize the app to production-grade quality ("10/10") with stric
 4. Incremental React Query adoption in data-heavy screens.
 5. Decompose oversized pages into maintainable feature modules.
 6. Fix mojibake/encoding issues in UI text.
+7. Picking UX operativa (cierre manual, faltantes, estados listos para despacho).
+8. Separar factura vs cobro en pedidos (emitir comprobante sin registrar pago).
 
 ### Block P3 - Delivery Quality
 1. CI pipeline.
