@@ -90,6 +90,7 @@ export const createCreditNote = catchAsync(async (req, res) => {
     const referenceType = requestedReferenceType === 'manual'
         ? 'other'
         : (allowedReferenceTypes.has(requestedReferenceType) ? requestedReferenceType : 'other');
+    const notes = req.body.notes || req.body.reason || null;
 
     const connection = await pool.getConnection();
     try {
@@ -119,7 +120,7 @@ export const createCreditNote = catchAsync(async (req, res) => {
                 referenceType,
                 req.body.reference_id || null,
                 Number(req.body.amount || 0),
-                req.body.notes || null
+                notes
             ]
         );
 
@@ -133,6 +134,7 @@ export const createCreditNote = catchAsync(async (req, res) => {
             reference_type: referenceType,
             reference_id: req.body.reference_id || null,
             amount: Number(req.body.amount || 0),
+            notes,
             status: 'issued'
         };
 

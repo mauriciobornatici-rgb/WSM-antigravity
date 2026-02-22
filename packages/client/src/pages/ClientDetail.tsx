@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CreditCard, History, Mail, MapPin, Phone, ShieldCheck, User } from "lucide-react";
 import { api } from "@/services/api";
-import type { Client, Order } from "@/types";
+import type { Client, Order, Transaction } from "@/types";
 import { showErrorToast } from "@/lib/errorHandling";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -10,10 +10,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
+type GenericRow = Record<string, unknown>;
+
 type ClientMovement = {
     id: string;
     date: string;
-    type: "sale" | "credit_note";
+    type: "sale" | "credit_note" | "return" | "payment" | "adjustment";
     description: string;
     amount: number;
 };
@@ -26,9 +28,87 @@ type WarrantySummary = {
     status: string;
 };
 
+type ReturnSummary = {
+    id: string;
+    created_at: string;
+    reason: string;
+    status: string;
+    total_amount: number;
+};
+
+type PaymentSummary = {
+    id: string;
+    date: string;
+    type: string;
+    description: string;
+    amount: number;
+};
+
+function readText(value: unknown, fallback = "-"): string {
+    return typeof value === "string" && value.trim().length > 0 ? value : fallback;
+}
+
+function readNumber(value: unknown): number {
+    const parsed = Number(value || 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function readDate(value: unknown): string {
+    return typeof value === "string" && value.length > 0 ? value : new Date().toISOString();
+}
+
+function movementLabel(type: ClientMovement["type"]): string {
+    switch (type) {
+        case "sale":
+            return "Venta";
+        case "credit_note":
+            return "Nota de credito";
+        case "return":
+            return "Devolucion";
+        case "adjustment":
+            return "Ajuste";
+        default:
+            return "Pago";
+    }
+}
+
+function movementVariant(type: ClientMovement["type"]): "default" | "secondary" | "outline" | "destructive" {
+    switch (type) {
+        case "credit_note":
+        case "return":
+            return "secondary";
+        case "adjustment":
+            return "outline";
+        case "payment":
+            return "default";
+        default:
+            return "outline";
+    }
+}
+
+function paymentTypeLabel(type: string): string {
+    const normalized = String(type || "").toLowerCase();
+    switch (normalized) {
+        case "sale":
+            return "Cobro";
+        case "adjustment":
+            return "Ajuste";
+        case "refund":
+            return "Reintegro";
+        case "expense":
+            return "Egreso";
+        case "income":
+            return "Ingreso";
+        default:
+            return normalized || "Movimiento";
+    }
+}
+
 function parseMovements(
     invoices: Awaited<ReturnType<typeof api.getInvoices>>,
     creditNotes: Awaited<ReturnType<typeof api.getCreditNotes>>,
+    clientReturns: GenericRow[],
+    transactions: Transaction[],
 ): ClientMovement[] {
     const invoiceRows: ClientMovement[] = invoices.map((invoice) => ({
         id: String(invoice.id),
@@ -42,11 +122,32 @@ function parseMovements(
         id: String(credit.id || crypto.randomUUID()),
         date: String(credit.created_at || new Date().toISOString()),
         type: "credit_note",
-        description: `Nota de crédito ${String(credit.number || credit.id || "-")}`,
-        amount: Number(credit.amount || 0),
+        description: `Nota de credito ${String(credit.number || credit.id || "-")}`,
+        amount: -Math.abs(Number(credit.amount || 0)),
     }));
 
-    return [...invoiceRows, ...creditRows].sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime());
+    const returnRows: ClientMovement[] = clientReturns.map((row) => ({
+        id: String(row.id || crypto.randomUUID()),
+        date: readDate(row.created_at),
+        type: "return",
+        description: `Devolucion ${String(row.id || "-")}`,
+        amount: -Math.abs(readNumber(row.total_amount)),
+    }));
+
+    const transactionRows: ClientMovement[] = transactions.map((tx) => {
+        const txType = String(tx.type || "").toLowerCase();
+        return {
+            id: String(tx.id || crypto.randomUUID()),
+            date: readDate(tx.date),
+            type: txType === "adjustment" ? "adjustment" : "payment",
+            description: readText(tx.description, `Movimiento ${paymentTypeLabel(txType)}`),
+            amount: Number(tx.amount || 0),
+        };
+    });
+
+    return [...invoiceRows, ...creditRows, ...returnRows, ...transactionRows].sort(
+        (left, right) => new Date(right.date).getTime() - new Date(left.date).getTime(),
+    );
 }
 
 export default function ClientDetailPage() {
@@ -56,22 +157,35 @@ export default function ClientDetailPage() {
     const [orders, setOrders] = useState<Order[]>([]);
     const [movements, setMovements] = useState<ClientMovement[]>([]);
     const [warranties, setWarranties] = useState<WarrantySummary[]>([]);
+    const [returns, setReturns] = useState<ReturnSummary[]>([]);
+    const [payments, setPayments] = useState<PaymentSummary[]>([]);
     const [loading, setLoading] = useState(true);
 
     const loadClientData = useCallback(async () => {
         if (!id) return;
         try {
             setLoading(true);
-            const [clientResponse, ordersResponse, invoicesResponse, creditNotesResponse, warrantiesResponse] = await Promise.all([
+            const [
+                clientResponse,
+                ordersResponse,
+                invoicesResponse,
+                creditNotesResponse,
+                warrantiesResponse,
+                returnsResponse,
+                transactionsResponse,
+            ] = await Promise.all([
                 api.getClient(id),
                 api.getOrders({ client_id: id }),
                 api.getInvoices({ client_id: id }),
                 api.getCreditNotes({ client_id: id }),
                 api.getWarranties({ client_id: id }),
+                api.getClientReturns({ client_id: id }),
+                api.getTransactions({ client_id: id }),
             ]);
+
             setClient(clientResponse);
             setOrders(ordersResponse);
-            setMovements(parseMovements(invoicesResponse, creditNotesResponse));
+            setMovements(parseMovements(invoicesResponse, creditNotesResponse, returnsResponse, transactionsResponse));
             setWarranties(
                 warrantiesResponse.map((warranty) => ({
                     id: String(warranty.id || crypto.randomUUID()),
@@ -79,6 +193,24 @@ export default function ClientDetailPage() {
                     product_name: String(warranty.product_name || "-"),
                     issue_description: String(warranty.issue_description || "-"),
                     status: String(warranty.status || "-"),
+                })),
+            );
+            setReturns(
+                returnsResponse.map((row) => ({
+                    id: String(row.id || crypto.randomUUID()),
+                    created_at: readDate(row.created_at),
+                    reason: readText(row.reason),
+                    status: readText(row.status, "pending"),
+                    total_amount: readNumber(row.total_amount),
+                })),
+            );
+            setPayments(
+                transactionsResponse.map((tx) => ({
+                    id: String(tx.id || crypto.randomUUID()),
+                    date: readDate(tx.date),
+                    type: String(tx.type || ""),
+                    description: readText(tx.description),
+                    amount: readNumber(tx.amount),
                 })),
             );
         } catch (error) {
@@ -183,77 +315,79 @@ export default function ClientDetailPage() {
                 </CardHeader>
                 <CardContent>
                     <div className="overflow-x-auto">
-                    <Table className="min-w-[620px]">
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead>Fecha</TableHead>
-                                <TableHead>Descripcion</TableHead>
-                                <TableHead>Tipo</TableHead>
-                                <TableHead className="text-right">Monto</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {movements.length === 0 ? (
-                                <TableRow>
-                                    <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
-                                        Sin movimientos.
-                                    </TableCell>
-                                </TableRow>
-                            ) : (
-                                movements.map((movement) => (
-                                    <TableRow key={movement.id}>
-                                        <TableCell>{new Date(movement.date).toLocaleDateString("es-AR")}</TableCell>
-                                        <TableCell>{movement.description}</TableCell>
-                                        <TableCell>
-                                            <Badge variant={movement.type === "credit_note" ? "secondary" : "outline"}>
-                                                {movement.type === "credit_note" ? "Nota de crédito" : "Venta"}
-                                            </Badge>
-                                        </TableCell>
-                                        <TableCell className="text-right">${movement.amount.toLocaleString("es-AR")}</TableCell>
-                                    </TableRow>
-                                ))
-                            )}
-                        </TableBody>
-                    </Table>
-                    </div>
-                </CardContent>
-            </Card>
-
-            <div className="grid gap-6 md:grid-cols-2">
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Pedidos recientes</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="overflow-x-auto">
-                        <Table className="min-w-[420px]">
+                        <Table className="min-w-[720px]">
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead>ID</TableHead>
-                                    <TableHead>Estado</TableHead>
-                                    <TableHead className="text-right">Total</TableHead>
+                                    <TableHead>Fecha</TableHead>
+                                    <TableHead>Descripcion</TableHead>
+                                    <TableHead>Tipo</TableHead>
+                                    <TableHead className="text-right">Monto</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {orders.length === 0 ? (
+                                {movements.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={3} className="h-20 text-center text-muted-foreground">
-                                            Sin pedidos.
+                                        <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                                            Sin movimientos.
                                         </TableCell>
                                     </TableRow>
                                 ) : (
-                                    orders.map((order) => (
-                                        <TableRow key={order.id}>
-                                            <TableCell className="font-mono text-xs">{order.id}</TableCell>
+                                    movements.map((movement) => (
+                                        <TableRow key={movement.id}>
+                                            <TableCell>{new Date(movement.date).toLocaleDateString("es-AR")}</TableCell>
+                                            <TableCell>{movement.description}</TableCell>
                                             <TableCell>
-                                                <Badge variant="outline">{order.status}</Badge>
+                                                <Badge variant={movementVariant(movement.type)}>
+                                                    {movementLabel(movement.type)}
+                                                </Badge>
                                             </TableCell>
-                                            <TableCell className="text-right">${Number(order.total_amount || 0).toLocaleString("es-AR")}</TableCell>
+                                            <TableCell className={cn("text-right", movement.amount < 0 ? "text-amber-600" : "")}>
+                                                ${movement.amount.toLocaleString("es-AR")}
+                                            </TableCell>
                                         </TableRow>
                                     ))
                                 )}
                             </TableBody>
                         </Table>
+                    </div>
+                </CardContent>
+            </Card>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Compras / pedidos</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="overflow-x-auto">
+                            <Table className="min-w-[420px]">
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>ID</TableHead>
+                                        <TableHead>Estado</TableHead>
+                                        <TableHead className="text-right">Total</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {orders.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={3} className="h-20 text-center text-muted-foreground">
+                                                Sin pedidos.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : (
+                                        orders.map((order) => (
+                                            <TableRow key={order.id}>
+                                                <TableCell className="font-mono text-xs">{order.id}</TableCell>
+                                                <TableCell>
+                                                    <Badge variant="outline">{order.status}</Badge>
+                                                </TableCell>
+                                                <TableCell className="text-right">${Number(order.total_amount || 0).toLocaleString("es-AR")}</TableCell>
+                                            </TableRow>
+                                        ))
+                                    )}
+                                </TableBody>
+                            </Table>
                         </div>
                     </CardContent>
                 </Card>
@@ -262,42 +396,128 @@ export default function ClientDetailPage() {
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                             <ShieldCheck className="h-5 w-5 text-indigo-500" />
-                            Garantías
+                            Garantias
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
                         <div className="overflow-x-auto">
-                        <Table className="min-w-[420px]">
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Fecha</TableHead>
-                                    <TableHead>Producto</TableHead>
-                                    <TableHead>Estado</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {warranties.length === 0 ? (
+                            <Table className="min-w-[420px]">
+                                <TableHeader>
                                     <TableRow>
-                                        <TableCell colSpan={3} className="h-20 text-center text-muted-foreground">
-                                            Sin garantias.
-                                        </TableCell>
+                                        <TableHead>Fecha</TableHead>
+                                        <TableHead>Producto</TableHead>
+                                        <TableHead>Estado</TableHead>
                                     </TableRow>
-                                ) : (
-                                    warranties.map((warranty) => (
-                                        <TableRow key={warranty.id}>
-                                            <TableCell>{new Date(warranty.created_at).toLocaleDateString("es-AR")}</TableCell>
-                                            <TableCell>
-                                                <div>{warranty.product_name}</div>
-                                                <div className="text-xs text-muted-foreground">{warranty.issue_description}</div>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Badge variant="outline">{warranty.status}</Badge>
+                                </TableHeader>
+                                <TableBody>
+                                    {warranties.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={3} className="h-20 text-center text-muted-foreground">
+                                                Sin garantias.
                                             </TableCell>
                                         </TableRow>
-                                    ))
-                                )}
-                            </TableBody>
-                        </Table>
+                                    ) : (
+                                        warranties.map((warranty) => (
+                                            <TableRow key={warranty.id}>
+                                                <TableCell>{new Date(warranty.created_at).toLocaleDateString("es-AR")}</TableCell>
+                                                <TableCell>
+                                                    <div>{warranty.product_name}</div>
+                                                    <div className="text-xs text-muted-foreground">{warranty.issue_description}</div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Badge variant="outline">{warranty.status}</Badge>
+                                                </TableCell>
+                                            </TableRow>
+                                        ))
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Devoluciones</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="overflow-x-auto">
+                            <Table className="min-w-[520px]">
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Fecha</TableHead>
+                                        <TableHead>Motivo</TableHead>
+                                        <TableHead>Estado</TableHead>
+                                        <TableHead className="text-right">Monto</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {returns.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                                                Sin devoluciones.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : (
+                                        returns.map((row) => (
+                                            <TableRow key={row.id}>
+                                                <TableCell>{new Date(row.created_at).toLocaleDateString("es-AR")}</TableCell>
+                                                <TableCell>{row.reason}</TableCell>
+                                                <TableCell>
+                                                    <Badge variant={row.status === "approved" ? "default" : "outline"}>
+                                                        {row.status}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                    ${row.total_amount.toLocaleString("es-AR")}
+                                                </TableCell>
+                                            </TableRow>
+                                        ))
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Pagos y ajustes</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="overflow-x-auto">
+                            <Table className="min-w-[560px]">
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Fecha</TableHead>
+                                        <TableHead>Tipo</TableHead>
+                                        <TableHead>Descripcion</TableHead>
+                                        <TableHead className="text-right">Monto</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {payments.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                                                Sin pagos o ajustes.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : (
+                                        payments.map((tx) => (
+                                            <TableRow key={tx.id}>
+                                                <TableCell>{new Date(tx.date).toLocaleDateString("es-AR")}</TableCell>
+                                                <TableCell>
+                                                    <Badge variant={String(tx.type).toLowerCase() === "adjustment" ? "outline" : "default"}>
+                                                        {paymentTypeLabel(tx.type)}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell>{tx.description}</TableCell>
+                                                <TableCell className="text-right">${tx.amount.toLocaleString("es-AR")}</TableCell>
+                                            </TableRow>
+                                        ))
+                                    )}
+                                </TableBody>
+                            </Table>
                         </div>
                     </CardContent>
                 </Card>

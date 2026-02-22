@@ -4,6 +4,7 @@ import { FileText, Plus, RotateCcw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { showErrorToast } from "@/lib/errorHandling";
 import type { Client, Product } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,7 @@ type ClientReturnRow = {
     client_name: string;
     reason: string;
     status: string;
+    total_amount: number;
 };
 
 type CreditNoteRow = {
@@ -80,6 +82,7 @@ function mapClientReturnRows(rows: GenericRow[]): ClientReturnRow[] {
         client_name: readText(row.client_name),
         reason: readText(row.reason),
         status: readText(row.status, "draft"),
+        total_amount: readNumber(row.total_amount),
     }));
 }
 
@@ -217,8 +220,8 @@ function WarrantiesTab() {
             setClientId("");
             setProductId("");
             setIssueDescription("");
-        } catch {
-            // El manejo global de React Query ya informa el error.
+        } catch (error) {
+            showErrorToast("No se pudo registrar la garantía", error);
         }
     }
 
@@ -229,8 +232,8 @@ function WarrantiesTab() {
         try {
             await updateWarrantyStatusMutation.mutateAsync({ id, status });
             toast.success("Estado actualizado");
-        } catch {
-            // El manejo global de React Query ya informa el error.
+        } catch (error) {
+            showErrorToast("No se pudo actualizar la garantía", error);
         }
     }
 
@@ -419,15 +422,17 @@ function ReturnsTab() {
 
     async function handleCreateReturn() {
         if (!productId || quantity <= 0) {
-            toast.error("Completá producto y cantidad");
+            toast.error("Completa producto y cantidad");
             return;
         }
         try {
             const selectedClient = clients.find((client) => client.id === clientId);
+            const selectedProduct = products.find((product) => product.id === productId);
+            const unitPrice = Number(selectedProduct?.sale_price || 0);
             const payload: Parameters<typeof api.createClientReturn>[0] = {
                 customer_name: selectedClient?.name || "Consumidor final",
                 reason,
-                items: [{ product_id: productId, quantity, condition_status: "sellable" }],
+                items: [{ product_id: productId, quantity, condition_status: "sellable", unit_price: unitPrice }],
             };
             if (clientId) payload.client_id = clientId;
 
@@ -438,8 +443,8 @@ function ReturnsTab() {
             setProductId("");
             setQuantity(1);
             setReason("");
-        } catch {
-            // El manejo global de React Query ya informa el error.
+        } catch (error) {
+            showErrorToast("No se pudo registrar la devolución", error);
         }
     }
 
@@ -447,8 +452,8 @@ function ReturnsTab() {
         try {
             await approveReturnMutation.mutateAsync(id);
             toast.success("Devolución aprobada");
-        } catch {
-            // El manejo global de React Query ya informa el error.
+        } catch (error) {
+            showErrorToast("No se pudo aprobar la devolución", error);
         }
     }
 
@@ -478,13 +483,14 @@ function ReturnsTab() {
                                 <TableHead>Cliente</TableHead>
                                 <TableHead>Motivo</TableHead>
                                 <TableHead>Estado</TableHead>
+                                <TableHead className="text-right">Monto</TableHead>
                                 <TableHead className="text-right">Acciones</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {returns.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
+                                    <TableCell colSpan={6} className="h-20 text-center text-muted-foreground">
                                         Sin devoluciones.
                                     </TableCell>
                                 </TableRow>
@@ -497,6 +503,7 @@ function ReturnsTab() {
                                         <TableCell>
                                             <Badge variant={row.status === "approved" ? "default" : "outline"}>{row.status}</Badge>
                                         </TableCell>
+                                        <TableCell className="text-right">${row.total_amount.toLocaleString("es-AR")}</TableCell>
                                         <TableCell className="text-right">
                                             {row.status !== "approved" ? (
                                                 <Button
@@ -620,10 +627,11 @@ function CreditNotesTab() {
         }
 
         try {
+            const trimmedReason = reason.trim();
             await createCreditNoteMutation.mutateAsync({
                 client_id: clientId,
-                amount,
-                reason,
+                amount: Number(amount),
+                ...(trimmedReason ? { reason: trimmedReason, notes: trimmedReason } : {}),
                 reference_type: "manual",
             });
             toast.success("Nota de crédito creada");
@@ -631,8 +639,8 @@ function CreditNotesTab() {
             setClientId("");
             setAmount(0);
             setReason("");
-        } catch {
-            // El manejo global de React Query ya informa el error.
+        } catch (error) {
+            showErrorToast("No se pudo crear la nota de crédito", error);
         }
     }
 
