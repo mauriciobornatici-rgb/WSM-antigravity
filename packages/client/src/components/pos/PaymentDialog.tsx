@@ -73,10 +73,12 @@ export function PaymentDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto border border-slate-200 bg-white text-slate-900 sm:max-w-2xl dark:border-slate-800 dark:bg-[#020a24] dark:text-slate-100">
                 <DialogHeader>
                     <DialogTitle>Confirmar cobro</DialogTitle>
-                    <DialogDescription>Puedes dividir el pago entre varios metodos.</DialogDescription>
+                    <DialogDescription className="text-slate-500 dark:text-slate-300">
+                        Puedes dividir el pago entre varios métodos.
+                    </DialogDescription>
                 </DialogHeader>
 
                 <div className="space-y-4">
@@ -85,12 +87,15 @@ export function PaymentDialog({
                             <Label>Medios de pago</Label>
                             <Button type="button" variant="outline" size="sm" className="w-full gap-2 sm:w-auto" onClick={addSplitLine}>
                                 <Plus className="h-4 w-4" />
-                                Agregar linea
+                                Agregar línea
                             </Button>
                         </div>
                         <div className="space-y-2">
                             {paymentSplits.map((line) => (
-                                <div key={line.id} className="grid gap-2 rounded-md border p-2 md:grid-cols-[minmax(0,1fr)_160px_auto]">
+                                <div
+                                    key={line.id}
+                                    className="grid gap-2 rounded-md border border-slate-200 bg-slate-50/60 p-2 md:grid-cols-[minmax(0,1fr)_160px_auto] dark:border-slate-700 dark:bg-slate-950/40"
+                                >
                                     <Select
                                         value={line.method}
                                         onValueChange={(value) => updateSplitMethod(line.id, value as PaymentMethod)}
@@ -122,7 +127,7 @@ export function PaymentDialog({
                                         onClick={() => removeSplitLine(line.id)}
                                         title="Eliminar linea"
                                     >
-                                        <Trash2 className="h-4 w-4 text-red-500" />
+                                        <Trash2 className="h-4 w-4 text-red-500 dark:text-red-400" />
                                     </Button>
                                 </div>
                             ))}
@@ -134,6 +139,7 @@ export function PaymentDialog({
                             type="checkbox"
                             checked={emitInvoice}
                             onChange={(event) => onEmitInvoiceChange(event.target.checked)}
+                            className="h-4 w-4 accent-blue-600"
                         />
                         Emitir factura
                     </label>
@@ -156,25 +162,27 @@ export function PaymentDialog({
                         </div>
                     ) : null}
 
-                    <div className="rounded-md border bg-slate-50 p-3 text-sm">
+                    <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 shadow-inner dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100">
                         <div className="flex items-center justify-between">
-                            <span>Total venta</span>
+                            <span className="text-slate-600 dark:text-slate-300">Total venta</span>
                             <span className="font-semibold">${grandTotal.toLocaleString("es-AR")}</span>
                         </div>
                         <div className="mt-1 flex items-center justify-between">
-                            <span>Total asignado</span>
+                            <span className="text-slate-600 dark:text-slate-300">Total asignado</span>
                             <span className="font-semibold">${paidAmount.toLocaleString("es-AR")}</span>
                         </div>
                         <div className="mt-1 flex items-center justify-between">
-                            <span>Diferencia</span>
-                            <span className={hasBalanceError ? "font-semibold text-red-600" : "font-semibold text-emerald-600"}>
+                            <span className="text-slate-600 dark:text-slate-300">Diferencia</span>
+                            <span
+                                className={hasBalanceError ? "font-semibold text-red-600 dark:text-red-400" : "font-semibold text-emerald-600 dark:text-emerald-400"}
+                            >
                                 ${difference.toLocaleString("es-AR")}
                             </span>
                         </div>
                     </div>
                 </div>
 
-                <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+                <div className="flex flex-col-reverse gap-2 border-t border-slate-200 pt-3 dark:border-slate-700 sm:flex-row sm:justify-end">
                     <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                         Cancelar
                     </Button>
