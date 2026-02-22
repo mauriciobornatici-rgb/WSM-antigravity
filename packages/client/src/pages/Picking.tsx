@@ -133,25 +133,34 @@ export default function PickingPage() {
     const pendingScanRemaining = pendingScanItem ? itemRemainingQuantity(pendingScanItem) : 0;
     const canPick = selectedOrder ? isPickableStatus(selectedOrder.status) : false;
 
-    async function transitionToPacked(order: Order): Promise<void> {
-        if (order.status === "pending") {
+    async function transitionToPacked(orderId: string): Promise<void> {
+        const summary = await api.getOrderSummary(orderId);
+        let currentStatus = String(summary.order?.status || "").toLowerCase();
+
+        if (currentStatus === "packed") return;
+
+        if (currentStatus === "pending") {
             try {
-                await api.updateOrderStatus(order.id, "picking");
+                await api.updateOrderStatus(orderId, "picking");
+                currentStatus = "picking";
             } catch (error) {
-                const payload =
-                    isApiError(error) && error.body && typeof error.body === "object"
-                        ? (error.body as Record<string, unknown>)
-                        : null;
-                const recoverable =
-                    isApiError(error)
-                    && (
-                        error.status === 409
-                        || (error.status === 400 && payload?.error === "validation_error")
-                    );
-                if (!recoverable) throw error;
+                if (isApiError(error) && error.status === 400) {
+                    throw new Error("El backend rechazo el estado 'picking'. Reinicia el servidor con la ultima version.");
+                }
+                throw error;
             }
         }
-        await api.updateOrderStatus(order.id, "packed");
+
+        if (currentStatus === "picking") {
+            await api.updateOrderStatus(orderId, "packed");
+            return;
+        }
+
+        if (currentStatus === "packed" || currentStatus === "dispatched" || currentStatus === "delivered" || currentStatus === "completed") {
+            return;
+        }
+
+        throw new Error(`No se puede cerrar picking desde estado '${currentStatus || "desconocido"}'.`);
     }
 
     useEffect(() => {
@@ -234,7 +243,7 @@ export default function PickingPage() {
 
         if (allPicked) {
             try {
-                await transitionToPacked(selectedOrder);
+                await transitionToPacked(selectedOrder.id);
                 toast.success("Picking finalizado", {
                     description: `Pedido ${selectedOrder.id}: ${readyStatusLabel(selectedOrder)}.`,
                 });
@@ -268,7 +277,7 @@ export default function PickingPage() {
         const confirmed = window.confirm(`Se cerrara el picking con faltantes (${missing} unidades). Deseas continuar?`);
         if (!confirmed) return;
         try {
-            await transitionToPacked(selectedOrder);
+            await transitionToPacked(selectedOrder.id);
             setPendingScanItemId(null);
             setPendingScanQuantity(1);
             toast.warning("Picking cerrado con faltantes", {
@@ -294,7 +303,7 @@ export default function PickingPage() {
         }
 
         try {
-            await transitionToPacked(selectedOrder);
+            await transitionToPacked(selectedOrder.id);
             setPendingScanItemId(null);
             setPendingScanQuantity(1);
             toast.success("Picking finalizado", {
