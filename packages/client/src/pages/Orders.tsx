@@ -5,7 +5,6 @@ import { CircleDashed, Eye, FileText, Package, Plus, Search, Trash2, Truck, XCir
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/services/api";
-import { isApiError } from "@/services/httpClient";
 import type { Client, Order, Product } from "@/types";
 import { queryKeys } from "@/lib/queryKeys";
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog";
@@ -23,7 +22,6 @@ import { PaginationControls } from "@/components/common/PaginationControls";
 type OrderStatus = Order["status"];
 type OrderFilter = OrderStatus | "all";
 type ShippingMethod = "pickup" | "delivery";
-type PaymentLine = { method: string; amount: number };
 type InvoiceType = "A" | "B" | "C" | "TK";
 type CreateOrderItem = { product_id: string; quantity: number };
 type NewClientForm = {
@@ -37,8 +35,8 @@ type NewClientForm = {
 
 const PAYMENT_METHODS = [
     { value: "cash", label: "Efectivo" },
-    { value: "debit_card", label: "Tarjeta débito" },
-    { value: "credit_card", label: "Tarjeta crédito" },
+    { value: "debit_card", label: "Tarjeta debito" },
+    { value: "credit_card", label: "Tarjeta credito" },
     { value: "transfer", label: "Transferencia" },
     { value: "qr", label: "QR" },
     { value: "credit_account", label: "Cuenta corriente" },
@@ -137,7 +135,6 @@ export default function OrdersPage() {
 
     const [invoiceOpen, setInvoiceOpen] = useState(false);
     const [invoiceOrder, setInvoiceOrder] = useState<Order | null>(null);
-    const [invoicePayments, setInvoicePayments] = useState<PaymentLine[]>([]);
     const [invoiceType, setInvoiceType] = useState<InvoiceType>("B");
 
     const ordersQuery = useQuery({
@@ -212,8 +209,6 @@ export default function OrdersPage() {
     const loading = ordersQuery.isLoading || productsQuery.isLoading || clientsQuery.isLoading;
     const hasLoadError = ordersQuery.isError || productsQuery.isError || clientsQuery.isError;
     const invoiceTotalAmount = Number(invoiceOrder ? getInvoiceTotal(invoiceOrder) : 0);
-    const invoiceAssignedAmount = invoicePayments.reduce((sum, line) => sum + Number(line.amount || 0), 0);
-    const invoiceDifference = invoiceTotalAmount - invoiceAssignedAmount;
 
     const filteredOrders = useMemo(() => {
         const query = search.trim().toLowerCase();
@@ -413,31 +408,8 @@ export default function OrdersPage() {
         }
     }
 
-    async function startPicking(order: Order) {
-        try {
-            if (order.status === "pending") {
-                await updateOrderStatusMutation.mutateAsync({ orderId: order.id, status: "picking" });
-            }
-            navigate(`/picking/${order.id}`);
-        } catch (error) {
-            const payload =
-                isApiError(error) && error.body && typeof error.body === "object"
-                    ? (error.body as Record<string, unknown>)
-                    : null;
-            const recoverable =
-                isApiError(error)
-                && (
-                    (error.status === 400 && payload?.error === "validation_error")
-                    || error.status === 409
-                );
-
-            if (recoverable) {
-                toast.warning("No se pudo actualizar estado automaticamente, continuamos en picking");
-                navigate(`/picking/${order.id}`);
-                return;
-            }
-            // El manejo global de React Query ya informa el error.
-        }
+    function startPicking(order: Order) {
+        navigate(`/picking/${order.id}`);
     }
 
     function openDispatch(order: Order) {
@@ -505,9 +477,7 @@ export default function OrdersPage() {
     }
 
     function openInvoice(order: Order) {
-        const total = getInvoiceTotal(order);
         setInvoiceOrder(order);
-        setInvoicePayments([{ method: "cash", amount: total }]);
         setInvoiceType("B");
         setInvoiceOpen(true);
     }
@@ -516,39 +486,18 @@ export default function OrdersPage() {
         navigate(`/invoices?invoice_id=${encodeURIComponent(invoiceId)}`);
     }
 
-    function updateInvoicePayment(index: number, patch: Partial<PaymentLine>) {
-        setInvoicePayments((current) =>
-            current.map((line, currentIndex) => (currentIndex === index ? { ...line, ...patch } : line)),
-        );
-    }
-
-    function removeInvoicePayment(index: number) {
-        setInvoicePayments((current) => {
-            if (current.length <= 1) return current;
-            return current.filter((_, currentIndex) => currentIndex !== index);
-        });
-    }
-
     async function submitInvoice() {
         if (!invoiceOrder) return;
-        const totalToPay = getInvoiceTotal(invoiceOrder);
-        const totalPayments = invoicePayments.reduce((sum, line) => sum + Number(line.amount || 0), 0);
-        if (Math.abs(totalPayments - totalToPay) > 0.01) {
-            toast.error("El total de pagos no coincide con el monto a facturar");
-            return;
-        }
         try {
             const createdInvoice = await createInvoiceMutation.mutateAsync({
                 orderId: invoiceOrder.id,
                 payload: {
                     invoice_type: invoiceType,
-                    payments: invoicePayments,
                 },
             });
             toast.success("Factura creada");
             setInvoiceOpen(false);
             setInvoiceOrder(null);
-            setInvoicePayments([]);
             if (createdInvoice?.id) {
                 goToInvoice(String(createdInvoice.id));
             }
@@ -1115,7 +1064,7 @@ export default function OrdersPage() {
                 <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>Facturar pedido</DialogTitle>
-                        <DialogDescription>Configura tipo de comprobante y pagos para emitir la factura.</DialogDescription>
+                        <DialogDescription>Emite la factura y deja el saldo pendiente para cobrar luego.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
                         <div className="grid gap-3 sm:grid-cols-2">
@@ -1137,61 +1086,15 @@ export default function OrdersPage() {
                         </div>
                         <div className="space-y-2 rounded-md border bg-muted/30 p-3 text-sm">
                             <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground">Total venta</span>
+                                <span className="text-muted-foreground">Total factura</span>
                                 <strong className="text-foreground">
                                     ${invoiceTotalAmount.toLocaleString("es-AR")}
                                 </strong>
                             </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground">Total asignado</span>
-                                <strong className="text-foreground">
-                                    ${invoiceAssignedAmount.toLocaleString("es-AR")}
-                                </strong>
-                            </div>
-                            <div className="flex items-center justify-between border-t pt-2">
-                                <span className="text-muted-foreground">Diferencia</span>
-                                <strong className={Math.abs(invoiceDifference) <= 0.01 ? "text-emerald-500" : "text-amber-500"}>
-                                    ${invoiceDifference.toLocaleString("es-AR")}
-                                </strong>
-                            </div>
+                            <p className="border-t pt-2 text-xs text-muted-foreground">
+                                No se registra cobro en este paso. El pago se carga luego en cuenta corriente (parcial o mixto).
+                            </p>
                         </div>
-                        {invoicePayments.map((line, index) => (
-                            <div key={`line-${index}`} className="grid grid-cols-12 gap-2">
-                                <div className="col-span-12 sm:col-span-6">
-                                    <Select value={line.method} onValueChange={(value) => updateInvoicePayment(index, { method: value })}>
-                                        <SelectTrigger>
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {PAYMENT_METHODS.map((method) => (
-                                                <SelectItem key={method.value} value={method.value}>
-                                                    {method.label}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div className="col-span-9 sm:col-span-4">
-                                    <Input type="number" min="0" step="0.01" value={line.amount} onChange={(event) => updateInvoicePayment(index, { amount: Number(event.target.value) || 0 })} />
-                                </div>
-                                <div className="col-span-3 flex justify-end sm:col-span-2">
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon"
-                                        className="text-muted-foreground hover:text-red-500"
-                                        disabled={invoicePayments.length <= 1}
-                                        onClick={() => removeInvoicePayment(index)}
-                                    >
-                                        <Trash2 className="h-4 w-4" />
-                                        <span className="sr-only">Quitar linea de pago</span>
-                                    </Button>
-                                </div>
-                            </div>
-                        ))}
-                        <Button type="button" variant="outline" onClick={() => setInvoicePayments((current) => [...current, { method: "cash", amount: 0 }])}>
-                            Agregar pago
-                        </Button>
                     </div>
                     <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
                         <Button type="button" variant="outline" onClick={() => setInvoiceOpen(false)}>
@@ -1217,4 +1120,5 @@ function SummaryCard({ title, count }: { title: string; count: number }) {
         </Card>
     );
 }
+
 

@@ -261,7 +261,7 @@ export const api = {
         data: {
             invoice_type?: "A" | "B" | "C" | "TK";
             point_of_sale?: number;
-            payments: Array<{ method: string; amount: number }>;
+            payments?: Array<{ method: string; amount: number }>;
             notes?: string;
         }
     ) => httpClient.post<Invoice>(`/api/orders/${orderId}/invoice`, data),

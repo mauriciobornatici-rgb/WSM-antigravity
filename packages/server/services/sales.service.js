@@ -706,12 +706,20 @@ class SalesService extends BaseService {
             const invoiceId = crypto.randomUUID();
 
             const client = await this._resolveClientSnapshot(connection, order.client_id, order.customer_name);
-            const paymentData = this._normalizePayments(
-                invoiceData.payments,
-                totalAmount,
-                order.payment_method || 'cash'
-            );
-            const paymentMethod = paymentData.primaryMethod;
+            const hasExplicitPayments = Array.isArray(invoiceData.payments) && invoiceData.payments.length > 0;
+            const paymentData = hasExplicitPayments
+                ? this._normalizePayments(
+                    invoiceData.payments,
+                    totalAmount,
+                    order.payment_method || 'cash'
+                )
+                : {
+                    payments: [],
+                    paidAmount: 0,
+                    paymentStatus: 'pending',
+                    primaryMethod: null
+                };
+            const paymentMethod = paymentData.primaryMethod || null;
             const invoiceLabel = `${invoiceType}-${String(pointOfSale).padStart(4, '0')}-${String(invoiceNumber).padStart(8, '0')}`;
 
             await connection.query(`
