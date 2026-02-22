@@ -159,7 +159,7 @@ export const schemas = {
     orderFilters: Joi.object({
         query: Joi.object({
             client_id: optionalUuid,
-            status: Joi.string().valid('pending', 'confirmed', 'paid', 'packed', 'dispatched', 'delivered', 'completed', 'cancelled', 'returned'),
+            status: Joi.string().valid('pending', 'picking', 'confirmed', 'paid', 'packed', 'dispatched', 'delivered', 'completed', 'cancelled', 'returned'),
             ...paginationQuery
         })
     }),
@@ -169,7 +169,7 @@ export const schemas = {
             id: uuid.required()
         }),
         body: Joi.object({
-            status: Joi.string().valid('pending', 'confirmed', 'paid', 'packed', 'dispatched', 'delivered', 'completed', 'cancelled', 'returned').required()
+            status: Joi.string().valid('pending', 'picking', 'confirmed', 'paid', 'packed', 'dispatched', 'delivered', 'completed', 'cancelled', 'returned').required()
         })
     }),
 
