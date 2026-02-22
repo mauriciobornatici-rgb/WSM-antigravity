@@ -60,13 +60,19 @@ function statusLabel(status: OrderStatus): string {
     const labels: Record<OrderStatus, string> = {
         pending: "Pendiente",
         picking: "En picking",
-        packed: "Empaquetado",
+        packed: "Listo para despacho",
         dispatched: "Despachado",
         delivered: "Entregado",
         completed: "Completado",
         cancelled: "Cancelado",
     };
     return labels[status] ?? status;
+}
+
+function packedReadyLabel(order: Order): string {
+    if (order.shipping_method === "pickup") return "Listo para retiro";
+    if (order.shipping_method === "delivery") return "Listo para envio";
+    return "Listo para despacho";
 }
 
 function getInvoiceTotal(order: Order): number {
@@ -833,7 +839,7 @@ export default function OrdersPage() {
                                 <SelectItem value="all">Todos</SelectItem>
                                 <SelectItem value="pending">Pendiente</SelectItem>
                                 <SelectItem value="picking">En picking</SelectItem>
-                                <SelectItem value="packed">Empaquetado</SelectItem>
+                                <SelectItem value="packed">Listo para despacho</SelectItem>
                                 <SelectItem value="dispatched">Despachado</SelectItem>
                                 <SelectItem value="delivered">Entregado</SelectItem>
                                 <SelectItem value="completed">Completado</SelectItem>
@@ -913,7 +919,11 @@ export default function OrdersPage() {
                                         <TableCell>
                                             {order.status === "packed" && orderHasShortage(order) ? (
                                                 <Badge className="bg-amber-600 text-white hover:bg-amber-600">
-                                                    Empaquetado c/faltante
+                                                    {packedReadyLabel(order)} c/faltante
+                                                </Badge>
+                                            ) : order.status === "packed" ? (
+                                                <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
+                                                    {packedReadyLabel(order)}
                                                 </Badge>
                                             ) : (
                                                 <Badge variant={order.status === "cancelled" ? "destructive" : "outline"}>

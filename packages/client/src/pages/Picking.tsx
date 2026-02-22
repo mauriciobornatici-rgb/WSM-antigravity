@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Box, Check, ScanLine } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
+import { isApiError } from "@/services/httpClient";
 import type { Order } from "@/types";
 import { showErrorToast } from "@/lib/errorHandling";
 import { cn } from "@/lib/utils";
@@ -61,6 +62,12 @@ function orderMissingQuantity(order: Order): number {
 
 function orderHasShortage(order: Order): boolean {
     return orderMissingQuantity(order) > 0;
+}
+
+function readyStatusLabel(order: Order): string {
+    if (order.shipping_method === "pickup") return "Listo para retiro";
+    if (order.shipping_method === "delivery") return "Listo para envio";
+    return "Listo para despacho";
 }
 
 function statusLabel(status: Order["status"]): string {
@@ -125,6 +132,27 @@ export default function PickingPage() {
 
     const pendingScanRemaining = pendingScanItem ? itemRemainingQuantity(pendingScanItem) : 0;
     const canPick = selectedOrder ? isPickableStatus(selectedOrder.status) : false;
+
+    async function transitionToPacked(order: Order): Promise<void> {
+        if (order.status === "pending") {
+            try {
+                await api.updateOrderStatus(order.id, "picking");
+            } catch (error) {
+                const payload =
+                    isApiError(error) && error.body && typeof error.body === "object"
+                        ? (error.body as Record<string, unknown>)
+                        : null;
+                const recoverable =
+                    isApiError(error)
+                    && (
+                        error.status === 409
+                        || (error.status === 400 && payload?.error === "validation_error")
+                    );
+                if (!recoverable) throw error;
+            }
+        }
+        await api.updateOrderStatus(order.id, "packed");
+    }
 
     useEffect(() => {
         if (!pendingScanItem) return;
@@ -198,21 +226,30 @@ export default function PickingPage() {
 
         try {
             await api.pickOrderItem(pendingScanItem.id, nextPicked);
-            if (allPicked) {
-                await api.updateOrderStatus(selectedOrder.id, "packed");
-                toast.success("Picking completo", {
-                    description: `Pedido ${selectedOrder.id} listo para despacho.`,
+        } catch (error) {
+            showErrorToast("Error al registrar cantidad", error);
+            await loadOrders();
+            return;
+        }
+
+        if (allPicked) {
+            try {
+                await transitionToPacked(selectedOrder);
+                toast.success("Picking finalizado", {
+                    description: `Pedido ${selectedOrder.id}: ${readyStatusLabel(selectedOrder)}.`,
                 });
                 await loadOrders();
                 return;
+            } catch (error) {
+                showErrorToast("Cantidad guardada, pero no se pudo cerrar el picking", error);
+                await loadOrders();
+                return;
             }
-            toast.success("Cantidad registrada", {
-                description: `${pendingScanItem.product_name} (${nextPicked}/${pendingScanItem.quantity})`,
-            });
-        } catch (error) {
-            showErrorToast("Error al guardar picking", error);
-            await loadOrders();
         }
+
+        toast.success("Cantidad registrada", {
+            description: `${pendingScanItem.product_name} (${nextPicked}/${pendingScanItem.quantity})`,
+        });
     }
 
     async function closeWithMissing() {
@@ -231,11 +268,11 @@ export default function PickingPage() {
         const confirmed = window.confirm(`Se cerrara el picking con faltantes (${missing} unidades). Deseas continuar?`);
         if (!confirmed) return;
         try {
-            await api.updateOrderStatus(selectedOrder.id, "packed");
+            await transitionToPacked(selectedOrder);
             setPendingScanItemId(null);
             setPendingScanQuantity(1);
             toast.warning("Picking cerrado con faltantes", {
-                description: `Quedaron ${missing} unidades pendientes.`,
+                description: `${readyStatusLabel(selectedOrder)} con ${missing} unidades pendientes.`,
             });
             await loadOrders();
         } catch (error) {
@@ -279,11 +316,11 @@ export default function PickingPage() {
                     <h2 className="text-2xl font-bold">Picking: {selectedOrder.id}</h2>
                     {packedWithShortage ? (
                         <Badge className="bg-amber-600 text-white hover:bg-amber-600">
-                            Completo con faltante
+                            {readyStatusLabel(selectedOrder)} c/faltante
                         </Badge>
                     ) : packedComplete ? (
                         <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
-                            Completo
+                            {readyStatusLabel(selectedOrder)}
                         </Badge>
                     ) : (
                         <Badge variant="outline">{statusLabel(selectedOrder.status)}</Badge>
