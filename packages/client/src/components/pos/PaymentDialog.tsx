@@ -1,4 +1,5 @@
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, UserPlus } from "lucide-react";
+import type { Client } from "@/types";
 import type { InvoiceType, PaymentMethod, PaymentSplit } from "@/components/pos/types";
 import { INVOICE_TYPE_OPTIONS, PAYMENT_METHOD_OPTIONS } from "@/components/pos/types";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 type PaymentDialogProps = {
     open: boolean;
     onOpenChange: (open: boolean) => void;
+    clients: Client[];
+    selectedClientId: string;
+    onClientChange: (clientId: string) => void;
+    onOpenClientDialog: () => void;
+    selectedClient: Client | null;
     paymentSplits: PaymentSplit[];
     onPaymentSplitsChange: (splits: PaymentSplit[]) => void;
     emitInvoice: boolean;
@@ -25,9 +31,16 @@ function roundMoney(value: number): number {
     return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
+const CONSUMIDOR_FINAL_VALUE = "__consumidor_final__";
+
 export function PaymentDialog({
     open,
     onOpenChange,
+    clients,
+    selectedClientId,
+    onClientChange,
+    onOpenClientDialog,
+    selectedClient,
     paymentSplits,
     onPaymentSplitsChange,
     emitInvoice,
@@ -41,6 +54,10 @@ export function PaymentDialog({
     const paidAmount = roundMoney(paymentSplits.reduce((sum, line) => sum + Number(line.amount || 0), 0));
     const difference = roundMoney(grandTotal - paidAmount);
     const hasBalanceError = Math.abs(difference) > 0.01;
+    const hasCreditAccountPayment = paymentSplits.some(
+        (line) => line.method === "credit_account" && Number(line.amount || 0) > 0,
+    );
+    const hasClientError = hasCreditAccountPayment && !selectedClientId;
 
     function addSplitLine() {
         onPaymentSplitsChange([
@@ -82,6 +99,48 @@ export function PaymentDialog({
                 </DialogHeader>
 
                 <div className="space-y-4">
+                    <div className="space-y-2">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <Label>Cliente</Label>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="w-full gap-2 sm:w-auto"
+                                onClick={onOpenClientDialog}
+                            >
+                                <UserPlus className="h-4 w-4" />
+                                Nuevo cliente
+                            </Button>
+                        </div>
+                        <Select
+                            value={selectedClientId || CONSUMIDOR_FINAL_VALUE}
+                            onValueChange={(value) =>
+                                onClientChange(value === CONSUMIDOR_FINAL_VALUE ? "" : value)
+                            }
+                        >
+                            <SelectTrigger>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value={CONSUMIDOR_FINAL_VALUE}>Consumidor final</SelectItem>
+                                {clients.map((client) => (
+                                    <SelectItem key={client.id} value={client.id}>
+                                        {client.name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        {selectedClient ? (
+                            <div className="rounded-md border border-slate-200 bg-slate-50/80 p-2 text-xs dark:border-slate-700 dark:bg-slate-950/40">
+                                <div className="font-medium">{selectedClient.name}</div>
+                                <div className="text-slate-500 dark:text-slate-300">{selectedClient.tax_id}</div>
+                            </div>
+                        ) : (
+                            <p className="text-xs text-slate-500 dark:text-slate-300">Se emitira como consumidor final.</p>
+                        )}
+                    </div>
+
                     <div className="space-y-2">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                             <Label>Medios de pago</Label>
@@ -133,6 +192,12 @@ export function PaymentDialog({
                             ))}
                         </div>
                     </div>
+
+                    {hasClientError ? (
+                        <p className="text-sm font-medium text-red-600 dark:text-red-400">
+                            Debes seleccionar cliente para usar cuenta corriente.
+                        </p>
+                    ) : null}
 
                     <label className="flex items-center gap-2 text-sm">
                         <input
@@ -186,7 +251,7 @@ export function PaymentDialog({
                     <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                         Cancelar
                     </Button>
-                    <Button type="button" onClick={onConfirm} disabled={processing || hasBalanceError}>
+                    <Button type="button" onClick={onConfirm} disabled={processing || hasBalanceError || hasClientError}>
                         {processing ? "Procesando..." : "Confirmar venta"}
                     </Button>
                 </div>

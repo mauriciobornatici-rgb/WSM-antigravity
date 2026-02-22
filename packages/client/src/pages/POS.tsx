@@ -399,6 +399,11 @@ export default function POSPage() {
             <PaymentDialog
                 open={paymentDialogOpen}
                 onOpenChange={setPaymentDialogOpen}
+                clients={clients}
+                selectedClientId={selectedClientId}
+                onClientChange={setSelectedClientId}
+                onOpenClientDialog={() => setClientDialogOpen(true)}
+                selectedClient={selectedClient}
                 paymentSplits={paymentSplits}
                 onPaymentSplitsChange={setPaymentSplits}
                 emitInvoice={emitInvoice}
