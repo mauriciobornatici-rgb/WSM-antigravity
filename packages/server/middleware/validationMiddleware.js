@@ -65,6 +65,10 @@ const strongPassword = Joi.string()
     });
 
 export const schemas = {
+    emptyQuery: Joi.object({
+        query: Joi.object({}).max(0)
+    }),
+
     idParam: Joi.object({
         params: Joi.object({
             id: uuid.required()
