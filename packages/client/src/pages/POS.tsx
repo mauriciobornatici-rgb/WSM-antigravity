@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { Client, CompanySettings } from "@/types";
@@ -11,8 +13,10 @@ import { PaymentDialog } from "@/components/pos/PaymentDialog";
 import { ProductCatalogCard } from "@/components/pos/ProductCatalogCard";
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog";
 import type { CartItem, InvoiceType, NewClientForm, PaymentMethod, POSProduct } from "@/components/pos/types";
+import { Button } from "@/components/ui/button";
 
 export default function POSPage() {
+    const navigate = useNavigate();
     const [products, setProducts] = useState<POSProduct[]>([]);
     const [clients, setClients] = useState<Client[]>([]);
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -295,39 +299,54 @@ export default function POSPage() {
     }
 
     return (
-        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2fr)_380px]">
-            <div className="space-y-4">
-                <ProductCatalogCard
-                    loading={loading}
-                    search={search}
-                    onSearchChange={setSearch}
-                    categoryFilter={categoryFilter}
-                    onCategoryFilterChange={setCategoryFilter}
-                    categories={categories}
-                    filteredProducts={filteredProducts}
-                    onAddToCart={addToCart}
-                    onScanSubmit={handleCatalogScan}
-                />
+        <div className="space-y-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full gap-2 sm:w-auto"
+                    onClick={() => navigate("/")}
+                >
+                    <ArrowLeft className="h-4 w-4" />
+                    Volver al menu principal
+                </Button>
+                <p className="text-sm text-muted-foreground">Terminal de venta</p>
             </div>
 
-            <div className="space-y-4">
-                <CartPanelCard
-                    clients={clients}
-                    selectedClientId={selectedClientId}
-                    onClientChange={setSelectedClientId}
-                    onOpenClientDialog={() => setClientDialogOpen(true)}
-                    selectedClient={selectedClient}
-                    cart={cart}
-                    onRemoveFromCart={removeFromCart}
-                    onUpdateQuantity={updateQuantity}
-                    subtotal={subtotal}
-                    taxLabel={taxLabel}
-                    taxAmount={taxAmount}
-                    grandTotal={grandTotal}
-                    onOpenPaymentDialog={() => setPaymentDialogOpen(true)}
-                    currentShift={currentShift}
-                    currentRegister={currentRegister}
-                />
+            <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2fr)_380px]">
+                <div className="space-y-4">
+                    <ProductCatalogCard
+                        loading={loading}
+                        search={search}
+                        onSearchChange={setSearch}
+                        categoryFilter={categoryFilter}
+                        onCategoryFilterChange={setCategoryFilter}
+                        categories={categories}
+                        filteredProducts={filteredProducts}
+                        onAddToCart={addToCart}
+                        onScanSubmit={handleCatalogScan}
+                    />
+                </div>
+
+                <div className="space-y-4">
+                    <CartPanelCard
+                        clients={clients}
+                        selectedClientId={selectedClientId}
+                        onClientChange={setSelectedClientId}
+                        onOpenClientDialog={() => setClientDialogOpen(true)}
+                        selectedClient={selectedClient}
+                        cart={cart}
+                        onRemoveFromCart={removeFromCart}
+                        onUpdateQuantity={updateQuantity}
+                        subtotal={subtotal}
+                        taxLabel={taxLabel}
+                        taxAmount={taxAmount}
+                        grandTotal={grandTotal}
+                        onOpenPaymentDialog={() => setPaymentDialogOpen(true)}
+                        currentShift={currentShift}
+                        currentRegister={currentRegister}
+                    />
+                </div>
             </div>
 
             <PaymentDialog
