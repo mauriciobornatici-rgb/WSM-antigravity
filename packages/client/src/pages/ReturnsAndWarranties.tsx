@@ -64,6 +64,42 @@ function readIsoDate(value: unknown): string {
     return typeof value === "string" && value.length > 0 ? value : new Date().toISOString();
 }
 
+function warrantyStatusLabel(status: string): string {
+    const labels: Record<string, string> = {
+        initiated: "Iniciada",
+        received: "Recibida",
+        in_progress: "En proceso",
+        resolved: "Resuelta",
+        rejected: "Rechazada",
+        closed: "Cerrada",
+    };
+    return labels[status] ?? status;
+}
+
+function returnStatusLabel(status: string): string {
+    const labels: Record<string, string> = {
+        draft: "Borrador",
+        initiated: "Iniciada",
+        pending: "Pendiente",
+        approved: "Aprobada",
+        rejected: "Rechazada",
+        closed: "Cerrada",
+    };
+    return labels[status] ?? status;
+}
+
+function creditNoteStatusLabel(status: string): string {
+    const labels: Record<string, string> = {
+        draft: "Borrador",
+        pending: "Pendiente",
+        issued: "Emitida",
+        approved: "Aprobada",
+        cancelled: "Anulada",
+        closed: "Cerrada",
+    };
+    return labels[status] ?? status;
+}
+
 function mapWarrantyRows(rows: GenericRow[]): WarrantyRow[] {
     return rows.map((row) => ({
         id: readText(row.id, crypto.randomUUID()),
@@ -282,7 +318,7 @@ function WarrantiesTab() {
                                         <TableCell>{warranty.product_name}</TableCell>
                                         <TableCell>{warranty.issue_description}</TableCell>
                                         <TableCell>
-                                            <Badge variant="outline">{warranty.status}</Badge>
+                                            <Badge variant="outline">{warrantyStatusLabel(warranty.status)}</Badge>
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <Select
@@ -501,7 +537,9 @@ function ReturnsTab() {
                                         <TableCell>{row.client_name}</TableCell>
                                         <TableCell>{row.reason}</TableCell>
                                         <TableCell>
-                                            <Badge variant={row.status === "approved" ? "default" : "outline"}>{row.status}</Badge>
+                                            <Badge variant={row.status === "approved" ? "default" : "outline"}>
+                                                {returnStatusLabel(row.status)}
+                                            </Badge>
                                         </TableCell>
                                         <TableCell className="text-right">${row.total_amount.toLocaleString("es-AR")}</TableCell>
                                         <TableCell className="text-right">
@@ -687,7 +725,7 @@ function CreditNotesTab() {
                                         <TableCell>{row.number}</TableCell>
                                         <TableCell>{row.client_name}</TableCell>
                                         <TableCell>
-                                            <Badge variant="outline">{row.status}</Badge>
+                                            <Badge variant="outline">{creditNoteStatusLabel(row.status)}</Badge>
                                         </TableCell>
                                         <TableCell className="text-right">${row.amount.toLocaleString("es-AR")}</TableCell>
                                     </TableRow>
