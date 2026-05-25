@@ -16,8 +16,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-function sortItemsByLocation(order: Order): Order {
-    const sortedItems = [...order.items].sort((left, right) => (left.location || "").localeCompare(right.location || ""));
+function sortItemsByLocation(order: Order, descending: boolean = true): Order {
+    const items = order.items || [];
+    const sortedItems = [...items].sort((left, right) => {
+        const locA = left.location || "";
+        const locB = right.location || "";
+        if (locA === locB) return 0;
+        if (!locA) return 1;
+        if (!locB) return -1;
+        return descending ? locB.localeCompare(locA) : locA.localeCompare(locB);
+    });
     return {
         ...order,
         items: sortedItems,
@@ -25,9 +33,10 @@ function sortItemsByLocation(order: Order): Order {
 }
 
 function toPickedFlag(order: Order): Order {
+    const items = order.items || [];
     return {
         ...order,
-        items: order.items.map((item) => ({
+        items: items.map((item) => ({
             ...item,
             picked: Number(item.picked_quantity || 0) >= Number(item.quantity || 0),
         })),
@@ -51,11 +60,13 @@ function itemIsPartial(item: Order["items"][number]): boolean {
 }
 
 function orderTotalQuantity(order: Order): number {
-    return order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    const items = order.items || [];
+    return items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
 }
 
 function orderPickedQuantity(order: Order): number {
-    return order.items.reduce((sum, item) => sum + Number(item.picked_quantity || 0), 0);
+    const items = order.items || [];
+    return items.reduce((sum, item) => sum + Number(item.picked_quantity || 0), 0);
 }
 
 function orderMissingQuantity(order: Order): number {
@@ -97,6 +108,27 @@ export default function PickingPage() {
     const [loading, setLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+    const [routeDirection, setRouteDirection] = useState<'desc' | 'asc'>('desc');
+    const [pickingStep, setPickingStep] = useState<'location' | 'barcode' | 'quantity'>('location');
+    const [isLocationVerified, setIsLocationVerified] = useState(false);
+    const [isBarcodeVerified, setIsBarcodeVerified] = useState(false);
+
+    const selectItemForPicking = useCallback((item: Order["items"][number]) => {
+        setPendingScanItemId(item.id);
+        const remaining = Math.max(1, Number(item.quantity || 0) - Number(item.picked_quantity || 0));
+        setPendingScanQuantity(remaining);
+        
+        const hasNoLocation = !item.location || item.location.trim().toLowerCase() === "general" || item.location.trim() === "";
+        if (hasNoLocation) {
+            setPickingStep('barcode');
+            setIsLocationVerified(true);
+        } else {
+            setPickingStep('location');
+            setIsLocationVerified(false);
+        }
+        setIsBarcodeVerified(false);
+    }, []);
+
     const loadOrders = useCallback(async () => {
         try {
             setLoading(true);
@@ -127,6 +159,18 @@ export default function PickingPage() {
         const picked = orderPickedQuantity(selectedOrder);
         return Math.round((picked / total) * 100);
     }, [selectedOrder]);
+
+    const sortedItems = useMemo(() => {
+        if (!selectedOrder) return [];
+        return [...selectedOrder.items].sort((left, right) => {
+            const locA = left.location || "";
+            const locB = right.location || "";
+            if (locA === locB) return 0;
+            if (!locA) return 1;
+            if (!locB) return -1;
+            return routeDirection === "desc" ? locB.localeCompare(locA) : locA.localeCompare(locB);
+        });
+    }, [selectedOrder, routeDirection]);
 
     const pendingScanItem = useMemo(() => {
         if (!selectedOrder || !pendingScanItemId) return null;
@@ -181,24 +225,77 @@ export default function PickingPage() {
             return;
         }
 
-        const scannedSku = scannerInput.toUpperCase().trim();
-        if (!scannedSku) return;
+        const scannedText = scannerInput.toUpperCase().trim();
+        setScannerInput("");
+        if (!scannedText) return;
 
-        const foundItem = selectedOrder.items.find(
-            (item) => item.sku.toUpperCase() === scannedSku && itemRemainingQuantity(item) > 0,
-        );
-        if (!foundItem) {
-            toast.error("SKU invalido o ya completo", {
-                description: `El SKU ${scannedSku} no tiene pendiente en este pedido.`,
-            });
-            setScannerInput("");
+        // CASE 1: There is an active pending item
+        if (pendingScanItem) {
+            if (pickingStep === 'location') {
+                const targetLoc = (pendingScanItem.location || "").toUpperCase().trim();
+                if (scannedText === targetLoc) {
+                    setIsLocationVerified(true);
+                    setPickingStep('barcode');
+                    toast.success("¡Ubicación confirmada!");
+                    void api.recordPickingEvent(selectedOrder.id, {
+                        product_id: pendingScanItem.product_id,
+                        action_type: 'location_verified',
+                        location_code: targetLoc
+                    });
+                } else {
+                    toast.error(`Ubicación incorrecta: ${scannedText}`, {
+                        description: `Debes ir a la ubicación: ${pendingScanItem.location || "Sin ubicación"}`,
+                    });
+                }
+            } else if (pickingStep === 'barcode') {
+                const skuMatch = pendingScanItem.sku.toUpperCase() === scannedText;
+                const barcodeMatch = pendingScanItem.barcode && pendingScanItem.barcode.toUpperCase() === scannedText;
+                if (skuMatch || barcodeMatch) {
+                    setIsBarcodeVerified(true);
+                    setPickingStep('quantity');
+                    toast.success("¡Producto verificado!");
+                    void api.recordPickingEvent(selectedOrder.id, {
+                        product_id: pendingScanItem.product_id,
+                        action_type: 'barcode_scanned',
+                        barcode_scanned: scannedText
+                    });
+                } else {
+                    toast.error(`Producto incorrecto`, {
+                        description: `Se esperaba el SKU/Código: ${pendingScanItem.sku}`,
+                    });
+                }
+            }
             return;
         }
 
-        const remaining = itemRemainingQuantity(foundItem);
-        setPendingScanItemId(foundItem.id);
-        setPendingScanQuantity(Math.max(1, remaining));
-        setScannerInput("");
+        // CASE 2: No active pending item, let's look up by scanned location, SKU, or barcode!
+        // First try matching location of any incomplete item
+        const matchingLocItem = sortedItems.find(
+            (item) => (item.location || "").toUpperCase().trim() === scannedText && itemRemainingQuantity(item) > 0
+        );
+        if (matchingLocItem) {
+            selectItemForPicking(matchingLocItem);
+            toast.info(`Ubicación detectada: ${matchingLocItem.location}`, {
+                description: `Iniciando recolección de ${matchingLocItem.product_name}`,
+            });
+            return;
+        }
+
+        // Next try matching SKU or barcode of any incomplete item
+        const matchingProductItem = sortedItems.find(
+            (item) =>
+                (item.sku.toUpperCase() === scannedText || (item.barcode && item.barcode.toUpperCase() === scannedText)) &&
+                itemRemainingQuantity(item) > 0
+        );
+        if (matchingProductItem) {
+            selectItemForPicking(matchingProductItem);
+            toast.success(`Producto detectado: ${matchingProductItem.product_name}`);
+            return;
+        }
+
+        toast.error("Código no reconocido", {
+            description: `El código ${scannedText} no coincide con ninguna ubicación o producto pendiente en este pedido.`,
+        });
     }
 
     async function confirmPendingScan() {
@@ -233,8 +330,6 @@ export default function PickingPage() {
         const allPicked = nextItems.every((item) => itemIsComplete(item));
 
         setSelectedOrder(nextOrder);
-        setPendingScanItemId(null);
-        setPendingScanQuantity(1);
 
         try {
             await api.pickOrderItem(pendingScanItem.id, nextPicked);
@@ -250,11 +345,15 @@ export default function PickingPage() {
                 toast.success("Picking finalizado", {
                     description: `Pedido ${selectedOrder.id}: ${readyStatusLabel(selectedOrder)}.`,
                 });
+                setPendingScanItemId(null);
+                setPendingScanQuantity(1);
                 await queryClient.invalidateQueries({ queryKey: queryKeys.orders.all });
                 await loadOrders();
                 return;
             } catch (error) {
                 showErrorToast("Cantidad guardada, pero no se pudo cerrar el picking", error);
+                setPendingScanItemId(null);
+                setPendingScanQuantity(1);
                 await loadOrders();
                 return;
             }
@@ -263,6 +362,25 @@ export default function PickingPage() {
         toast.success("Cantidad registrada", {
             description: `${pendingScanItem.product_name} (${nextPicked}/${pendingScanItem.quantity})`,
         });
+
+        // Auto-advance to the next incomplete item along the sorted route!
+        const nextIncompleteItem = [...nextItems]
+            .sort((left, right) => {
+                const locA = left.location || "";
+                const locB = right.location || "";
+                if (locA === locB) return 0;
+                if (!locA) return 1;
+                if (!locB) return -1;
+                return routeDirection === "desc" ? locB.localeCompare(locA) : locA.localeCompare(locB);
+            })
+            .find((item) => Number(item.picked_quantity || 0) < Number(item.quantity || 0));
+
+        if (nextIncompleteItem) {
+            selectItemForPicking(nextIncompleteItem);
+        } else {
+            setPendingScanItemId(null);
+            setPendingScanQuantity(1);
+        }
     }
 
     async function closeWithMissing() {
@@ -281,6 +399,11 @@ export default function PickingPage() {
         const confirmed = window.confirm(`Se cerrara el picking con faltantes (${missing} unidades). Deseas continuar?`);
         if (!confirmed) return;
         try {
+            void api.recordPickingEvent(selectedOrder.id, {
+                product_id: "order_shortage_close",
+                action_type: "shortage_closed",
+                quantity: missing,
+            });
             await transitionToPacked(selectedOrder.id);
             setPendingScanItemId(null);
             setPendingScanQuantity(1);
@@ -351,28 +474,46 @@ export default function PickingPage() {
 
         return (
             <div className="space-y-6">
-                <div className="flex items-center gap-4">
-                    <Button variant="ghost" onClick={() => navigate("/orders")}>
-                        <ArrowLeft className="mr-2 h-4 w-4" />
-                        Volver a pedidos
-                    </Button>
-                    <h2 className="text-2xl font-bold">Picking: {selectedOrder.id}</h2>
-                    {packedWithShortage ? (
-                        <Badge className="bg-amber-600 text-white hover:bg-amber-600">
-                            {readyStatusLabel(selectedOrder)} c/faltante
-                        </Badge>
-                    ) : packedComplete ? (
-                        <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
-                            {readyStatusLabel(selectedOrder)}
-                        </Badge>
-                    ) : canFinalizeNow ? (
-                        <Badge className="bg-blue-600 text-white hover:bg-blue-600">
-                            Listo para cerrar
-                        </Badge>
-                    ) : (
-                        <Badge variant="outline">{statusLabel(selectedOrder.status)}</Badge>
-                    )}
-                    <Badge className="bg-blue-600">{completion}%</Badge>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b pb-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                        <Button variant="ghost" size="sm" onClick={() => navigate("/orders")}>
+                            <ArrowLeft className="mr-2 h-4 w-4" />
+                            Volver a pedidos
+                        </Button>
+                        <h2 className="text-2xl font-bold font-sans">Picking: {selectedOrder.id}</h2>
+                        {packedWithShortage ? (
+                            <Badge className="bg-amber-500/20 text-amber-700 border-amber-300 hover:bg-amber-500/20 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-800/50 font-semibold">
+                                {readyStatusLabel(selectedOrder)} c/faltante
+                            </Badge>
+                        ) : packedComplete ? (
+                            <Badge className="bg-emerald-500/20 text-emerald-700 border-emerald-300 hover:bg-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-800/50 font-semibold">
+                                {readyStatusLabel(selectedOrder)}
+                            </Badge>
+                        ) : canFinalizeNow ? (
+                            <Badge className="bg-blue-600 text-white font-semibold">
+                                Listo para cerrar
+                            </Badge>
+                        ) : (
+                            <Badge variant="outline" className="font-semibold">{statusLabel(selectedOrder.status)}</Badge>
+                        )}
+                        <Badge className="bg-blue-600 text-white font-bold">{completion}%</Badge>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <Label className="text-xs font-semibold text-slate-500 shrink-0">Ruta de picking:</Label>
+                        <Select 
+                            value={routeDirection} 
+                            onValueChange={(val) => setRouteDirection(val as 'desc' | 'asc')}
+                        >
+                            <SelectTrigger className="w-48 h-9 text-xs font-semibold">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="desc">Mayor a Menor (Optimizada)</SelectItem>
+                                <SelectItem value="asc">Menor a Mayor (Normal)</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
                 </div>
 
                 <Card
@@ -424,41 +565,171 @@ export default function PickingPage() {
                         </form>
 
                         {pendingScanItem && canPick ? (
-                            <div className="mt-4 space-y-3 rounded-md border border-blue-500/30 bg-blue-500/10 p-3">
-                                <div className="space-y-1">
-                                    <p className="text-sm font-semibold">{pendingScanItem.product_name}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                        SKU: {pendingScanItem.sku} | Solicitado: {pendingScanItem.quantity} | Recolectado: {Number(pendingScanItem.picked_quantity || 0)} | Pendiente: {pendingScanRemaining}
-                                    </p>
-                                </div>
-                                <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)] md:items-end">
-                                    <div className="space-y-2">
-                                        <Label>Cantidad a registrar</Label>
-                                        <Select
-                                            value={String(pendingScanQuantity)}
-                                            onValueChange={(value) => setPendingScanQuantity(Number(value))}
-                                        >
-                                            <SelectTrigger>
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {Array.from({ length: Math.max(1, pendingScanRemaining) }, (_, index) => index + 1).map((value) => (
-                                                    <SelectItem key={value} value={String(value)}>
-                                                        {value}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
+                            <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 dark:border-blue-400/30 dark:bg-blue-950/20 p-4 space-y-4 shadow-sm">
+                                {/* Steps header */}
+                                <div className="flex items-center justify-between border-b border-blue-500/20 pb-3">
+                                    <div>
+                                        <h3 className="font-bold text-slate-900 dark:text-slate-100">{pendingScanItem.product_name}</h3>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400">SKU: {pendingScanItem.sku} | Cantidad Solicitada: {pendingScanItem.quantity}</p>
                                     </div>
-                                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                                        <Button type="button" variant="outline" onClick={() => setPendingScanItemId(null)}>
-                                            Cancelar
-                                        </Button>
-                                        <Button type="button" onClick={() => void confirmPendingScan()}>
-                                            Confirmar cantidad
-                                        </Button>
+                                    <Badge className="bg-blue-600 dark:bg-blue-500">
+                                        {pickingStep === 'location' ? "Paso 1: Ubicación" : pickingStep === 'barcode' ? "Paso 2: Producto" : "Paso 3: Cantidad"}
+                                    </Badge>
+                                </div>
+
+                                {/* Visual progress dots */}
+                                <div className="flex items-center justify-center gap-6 py-2 text-xs font-semibold">
+                                    <div className="flex items-center gap-2">
+                                        <span className={cn(
+                                            "flex h-6 w-6 items-center justify-center rounded-full border text-xs",
+                                            isLocationVerified 
+                                                ? "bg-emerald-600 border-emerald-600 text-white" 
+                                                : pickingStep === 'location' 
+                                                    ? "bg-blue-600 border-blue-600 text-white animate-pulse" 
+                                                    : "border-slate-300 text-slate-400"
+                                        )}>
+                                            {isLocationVerified ? "✓" : "1"}
+                                        </span>
+                                        <span className={isLocationVerified ? "text-emerald-500" : pickingStep === 'location' ? "text-blue-500" : "text-slate-400"}>Ubicación</span>
+                                    </div>
+                                    <div className="h-[1px] w-8 bg-slate-300 dark:bg-slate-700" />
+                                    <div className="flex items-center gap-2">
+                                        <span className={cn(
+                                            "flex h-6 w-6 items-center justify-center rounded-full border text-xs",
+                                            isBarcodeVerified 
+                                                ? "bg-emerald-600 border-emerald-600 text-white" 
+                                                : pickingStep === 'barcode' 
+                                                    ? "bg-blue-600 border-blue-600 text-white animate-pulse" 
+                                                    : "border-slate-300 text-slate-400"
+                                        )}>
+                                            {isBarcodeVerified ? "✓" : "2"}
+                                        </span>
+                                        <span className={isBarcodeVerified ? "text-emerald-500" : pickingStep === 'barcode' ? "text-blue-500" : "text-slate-400"}>Producto</span>
+                                    </div>
+                                    <div className="h-[1px] w-8 bg-slate-300 dark:bg-slate-700" />
+                                    <div className="flex items-center gap-2">
+                                        <span className={cn(
+                                            "flex h-6 w-6 items-center justify-center rounded-full border text-xs",
+                                            pickingStep === 'quantity' ? "bg-blue-600 border-blue-600 text-white animate-pulse" : "border-slate-300 text-slate-400"
+                                        )}>
+                                            3
+                                        </span>
+                                        <span className={pickingStep === 'quantity' ? "text-blue-500 animate-pulse" : "text-slate-400"}>Cantidad</span>
                                     </div>
                                 </div>
+
+                                {/* Step Content */}
+                                {pickingStep === 'location' && (
+                                    <div className="space-y-3 bg-white/50 dark:bg-black/20 p-3 rounded-lg border border-blue-500/10">
+                                        <div className="text-center py-2">
+                                            <p className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-bold">Dirígete a la ubicación</p>
+                                            <p className="text-2xl font-extrabold text-blue-600 dark:text-blue-400 font-mono mt-1">{pendingScanItem.location || "Sin ubicación"}</p>
+                                        </div>
+                                        <div className="flex flex-col gap-2">
+                                            <p className="text-xs text-center text-slate-500">Usa el lector para escanear el código del estante o haz clic abajo para verificar manualmente.</p>
+                                            <Button 
+                                                type="button" 
+                                                variant="secondary" 
+                                                size="sm"
+                                                onClick={() => {
+                                                    setIsLocationVerified(true);
+                                                    setPickingStep('barcode');
+                                                    toast.success("¡Ubicación confirmada manualmente!");
+                                                    void api.recordPickingEvent(selectedOrder.id, {
+                                                        product_id: pendingScanItem.product_id,
+                                                        action_type: 'location_verified_manual',
+                                                        location_code: pendingScanItem.location
+                                                    });
+                                                }}
+                                            >
+                                                Confirmar ubicación manualmente
+                                            </Button>
+                                        </div>
+                                    </div>
+                                )}
+ 
+                                {pickingStep === 'barcode' && (
+                                    <div className="space-y-3 bg-white/50 dark:bg-black/20 p-3 rounded-lg border border-blue-500/10">
+                                        <div className="text-center py-2">
+                                            <p className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-bold">Escanea el producto</p>
+                                            <p className="text-lg font-bold text-slate-900 dark:text-slate-100 mt-1">{pendingScanItem.product_name}</p>
+                                            <div className="flex justify-center gap-4 text-xs font-mono text-slate-500 dark:text-slate-400 mt-1 bg-slate-100 dark:bg-slate-900 py-1 px-3 rounded-md w-fit mx-auto">
+                                                <span>SKU: {pendingScanItem.sku}</span>
+                                                {pendingScanItem.barcode && <span>EAN: {pendingScanItem.barcode}</span>}
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-col gap-2">
+                                            <p className="text-xs text-center text-slate-500">Escanea el código de barra del artículo o haz clic abajo para omitir el escaneo.</p>
+                                            <Button 
+                                                type="button" 
+                                                variant="secondary" 
+                                                size="sm"
+                                                onClick={() => {
+                                                    setIsBarcodeVerified(true);
+                                                    setPickingStep('quantity');
+                                                    toast.success("¡Producto verificado manualmente!");
+                                                    void api.recordPickingEvent(selectedOrder.id, {
+                                                        product_id: pendingScanItem.product_id,
+                                                        action_type: 'barcode_scanned_manual',
+                                                        barcode_scanned: pendingScanItem.sku
+                                                    });
+                                                }}
+                                            >
+                                                Omitir escaneo y verificar producto
+                                            </Button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {pickingStep === 'quantity' && (
+                                    <div className="space-y-3 bg-white/50 dark:bg-black/20 p-3 rounded-lg border border-blue-500/10">
+                                        <div className="text-center py-1">
+                                            <p className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-bold">Confirma la cantidad recolectada</p>
+                                            <p className="text-lg font-bold text-slate-800 dark:text-slate-200 mt-1">{pendingScanItem.product_name}</p>
+                                        </div>
+                                        
+                                        <div className="flex flex-col gap-3 items-center justify-center">
+                                            <div className="flex items-center gap-4">
+                                                <Button 
+                                                    type="button" 
+                                                    variant="outline" 
+                                                    size="icon" 
+                                                    className="h-10 w-10 text-xl font-bold"
+                                                    onClick={() => setPendingScanQuantity(prev => Math.max(1, prev - 1))}
+                                                >
+                                                    -
+                                                </Button>
+                                                <Input 
+                                                    type="number" 
+                                                    min="1" 
+                                                    max={pendingScanRemaining} 
+                                                    value={pendingScanQuantity} 
+                                                    onChange={(e) => setPendingScanQuantity(Math.max(1, Math.min(pendingScanRemaining, Number(e.target.value || 1))))}
+                                                    className="w-20 text-center font-bold text-lg"
+                                                />
+                                                <Button 
+                                                    type="button" 
+                                                    variant="outline" 
+                                                    size="icon" 
+                                                    className="h-10 w-10 text-xl font-bold"
+                                                    onClick={() => setPendingScanQuantity(prev => Math.min(pendingScanRemaining, prev + 1))}
+                                                >
+                                                    +
+                                                </Button>
+                                            </div>
+                                            <span className="text-xs text-slate-500 dark:text-slate-400">Máximo pendiente: {pendingScanRemaining} unidades</span>
+                                        </div>
+
+                                        <div className="flex justify-end gap-2 border-t pt-3 mt-2">
+                                            <Button type="button" variant="ghost" onClick={() => setPendingScanItemId(null)}>
+                                                Cancelar
+                                            </Button>
+                                            <Button type="button" className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold" onClick={() => void confirmPendingScan()}>
+                                                Confirmar y Avanzar
+                                            </Button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         ) : null}
 
@@ -480,21 +751,25 @@ export default function PickingPage() {
                 </Card>
 
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {selectedOrder.items.map((item, index) => {
+                    {sortedItems.map((item, index) => {
                         const remaining = itemRemainingQuantity(item);
                         const complete = itemIsComplete(item);
                         const warning = itemIsPartial(item) || (!canPick && remaining > 0);
+                        const isActive = pendingScanItemId === item.id;
 
                         return (
                             <Card
                                 key={`${item.id}-${index}`}
+                                onClick={() => !complete && canPick && selectItemForPicking(item)}
                                 className={cn(
-                                    "transition",
-                                    complete
-                                        ? "border-emerald-500/40 bg-emerald-500/10 dark:border-emerald-500/50 dark:bg-emerald-500/10"
-                                        : warning
-                                            ? "border-amber-500/40 bg-amber-500/10 dark:border-amber-400/50 dark:bg-amber-500/10"
-                                            : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/70",
+                                    "transition duration-200 cursor-pointer",
+                                    isActive
+                                        ? "border-blue-500 bg-blue-500/5 ring-2 ring-blue-500/20 dark:border-blue-400 dark:bg-blue-950/20"
+                                        : complete
+                                            ? "border-emerald-500/40 bg-emerald-500/10 dark:border-emerald-500/50 dark:bg-emerald-500/10 hover:bg-emerald-500/5 cursor-default"
+                                            : warning
+                                                ? "border-amber-500/40 bg-amber-500/10 dark:border-amber-400/50 dark:bg-amber-500/10 hover:border-amber-500"
+                                                : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/70 hover:border-blue-500 dark:hover:border-blue-400",
                                 )}
                             >
                                 <CardContent className="space-y-3 p-4">

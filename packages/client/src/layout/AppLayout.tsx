@@ -33,25 +33,53 @@ export default function AppLayout() {
         warehouse: "Depósito",
     };
 
-    const navItems = [
-        { name: "Inicio", href: "/", icon: LayoutDashboard, roles: ["admin", "manager", "cashier", "warehouse"] },
-        { name: "Inventario (WMS)", href: "/inventory", icon: Package, roles: ["admin", "manager", "warehouse"] },
-        { name: "Órdenes de compra", href: "/purchase-orders", icon: FileSpreadsheet, roles: ["admin", "manager"] },
-        { name: "Recepciones", href: "/receptions", icon: ClipboardCheck, roles: ["admin", "manager", "warehouse"] },
-        { name: "Proveedores", href: "/suppliers", icon: Truck, roles: ["admin", "manager"] },
-        { name: "Pedidos y preparación", href: "/orders", icon: ClipboardList, roles: ["admin", "manager", "cashier", "warehouse"] },
-        { name: "Clientes", href: "/clients", icon: Users, roles: ["admin", "manager", "cashier"] },
-        { name: "Reclamos y garantías", href: "/returns-warranties", icon: BadgeAlert, roles: ["admin", "manager", "cashier"] },
-        { name: "Punto de Venta", href: "/pos", icon: ShoppingCart, roles: ["admin", "cashier"] },
-        { name: "Facturación", href: "/invoices", icon: Printer, roles: ["admin", "manager", "cashier"] },
-        { name: "Gestión de caja", href: "/cash-management", icon: Landmark, roles: ["admin", "cashier"] },
-        { name: "Contabilidad", href: "/accounting", icon: FileText, roles: ["admin"] },
-        { name: "Configuración", href: "/settings", icon: Settings, roles: ["admin"] },
+    const navSections = [
+        {
+            title: "General",
+            items: [
+                { name: "Inicio", href: "/", icon: LayoutDashboard, roles: ["admin", "manager", "cashier", "warehouse"] },
+            ]
+        },
+        {
+            title: "Operaciones y POS",
+            items: [
+                { name: "Punto de Venta", href: "/pos", icon: ShoppingCart, roles: ["admin", "cashier"] },
+                { name: "Pedidos y preparación", href: "/orders", icon: ClipboardList, roles: ["admin", "manager", "cashier", "warehouse"] },
+                { name: "Clientes", href: "/clients", icon: Users, roles: ["admin", "manager", "cashier"] },
+            ]
+        },
+        {
+            title: "Depósito y Logística",
+            items: [
+                { name: "Inventario (WMS)", href: "/inventory", icon: Package, roles: ["admin", "manager", "warehouse"] },
+                { name: "Órdenes de compra", href: "/purchase-orders", icon: FileSpreadsheet, roles: ["admin", "manager"] },
+                { name: "Recepciones", href: "/receptions", icon: ClipboardCheck, roles: ["admin", "manager", "warehouse"] },
+                { name: "Proveedores", href: "/suppliers", icon: Truck, roles: ["admin", "manager"] },
+                { name: "Reclamos y garantías", href: "/returns-warranties", icon: BadgeAlert, roles: ["admin", "manager", "cashier"] },
+            ]
+        },
+        {
+            title: "Administración y Finanzas",
+            items: [
+                { name: "Facturación", href: "/invoices", icon: Printer, roles: ["admin", "manager", "cashier"] },
+                { name: "Gestión de caja", href: "/cash-management", icon: Landmark, roles: ["admin", "cashier"] },
+                { name: "Contabilidad", href: "/accounting", icon: FileText, roles: ["admin"] },
+                { name: "Configuración", href: "/settings", icon: Settings, roles: ["admin"] },
+            ]
+        }
     ];
 
-    const filteredNavItems = navItems.filter((item) => !item.roles || (user && item.roles.includes(user.role)));
+    const allNavItems = navSections.flatMap((sec) => sec.items);
+    const filteredNavItems = allNavItems.filter((item) => !item.roles || (user && item.roles.includes(user.role)));
     const activeNavItem = filteredNavItems.find((item) => item.href === location.pathname);
     const ActiveIcon = activeNavItem?.icon;
+
+    const filteredSections = navSections
+        .map((sec) => ({
+            ...sec,
+            items: sec.items.filter((item) => !item.roles || (user && item.roles.includes(user.role)))
+        }))
+        .filter((sec) => sec.items.length > 0);
 
     return (
         <div className="min-h-screen bg-background flex text-foreground font-sans antialiased overflow-hidden">
@@ -61,7 +89,7 @@ export default function AppLayout() {
                     collapsed ? "w-16" : "w-64"
                 )}
             >
-                <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800">
+                <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800 shrink-0">
                     {!collapsed && <span className="font-bold text-xl text-blue-400 tracking-tight">SportsERP</span>}
                     <Button
                         variant="ghost"
@@ -73,26 +101,40 @@ export default function AppLayout() {
                     </Button>
                 </div>
 
-                <nav className="flex-1 p-2 space-y-2">
-                    {filteredNavItems.map((item) => {
-                        const isActive = location.pathname === item.href;
-                        return (
-                            <Link
-                                key={item.href}
-                                to={item.href}
-                                className={cn(
-                                    "flex items-center gap-3 px-3 py-3 rounded-lg transition-all duration-200",
-                                    isActive
-                                        ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20"
-                                        : "hover:bg-slate-800/50 text-slate-400 hover:text-white",
-                                    collapsed && "justify-center px-2"
-                                )}
-                            >
-                                <item.icon className={cn("h-5 w-5", isActive ? "text-white" : "text-slate-400 group-hover:text-white")} />
-                                {!collapsed && <span>{item.name}</span>}
-                            </Link>
-                        );
-                    })}
+                <nav className="flex-1 p-2 space-y-4 overflow-y-auto scrollbar-none">
+                    {filteredSections.map((sec) => (
+                        <div key={sec.title} className="space-y-1">
+                            {!collapsed && (
+                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-3 mb-1.5 mt-3 select-none">
+                                    {sec.title}
+                                </div>
+                            )}
+                            {collapsed && sec.title !== "General" && (
+                                <div className="border-t border-slate-800/40 my-2 mx-2" />
+                            )}
+                            <div className="space-y-1">
+                                {sec.items.map((item) => {
+                                    const isActive = location.pathname === item.href;
+                                    return (
+                                        <Link
+                                            key={item.href}
+                                            to={item.href}
+                                            className={cn(
+                                                "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group text-sm",
+                                                isActive
+                                                    ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20 font-medium"
+                                                    : "hover:bg-slate-800/40 text-slate-400 hover:text-white",
+                                                collapsed && "justify-center px-2"
+                                            )}
+                                        >
+                                            <item.icon className={cn("h-4 w-4 shrink-0", isActive ? "text-white" : "text-slate-400 group-hover:text-white")} />
+                                            {!collapsed && <span>{item.name}</span>}
+                                        </Link>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
                 </nav>
             </aside>
 

@@ -4,10 +4,63 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>wsm-antigravity</title>
+    <title>WSM SportsERP</title>
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      (function() {
+        function showError(title, message, stack) {
+          var errDiv = document.getElementById('debug-error-banner');
+          if (!errDiv) {
+            errDiv = document.createElement('div');
+            errDiv.id = 'debug-error-banner';
+            errDiv.style.position = 'fixed';
+            errDiv.style.top = '0';
+            errDiv.style.left = '0';
+            errDiv.style.width = '100%';
+            errDiv.style.height = '100%';
+            errDiv.style.backgroundColor = '#8b0000';
+            errDiv.style.color = '#ffffff';
+            errDiv.style.zIndex = '999999999';
+            errDiv.style.padding = '30px';
+            errDiv.style.fontFamily = 'Consolas, Monaco, monospace';
+            errDiv.style.fontSize = '16px';
+            errDiv.style.lineHeight = '1.5';
+            errDiv.style.overflow = 'auto';
+            errDiv.style.boxSizing = 'border-box';
+            document.body.appendChild(errDiv);
+          }
+          errDiv.innerHTML = '<h1 style="font-size: 24px; margin-top: 0; color: #ff6b6b; border-bottom: 2px solid #ff6b6b; padding-bottom: 10px;">' + title + '</h1>' +
+            '<p style="font-weight: bold; font-size: 18px; margin: 15px 0;">' + message + '</p>' +
+            '<pre style="background: #1a0000; padding: 15px; border-radius: 6px; border: 1px solid #550000; overflow-x: auto; white-space: pre-wrap; word-break: break-all; color: #ffcccc;">' + (stack || 'No stack trace available') + '</pre>' +
+            '<button onclick="location.reload()" style="margin-top: 20px; padding: 10px 20px; background: #ff6b6b; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 14px;">Recargar Página</button>';
+        }
+
+        window.addEventListener('error', function(e) {
+          showError('Crash de JavaScript Detectado!', e.message || 'Error desconocido', e.error ? e.error.stack : '');
+        });
+
+        window.addEventListener('unhandledrejection', function(e) {
+          var msg = 'Rechazo de Promesa No Manejado';
+          var reason = e.reason;
+          var stack = '';
+          if (reason) {
+            if (reason instanceof Error) {
+              msg = reason.message;
+              stack = reason.stack;
+            } else if (typeof reason === 'object') {
+              try { msg = JSON.stringify(reason); } catch(err) {}
+            } else {
+              msg = String(reason);
+            }
+          }
+          showError('Crash de Promesa (Unhandled Rejection) Detectado!', msg, stack);
+        });
+
+        console.log("Global error debugger initialized successfully.");
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

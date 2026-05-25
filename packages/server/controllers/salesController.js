@@ -1,4 +1,5 @@
 import salesService from '../services/sales.service.js';
+import financeService from '../services/finance.service.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
@@ -40,7 +41,7 @@ export const updateOrderStatus = catchAsync(async (req, res) => {
     const previous = await salesService.findById(id);
     let updated;
     try {
-        updated = await salesService.transitionOrderStatus(id, status);
+        updated = await salesService.transitionOrderStatus(id, status, req.user?.id);
     } catch (err) {
         if (err.errorCode === 'ORDER_NOT_FOUND') {
             return res.status(404).json({ error: 'not_found', message: 'Pedido no encontrado' });
@@ -62,6 +63,12 @@ export const updateOrderStatus = catchAsync(async (req, res) => {
         });
     }
     res.json(updated);
+});
+
+export const recordPickingEvent = catchAsync(async (req, res) => {
+    const { id } = req.params;
+    const result = await salesService.recordPickingEvent(id, req.body, req.user?.id);
+    res.json(result);
 });
 
 export const dispatchOrder = catchAsync(async (req, res) => {
@@ -113,7 +120,7 @@ export const authorizeInvoice = catchAsync(async (req, res) => {
 
 export const registerInvoicePayments = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const result = await salesService.registerInvoicePayments(id, req.body, req.user?.id);
+    const result = await financeService.registerInvoicePayments(id, req.body, req.user?.id);
     res.json(result);
 });
 

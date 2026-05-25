@@ -33,7 +33,10 @@ const REQUIRED_TABLES = [
     'cash_shifts',
     'shift_payments',
     'audit_logs',
-    'document_sequences'
+    'document_sequences',
+    'chart_of_accounts',
+    'journal_entries',
+    'journal_entry_lines'
 ];
 
 async function assertRequiredTables() {

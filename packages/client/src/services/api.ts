@@ -215,7 +215,7 @@ export const api = {
         httpClient.del<{ success: boolean }>(`/api/suppliers/${id}`),
 
     // ==================== TRANSACTIONS ====================
-    getTransactions: (filters?: { supplier_id?: string; client_id?: string; type?: string }) =>
+    getTransactions: (filters?: { supplier_id?: string; client_id?: string; type?: string; start_date?: string; end_date?: string }) =>
         httpClient.get<Transaction[]>(withQuery("/api/transactions", filters)),
 
     // ==================== INVENTORY ====================
@@ -258,6 +258,17 @@ export const api = {
     pickOrderItem: (itemId: string, picked_quantity: number) =>
         httpClient.put<GenericRecord>(`/api/order-items/${itemId}/pick`, { picked_quantity }),
 
+    recordPickingEvent: (
+        orderId: string,
+        data: {
+            product_id: string;
+            action_type: string;
+            location_code?: string | undefined;
+            barcode_scanned?: string | undefined;
+            quantity?: number;
+        }
+    ) => httpClient.post<GenericRecord>(`/api/orders/${orderId}/picking-event`, data),
+
     createInvoiceFromOrder: (
         orderId: string,
         data: {
@@ -271,9 +282,24 @@ export const api = {
     getOrderSummary: (id: string) =>
         httpClient.get<{
             order: Order;
-            items: Array<GenericRecord>;
+            items: Array<any>;
             summary: { total_items: number; total_picked: number; completion_percent: number };
+            picking_session?: {
+                id: string;
+                order_id: string;
+                picker_id: string;
+                picker_name?: string;
+                status: string;
+                started_at: string;
+                completed_at: string | null;
+                total_items_requested: number;
+                total_items_picked: number;
+            } | null;
         }>(`/api/orders/${id}/summary`),
+
+    // ==================== DASHBOARD ====================
+    getDashboardStats: () =>
+        httpClient.get<any>("/api/dashboard/stats"),
 
     // ==================== RETURNS ====================
     getReturns: (filters?: { supplier_id?: string; status?: string }) =>
@@ -291,6 +317,9 @@ export const api = {
     // ==================== CLIENT RETURNS ====================
     getClientReturns: (filters?: { client_id?: string; status?: string }) =>
         httpClient.get<GenericRecord[]>(withQuery("/api/client-returns", filters)),
+
+    getReturnsAnalytics: () =>
+        httpClient.get<any>("/api/client-returns/analytics"),
 
     createClientReturn: (data: ClientReturnCreateInput) =>
         httpClient.post<{ id: string } & GenericRecord>("/api/client-returns", data),
@@ -315,6 +344,9 @@ export const api = {
     createCreditNote: (data: CreditNoteCreateInput) =>
         httpClient.post<GenericRecord>("/api/credit-notes", data),
 
+    authorizeCreditNote: (id: string) =>
+        httpClient.post<GenericRecord>(`/api/credit-notes/${id}/authorize`),
+
     // ==================== SETTINGS ====================
     getCompanyPublicProfile: () =>
         httpClient.get<CompanySettings>("/api/settings/company/public"),
@@ -324,6 +356,9 @@ export const api = {
 
     updateCompanySettings: (settings: CompanySettings) =>
         httpClient.put<{ success: boolean }>("/api/settings/company", settings),
+
+    testAfipConnection: (billing: NonNullable<CompanySettings["billing"]>) =>
+        httpClient.post<{ success: boolean; logs: string[]; nextVoucherNumber: number }>("/api/settings/afip/test-connection", billing),
 
     getAuditLogs: (filters?: { entity_type?: string; entity_id?: string; page?: number; limit?: number; offset?: number }) =>
         httpClient.get<AuditLogEntry[]>(withQuery("/api/settings/audit-logs", filters)),
@@ -402,6 +437,18 @@ export const api = {
         httpClient.put<PurchaseOrder>(`/api/purchase-orders/${id}/status`, { status }),
 
     // ==================== RECEPTIONS ====================
+    getIVACompras: () =>
+        httpClient.get<Array<{
+            date: string
+            type: string
+            number: string
+            tax_id: string
+            supplier_name: string
+            subtotal: number
+            iva: number
+            total: number
+        }>>("/api/iva-compras"),
+
     getReceptions: (filters?: { status?: string; supplier_id?: string }) =>
         httpClient.get<ReceptionRecord[]>(withQuery("/api/receptions", filters)),
 
@@ -461,4 +508,42 @@ export const api = {
 
     createCashTransaction: (data: CashTransactionInput) =>
         httpClient.post<CashTransactionResponse>("/api/cash-transactions", data),
+
+    // ==================== DOUBLE-ENTRY ACCOUNTING ====================
+    getChartOfAccounts: () =>
+        httpClient.get<any[]>("/api/accounting/chart-of-accounts"),
+
+    getJournalEntries: (filters?: { start_date?: string; end_date?: string }) =>
+        httpClient.get<any[]>(withQuery("/api/accounting/journal-entries", filters)),
+
+    getTrialBalance: (filters?: { start_date?: string; end_date?: string }) =>
+        httpClient.get<any[]>(withQuery("/api/accounting/trial-balance", filters)),
+
+    getIncomeStatement: (filters?: { start_date?: string; end_date?: string }) =>
+        httpClient.get<any>(withQuery("/api/accounting/income-statement", filters)),
+
+    createAccount: (data: { code: string; name: string; type: string; active: boolean }) =>
+        httpClient.post<any>("/api/accounting/chart-of-accounts", data),
+
+    updateAccount: (code: string, data: { name: string; active: boolean }) =>
+        httpClient.put<any>(`/api/accounting/chart-of-accounts/${code}`, data),
+
+    deleteAccount: (code: string) =>
+        httpClient.del<any>(`/api/accounting/chart-of-accounts/${code}`),
+
+    createManualJournalEntry: (data: any) =>
+        httpClient.post<any>("/api/accounting/journal-entries", data),
+
+    updateJournalEntry: (id: string, data: any) =>
+        httpClient.put<any>(`/api/accounting/journal-entries/${id}`, data),
+
+    reverseJournalEntry: (id: string) =>
+        httpClient.post<any>(`/api/accounting/journal-entries/${id}/reverse`),
+
+    deleteJournalEntry: (id: string) =>
+        httpClient.del<any>(`/api/accounting/journal-entries/${id}`),
+
+    // ==================== WMS TRANSFER ====================
+    transferStock: (data: { product_id: string; from_location: string; to_location: string; quantity: number }) =>
+        httpClient.post<any>("/api/inventory/transfer", data),
 };

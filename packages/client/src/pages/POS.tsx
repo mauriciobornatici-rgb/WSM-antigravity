@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, History } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { Client, CompanySettings } from "@/types";
@@ -12,8 +12,11 @@ import { CheckoutSuccessDialog } from "@/components/pos/CheckoutSuccessDialog";
 import { PaymentDialog } from "@/components/pos/PaymentDialog";
 import { ProductCatalogCard } from "@/components/pos/ProductCatalogCard";
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog";
+import { POSHistoryDialog } from "@/components/pos/POSHistoryDialog";
 import type { CartItem, InvoiceType, NewClientForm, PaymentSplit, POSProduct } from "@/components/pos/types";
 import { Button } from "@/components/ui/button";
+import { PrintableInvoiceArea } from "@/components/invoices/PrintableInvoiceArea";
+import { PrintableThermalTicket } from "@/components/invoices/PrintableThermalTicket";
 
 function roundMoney(value: number): number {
     return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -54,10 +57,21 @@ export default function POSPage() {
     const [successDialogOpen, setSuccessDialogOpen] = useState(false);
     const [lastOrderId, setLastOrderId] = useState<string | null>(null);
     const [lastInvoice, setLastInvoice] = useState<Invoice | null>(null);
+    const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
 
     const [companySettings, setCompanySettings] = useState<CompanySettings>(DEFAULT_COMPANY_SETTINGS);
     const [currentRegister, setCurrentRegister] = useState<CashRegister | null>(null);
     const [currentShift, setCurrentShift] = useState<CashShiftSummary | null>(null);
+    const [activePrintLayout, setActivePrintLayout] = useState<'a4' | 'thermal' | null>(null);
+    const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+
+    const handlePrint = (layout: 'a4' | 'thermal', invoice: Invoice) => {
+        setActivePrintLayout(layout);
+        setSelectedInvoice(invoice);
+        setTimeout(() => {
+            window.print();
+        }, 300);
+    };
 
     useEffect(() => {
         void loadData();
@@ -92,7 +106,6 @@ export default function POSPage() {
         }
     }
 
-    const taxRate = Number(companySettings.operation.tax_rate || 0);
     const taxLabel = `IVA ${getTaxRatePercentage(companySettings)}%`;
 
     const categories = useMemo(() => {
@@ -179,9 +192,16 @@ export default function POSPage() {
         setCart((current) => current.filter((item) => item.id !== productId));
     }
 
-    const subtotal = cart.reduce((sum, item) => sum + Number(item.sale_price || 0) * item.quantity, 0);
-    const taxAmount = subtotal * taxRate;
-    const grandTotal = subtotal + taxAmount;
+    const subtotal = roundMoney(cart.reduce((sum, item) => sum + Number(item.sale_price || 0) * item.quantity, 0));
+    const taxAmount = roundMoney(
+        cart.reduce((sum, item) => {
+            const itemVatRate = item.vat_rate != null ? Number(item.vat_rate) : 21.00;
+            const lineNet = roundMoney(item.quantity * Number(item.sale_price || 0));
+            const lineVat = roundMoney(lineNet * (itemVatRate / 100));
+            return sum + lineVat;
+        }, 0),
+    );
+    const grandTotal = roundMoney(subtotal + taxAmount);
 
     async function createClient() {
         if (!newClient.name || !newClient.tax_id) {
@@ -260,6 +280,32 @@ export default function POSPage() {
             }
         }
 
+        // Cache previous state for potential rollback
+        const previousProducts = [...products];
+        const previousCart = [...cart];
+        const previousClientId = selectedClientId;
+        const previousEmitInvoice = emitInvoice;
+        const previousPaymentSplits = [...paymentSplits];
+
+        const soldByProduct = cart.reduce<Record<string, number>>((acc, item) => {
+            acc[item.id] = (acc[item.id] || 0) + item.quantity;
+            return acc;
+        }, {});
+
+        // 1. Apply UI changes optimistically (0ms latency experience)
+        setProducts((current) =>
+            current.map((product) => ({
+                ...product,
+                stock: Math.max(0, product.stock - (soldByProduct[product.id] || 0)),
+            })),
+        );
+        setCart([]);
+        setSelectedClientId("");
+        setEmitInvoice(false);
+        setPaymentSplits([defaultPaymentSplit(0)]);
+        setPaymentDialogOpen(false);
+        setSuccessDialogOpen(true);
+
         try {
             setProcessing(true);
             setLastInvoice(null);
@@ -267,17 +313,17 @@ export default function POSPage() {
             const orderPayload: Parameters<typeof api.createOrder>[0] = {
                 customer_name: selectedClient?.name || "Consumidor final",
                 payment_method: primaryPaymentMethod,
-                items: cart.map((item) => ({
+                items: previousCart.map((item) => ({
                     product_id: item.id,
                     quantity: item.quantity,
                 })),
             };
-            if (selectedClientId) orderPayload.client_id = selectedClientId;
+            if (previousClientId) orderPayload.client_id = previousClientId;
 
             const order = await api.createOrder(orderPayload);
             setLastOrderId(order.id);
 
-            if (emitInvoice) {
+            if (previousEmitInvoice) {
                 try {
                     const invoicePayload: Record<string, unknown> = {
                         order_id: order.id,
@@ -286,19 +332,19 @@ export default function POSPage() {
                         point_of_sale: 1,
                         payment_method: primaryPaymentMethod,
                         payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
-                        items: cart.map((item) => ({
+                        items: previousCart.map((item) => ({
                             product_id: item.id,
                             description: item.name,
                             quantity: item.quantity,
                             unit_price: item.sale_price,
-                            vat_rate: getTaxRatePercentage(companySettings),
+                            vat_rate: item.vat_rate != null ? Number(item.vat_rate) : 21.00,
                         })),
                     };
-                    if (selectedClientId) invoicePayload.client_id = selectedClientId;
+                    if (previousClientId) invoicePayload.client_id = previousClientId;
                     const invoice = await api.createInvoice(invoicePayload);
                     setLastInvoice(invoice);
                 } catch (invoiceError) {
-                    showErrorToast("Venta guardada, pero fallo la factura", invoiceError);
+                    showErrorToast("Venta guardada, pero falló la factura", invoiceError);
                 }
             }
 
@@ -311,27 +357,17 @@ export default function POSPage() {
                 });
             }
 
-            const soldByProduct = cart.reduce<Record<string, number>>((acc, item) => {
-                acc[item.id] = (acc[item.id] || 0) + item.quantity;
-                return acc;
-            }, {});
-
-            setProducts((current) =>
-                current.map((product) => ({
-                    ...product,
-                    stock: Math.max(0, product.stock - (soldByProduct[product.id] || 0)),
-                })),
-            );
-
-            setCart([]);
-            setSelectedClientId("");
-            setEmitInvoice(false);
-            setPaymentSplits([defaultPaymentSplit(0)]);
-            setPaymentDialogOpen(false);
-            setSuccessDialogOpen(true);
-            toast.success("Venta registrada");
+            toast.success("Venta registrada con éxito");
         } catch (error) {
-            showErrorToast("Error al procesar la venta", error);
+            // 2. Rollback state to prior values on checkout error
+            setProducts(previousProducts);
+            setCart(previousCart);
+            setSelectedClientId(previousClientId);
+            setEmitInvoice(previousEmitInvoice);
+            setPaymentSplits(previousPaymentSplits);
+            setSuccessDialogOpen(false);
+            setPaymentDialogOpen(true);
+            showErrorToast("Error al procesar la venta. El carrito ha sido restaurado.", error);
         } finally {
             setProcessing(false);
         }
@@ -340,15 +376,26 @@ export default function POSPage() {
     return (
         <div className="space-y-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full gap-2 sm:w-auto"
-                    onClick={() => navigate("/")}
-                >
-                    <ArrowLeft className="h-4 w-4" />
-                    Volver al menu principal
-                </Button>
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full gap-2 sm:w-auto"
+                        onClick={() => navigate("/")}
+                    >
+                        <ArrowLeft className="h-4 w-4" />
+                        Volver al menu principal
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full gap-2 sm:w-auto border-blue-800/30 bg-blue-950/20 text-blue-400 hover:bg-blue-950/40 hover:text-blue-300"
+                        onClick={() => setHistoryDialogOpen(true)}
+                    >
+                        <History className="h-4 w-4" />
+                        Historial de Ventas / Reimprimir
+                    </Button>
+                </div>
                 <p className="text-sm text-muted-foreground">Terminal de venta</p>
             </div>
 
@@ -434,7 +481,36 @@ export default function POSPage() {
                 lastOrderId={lastOrderId}
                 lastInvoice={lastInvoice}
                 grandTotal={grandTotal}
+                companySettings={companySettings}
+                onPrint={handlePrint}
             />
+
+            <POSHistoryDialog
+                open={historyDialogOpen}
+                onOpenChange={setHistoryDialogOpen}
+                onPrint={handlePrint}
+            />
+
+            {activePrintLayout === "a4" && selectedInvoice && (
+                <PrintableInvoiceArea
+                    invoice={selectedInvoice as any}
+                    companyName={companySettings.identity.legal_name || companySettings.identity.brand_name || "Empresa"}
+                    companyTaxId={companySettings.identity.tax_id || "No informado"}
+                    companyAddress={`${companySettings.address.street} ${companySettings.address.number || ""}, ${companySettings.address.city}`}
+                    taxRateLabel={`IVA (${Number(companySettings.operation.tax_rate * 100).toFixed(0)}%)`}
+                    companySettings={companySettings}
+                />
+            )}
+
+            {activePrintLayout === "thermal" && selectedInvoice && (
+                <PrintableThermalTicket
+                    invoice={selectedInvoice as any}
+                    companyName={companySettings.identity.legal_name || companySettings.identity.brand_name || "Empresa"}
+                    companyTaxId={companySettings.identity.tax_id || "No informado"}
+                    companyAddress={`${companySettings.address.street} ${companySettings.address.number || ""}, ${companySettings.address.city}`}
+                    companySettings={companySettings}
+                />
+            )}
         </div>
     );
 }

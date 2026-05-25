@@ -1,5 +1,6 @@
 import { InvoiceDocument } from "./InvoiceDocument"
 import type { InvoiceView } from "./types"
+import type { CompanySettings } from "@/types"
 
 type PrintableInvoiceAreaProps = {
     invoice: InvoiceView | null
@@ -7,6 +8,7 @@ type PrintableInvoiceAreaProps = {
     companyTaxId: string
     companyAddress: string
     taxRateLabel: string
+    companySettings?: CompanySettings | undefined
 }
 
 export function PrintableInvoiceArea({
@@ -15,6 +17,7 @@ export function PrintableInvoiceArea({
     companyTaxId,
     companyAddress,
     taxRateLabel,
+    companySettings,
 }: PrintableInvoiceAreaProps) {
     return (
         <div id="printable-invoice" className="fixed inset-0 z-[9999] m-0 hidden bg-white p-0 text-black print:block">
@@ -26,6 +29,7 @@ export function PrintableInvoiceArea({
                     companyAddress={companyAddress}
                     taxRateLabel={taxRateLabel}
                     printMode
+                    companySettings={companySettings}
                 />
             ) : null}
         </div>

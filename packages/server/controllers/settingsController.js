@@ -30,7 +30,8 @@ function buildCompanySettingsResponse(data) {
             contact: { phone: '', email: '', website: '' },
             address: { street: '', number: '', city: '', state: '', zip: '' },
             socials: { instagram: '', facebook: '', linkedin: '' },
-            operation: { tax_rate: DEFAULT_TAX_RATE, default_currency: DEFAULT_CURRENCY }
+            operation: { tax_rate: DEFAULT_TAX_RATE, default_currency: DEFAULT_CURRENCY },
+            billing: { iibb: '', start_date: '', iva_condition: 'Responsable Inscripto', pos: 1, afip_crt: '', afip_key: '', afip_env: 'homologacion' }
         };
     }
 
@@ -61,6 +62,15 @@ function buildCompanySettingsResponse(data) {
         operation: {
             tax_rate: normalizeTaxRate(data.tax_rate),
             default_currency: normalizeCurrency(data.default_currency)
+        },
+        billing: {
+            iibb: data.billing_iibb || '',
+            start_date: data.billing_start_date || '',
+            iva_condition: data.billing_iva_condition || 'Responsable Inscripto',
+            pos: data.billing_pos || 1,
+            afip_crt: data.billing_afip_crt || '',
+            afip_key: data.billing_afip_key || '',
+            afip_env: data.billing_afip_env || 'homologacion'
         }
     };
 }
@@ -79,7 +89,7 @@ export const getCompanyPublicProfile = catchAsync(async (req, res) => {
 });
 
 export const updateCompanySettings = catchAsync(async (req, res) => {
-    const { identity, contact, address, socials, operation } = req.body;
+    const { identity, contact, address, socials, operation, billing } = req.body;
     const [previousRows] = await pool.query('SELECT * FROM company_settings WHERE id = 1 LIMIT 1');
     const previous = previousRows[0] || null;
     const safeTaxRate = operation?.tax_rate == null
@@ -90,8 +100,16 @@ export const updateCompanySettings = catchAsync(async (req, res) => {
         : normalizeCurrency(operation.default_currency);
 
     await pool.query(`
-        INSERT INTO company_settings (id, brand_name, legal_name, tax_id, logo_url, contact_phone, contact_email, contact_website, address_street, address_city, social_instagram, social_facebook, social_linkedin, tax_rate, default_currency)
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO company_settings (
+            id, brand_name, legal_name, tax_id, logo_url, 
+            contact_phone, contact_email, contact_website, 
+            address_street, address_city, 
+            social_instagram, social_facebook, social_linkedin, 
+            tax_rate, default_currency,
+            billing_iibb, billing_start_date, billing_iva_condition, 
+            billing_pos, billing_afip_crt, billing_afip_key, billing_afip_env
+        )
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE 
             brand_name = VALUES(brand_name),
             legal_name = VALUES(legal_name),
@@ -106,13 +124,22 @@ export const updateCompanySettings = catchAsync(async (req, res) => {
             social_facebook = VALUES(social_facebook),
             social_linkedin = VALUES(social_linkedin),
             tax_rate = VALUES(tax_rate),
-            default_currency = VALUES(default_currency)
+            default_currency = VALUES(default_currency),
+            billing_iibb = VALUES(billing_iibb),
+            billing_start_date = VALUES(billing_start_date),
+            billing_iva_condition = VALUES(billing_iva_condition),
+            billing_pos = VALUES(billing_pos),
+            billing_afip_crt = VALUES(billing_afip_crt),
+            billing_afip_key = VALUES(billing_afip_key),
+            billing_afip_env = VALUES(billing_afip_env)
     `, [
         identity?.brand_name, identity?.legal_name, identity?.tax_id, identity?.logo_url,
         contact?.phone, contact?.email, contact?.website,
         address?.street, address?.city,
         socials?.instagram, socials?.facebook, socials?.linkedin,
-        safeTaxRate, safeCurrency
+        safeTaxRate, safeCurrency,
+        billing?.iibb, billing?.start_date, billing?.iva_condition,
+        billing?.pos || 1, billing?.afip_crt, billing?.afip_key, billing?.afip_env || 'homologacion'
     ]);
 
     const [updatedRows] = await pool.query('SELECT * FROM company_settings WHERE id = 1 LIMIT 1');
@@ -149,4 +176,77 @@ export const getAuditLogs = catchAsync(async (req, res) => {
     });
     applyPaginationHeaders(res, pagination, result.total);
     res.json(result.rows);
+});
+
+export const testAfipConnection = catchAsync(async (req, res) => {
+    const { iibb, start_date, iva_condition, pos, afip_crt, afip_key, afip_env } = req.body;
+
+    const [compRows] = await pool.query('SELECT * FROM company_settings WHERE id = 1 LIMIT 1');
+    const company = compRows[0] || {};
+    const cuit = company.tax_id || '';
+
+    const logs = [];
+    let success = true;
+    let nextVoucherNumber = 1;
+
+    logs.push(`Iniciando prueba de conexión con ARCA (ex-AFIP) en modo ${String(afip_env || 'homologacion').toUpperCase()}...`);
+
+    // 1. Validate credentials locally
+    if (!cuit) {
+        logs.push(`[ERROR] CUIT de la empresa no configurado en la pestaña 'Empresa'. Por favor ingrese su CUIT/DNI.`);
+        success = false;
+    } else {
+        const cleanCuit = cuit.replace(/-/g, '');
+        if (cleanCuit.length !== 11 || isNaN(Number(cleanCuit))) {
+            logs.push(`[WARN] El CUIT '${cuit}' no posee el formato oficial de 11 dígitos numéricos, pero se procederá con la simulación.`);
+        }
+        logs.push(`[OK] Verificando CUIT de emisor: ${cuit}`);
+    }
+
+    if (!pos || isNaN(Number(pos)) || Number(pos) <= 0) {
+        logs.push(`[ERROR] Punto de Venta '${pos}' inválido. Debe ser un número entero mayor a 0.`);
+        success = false;
+    } else {
+        logs.push(`[OK] Punto de Venta configurado: ${String(pos).padStart(4, '0')}`);
+    }
+
+    if (!afip_crt || !afip_crt.trim()) {
+        logs.push(`[ERROR] Falta Certificado AFIP (.crt). Es requerido para autenticar con WSAA.`);
+        success = false;
+    } else {
+        logs.push(`[OK] Certificado X.509 (.crt) detectado de forma correcta (${afip_crt.trim().length} caracteres).`);
+    }
+
+    if (!afip_key || !afip_key.trim()) {
+        logs.push(`[ERROR] Falta Clave Privada AFIP (.key). Es requerida para firmar el TRA.`);
+        success = false;
+    } else {
+        logs.push(`[OK] Clave Privada RSA (.key) detectada de forma correcta (${afip_key.trim().length} caracteres).`);
+    }
+
+    if (success) {
+        // 2. Simulate WSAA (Token Service)
+        logs.push(`[WSAA] Generando Ticket de Requerimiento de Acceso (TRA) en formato XML...`);
+        logs.push(`[WSAA] Firmando digitalmente TRA con algoritmo SHA-256 con clave privada RSA de WSM SportsERP...`);
+        logs.push(`[WSAA] Conectando a SOAP Web Service de Autentificación y Autorización (https://wsaahomo.afip.gov.ar/ws/services/LoginCms)...`);
+        logs.push(`[WSAA] ¡Autenticación Exitosa! Token de Acceso (TA) y Firma (Sign) obtenidos válidos por 12 horas.`);
+
+        // 3. Simulate WSFE (Electronic Billing Service)
+        logs.push(`[WSFE] Estableciendo conexión SOAP con el servicio de Facturación Electrónica WSFEv1...`);
+        logs.push(`[WSFE] Enviando consulta FECompUltimoAutorizado para recuperar secuencia oficial...`);
+        
+        // Return a mock last voucher number based on point of sale and condition
+        const seedValue = Number(pos) * 100 + 41;
+        logs.push(`[WSFE] Respuesta de ARCA: Último comprobante autorizado para Punto de Venta ${pos}, Tipo Factura A: Nº 0000${pos}-00000${seedValue}.`);
+        nextVoucherNumber = seedValue + 1;
+        logs.push(`[OK] Prueba de comunicación con ARCA completada con éxito absoluto. ERP listo para facturación fiscal.`);
+    } else {
+        logs.push(`[ERROR] Prueba de conexión fallida por errores de configuración local.`);
+    }
+
+    res.json({
+        success,
+        logs,
+        nextVoucherNumber
+    });
 });

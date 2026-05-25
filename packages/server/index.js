@@ -1,4 +1,4 @@
-﻿import dotenv from 'dotenv';
+import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -24,9 +24,11 @@ import salesRouter from './routes/salesRoutes.js';
 import financeRouter from './routes/financeRoutes.js';
 import procurementRouter from './routes/procurementRoutes.js';
 import warrantiesRouter from './routes/warrantiesRoutes.js';
+import dashboardRouter from './routes/dashboardRoutes.js';
+import accountingRouter from './routes/accountingRoutes.js';
 import globalErrorHandler from './middleware/errorMiddleware.js';
 import { authenticateToken, authorizeRoles } from './middleware/authMiddleware.js';
-import { validate, schemas } from './middleware/validationMiddleware.js';
+import { validate, schemas, validateZod, zodSchemas } from './middleware/validationMiddleware.js';
 import * as userController from './controllers/userController.js';
 
 const app = express();
@@ -121,7 +123,7 @@ const loginLimiter = rateLimit({
     legacyHeaders: false,
 });
 
-app.post('/api/login', loginLimiter, validate(schemas.login), userController.loginDirect);
+app.post('/api/login', loginLimiter, validateZod(zodSchemas.login), userController.loginDirect);
 
 // Mount Modular Routes - authentication at mount, RBAC inside each router
 app.use('/api/users', authenticateToken, authorizeRoles('admin'), userRouter);
@@ -132,6 +134,8 @@ app.use('/api', authenticateToken, salesRouter);
 app.use('/api', authenticateToken, financeRouter);
 app.use('/api', authenticateToken, procurementRouter);
 app.use('/api', authenticateToken, warrantiesRouter);
+app.use('/api', authenticateToken, dashboardRouter);
+app.use('/api/accounting', authenticateToken, accountingRouter);
 
 // Global Error Handler (Must be last)
 app.use(globalErrorHandler);

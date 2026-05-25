@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, RotateCcw } from "lucide-react";
+import { Plus, RotateCcw, Download } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { queryKeys } from "@/lib/queryKeys";
@@ -181,6 +181,44 @@ export default function ReceptionsPage() {
         }
     }
 
+    const handleExportLibroIVACompras = async () => {
+        try {
+            const records = await api.getIVACompras();
+            if (records.length === 0) {
+                toast.warning("No hay comprobantes de compra aprobados para exportar.");
+                return;
+            }
+
+            const headers = ["Fecha", "Tipo Comprobante", "Numero", "CUIT Proveedor", "Proveedor/Razon Social", "Neto Gravado", "IVA Credito Fiscal", "Total"];
+            const rows = records.map((r) => [
+                new Date(r.date).toLocaleDateString("es-AR"),
+                r.type,
+                r.number,
+                r.tax_id,
+                `"${r.supplier_name.replace(/"/g, '""')}"`,
+                Number(r.subtotal).toFixed(2),
+                Number(r.iva).toFixed(2),
+                Number(r.total).toFixed(2)
+            ]);
+
+            const csvContent =
+                "\uFEFF" +
+                [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\n");
+
+            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            link.setAttribute("download", `libro_iva_compras_${new Date().toISOString().split("T")[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            toast.success("Libro IVA Compras exportado con éxito");
+        } catch (error) {
+            toast.error("Error al exportar Libro IVA Compras");
+        }
+    };
+
     return (
         <div className="space-y-6 p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -189,23 +227,32 @@ export default function ReceptionsPage() {
                     <p className="mt-1 text-slate-600">Gestion de recepciones y devoluciones a proveedor.</p>
                 </div>
 
-                <button
-                    onClick={() => {
-                        if (activeTab === "returns") {
-                            setIsReturnDialogOpen(true);
-                            return;
-                        }
-                        setPrefilledOrderId(undefined);
-                        setPrefilledSupplierId(undefined);
-                        setIsCreateDialogOpen(true);
-                    }}
-                    className={`flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-white transition sm:w-auto ${
-                        activeTab === "returns" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"
-                    }`}
-                >
-                    {activeTab === "returns" ? <RotateCcw className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
-                    {activeTab === "returns" ? "Nueva devolucion" : "Nueva recepcion"}
-                </button>
+                <div className="flex flex-col gap-2 sm:flex-row w-full sm:w-auto">
+                    <button
+                        onClick={handleExportLibroIVACompras}
+                        className="flex w-full items-center justify-center gap-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-300 px-4 py-2 hover:bg-slate-200 transition sm:w-auto font-medium"
+                    >
+                        <Download className="h-5 w-5" />
+                        Exportar Libro IVA
+                    </button>
+                    <button
+                        onClick={() => {
+                            if (activeTab === "returns") {
+                                setIsReturnDialogOpen(true);
+                                return;
+                            }
+                            setPrefilledOrderId(undefined);
+                            setPrefilledSupplierId(undefined);
+                            setIsCreateDialogOpen(true);
+                        }}
+                        className={`flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-white transition sm:w-auto ${
+                            activeTab === "returns" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"
+                        }`}
+                    >
+                        {activeTab === "returns" ? <RotateCcw className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+                        {activeTab === "returns" ? "Nueva devolucion" : "Nueva recepcion"}
+                    </button>
+                </div>
             </div>
 
             <div className="flex gap-1 overflow-x-auto border-b border-slate-200">

@@ -13,6 +13,9 @@ export const queryKeys = {
     clients: {
         all: ["clients"] as const,
     },
+    suppliers: {
+        all: ["suppliers"] as const,
+    },
     auditLogs: {
         all: ["audit-logs"] as const,
         paged: (page: number, limit: number) => ["audit-logs", "paged", page, limit] as const,

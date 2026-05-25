@@ -28,7 +28,7 @@ async function calculateShiftExpectedBalance(connection, shiftId) {
 }
 
 export const getTransactions = catchAsync(async (req, res) => {
-    const { supplier_id, client_id, type } = req.query;
+    const { supplier_id, client_id, type, start_date, end_date } = req.query;
     let query = `
         SELECT t.*, c.name AS client_name, s.name AS supplier_name
         FROM transactions t
@@ -49,6 +49,14 @@ export const getTransactions = catchAsync(async (req, res) => {
     if (type) {
         query += ' AND t.type = ?';
         params.push(type);
+    }
+    if (start_date) {
+        query += ' AND DATE(t.date) >= DATE(?)';
+        params.push(start_date);
+    }
+    if (end_date) {
+        query += ' AND DATE(t.date) <= DATE(?)';
+        params.push(end_date);
     }
     query += ' ORDER BY t.date DESC';
 

@@ -3,6 +3,7 @@ import pool from '../config/db.js';
 import catchAsync from '../utils/catchAsync.js';
 import inventoryService from '../services/inventory.service.js';
 import auditService from '../services/audit.service.js';
+import accountingService from '../services/accounting.service.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
 import getRequestIp from '../utils/requestIp.js';
 
@@ -553,6 +554,16 @@ export const approveReturn = catchAsync(async (req, res) => {
 
         await connection.query('UPDATE supplier_returns SET status = "approved" WHERE id = ?', [id]);
 
+        await accountingService.createJournalEntry(connection, {
+            description: `Devolución a proveedor ${supplierReturn.return_number}`,
+            reference_type: 'supplier_return',
+            reference_id: id,
+            lines: [
+                { account_code: '2.1.01.01', debit: totalAmount, credit: 0 },
+                { account_code: '1.1.04.01', debit: 0, credit: totalAmount }
+            ]
+        });
+
         await connection.query(`
             INSERT INTO transactions (id, type, amount, description, reference_id, supplier_id)
             VALUES (?, 'expense', ?, ?, ?, ?)
@@ -747,4 +758,71 @@ export const createQualityCheck = catchAsync(async (req, res) => {
     });
 
     res.json({ id, success: true });
+});
+
+export const exportIVACompras = catchAsync(async (req, res) => {
+    // 1. Get all approved receptions
+    const [receptions] = await pool.query(`
+        SELECT r.reception_number, r.remito_number, r.created_at, s.name AS supplier_name, s.tax_id AS supplier_tax_id,
+               COALESCE(SUM(ri.quantity_received * ri.unit_cost), 0) AS subtotal
+        FROM receptions r
+        JOIN suppliers s ON r.supplier_id = s.id
+        JOIN reception_items ri ON ri.reception_id = r.id
+        WHERE r.status = 'approved'
+        GROUP BY r.id, r.reception_number, r.remito_number, r.created_at, s.name, s.tax_id
+        ORDER BY r.created_at DESC
+    `);
+
+    // 2. Get all approved returns
+    const [returns] = await pool.query(`
+        SELECT sr.return_number, sr.created_at, s.name AS supplier_name, s.tax_id AS supplier_tax_id,
+               COALESCE(SUM(sri.quantity * sri.unit_cost), 0) AS subtotal
+        FROM supplier_returns sr
+        JOIN suppliers s ON sr.supplier_id = s.id
+        JOIN supplier_return_items sri ON sri.return_id = sr.id
+        WHERE sr.status = 'approved'
+        GROUP BY sr.id, sr.return_number, sr.created_at, s.name, s.tax_id
+        ORDER BY sr.created_at DESC
+    `);
+
+    const taxRate = await getTaxRate();
+
+    // 3. Merge and sort chronologically
+    const records = [];
+    for (const r of receptions) {
+        const sub = Number(r.subtotal || 0);
+        const iva = sub * taxRate;
+        const total = sub + iva;
+        records.push({
+            date: new Date(r.created_at),
+            type: 'Recepción (Ingreso)',
+            number: r.remito_number || r.reception_number,
+            tax_id: r.supplier_tax_id || '-',
+            supplier_name: r.supplier_name,
+            subtotal: sub,
+            iva: iva,
+            total: total
+        });
+    }
+
+    for (const ret of returns) {
+        const sub = Number(ret.subtotal || 0);
+        const iva = sub * taxRate;
+        const total = sub + iva;
+        records.push({
+            date: new Date(ret.created_at),
+            type: 'Devolución (Egreso/Ajuste)',
+            number: ret.return_number,
+            tax_id: ret.supplier_tax_id || '-',
+            supplier_name: ret.supplier_name,
+            subtotal: -sub,
+            iva: -iva,
+            total: -total
+        });
+    }
+
+    // Sort chronologically descending
+    records.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+    res.json(records);
 });

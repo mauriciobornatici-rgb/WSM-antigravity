@@ -18,6 +18,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { PaginationControls } from "@/components/common/PaginationControls";
+import { PrintableOrderArea } from "@/components/orders/PrintableOrderArea";
+import { PrintableLabelArea } from "@/components/orders/PrintableLabelArea";
+import { PrintableManifestArea } from "@/components/orders/PrintableManifestArea";
 
 type OrderStatus = Order["status"];
 type OrderFilter = OrderStatus | "all";
@@ -74,15 +77,52 @@ function packedReadyLabel(order: Order): string {
 }
 
 function getInvoiceTotal(order: Order): number {
-    const picked = order.items
+    const items = order.items || [];
+    const picked = items
         .filter((item) => Number(item.picked_quantity || 0) > 0)
         .reduce((sum, item) => sum + Number(item.picked_quantity || 0) * Number(item.unit_price || 0), 0);
     if (picked > 0) return picked;
-    return order.items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_price || 0), 0);
+    return items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_price || 0), 0);
 }
 
 function orderHasShortage(order: Order): boolean {
-    return order.items.some((item) => Number(item.picked_quantity || 0) < Number(item.quantity || 0));
+    const items = order.items || [];
+    return items.some((item) => Number(item.picked_quantity || 0) < Number(item.quantity || 0));
+}
+
+function renderStatusBadge(status: OrderStatus, order?: Order) {
+    if (status === "packed") {
+        const hasShortage = order ? orderHasShortage(order) : false;
+        const label = order ? packedReadyLabel(order) : "Listo para despacho";
+        if (hasShortage) {
+            return (
+                <Badge className="bg-amber-500/10 text-amber-700 border border-amber-500/30 hover:bg-amber-500/10 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-800/50 font-semibold shadow-sm">
+                    {label} c/faltante
+                </Badge>
+            );
+        }
+        return (
+            <Badge className="bg-emerald-500/10 text-emerald-700 border border-emerald-500/30 hover:bg-emerald-500/10 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-800/50 font-semibold shadow-sm">
+                {label}
+            </Badge>
+        );
+    }
+
+    const badgeStyles: Record<OrderStatus, string> = {
+        pending: "bg-indigo-50/80 text-indigo-700 border border-indigo-200 hover:bg-indigo-50/80 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-800/50 font-semibold shadow-sm",
+        picking: "bg-amber-50/80 text-amber-700 border border-amber-200 hover:bg-amber-50/80 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800/50 font-semibold shadow-sm",
+        packed: "", // Handled above
+        dispatched: "bg-slate-100/70 text-slate-500 border border-slate-200/80 dark:bg-slate-900/30 dark:text-slate-400 dark:border-slate-800/50 hover:bg-slate-100/70 font-normal shadow-sm", // Soft color so it doesn't pop out
+        delivered: "bg-teal-50/50 text-teal-700 border border-teal-200 dark:bg-teal-950/20 dark:text-teal-450 dark:border-teal-900/30 hover:bg-teal-50/50 font-normal shadow-sm",
+        completed: "bg-gray-100/60 text-gray-400 border border-gray-200/80 dark:bg-gray-800/30 dark:text-gray-400 dark:border-gray-700/50 hover:bg-gray-100/60 font-normal shadow-sm", // Soft color
+        cancelled: "bg-red-50 text-red-650 border border-red-200 dark:bg-red-950/20 dark:text-red-400 dark:border-red-900/30 hover:bg-red-50 font-normal shadow-sm",
+    };
+
+    return (
+        <Badge className={badgeStyles[status] || "outline font-medium"}>
+            {statusLabel(status)}
+        </Badge>
+    );
 }
 
 export default function OrdersPage() {
@@ -93,6 +133,64 @@ export default function OrdersPage() {
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState<OrderFilter>("all");
     const [ordersPage, setOrdersPage] = useState(1);
+
+    const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+    const [detailOpen, setDetailOpen] = useState(false);
+    const [printOrder, setPrintOrder] = useState<Order | null>(null);
+    const [printType, setPrintType] = useState<"remito" | "label" | null>(null);
+
+    const orderDetailQuery = useQuery({
+        queryKey: ["orders", "detail", selectedOrderId ?? ""],
+        queryFn: () => api.getOrderSummary(selectedOrderId!),
+        enabled: !!selectedOrderId,
+    });
+
+    function openOrderDetail(order: Order) {
+        setSelectedOrderId(order.id);
+        setDetailOpen(true);
+    }
+
+    function handleTriggerPrint(order: Order, type: "remito" | "label") {
+        setPrintOrder(order);
+        setPrintType(type);
+        toast.success(`Preparando impresión de ${type === "remito" ? "remito de picking" : "etiqueta térmica"}`);
+        setTimeout(() => {
+            window.print();
+            setPrintOrder(null);
+            setPrintType(null);
+        }, 150);
+    }
+
+    const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+    const [manifestDialogOpen, setManifestDialogOpen] = useState(false);
+    const [manifestDriver, setManifestDriver] = useState("");
+    const [manifestPlate, setManifestPlate] = useState("");
+    const [manifestCarrier, setManifestCarrier] = useState("Flete Propio");
+    const [manifestNotes, setManifestNotes] = useState("");
+    const [printManifestOrders, setPrintManifestOrders] = useState<Order[]>([]);
+    const [printManifestActive, setPrintManifestActive] = useState(false);
+
+    function toggleOrderSelection(orderId: string) {
+        setSelectedOrderIds((current) =>
+            current.includes(orderId)
+                ? current.filter((id) => id !== orderId)
+                : [...current, orderId],
+        );
+    }
+
+    function handleTriggerManifestPrint() {
+        const ordersToPrint = orders.filter((o) => selectedOrderIds.includes(o.id));
+        setPrintManifestOrders(ordersToPrint);
+        setPrintManifestActive(true);
+        toast.success("Preparando impresión de hoja de ruta consolidada");
+        setTimeout(() => {
+            window.print();
+            setPrintManifestOrders([]);
+            setPrintManifestActive(false);
+            setSelectedOrderIds([]); // Clear selection after printing
+            setManifestDialogOpen(false);
+        }, 150);
+    }
 
     const [createOpen, setCreateOpen] = useState(false);
     const [createClientId, setCreateClientId] = useState("");
@@ -836,6 +934,7 @@ export default function OrdersPage() {
                         <Table className="min-w-[900px]">
                         <TableHeader>
                             <TableRow>
+                                <TableHead className="w-10"></TableHead>
                                 <TableHead>ID</TableHead>
                                 <TableHead>Cliente</TableHead>
                                 <TableHead>Mostrador</TableHead>
@@ -849,19 +948,31 @@ export default function OrdersPage() {
                         <TableBody>
                             {loading ? (
                                 <TableRow>
-                                    <TableCell colSpan={8} className="h-20 text-center text-muted-foreground">
+                                    <TableCell colSpan={9} className="h-20 text-center text-muted-foreground">
                                         Cargando...
                                     </TableCell>
                                 </TableRow>
                             ) : filteredOrders.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={8} className="h-20 text-center text-muted-foreground">
+                                    <TableCell colSpan={9} className="h-20 text-center text-muted-foreground">
                                         Sin resultados.
                                     </TableCell>
                                 </TableRow>
                             ) : (
                                 filteredOrders.map((order) => (
                                     <TableRow key={order.id}>
+                                        <TableCell className="w-10">
+                                            {order.shipping_method === "delivery" && (order.status === "packed" || order.status === "dispatched") ? (
+                                                <input
+                                                    type="checkbox"
+                                                    className="h-4 w-4 rounded border-slate-350 accent-primary cursor-pointer"
+                                                    checked={selectedOrderIds.includes(order.id)}
+                                                    onChange={() => toggleOrderSelection(order.id)}
+                                                />
+                                            ) : (
+                                                <span className="text-muted-foreground text-xs">-</span>
+                                            )}
+                                        </TableCell>
                                         <TableCell className="font-mono text-xs">{order.id}</TableCell>
                                         <TableCell>{order.client_name || order.customer_name || "-"}</TableCell>
                                         <TableCell>{order.counter_name || "-"}</TableCell>
@@ -876,19 +987,7 @@ export default function OrdersPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            {order.status === "packed" && orderHasShortage(order) ? (
-                                                <Badge className="bg-amber-600 text-white hover:bg-amber-600">
-                                                    {packedReadyLabel(order)} c/faltante
-                                                </Badge>
-                                            ) : order.status === "packed" ? (
-                                                <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
-                                                    {packedReadyLabel(order)}
-                                                </Badge>
-                                            ) : (
-                                                <Badge variant={order.status === "cancelled" ? "destructive" : "outline"}>
-                                                    {statusLabel(order.status)}
-                                                </Badge>
-                                            )}
+                                            {renderStatusBadge(order.status, order)}
                                         </TableCell>
                                         <TableCell className="text-right">${Number(order.total_amount || 0).toLocaleString("es-AR")}</TableCell>
                                         <TableCell>
@@ -907,6 +1006,10 @@ export default function OrdersPage() {
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-2">
+                                                <Button size="sm" variant="outline" onClick={() => openOrderDetail(order)}>
+                                                    <Eye className="mr-1 h-4 w-4" />
+                                                    Detalle
+                                                </Button>
                                                 {(order.status === "pending" || order.status === "picking" || (order.status === "packed" && orderHasShortage(order))) ? (
                                                     <Button size="sm" variant="outline" onClick={() => void startPicking(order)}>
                                                         <CircleDashed className="mr-1 h-4 w-4" />
@@ -1116,6 +1219,331 @@ export default function OrdersPage() {
                     </div>
                 </DialogContent>
             </Dialog>
+
+            {/* Order Detail Dialog */}
+            <Dialog open={detailOpen} onOpenChange={(open) => {
+                setDetailOpen(open);
+                if (!open) setSelectedOrderId(null);
+            }}>
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-3xl no-print print:hidden">
+                    <DialogHeader>
+                        <DialogTitle>Detalle del Pedido</DialogTitle>
+                        <DialogDescription>
+                            Información comercial, artículos y auditoría de preparación WMS.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {orderDetailQuery.isLoading ? (
+                        <div className="flex h-40 items-center justify-center">
+                            <CircleDashed className="h-8 w-8 animate-spin text-primary" />
+                            <span className="ml-2 text-sm text-muted-foreground">Cargando detalles...</span>
+                        </div>
+                    ) : orderDetailQuery.isError ? (
+                        <div className="rounded-md border border-red-500/30 bg-red-500/10 p-4 text-center text-sm text-red-500">
+                            Ocurrió un error al cargar la información detallada del pedido.
+                        </div>
+                    ) : orderDetailQuery.data ? (
+                        (() => {
+                            const { order: detailOrder, items: detailItems, picking_session: detailSession } = orderDetailQuery.data;
+
+                            let speedText = "-";
+                            let durationText = "-";
+                            if (detailSession?.started_at && detailSession?.completed_at) {
+                                const start = new Date(detailSession.started_at).getTime();
+                                const end = new Date(detailSession.completed_at).getTime();
+                                const diffMs = end - start;
+                                const diffSec = Math.floor(diffMs / 1000);
+                                const minutes = Math.floor(diffSec / 60);
+                                const seconds = diffSec % 60;
+                                durationText = `${minutes}m ${seconds}s`;
+
+                                const itemsPicked = Number(detailSession.total_items_picked || 0);
+                                if (itemsPicked > 0 && diffSec > 0) {
+                                    const itemsPerMinute = ((itemsPicked / diffSec) * 60).toFixed(1);
+                                    speedText = `${itemsPerMinute} art/min`;
+                                }
+                            }
+
+                            return (
+                                <div className="space-y-6">
+                                    <div className="grid gap-4 sm:grid-cols-2 rounded-lg border p-4 bg-muted/10">
+                                        <div>
+                                            <h4 className="font-semibold text-sm text-muted-foreground mb-2">Información del Pedido</h4>
+                                            <div className="space-y-1 text-sm">
+                                                <p><strong>Pedido ID:</strong> <span className="font-mono text-xs">{detailOrder.id}</span></p>
+                                                <p><strong>Fecha Creación:</strong> {new Date(detailOrder.created_at).toLocaleString("es-AR")}</p>
+                                                <p><strong>Estado:</strong> {renderStatusBadge(detailOrder.status, { ...detailOrder, items: detailItems })}</p>
+                                                <p><strong>Total Comercial:</strong> <strong className="text-foreground">${Number(detailOrder.total_amount || 0).toLocaleString("es-AR")}</strong></p>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <h4 className="font-semibold text-sm text-muted-foreground mb-2">Logística & Entrega</h4>
+                                            <div className="space-y-1 text-sm">
+                                                <p><strong>Método Logístico:</strong> {detailOrder.shipping_method === "delivery" ? "Envío a Domicilio" : "Retiro en Local"}</p>
+                                                <p><strong>Receptor:</strong> {detailOrder.recipient_name || "-"} {detailOrder.recipient_dni ? `(DNI: ${detailOrder.recipient_dni})` : ""}</p>
+                                                {detailOrder.shipping_method === "delivery" && (
+                                                    <p><strong>Dirección:</strong> {detailOrder.shipping_address || "No indicada"}</p>
+                                                )}
+                                                {detailOrder.tracking_number && (
+                                                    <p><strong>Nº Seguimiento:</strong> <span className="font-mono text-xs">{detailOrder.tracking_number}</span></p>
+                                                )}
+                                                {detailOrder.estimated_delivery && (
+                                                    <p><strong>Fecha Estimada:</strong> {new Date(detailOrder.estimated_delivery).toLocaleDateString("es-AR")}</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid gap-4 sm:grid-cols-2 border-b pb-4">
+                                        <div className="text-sm">
+                                            <span className="text-muted-foreground block text-xs uppercase font-bold tracking-wider">Cliente</span>
+                                            <span className="font-medium text-base">{detailOrder.client_name || detailOrder.customer_name || "Consumidor Final"}</span>
+                                        </div>
+                                        <div className="text-sm">
+                                            <span className="text-muted-foreground block text-xs uppercase font-bold tracking-wider">Operador de Venta</span>
+                                            <span className="font-medium text-base">{detailOrder.counter_name || "Sistema"}</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <h4 className="font-semibold text-sm">Artículos del Pedido</h4>
+                                        <div className="rounded-md border overflow-hidden">
+                                            <Table>
+                                                <TableHeader>
+                                                    <TableRow>
+                                                        <TableHead>Ubicación</TableHead>
+                                                        <TableHead>SKU</TableHead>
+                                                        <TableHead>Producto</TableHead>
+                                                        <TableHead className="text-right">Cantidad</TableHead>
+                                                        <TableHead className="text-right">Preparado</TableHead>
+                                                        <TableHead className="text-right">Unitario</TableHead>
+                                                        <TableHead className="text-right">Subtotal</TableHead>
+                                                    </TableRow>
+                                                </TableHeader>
+                                                <TableBody>
+                                                    {detailItems.map((item: any, idx: number) => {
+                                                        const subtotal = Number(item.quantity || 0) * Number(item.unit_price || 0);
+                                                        return (
+                                                            <TableRow key={`${item.id}-${idx}`}>
+                                                                <TableCell className="font-mono font-bold text-xs">{item.location || "Sin Ubicación"}</TableCell>
+                                                                <TableCell className="font-mono text-xs">{item.sku}</TableCell>
+                                                                <TableCell className="text-sm">{item.product_name}</TableCell>
+                                                                <TableCell className="text-right font-semibold">{item.quantity}</TableCell>
+                                                                <TableCell className="text-right font-mono">
+                                                                    <span className={Number(item.picked_quantity || 0) < Number(item.quantity || 0) ? "text-amber-500 font-bold" : "text-emerald-500"}>
+                                                                        {item.picked_quantity || 0}
+                                                                    </span>
+                                                                </TableCell>
+                                                                <TableCell className="text-right font-mono">${Number(item.unit_price || 0).toLocaleString("es-AR")}</TableCell>
+                                                                <TableCell className="text-right font-mono font-semibold">${subtotal.toLocaleString("es-AR")}</TableCell>
+                                                            </TableRow>
+                                                        );
+                                                    })}
+                                                </TableBody>
+                                            </Table>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3 rounded-lg border p-4 bg-emerald-500/5">
+                                        <h4 className="font-semibold text-sm flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+                                            <Package className="h-4 w-4" /> Audición WMS (Sistemas de Depósito)
+                                        </h4>
+                                        {detailSession ? (
+                                            <div className="grid gap-3 sm:grid-cols-3 text-sm">
+                                                <div>
+                                                    <span className="text-muted-foreground block text-xs">Operario Responsable</span>
+                                                    <span className="font-medium">{detailSession.picker_name || `Picker ID: ${detailSession.picker_id}`}</span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-muted-foreground block text-xs">Tiempo Transcurrido</span>
+                                                    <span className="font-medium">{durationText}</span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-muted-foreground block text-xs">Velocidad del Operario</span>
+                                                    <span className="font-medium">{speedText}</span>
+                                                </div>
+                                                <div className="sm:col-span-3 border-t pt-2 mt-1 grid grid-cols-2 gap-2 text-xs">
+                                                    <p><strong>Inicio Picking:</strong> {new Date(detailSession.started_at).toLocaleString("es-AR")}</p>
+                                                    <p><strong>Fin Picking:</strong> {detailSession.completed_at ? new Date(detailSession.completed_at).toLocaleString("es-AR") : "En progreso..."}</p>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <p className="text-sm text-muted-foreground">
+                                                No hay registros de picking WMS para este pedido. El picking comienza cuando la orden pasa a estado "picking".
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    {detailOrder.notes && (
+                                        <div className="rounded-md border p-3 bg-slate-50 dark:bg-slate-900/50 text-sm">
+                                            <strong className="block mb-1 text-xs uppercase tracking-wider text-muted-foreground">Observaciones del Pedido</strong>
+                                            <p className="text-slate-700 dark:text-slate-350">{detailOrder.notes}</p>
+                                        </div>
+                                    )}
+                                    {detailOrder.delivery_notes && (
+                                        <div className="rounded-md border p-3 bg-amber-500/5 text-sm">
+                                            <strong className="block mb-1 text-xs uppercase tracking-wider text-amber-700 dark:text-amber-400">Instrucciones de Despacho</strong>
+                                            <p className="text-amber-900 dark:text-amber-300">{detailOrder.delivery_notes}</p>
+                                        </div>
+                                    )}
+
+                                    <div className="flex flex-wrap gap-2 justify-between border-t pt-4">
+                                        <div className="flex gap-2">
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={() => handleTriggerPrint(detailOrder, "remito")}
+                                            >
+                                                <FileText className="mr-2 h-4 w-4" />
+                                                Imprimir Remito (A4)
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={() => handleTriggerPrint(detailOrder, "label")}
+                                            >
+                                                <Truck className="mr-2 h-4 w-4" />
+                                                Imprimir Etiqueta (10x15)
+                                            </Button>
+                                        </div>
+                                        <Button type="button" onClick={() => setDetailOpen(false)}>
+                                            Cerrar
+                                        </Button>
+                                    </div>
+                                </div>
+                            );
+                        })()
+                    ) : null}
+                </DialogContent>
+            </Dialog>
+
+            {/* Print Areas */}
+            {printOrder && printType === "remito" && (
+                <PrintableOrderArea order={printOrder} />
+            )}
+            {printOrder && printType === "label" && (
+                <PrintableLabelArea order={printOrder} />
+            )}
+
+            {/* Floating Selection Bar */}
+            {selectedOrderIds.length > 0 && (
+                <div className="fixed bottom-6 left-1/2 z-[45] -translate-x-1/2 flex items-center justify-between gap-4 rounded-full border border-primary/25 bg-slate-900 px-6 py-3 text-white shadow-2xl animate-in slide-in-from-bottom duration-300 no-print print:hidden">
+                    <span className="text-sm font-semibold">
+                        {selectedOrderIds.length} {selectedOrderIds.length === 1 ? "pedido seleccionado" : "pedidos seleccionados"}
+                    </span>
+                    <div className="flex gap-2">
+                        <Button
+                            size="sm"
+                            className="rounded-full bg-primary hover:bg-primary/95 text-white"
+                            onClick={() => {
+                                setManifestDriver("");
+                                setManifestPlate("");
+                                setManifestCarrier("Flete Propio");
+                                setManifestNotes("");
+                                setManifestDialogOpen(true);
+                            }}
+                        >
+                            Generar Hoja de Ruta
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="ghost"
+                            className="rounded-full hover:bg-slate-800 text-slate-400 hover:text-white"
+                            onClick={() => setSelectedOrderIds([])}
+                        >
+                            Limpiar
+                        </Button>
+                    </div>
+                </div>
+            )}
+
+            {/* Manifest Creation Dialog */}
+            <Dialog open={manifestDialogOpen} onOpenChange={setManifestDialogOpen}>
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-xl no-print print:hidden">
+                    <DialogHeader>
+                        <DialogTitle>Generar Hoja de Ruta de Reparto</DialogTitle>
+                        <DialogDescription>
+                            Asigna un chofer, vehículo y transportista para consolidar las entregas.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <form
+                        className="space-y-4"
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            handleTriggerManifestPrint();
+                        }}
+                    >
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="space-y-2">
+                                <Label>Nombre del Chofer</Label>
+                                <Input
+                                    value={manifestDriver}
+                                    onChange={(e) => setManifestDriver(e.target.value)}
+                                    placeholder="Nombre completo"
+                                    required
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Patente del Vehículo</Label>
+                                <Input
+                                    value={manifestPlate}
+                                    onChange={(e) => setManifestPlate(e.target.value)}
+                                    placeholder="Patente (Ej: AAA-000 o AA000AA)"
+                                    required
+                                />
+                            </div>
+                            <div className="space-y-2 sm:col-span-2">
+                                <Label>Empresa Logística / Transportista</Label>
+                                <Input
+                                    value={manifestCarrier}
+                                    onChange={(e) => setManifestCarrier(e.target.value)}
+                                    placeholder="Ej: Andreani, Correo Argentino, Flete Propio"
+                                    required
+                                />
+                            </div>
+                            <div className="space-y-2 sm:col-span-2">
+                                <Label>Observaciones / Instrucciones de Ruta</Label>
+                                <Textarea
+                                    value={manifestNotes}
+                                    onChange={(e) => setManifestNotes(e.target.value)}
+                                    placeholder="Instrucciones para el chofer, orden de visitas, etc."
+                                />
+                            </div>
+                        </div>
+
+                        <div className="rounded-md border p-3 bg-muted/20 text-xs space-y-1">
+                            <strong className="block text-sm mb-1 text-slate-800 dark:text-slate-200">Pedidos Consolidados:</strong>
+                            {orders.filter(o => selectedOrderIds.includes(o.id)).map(o => (
+                                <div key={o.id} className="flex justify-between border-b pb-1 last:border-0">
+                                    <span className="font-mono text-xs">{o.id.slice(0, 8).toUpperCase()}</span>
+                                    <span className="truncate max-w-[200px] font-medium">{o.recipient_name || o.client_name || o.customer_name}</span>
+                                    <span className="text-muted-foreground">{o.shipping_address ? "Envío" : "Sin dirección"}</span>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+                            <Button type="button" variant="outline" onClick={() => setManifestDialogOpen(false)}>
+                                Cancelar
+                            </Button>
+                            <Button type="submit">
+                                Imprimir Hoja de Ruta
+                            </Button>
+                        </div>
+                    </form>
+                </DialogContent>
+            </Dialog>
+
+            {/* Printable Manifest Area */}
+            {printManifestActive && (
+                <PrintableManifestArea
+                    orders={printManifestOrders}
+                    driver={manifestDriver}
+                    plate={manifestPlate}
+                    carrier={manifestCarrier}
+                    notes={manifestNotes}
+                />
+            )}
         </div>
     );
 }

@@ -18,6 +18,7 @@ router.post('/purchase-orders', purchaseOrderWriteRoles, validate(schemas.purcha
 router.put('/purchase-orders/:id/status', purchaseOrderWriteRoles, validate(schemas.purchaseOrderStatus), procurementController.updatePurchaseOrderStatus);
 
 // Receptions
+router.get('/iva-compras', receptionRoles, procurementController.exportIVACompras);
 router.get('/receptions', receptionRoles, validate(schemas.receptionFilters), procurementController.getReceptions);
 router.post('/receptions', receptionRoles, validate(schemas.reception), procurementController.createReception);
 router.post('/receptions/:id/approve', receptionRoles, validate(schemas.approveReception), procurementController.approveReception);

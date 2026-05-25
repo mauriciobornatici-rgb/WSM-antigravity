@@ -1,5 +1,7 @@
 import Joi from 'joi';
+import { z } from 'zod';
 import { passwordPolicy, getPasswordPolicyMessage } from '../utils/passwordPolicy.js';
+import * as commonSchemas from '@wsm/common';
 
 export const validate = (schema) => (req, res, next) => {
     const { body, params, query } = req;
@@ -41,6 +43,39 @@ export const validate = (schema) => (req, res, next) => {
     }
 
     next();
+};
+
+export const validateZod = (schema) => (req, res, next) => {
+    try {
+        const dataToValidate = {
+            body: Object.keys(req.body || {}).length ? req.body : undefined,
+            params: Object.keys(req.params || {}).length ? req.params : undefined,
+            query: Object.keys(req.query || {}).length ? req.query : undefined
+        };
+        const validated = schema.parse(dataToValidate);
+        
+        if (validated.body) req.body = validated.body;
+        if (validated.params) req.params = validated.params;
+        if (validated.query) {
+            req.validatedQuery = validated.query;
+            Object.assign(req.query, validated.query);
+        }
+        
+        next();
+    } catch (error) {
+        if (error.issues) {
+            const details = error.issues.map((issue) => ({
+                message: issue.message,
+                path: issue.path
+            }));
+            return res.status(400).json({
+                error: 'validation_error',
+                message: 'Datos de entrada invalidos (Zod)',
+                details
+            });
+        }
+        next(error);
+    }
 };
 
 const uuid = Joi.string().pattern(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/);
@@ -574,6 +609,15 @@ export const schemas = {
             operation: Joi.object({
                 tax_rate: Joi.number().min(0).max(100).optional(),
                 default_currency: Joi.string().length(3).optional()
+            }).optional(),
+            billing: Joi.object({
+                iibb: Joi.string().allow('', null),
+                start_date: Joi.string().allow('', null),
+                iva_condition: Joi.string().allow('', null),
+                pos: Joi.number().integer().min(1).max(99999).allow(null),
+                afip_crt: Joi.string().allow('', null),
+                afip_key: Joi.string().allow('', null),
+                afip_env: Joi.string().valid('homologacion', 'produccion').allow('', null)
             }).optional()
         }).min(1)
     }),
@@ -590,7 +634,9 @@ export const schemas = {
         query: Joi.object({
             supplier_id: optionalUuid,
             client_id: optionalUuid,
-            type: Joi.string().max(50)
+            type: Joi.string().max(50),
+            start_date: Joi.string().max(50).optional(),
+            end_date: Joi.string().max(50).optional()
         })
     }),
 
@@ -715,5 +761,37 @@ export const schemas = {
             reference_id: optionalUuid,
             notes: Joi.string().allow('', null)
         })
+    })
+};
+
+export const zodSchemas = {
+    login: z.object({
+        body: commonSchemas.loginSchema
+    }),
+    user: z.object({
+        body: commonSchemas.createUserSchema
+    }),
+    userUpdate: z.object({
+        params: z.object({ id: commonSchemas.uuidSchema }),
+        body: commonSchemas.updateUserSchema
+    }),
+    product: z.object({
+        body: commonSchemas.createProductSchema
+    }),
+    uploadProductImage: z.object({
+        body: commonSchemas.uploadProductImageSchema
+    }),
+    productFilters: z.object({
+        query: commonSchemas.productFiltersSchema.optional()
+    }),
+    order: z.object({
+        body: commonSchemas.createOrderSchema
+    }),
+    orderFilters: z.object({
+        query: commonSchemas.orderFiltersSchema.optional()
+    }),
+    invoicePayment: z.object({
+        params: z.object({ id: commonSchemas.uuidSchema }),
+        body: commonSchemas.invoicePaymentSchema
     })
 };

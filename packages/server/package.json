@@ -8,9 +8,12 @@
         "dev": "nodemon index.js",
         "test": "node --test",
         "smoke:rbac": "node scripts/rbac-validation-smoke.js",
-        "smoke:integrity": "node scripts/integrity-validation-smoke.js"
+        "smoke:integrity": "node scripts/integrity-validation-smoke.js",
+        "seed:bulk": "node scripts/seed-bulk.js"
     },
     "dependencies": {
+        "@afipsdk/afip.js": "^1.2.3",
+        "@wsm/common": "*",
         "bcrypt": "^6.0.0",
         "cors": "^2.8.6",
         "dotenv": "^17.2.3",
@@ -18,11 +21,13 @@
         "express-rate-limit": "^8.2.1",
         "helmet": "^8.1.0",
         "hpp": "^0.2.3",
-        "joi": "^18.0.2",
+        "joi": "^18.2.1",
         "jsonwebtoken": "^9.0.3",
-        "mysql2": "^3.16.2"
+        "mysql2": "^3.16.2",
+        "zod": "^4.4.3"
     },
     "devDependencies": {
+        "@faker-js/faker": "^10.4.0",
         "nodemon": "^3.1.11"
     }
 }

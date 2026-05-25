@@ -13,6 +13,7 @@ router.post('/warranties', warrantyRoles, validate(schemas.warrantyCreate), cont
 router.put('/warranties/:id/status', warrantyRoles, validate(schemas.warrantyStatusUpdate), controller.updateWarrantyStatus);
 
 // Client Returns
+router.get('/client-returns/analytics', warrantyRoles, controller.getReturnsAnalytics);
 router.get('/client-returns', warrantyRoles, validate(schemas.clientReturnsFilters), controller.getReturns);
 router.post('/client-returns', warrantyRoles, validate(schemas.clientReturnCreate), controller.createReturn);
 router.post('/client-returns/:id/approve', warrantyRoles, validate(schemas.idParam), controller.approveReturn);
@@ -20,5 +21,6 @@ router.post('/client-returns/:id/approve', warrantyRoles, validate(schemas.idPar
 // Credit Notes
 router.get('/credit-notes', warrantyRoles, validate(schemas.creditNotesFilters), controller.getCreditNotes);
 router.post('/credit-notes', creditNoteWriteRoles, validate(schemas.creditNoteCreate), controller.createCreditNote);
+router.post('/credit-notes/:id/authorize', creditNoteWriteRoles, validate(schemas.idParam), controller.authorizeCreditNote);
 
 export default router;

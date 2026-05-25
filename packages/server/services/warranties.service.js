@@ -2,6 +2,8 @@ import crypto from 'crypto';
 import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
+import auditService from './audit.service.js';
+import afipService from './afip.service.js';
 
 class WarrantiesService extends BaseService {
     constructor() {
@@ -70,13 +72,33 @@ class ReturnsService extends BaseService {
         if (quantity <= 0) return { restocked: 0, discarded: 0 };
 
         const condition = String(item.condition_status || 'sellable').toLowerCase();
-        const isSellable = condition === 'sellable';
-        const location = 'General';
+        
+        let targetLocation = null;
+        let movementType = 'damage';
+        let movementReason = '';
 
-        if (isSellable) {
+        if (condition === 'sellable') {
+            targetLocation = 'General';
+            movementType = 'return';
+            movementReason = 'Devolución de cliente - Reingreso a stock';
+        } else if (condition === 'supplier_rma') {
+            targetLocation = 'Devoluciones a Proveedores';
+            movementType = 'return';
+            movementReason = 'Devolución de cliente - A enviar a proveedor';
+        } else if (condition === 'loss') {
+            targetLocation = null;
+            movementType = 'damage';
+            movementReason = 'Devolución de cliente - Pérdida asumida';
+        } else if (condition === 'rejected') {
+            targetLocation = null;
+            movementType = 'rejected';
+            movementReason = 'Devolución de cliente - Rechazada sin garantía';
+        }
+
+        if (targetLocation) {
             const [existingInventory] = await connection.query(
                 'SELECT id FROM inventory WHERE product_id = ? AND location = ? LIMIT 1 FOR UPDATE',
-                [item.product_id, location]
+                [item.product_id, targetLocation]
             );
 
             if (existingInventory.length > 0) {
@@ -87,7 +109,7 @@ class ReturnsService extends BaseService {
             } else {
                 await connection.query(
                     'INSERT INTO inventory (id, product_id, location, quantity) VALUES (?, ?, ?, ?)',
-                    [crypto.randomUUID(), item.product_id, location, quantity]
+                    [crypto.randomUUID(), item.product_id, targetLocation, quantity]
                 );
             }
         }
@@ -98,20 +120,20 @@ class ReturnsService extends BaseService {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'client_return', ?, ?)`,
             [
                 crypto.randomUUID(),
-                isSellable ? 'return' : 'damage',
+                movementType,
                 item.product_id,
-                isSellable ? location : null,
+                targetLocation,
                 quantity,
                 Number(item.unit_price || 0),
-                isSellable ? 'Client return approved - restocked' : 'Client return approved - non sellable',
+                movementReason,
                 returnId,
                 actorUserId || null
             ]
         );
 
         return {
-            restocked: isSellable ? quantity : 0,
-            discarded: isSellable ? 0 : quantity
+            restocked: targetLocation === 'General' ? quantity : 0,
+            discarded: targetLocation !== 'General' ? quantity : 0
         };
     }
 
@@ -151,6 +173,51 @@ class ReturnsService extends BaseService {
             ...r,
             items: items.filter((i) => i.return_id === r.id)
         }));
+    }
+
+    async getReturnsAnalytics() {
+        const conn = await pool.getConnection();
+        try {
+            // Rate of returns (loss and rejected) by product
+            const [productStats] = await conn.query(`
+                SELECT p.name as product_name, p.sku,
+                       SUM(CASE WHEN i.condition_status IN ('loss', 'rejected') THEN i.quantity ELSE 0 END) as defective_quantity,
+                       SUM(i.quantity) as total_returned_quantity
+                FROM client_return_items i
+                JOIN products p ON i.product_id = p.id
+                JOIN client_returns r ON i.return_id = r.id
+                WHERE r.status = 'approved'
+                GROUP BY i.product_id
+                ORDER BY defective_quantity DESC
+                LIMIT 5
+            `);
+
+            // Returns by reason
+            const [reasonStats] = await conn.query(`
+                SELECT r.reason, COUNT(*) as count
+                FROM client_returns r
+                WHERE r.status = 'approved' AND r.reason IS NOT NULL AND r.reason != ''
+                GROUP BY r.reason
+                ORDER BY count DESC
+                LIMIT 5
+            `);
+
+            // Total financial loss
+            const [lossStats] = await conn.query(`
+                SELECT COALESCE(SUM(i.quantity * i.unit_price), 0) as total_loss_amount
+                FROM client_return_items i
+                JOIN client_returns r ON i.return_id = r.id
+                WHERE r.status = 'approved' AND i.condition_status IN ('loss', 'rejected')
+            `);
+
+            return {
+                topDefectiveProducts: productStats,
+                topReasons: reasonStats,
+                totalLossAmount: Number(lossStats[0]?.total_loss_amount || 0)
+            };
+        } finally {
+            conn.release();
+        }
     }
 
     async createReturn(data) {
@@ -225,22 +292,18 @@ class ReturnsService extends BaseService {
                 throw this._buildDomainError('La devolucion no tiene items', 'RETURN_WITHOUT_ITEMS', 400);
             }
 
-            let totalAmount = Number(returnRow.total_amount || 0);
-            if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
-                totalAmount = items.reduce(
-                    (sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_price || 0),
-                    0
-                );
+            let totalAmount = 0;
+            for (const item of items) {
+                // If item is rejected, it does not contribute to the refund amount
+                if (String(item.condition_status).toLowerCase() !== 'rejected') {
+                    totalAmount += Number(item.quantity || 0) * Number(item.unit_price || 0);
+                }
             }
             totalAmount = Math.round((totalAmount + Number.EPSILON) * 100) / 100;
-            if (totalAmount <= 0) {
-                throw this._buildDomainError(
-                    'El monto total de la devolucion debe ser mayor a 0 para emitir nota de credito',
-                    'RETURN_TOTAL_INVALID',
-                    400
-                );
-            }
-
+            
+            // It's possible that a return ONLY has rejected items, then totalAmount = 0
+            // If totalAmount is 0, we just approve it without creating a Credit Note.
+            
             let restockedTotal = 0;
             let discardedTotal = 0;
             for (const item of items) {
@@ -253,42 +316,70 @@ class ReturnsService extends BaseService {
                 discardedTotal += impact.discarded;
             }
 
-            const creditNoteId = crypto.randomUUID();
-            const creditNoteNumber = await this._nextCreditNoteNumber(conn);
-            await conn.query(
-                `INSERT INTO credit_notes (
-                    id, number, client_id, customer_name, reference_type, reference_id, amount, status, notes
-                ) VALUES (?, ?, ?, ?, 'return', ?, ?, 'issued', ?)`,
-                [
-                    creditNoteId,
-                    creditNoteNumber,
-                    returnRow.client_id || null,
-                    returnRow.customer_name || null,
-                    returnId,
-                    totalAmount,
-                    `Generada automaticamente por aprobacion de devolucion ${returnId}`
-                ]
-            );
+            let creditNoteId = null;
+            let creditNoteNumber = null;
 
-            await conn.query(
-                `INSERT INTO transactions (id, type, amount, description, reference_id, client_id, date)
-                 VALUES (?, 'adjustment', ?, ?, ?, ?, NOW())`,
-                [
-                    crypto.randomUUID(),
-                    totalAmount,
-                    `Nota de credito ${creditNoteNumber} por devolucion de cliente`,
-                    creditNoteId,
-                    returnRow.client_id || null
-                ]
-            );
+            if (totalAmount > 0) {
+                creditNoteId = crypto.randomUUID();
+                creditNoteNumber = await this._nextCreditNoteNumber(conn);
 
-            if (returnRow.client_id) {
+                let pointOfSale = 1;
+                const [compRows] = await conn.query('SELECT billing_pos FROM company_settings LIMIT 1');
+                if (compRows.length > 0 && compRows[0].billing_pos) {
+                    pointOfSale = Number(compRows[0].billing_pos) || 1;
+                }
+
+                let creditNoteType = 'B';
+                if (returnRow.client_id) {
+                    const [clients] = await conn.query(
+                        'SELECT tax_condition_id FROM clients WHERE id = ?',
+                        [returnRow.client_id]
+                    );
+                    if (clients.length > 0) {
+                        const condId = clients[0].tax_condition_id || '';
+                        if (condId === 'tc_RespInscripto' || condId.toLowerCase().includes('inscripto')) {
+                            creditNoteType = 'A';
+                        }
+                    }
+                }
+
                 await conn.query(
-                    `UPDATE clients
-                     SET current_account_balance = COALESCE(current_account_balance, 0) - ?
-                     WHERE id = ?`,
-                    [totalAmount, returnRow.client_id]
+                    `INSERT INTO credit_notes (
+                        id, number, client_id, point_of_sale, credit_note_type, customer_name, reference_type, reference_id, amount, status, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'return', ?, ?, 'issued', ?)`,
+                    [
+                        creditNoteId,
+                        creditNoteNumber,
+                        returnRow.client_id || null,
+                        pointOfSale,
+                        creditNoteType,
+                        returnRow.customer_name || null,
+                        returnId,
+                        totalAmount,
+                        `Generada automaticamente por aprobacion de devolucion ${returnId}`
+                    ]
                 );
+
+                await conn.query(
+                    `INSERT INTO transactions (id, type, amount, description, reference_id, client_id, date)
+                     VALUES (?, 'adjustment', ?, ?, ?, ?, NOW())`,
+                    [
+                        crypto.randomUUID(),
+                        totalAmount,
+                        `Nota de credito ${creditNoteNumber} por devolucion de cliente`,
+                        creditNoteId,
+                        returnRow.client_id || null
+                    ]
+                );
+
+                if (returnRow.client_id) {
+                    await conn.query(
+                        `UPDATE clients
+                         SET current_account_balance = COALESCE(current_account_balance, 0) - ?
+                         WHERE id = ?`,
+                        [totalAmount, returnRow.client_id]
+                    );
+                }
             }
 
             await conn.query(
@@ -337,6 +428,79 @@ class CreditNotesService extends BaseService {
         query += ' ORDER BY cn.created_at DESC';
         const [rows] = await pool.query(query, params);
         return rows;
+    }
+
+    async authorizeCreditNote(creditNoteId, userId) {
+        const [rows] = await pool.query('SELECT * FROM credit_notes WHERE id = ? AND deleted_at IS NULL', [creditNoteId]);
+        if (rows.length === 0) {
+            const err = new Error('Credit Note not found');
+            err.statusCode = 404;
+            err.status = 'fail';
+            err.errorCode = 'CREDIT_NOTE_NOT_FOUND';
+            throw err;
+        }
+
+        const cn = rows[0];
+        if (cn.status === 'authorized') return cn;
+        
+        let afipRes = null;
+        
+        // Consultar factura original si esta NC viene de una devolucion
+        if (cn.reference_type === 'return' && cn.reference_id) {
+            const [returns] = await pool.query('SELECT order_id FROM client_returns WHERE id = ?', [cn.reference_id]);
+            if (returns.length > 0 && returns[0].order_id) {
+                const [invoices] = await pool.query('SELECT * FROM invoices WHERE order_id = ? AND cae IS NOT NULL', [returns[0].order_id]);
+                if (invoices.length > 0) {
+                    // Factura validada en AFIP. Generar NC_A o NC_B
+                    const originalInvoice = invoices[0];
+                    const [settingsRows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
+                    const companySettings = settingsRows[0] || {};
+                    
+                    const invoiceData = {
+                        invoice_type: cn.credit_note_type === 'A' ? 'NC_A' : 'NC_B',
+                        client_tax_id: originalInvoice.client_tax_id || null
+                    };
+                    
+                    // We need items for AFIP: we will reconstruct a mock item matching the total amount and VAT of original
+                    const invoiceItems = [
+                        { quantity: 1, unit_price: cn.amount, vat_rate: 21 } // Simplificacion para el CAE de devolucion
+                    ];
+
+                    try {
+                        afipRes = await afipService.createVoucher(invoiceData, invoiceItems, companySettings);
+                    } catch (err) {
+                        throw new Error(`AFIP rechazó la Nota de Crédito: ${err.message}`);
+                    }
+                }
+            }
+        }
+
+        const cae = afipRes ? afipRes.cae : String(Math.floor(10000000000000 + Math.random() * 90000000000000));
+        let expirationDate = null;
+        if (afipRes && afipRes.cae_expiration_date) {
+            const d = afipRes.cae_expiration_date;
+            expirationDate = `${d.substring(0,4)}-${d.substring(4,6)}-${d.substring(6,8)}`;
+        } else {
+            const exp = new Date();
+            exp.setDate(exp.getDate() + 10);
+            expirationDate = exp.toISOString().slice(0, 10);
+        }
+
+        await pool.query(
+            'UPDATE credit_notes SET status = "authorized", cae = ?, cae_expiration_date = ? WHERE id = ?',
+            [cae, expirationDate, creditNoteId]
+        );
+
+        await auditService.log({
+            user_id: userId,
+            action: 'AUTHORIZE_CREDIT_NOTE',
+            entity_type: 'credit_note',
+            entity_id: creditNoteId,
+            new_values: { cae, cae_expiration_date: expirationDate }
+        });
+
+        const [updated] = await pool.query('SELECT * FROM credit_notes WHERE id = ?', [creditNoteId]);
+        return updated[0];
     }
 }
 

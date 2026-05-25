@@ -200,3 +200,15 @@ export const updateSerialNumber = catchAsync(async (req, res) => {
     }
     res.json(result);
 });
+
+export const transferStock = catchAsync(async (req, res) => {
+    const { product_id, from_location, to_location, quantity } = req.body;
+    const result = await inventoryService.transferStock(
+        product_id,
+        from_location,
+        to_location,
+        quantity,
+        req.user?.id
+    );
+    res.json(result);
+});

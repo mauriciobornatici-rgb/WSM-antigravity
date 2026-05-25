@@ -9,16 +9,47 @@ dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 const env = getEnvConfig();
 
-const pool = mysql.createPool({
-    host: process.env.DB_HOST || 'localhost',
-    port: env.dbPort,
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'sports_erp',
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
-    ...(env.dbSsl ? { ssl: { rejectUnauthorized: env.dbSslRejectUnauthorized } } : {})
+let _pool = null;
+
+const getPool = () => {
+    if (!_pool) {
+        _pool = mysql.createPool({
+            host: process.env.DB_HOST || 'localhost',
+            port: env.dbPort,
+            user: process.env.DB_USER || 'root',
+            password: process.env.DB_PASSWORD || '',
+            database: process.env.DB_NAME || 'sports_erp',
+            waitForConnections: true,
+            connectionLimit: 10,
+            queueLimit: 0,
+            ...(env.dbSsl ? { ssl: { rejectUnauthorized: env.dbSslRejectUnauthorized } } : {})
+        });
+    }
+    return _pool;
+};
+
+export const closePool = async () => {
+    if (_pool) {
+        await _pool.end();
+        _pool = null;
+    }
+};
+
+const poolProxy = new Proxy({}, {
+    get: (target, prop) => {
+        if (prop in target) {
+            return target[prop];
+        }
+        const p = getPool();
+        if (typeof p[prop] === 'function') {
+            return p[prop].bind(p);
+        }
+        return p[prop];
+    },
+    set: (target, prop, value) => {
+        target[prop] = value;
+        return true;
+    }
 });
 
-export default pool;
+export default poolProxy;

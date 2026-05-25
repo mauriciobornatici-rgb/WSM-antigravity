@@ -480,17 +480,16 @@ export default function ClientDetailPage() {
             return;
         }
 
+        if (paymentLines.some((line) => Number(line.amount || 0) <= 0)) {
+            toast.error("Existen lineas de pago con monto 0 o vacio.");
+            return;
+        }
+
         const sanitized = paymentLines
             .map((line) => ({
                 method: line.method,
                 amount: Number(line.amount || 0),
-            }))
-            .filter((line) => Number.isFinite(line.amount) && line.amount > 0);
-
-        if (sanitized.length === 0) {
-            toast.error("Debes ingresar al menos una linea de pago valida.");
-            return;
-        }
+            }));
 
         const totalToRegister = sanitized.reduce((sum, line) => sum + line.amount, 0);
         if (totalToRegister - selectedInvoicePending > 0.01) {
@@ -1203,7 +1202,7 @@ export default function ClientDetailPage() {
                                 <p className="font-semibold">${selectedInvoicePending.toLocaleString("es-AR")}</p>
                             </div>
                             <div>
-                                <p className="text-muted-foreground">Diferencia</p>
+                                <p className="text-muted-foreground">Saldo restante</p>
                                 <p className={cn("font-semibold", paymentLinesTotal - selectedInvoicePending > 0.01 ? "text-red-500" : "text-emerald-500")}>
                                     ${(selectedInvoicePending - paymentLinesTotal).toLocaleString("es-AR")}
                                 </p>
@@ -1218,7 +1217,14 @@ export default function ClientDetailPage() {
                         <Button
                             type="button"
                             onClick={() => void submitPaymentRegistration()}
-                            disabled={registeringPayment || !selectedInvoiceId || openInvoices.length === 0}
+                            disabled={
+                                registeringPayment || 
+                                !selectedInvoiceId || 
+                                openInvoices.length === 0 || 
+                                paymentLines.some(line => Number(line.amount || 0) <= 0) || 
+                                paymentLinesTotal <= 0 || 
+                                paymentLinesTotal - selectedInvoicePending > 0.01
+                            }
                         >
                             {registeringPayment ? "Registrando..." : "Registrar cobro"}
                         </Button>

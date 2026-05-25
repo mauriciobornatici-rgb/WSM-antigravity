@@ -1,6 +1,6 @@
 import express from 'express';
 import * as inventoryController from '../controllers/inventoryController.js';
-import { validate, schemas } from '../middleware/validationMiddleware.js';
+import { validate, schemas, validateZod, zodSchemas } from '../middleware/validationMiddleware.js';
 import { authorizeRoles } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -9,15 +9,16 @@ const inventoryWriteRoles = authorizeRoles('admin', 'manager', 'warehouse');
 const advancedInventoryRoles = authorizeRoles('admin', 'manager', 'warehouse');
 
 // Products
-router.get('/products', inventoryReadRoles, validate(schemas.productFilters), inventoryController.getProducts);
-router.post('/products/image-upload', inventoryWriteRoles, validate(schemas.uploadProductImage), inventoryController.uploadProductImage);
-router.post('/products', inventoryWriteRoles, validate(schemas.product), inventoryController.createProduct);
-router.put('/products/:id', inventoryWriteRoles, validate(schemas.product), inventoryController.updateProduct);
+router.get('/products', inventoryReadRoles, validateZod(zodSchemas.productFilters), inventoryController.getProducts);
+router.post('/products/image-upload', inventoryWriteRoles, validateZod(zodSchemas.uploadProductImage), inventoryController.uploadProductImage);
+router.post('/products', inventoryWriteRoles, validateZod(zodSchemas.product), inventoryController.createProduct);
+router.put('/products/:id', inventoryWriteRoles, validateZod(zodSchemas.product), inventoryController.updateProduct);
 router.delete('/products/:id', inventoryWriteRoles, validate(schemas.idParam), inventoryController.deleteProduct);
 router.get('/products/:id/movements', inventoryReadRoles, validate(schemas.idParam), inventoryController.getProductMovements);
 
 // Inventory summary
 router.get('/inventory', inventoryReadRoles, inventoryController.getInventory);
+router.post('/inventory/transfer', inventoryWriteRoles, inventoryController.transferStock);
 
 // Movements (legacy + explicit alias)
 router.get('/movements', inventoryReadRoles, validate(schemas.inventoryMovementFilters), inventoryController.getMovements);

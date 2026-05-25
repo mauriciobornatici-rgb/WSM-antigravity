@@ -11,5 +11,6 @@ router.get('/company/public', validate(schemas.emptyQuery), settingsController.g
 router.get('/company', authorizeRoles('admin'), validate(schemas.emptyQuery), settingsController.getCompanySettings);
 router.put('/company', authorizeRoles('admin'), validate(schemas.companySettingsUpdate), settingsController.updateCompanySettings);
 router.get('/audit-logs', authorizeRoles('admin'), validate(schemas.auditLogsFilters), settingsController.getAuditLogs);
+router.post('/afip/test-connection', authorizeRoles('admin'), settingsController.testAfipConnection);
 
 export default router;

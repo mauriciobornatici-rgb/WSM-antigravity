@@ -3,6 +3,7 @@ import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import auditService from './audit.service.js';
 import { normalizeProductImageUrl } from '../utils/imagePolicy.js';
+import accountingService from './accounting.service.js';
 
 class InventoryService extends BaseService {
     constructor() {
@@ -49,10 +50,10 @@ class InventoryService extends BaseService {
         let query = `
             SELECT
                 p.*,
-                COALESCE(inv.total_quantity, 0) AS inventory_stock_current
+                COALESCE(inv.total_quantity - inv.total_reserved, 0) AS inventory_stock_current
             FROM products p
             LEFT JOIN (
-                SELECT product_id, SUM(quantity) AS total_quantity
+                SELECT product_id, SUM(quantity) AS total_quantity, SUM(reserved_quantity) AS total_reserved
                 FROM inventory
                 GROUP BY product_id
             ) inv ON inv.product_id = p.id
@@ -233,6 +234,21 @@ class InventoryService extends BaseService {
             entity_type: 'inventory',
             entity_id: movementData.product_id,
             new_values: movementData
+        });
+
+        // Trigger Tienda Nube sync asynchronously
+        // We do this without await so it doesn't block the database transaction
+        setImmediate(async () => {
+            try {
+                const inventory = await this.getInventoryWithDetails();
+                const productInv = inventory.find(i => i.product_id === movementData.product_id);
+                if (productInv) {
+                    const tiendanubeService = (await import('./tiendanube.service.js')).default;
+                    await tiendanubeService.syncStock(movementData.product_id, productInv.quantity);
+                }
+            } catch (err) {
+                console.error('[TiendaNube Sync] Error calculating stock for sync:', err);
+            }
         });
 
         return { id, ...movementData };
@@ -465,6 +481,28 @@ class InventoryService extends BaseService {
                 );
             }
 
+            let netPurchaseSubtotal = 0;
+            for (const item of items) {
+                netPurchaseSubtotal += Number(item.quantity_received || 0) * Number(item.unit_cost || 0);
+            }
+            netPurchaseSubtotal = Math.round(netPurchaseSubtotal * 100) / 100;
+            const vatAmount = Math.round((netPurchaseSubtotal * 0.21) * 100) / 100;
+            const totalPurchase = Math.round((netPurchaseSubtotal + vatAmount) * 100) / 100;
+
+            if (totalPurchase > 0) {
+                await accountingService.createJournalEntry(connection, {
+                    date: reception.reception_date || new Date(),
+                    description: `Ingreso de Mercadería - Recepción ${reception.reception_number}`,
+                    reference_type: 'reception',
+                    reference_id: reception.id,
+                    lines: [
+                        { account_code: '1.1.04.01', debit: netPurchaseSubtotal, credit: 0, notes: 'Ingreso al Almacén' },
+                        { account_code: '1.1.05.02', debit: vatAmount, credit: 0, notes: 'IVA Crédito Fiscal 21%' },
+                        { account_code: '2.1.01.01', debit: 0, credit: totalPurchase, notes: `Cuenta Corriente Proveedor` }
+                    ]
+                });
+            }
+
             await connection.query(
                 'UPDATE receptions SET status = "approved", approved_by = ? WHERE id = ?',
                 [approvedBy, receptionId]
@@ -472,6 +510,105 @@ class InventoryService extends BaseService {
 
             await connection.commit();
             return { success: true };
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async transferStock(productId, fromLocation, toLocation, quantity, userId) {
+        const qty = Number(quantity);
+        if (!qty || qty <= 0) {
+            throw new Error('La cantidad a transferir debe ser mayor a cero.');
+        }
+
+        const normalizedFrom = String(fromLocation || 'General').trim();
+        const normalizedTo = String(toLocation || 'General').trim();
+
+        if (normalizedFrom === normalizedTo) {
+            throw new Error('La ubicación de origen y destino no pueden ser iguales.');
+        }
+
+        const connection = await pool.getConnection();
+        await connection.beginTransaction();
+
+        try {
+            const [sourceRows] = await connection.query(
+                'SELECT id, quantity, reserved_quantity FROM inventory WHERE product_id = ? AND location = ? FOR UPDATE',
+                [productId, normalizedFrom]
+            );
+
+            if (sourceRows.length === 0) {
+                throw new Error(`Stock insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: 0 (Físico: 0, Reservado: 0)`);
+            }
+
+            const physicalQty = sourceRows[0].quantity;
+            const reservedQty = sourceRows[0].reserved_quantity || 0;
+            const availableQty = physicalQty - reservedQty;
+
+            if (availableQty < qty) {
+                throw new Error(`Stock disponible insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: ${availableQty} (Físico: ${physicalQty}, Reservado: ${reservedQty})`);
+            }
+
+            const sourceId = sourceRows[0].id;
+            const remainingQty = sourceRows[0].quantity - qty;
+
+            if (remainingQty === 0) {
+                await connection.query('DELETE FROM inventory WHERE id = ?', [sourceId]);
+            } else {
+                await connection.query('UPDATE inventory SET quantity = ? WHERE id = ?', [remainingQty, sourceId]);
+            }
+
+            const [targetRows] = await connection.query(
+                'SELECT id FROM inventory WHERE product_id = ? AND location = ? FOR UPDATE',
+                [productId, normalizedTo]
+            );
+
+            if (targetRows.length > 0) {
+                await connection.query(
+                    'UPDATE inventory SET quantity = quantity + ? WHERE id = ?',
+                    [qty, targetRows[0].id]
+                );
+            } else {
+                await connection.query(
+                    'INSERT INTO inventory (id, product_id, location, quantity) VALUES (?, ?, ?, ?)',
+                    [crypto.randomUUID(), productId, normalizedTo, qty]
+                );
+            }
+
+            const movementId = crypto.randomUUID();
+            await connection.query(`
+                INSERT INTO inventory_movements (
+                    id, type, product_id, from_location, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
+                ) VALUES (?, 'transfer', ?, ?, ?, ?, 0, 'Internal location transfer', 'transfer', ?, ?)
+            `, [
+                movementId,
+                productId,
+                normalizedFrom,
+                normalizedTo,
+                qty,
+                movementId,
+                userId || null
+            ]);
+
+            await auditService.log({
+                user_id: userId || null,
+                action: 'INVENTORY_LOCATION_TRANSFER',
+                entity_type: 'inventory',
+                entity_id: productId,
+                new_values: {
+                    product_id: productId,
+                    from_location: normalizedFrom,
+                    to_location: normalizedTo,
+                    quantity: qty,
+                    movement_id: movementId
+                }
+            });
+
+            await connection.commit();
+            return { success: true, movementId };
         } catch (error) {
             await connection.rollback();
             throw error;

@@ -6,6 +6,7 @@ export type InvoiceView = Invoice & {
     client_tax_id?: string
     client_address?: string
     cae?: string
+    cae_expiration_date?: string
     net_amount?: number
     vat_amount?: number
     subtotal?: number
@@ -28,4 +29,21 @@ export type DraftInvoice = {
     point_of_sale: number
     items: DraftInvoiceItem[]
     notes: string
+}
+
+export type CreditNoteRow = {
+    id: string
+    number: string
+    created_at: string
+    client_name: string
+    amount: number
+    status: string
+    point_of_sale?: number | undefined
+    credit_note_type?: string | undefined
+    cae?: string | undefined
+    cae_expiration_date?: string | undefined
+    reference_type?: string | undefined
+    reference_id?: string | undefined
+    customer_name?: string | undefined
+    notes?: string | undefined
 }

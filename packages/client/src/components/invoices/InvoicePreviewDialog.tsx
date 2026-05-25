@@ -1,6 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { InvoiceDocument } from "./InvoiceDocument"
 import type { InvoiceView } from "./types"
+import type { CompanySettings } from "@/types"
 
 type InvoicePreviewDialogProps = {
     open: boolean
@@ -12,6 +13,8 @@ type InvoicePreviewDialogProps = {
     taxRateLabel: string
     onSendEmail: (invoice: InvoiceView) => void
     onClose: () => void
+    onAuthorize?: (invoice: InvoiceView) => void | Promise<void>
+    companySettings?: CompanySettings
 }
 
 export function InvoicePreviewDialog({
@@ -24,6 +27,8 @@ export function InvoicePreviewDialog({
     taxRateLabel,
     onSendEmail,
     onClose,
+    onAuthorize,
+    companySettings,
 }: InvoicePreviewDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -40,6 +45,8 @@ export function InvoicePreviewDialog({
                         taxRateLabel={taxRateLabel}
                         onSendEmail={onSendEmail}
                         onClose={onClose}
+                        onAuthorize={onAuthorize}
+                        companySettings={companySettings}
                     />
                 ) : (
                     <div className="flex h-64 items-center justify-center">

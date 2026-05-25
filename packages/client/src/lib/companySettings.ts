@@ -10,6 +10,7 @@ export const DEFAULT_COMPANY_SETTINGS: CompanySettings = {
     address: { street: "", number: "", city: "", state: "", zip: "" },
     socials: { instagram: "", facebook: "", linkedin: "" },
     operation: { tax_rate: DEFAULT_TAX_RATE, default_currency: DEFAULT_CURRENCY },
+    billing: { iibb: "", start_date: "", iva_condition: "Responsable Inscripto", pos: 1, afip_crt: "", afip_key: "", afip_env: "homologacion" },
 };
 
 function toSafeText(value: unknown): string {
@@ -57,6 +58,15 @@ export function normalizeCompanySettings(input?: Partial<CompanySettings> | null
         operation: {
             tax_rate: normalizeTaxRate(input?.operation?.tax_rate),
             default_currency: normalizeCurrency(input?.operation?.default_currency),
+        },
+        billing: {
+            iibb: toSafeText(input?.billing?.iibb),
+            start_date: toSafeText(input?.billing?.start_date),
+            iva_condition: toSafeText(input?.billing?.iva_condition) || "Responsable Inscripto",
+            pos: typeof input?.billing?.pos === 'number' ? input.billing.pos : 1,
+            afip_crt: toSafeText(input?.billing?.afip_crt),
+            afip_key: toSafeText(input?.billing?.afip_key),
+            afip_env: (input?.billing?.afip_env === 'produccion' ? 'produccion' : 'homologacion') as 'homologacion' | 'produccion',
         },
     };
 }

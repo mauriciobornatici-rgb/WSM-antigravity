@@ -54,7 +54,7 @@ export default function LoginPage() {
                     <p className="text-slate-400 text-lg">Control de inventario, ventas POS, picking optimizado y contabilidad en una sola plataforma unificada.</p>
                 </div>
                 <div className="relative z-10 text-sm text-slate-500">
-                    © 2024 Antigravity Systems
+                    © 2026 WSM SportsERP
                 </div>
             </div>
 

@@ -1,4 +1,4 @@
-import type { Client, Product } from "@/types";
+import type { Client, Product, CompanySettings } from "@/types";
 import type { CashRegister, CashShiftSummary, Invoice } from "@/types/api";
 
 export type POSProduct = Product & { stock: number };
@@ -57,4 +57,6 @@ export type CheckoutSuccessDialogProps = {
     lastOrderId: string | null;
     lastInvoice: Invoice | null;
     grandTotal: number;
+    companySettings?: CompanySettings | undefined;
+    onPrint?: ((layout: "a4" | "thermal", invoice: Invoice) => void) | undefined;
 };

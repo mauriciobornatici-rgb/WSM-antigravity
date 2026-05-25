@@ -69,6 +69,11 @@
 }
 
 @media print {
+  @page {
+    size: auto;
+    margin: 0mm; /* Quita los textos por defecto del navegador (título, fecha, url) */
+  }
+
   .no-print, header, nav, aside, button, footer, .lucide {
       display: none !important;
   }
@@ -76,9 +81,10 @@
   body {
       background: white !important;
       color: black !important;
+      padding: 10mm !important; /* Agrega espacio seguro para el contenido */
   }
   
-  #printable-ticket, #printable-invoice, #printable-client-document {
+  #printable-ticket, #printable-invoice, #printable-client-document, #printable-order, #printable-label, #printable-manifest {
       display: block !important;
       width: 100% !important;
       margin: 0 !important;
@@ -86,6 +92,6 @@
   }
 }
 
-#printable-ticket, #printable-invoice, #printable-client-document {
+#printable-ticket, #printable-invoice, #printable-client-document, #printable-order, #printable-label, #printable-manifest {
     display: none;
 }

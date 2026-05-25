@@ -11,6 +11,7 @@ export interface Product {
     stock_current?: number
     stock_min?: number
     location?: string
+    vat_rate?: number
     created_at: string
 }
 
@@ -20,6 +21,7 @@ export interface InventoryItem {
     variant_id?: string
     location: string
     quantity: number
+    reserved_quantity?: number
     min_stock_level: number
     updated_at: string
     product?: Product
@@ -57,6 +59,7 @@ export interface OrderItem {
     product_name: string
     sku: string
     location?: string
+    barcode?: string | null
     quantity: number
     picked_quantity?: number
     unit_price: number
@@ -102,6 +105,7 @@ export interface Transaction {
     supplier_id?: string
     client_name?: string
     supplier_name?: string
+    payment_method?: string
 }
 
 export interface CompanySettings {
@@ -131,6 +135,15 @@ export interface CompanySettings {
     operation: {
         tax_rate: number
         default_currency: string
+    }
+    billing?: {
+        iibb: string
+        start_date: string
+        iva_condition: string
+        pos: number
+        afip_crt: string
+        afip_key: string
+        afip_env: 'homologacion' | 'produccion'
     }
 }
 

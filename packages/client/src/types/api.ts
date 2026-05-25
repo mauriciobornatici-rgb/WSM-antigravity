@@ -215,6 +215,8 @@ export type Invoice = {
     payment_method?: string | null;
     issue_date?: string;
     customer_name?: string;
+    cae?: string;
+    cae_expiration_date?: string;
     items?: InvoiceItem[];
     [key: string]: unknown;
 };

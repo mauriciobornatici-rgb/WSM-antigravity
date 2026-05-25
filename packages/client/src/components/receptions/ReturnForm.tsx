@@ -1,7 +1,8 @@
-﻿import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Trash2, Save, Search } from 'lucide-react';
 import { api } from '@/services/api';
 import { showErrorToast } from '@/lib/errorHandling';
+import { toast } from 'sonner';
 import type { Product, Supplier } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -68,6 +69,17 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
         const product = products.find((p) => p.id === productId);
         if (!product) return;
 
+        const stockAvailable = Number(product.stock_current || 0);
+        if (stockAvailable <= 0) {
+            toast.error(`No hay stock disponible en el almacén para el producto ${product.name}. No se puede realizar la devolución.`);
+            return;
+        }
+
+        if (items.some((item) => item.product_id === productId)) {
+            toast.warning('El producto ya se encuentra en la lista.');
+            return;
+        }
+
         setItems((prev) => [
             ...prev,
             {
@@ -86,6 +98,18 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
     };
 
     const handleUpdateItem = <K extends keyof ReturnItem>(index: number, field: K, value: ReturnItem[K]) => {
+        if (field === 'quantity') {
+            const item = items[index];
+            if (item) {
+                const product = products.find((p) => p.id === item.product_id);
+                const stockAvailable = Number(product?.stock_current || 0);
+                const inputQty = Number(value);
+                if (inputQty > stockAvailable) {
+                    toast.error(`Stock insuficiente. Solo hay ${stockAvailable} unidades disponibles de este producto.`);
+                    value = stockAvailable as ReturnItem[K];
+                }
+            }
+        }
         setItems((prev) => prev.map((item, idx) => (idx === index ? { ...item, [field]: value } : item)));
     };
 
@@ -185,7 +209,9 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                             <div key={`${item.product_id}-${index}`} className="grid grid-cols-1 items-center gap-2 rounded border bg-white p-2 dark:bg-slate-800 sm:grid-cols-12">
                                 <div className="sm:col-span-5">
                                     <div className="text-sm font-medium">{item.product_name}</div>
-                                    <div className="text-xs text-muted-foreground">{item.sku}</div>
+                                    <div className="text-xs text-muted-foreground">
+                                        SKU: {item.sku} | Stock Disponible: <span className="font-bold text-slate-700 dark:text-slate-200">{products.find(p => p.id === item.product_id)?.stock_current || 0} u</span>
+                                    </div>
                                 </div>
                                 <div className="sm:col-span-2">
                                     <Label className="mb-1 text-xs sm:hidden">Cantidad</Label>

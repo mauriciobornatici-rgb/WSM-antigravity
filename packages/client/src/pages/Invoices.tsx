@@ -16,6 +16,7 @@ import { InvoiceCreateDialog } from "@/components/invoices/InvoiceCreateDialog"
 import { InvoicesTable } from "@/components/invoices/InvoicesTable"
 import { InvoicePreviewDialog } from "@/components/invoices/InvoicePreviewDialog"
 import { PrintableInvoiceArea } from "@/components/invoices/PrintableInvoiceArea"
+import { PrintableThermalTicket } from "@/components/invoices/PrintableThermalTicket"
 import { calculateDraftTotal } from "@/components/invoices/invoiceUtils"
 import type { DraftInvoice, DraftInvoiceItem, InvoiceView } from "@/components/invoices/types"
 
@@ -26,6 +27,7 @@ export default function InvoicesPage() {
     const [isCreateOpen, setIsCreateOpen] = useState(false)
     const [isPreviewOpen, setIsPreviewOpen] = useState(false)
     const [selectedInvoice, setSelectedInvoice] = useState<InvoiceView | null>(null)
+    const [activePrintLayout, setActivePrintLayout] = useState<'a4' | 'thermal' | null>(null)
     const [clients, setClients] = useState<Client[]>([])
     const [companySettings, setCompanySettings] = useState<CompanySettings>(DEFAULT_COMPANY_SETTINGS)
     const [draftInvoice, setDraftInvoice] = useState<DraftInvoice>({
@@ -146,8 +148,104 @@ export default function InvoicesPage() {
     }
 
     const handlePrintInvoice = (invoice: InvoiceView) => {
+        setActivePrintLayout("a4")
         setSelectedInvoice(invoice)
         setTimeout(() => window.print(), 200)
+    }
+
+    const handlePrintThermal = (invoice: InvoiceView) => {
+        setActivePrintLayout("thermal")
+        setSelectedInvoice(invoice)
+        setTimeout(() => window.print(), 200)
+    }
+
+    const handleExportLibroIVA = () => {
+        if (visibleInvoices.length === 0) {
+            toast.info("No hay facturas para exportar")
+            return
+        }
+
+        // Define CSV headers
+        const headers = [
+            "Fecha",
+            "Tipo",
+            "Punto de Venta",
+            "Nro Comprobante",
+            "CUIT/DNI Receptor",
+            "Razón Social / Nombre",
+            "Neto Gravado",
+            "IVA Liquidado",
+            "Total",
+            "CAE",
+        ]
+
+        // Map visibleInvoices to rows
+        const rows = visibleInvoices.map((inv) => {
+            const dateStr = inv.issue_date ? new Date(inv.issue_date).toLocaleDateString("es-AR") : ""
+            const typeStr = inv.invoice_type || ""
+            const posStr = String(inv.point_of_sale || 1).padStart(4, "0")
+            const numStr = inv.invoice_number ? String(inv.invoice_number).padStart(8, "0") : ""
+            const clientCuit = inv.client_tax_id || ""
+            const clientName = inv.client_name || ""
+            const netVal = Number(inv.net_amount || 0).toFixed(2)
+            const ivaVal = Number(inv.vat_amount || 0).toFixed(2)
+            const totalVal = Number(inv.total_amount || 0).toFixed(2)
+            const caeVal = inv.cae || ""
+
+            return [
+                dateStr,
+                typeStr,
+                posStr,
+                numStr,
+                clientCuit,
+                clientName,
+                netVal,
+                ivaVal,
+                totalVal,
+                caeVal,
+            ]
+        })
+
+        // Combine headers and rows
+        const csvContent = [
+            headers.join(";"),
+            ...rows.map((row) => row.map((val) => {
+                const str = String(val)
+                if (str.includes(";") || str.includes('"')) {
+                    return `"${str.replace(/"/g, '""')}"`
+                }
+                return str
+            }).join(";")),
+        ].join("\n")
+
+        // Prepend UTF-8 Byte Order Mark (\uFEFF) for Excel
+        const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement("a")
+        link.setAttribute("href", url)
+        link.setAttribute("download", `Libro_IVA_Ventas_${new Date().toISOString().substring(0, 10)}.csv`)
+        link.style.visibility = "hidden"
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        
+        toast.success("Libro IVA exportado exitosamente")
+    }
+
+    const handleAuthorizeInvoice = async (invoice: InvoiceView) => {
+        try {
+            const updatedInvoice = await api.authorizeInvoice(invoice.id)
+            toast.success("Factura autorizada exitosamente con CAE")
+            
+            // Update selected invoice to show CAE immediately in the open preview modal
+            setSelectedInvoice(updatedInvoice as InvoiceView)
+            
+            // Reload the list of invoices
+            void loadData()
+        } catch (error) {
+            showErrorToast("Error al autorizar factura", error)
+            throw error
+        }
     }
 
     const taxRateLabel = `IVA (${getTaxRatePercentage(companySettings)}%)`
@@ -183,6 +281,8 @@ export default function InvoicesPage() {
                 onPreview={handleOpenPreview}
                 onSendEmail={handleSendEmail}
                 onPrint={handlePrintInvoice}
+                onExportCSV={handleExportLibroIVA}
+                onPrintThermal={handlePrintThermal}
             />
             {invoiceIdFilter ? (
                 <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm">
@@ -215,15 +315,30 @@ export default function InvoicesPage() {
                 taxRateLabel={taxRateLabel}
                 onSendEmail={handleSendEmail}
                 onClose={() => setIsPreviewOpen(false)}
+                onAuthorize={handleAuthorizeInvoice}
+                companySettings={companySettings}
             />
 
-            <PrintableInvoiceArea
-                invoice={selectedInvoice}
-                companyName={companyName}
-                companyTaxId={companyTaxId}
-                companyAddress={companyAddress}
-                taxRateLabel={taxRateLabel}
-            />
+            {activePrintLayout === "a4" && selectedInvoice && (
+                <PrintableInvoiceArea
+                    invoice={selectedInvoice}
+                    companyName={companyName}
+                    companyTaxId={companyTaxId}
+                    companyAddress={companyAddress}
+                    taxRateLabel={taxRateLabel}
+                    companySettings={companySettings}
+                />
+            )}
+
+            {activePrintLayout === "thermal" && selectedInvoice && (
+                <PrintableThermalTicket
+                    invoice={selectedInvoice}
+                    companyName={companyName}
+                    companyTaxId={companyTaxId}
+                    companyAddress={companyAddress}
+                    companySettings={companySettings}
+                />
+            )}
         </div>
     )
 }

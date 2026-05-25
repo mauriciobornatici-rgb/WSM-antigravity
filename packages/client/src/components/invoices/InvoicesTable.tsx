@@ -12,6 +12,8 @@ type InvoicesTableProps = {
     onPreview: (invoice: InvoiceView) => void
     onSendEmail: (invoice: InvoiceView) => void
     onPrint: (invoice: InvoiceView) => void
+    onExportCSV: () => void
+    onPrintThermal?: ((invoice: InvoiceView) => void) | undefined
 }
 
 export function InvoicesTable({
@@ -21,15 +23,23 @@ export function InvoicesTable({
     onPreview,
     onSendEmail,
     onPrint,
+    onExportCSV,
+    onPrintThermal,
 }: InvoicesTableProps) {
     return (
         <Card>
             <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>Comprobantes y tickets</CardTitle>
-                <Button className="w-full sm:w-auto" variant="outline" onClick={onRefresh} disabled={loading} title="Actualizar lista">
-                    <Download className="mr-2 h-4 w-4" />
-                    Actualizar
-                </Button>
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    <Button className="w-full sm:w-auto border-emerald-600/40 text-emerald-500 hover:bg-emerald-600/10 hover:text-emerald-600" variant="outline" onClick={onExportCSV} disabled={loading} title="Exportar reporte Libro IVA a Excel">
+                        <Download className="mr-2 h-4 w-4" />
+                        Exportar Libro IVA
+                    </Button>
+                    <Button className="w-full sm:w-auto" variant="outline" onClick={onRefresh} disabled={loading} title="Actualizar lista">
+                        <Download className="mr-2 h-4 w-4" />
+                        Actualizar
+                    </Button>
+                </div>
             </CardHeader>
             <CardContent>
                 <div className="overflow-x-auto">
@@ -81,9 +91,14 @@ export function InvoicesTable({
                                     <Button variant="ghost" size="sm" title="Enviar por email" onClick={() => onSendEmail(invoice)}>
                                         <Mail className="h-4 w-4 text-blue-500" />
                                     </Button>
-                                    <Button variant="ghost" size="sm" title="Imprimir" onClick={() => onPrint(invoice)}>
+                                    <Button variant="ghost" size="sm" title="Imprimir Factura A4" onClick={() => onPrint(invoice)}>
                                         <Printer className="h-4 w-4" />
                                     </Button>
+                                    {invoice.invoice_type !== "TK" && onPrintThermal && (
+                                        <Button variant="ghost" size="sm" title="Imprimir Ticket (80mm)" onClick={() => onPrintThermal(invoice)}>
+                                            <ReceiptText className="h-4 w-4 text-slate-400" />
+                                        </Button>
+                                    )}
                                 </TableCell>
                             </TableRow>
                         ))}

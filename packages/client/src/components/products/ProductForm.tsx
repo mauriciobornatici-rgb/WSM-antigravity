@@ -4,6 +4,7 @@ import { Camera, ImagePlus, ScanLine, Trash2, Upload } from "lucide-react";
 import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import * as z from "zod";
+import { createProductSchema } from "@wsm/common";
 import type { Product } from "@/types";
 import { api } from "@/services/api";
 import { Button } from "@/components/ui/button";
@@ -23,29 +24,10 @@ const IMAGE_URL_PATTERN = /^https?:\/\/.+/i;
 const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const IMAGE_DATA_URL_PATTERN = /^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/i;
 
-const productSchema = z.object({
-    sku: z.string().trim().min(2, "SKU requerido"),
-    barcode: z.string().trim().max(100, "Codigo demasiado largo").optional().or(z.literal("")),
-    name: z.string().trim().min(2, "Nombre requerido"),
-    category: z.string().trim().min(2, "Categoria requerida"),
-    location: z.string().trim().optional().or(z.literal("")),
-    purchase_price: z
-        .string()
-        .trim()
-        .refine((value) => value !== "" && !Number.isNaN(Number(value)) && Number(value) >= 0, "Debe ser un numero valido"),
-    sale_price: z
-        .string()
-        .trim()
-        .refine((value) => value !== "" && !Number.isNaN(Number(value)) && Number(value) >= 0, "Debe ser un numero valido"),
-    stock_initial: z
-        .string()
-        .trim()
-        .refine((value) => value !== "" && Number.isInteger(Number(value)) && Number(value) >= 0, "Stock invalido"),
-    image_url: z
-        .string()
-        .trim()
-        .max(2048, "La URL de imagen es demasiado larga")
-        .refine((value) => value === "" || IMAGE_URL_PATTERN.test(value), "Debe ser una URL http(s) valida"),
+const productSchema = createProductSchema.extend({
+    purchase_price: z.union([z.string(), z.number()]).transform(v => String(v)),
+    sale_price: z.union([z.string(), z.number()]).transform(v => String(v)),
+    stock_initial: z.union([z.string(), z.number()]).transform(v => String(v)),
 });
 
 type ProductFormSchema = z.infer<typeof productSchema>;
@@ -97,7 +79,7 @@ async function readFileAsDataUrl(file: File): Promise<string> {
 
 export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProps) {
     const form = useForm<ProductFormSchema>({
-        resolver: zodResolver(productSchema),
+        resolver: zodResolver(productSchema) as any,
         defaultValues: {
             sku: initialData?.sku ?? "",
             barcode: initialData?.barcode ?? "",
@@ -306,7 +288,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             sku: values.sku.trim(),
             barcode: values.barcode?.trim() ? values.barcode.trim() : null,
             name: values.name.trim(),
-            category: values.category.trim(),
+            category: (values.category ?? "").trim(),
             purchase_price: Number(values.purchase_price),
             sale_price: Number(values.sale_price),
             image_url: values.image_url?.trim() || "",
@@ -322,7 +304,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     return (
         <>
             <Form {...form}>
-                <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-5 pb-1">
+                <form onSubmit={form.handleSubmit(handleSubmit as any)} className="space-y-5 pb-1">
                     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.95fr)]">
                         <div className="rounded-xl border p-4 sm:p-5">
                         <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
@@ -331,26 +313,26 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
                         <div className="mt-3 grid gap-3 md:grid-cols-2">
                             <FormField<ProductFormSchema>
-                                control={form.control}
+                                control={form.control as any}
                                 name="name"
                                 render={({ field }) => (
                                     <FormItem>
                                         <FormLabel>Nombre</FormLabel>
                                         <FormControl>
-                                            <Input placeholder="Ej: Zapatilla Running Pro" {...field} />
+                                            <Input placeholder="Ej: Zapatilla Running Pro" {...field} value={field.value ?? ""} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
                                 )}
                             />
                             <FormField<ProductFormSchema>
-                                control={form.control}
+                                control={form.control as any}
                                 name="category"
                                 render={({ field }) => (
                                     <FormItem>
                                         <FormLabel>Categoria</FormLabel>
                                         <FormControl>
-                                            <Input placeholder="Calzado, Ropa, Accesorios" {...field} />
+                                            <Input placeholder="Calzado, Ropa, Accesorios" {...field} value={field.value ?? ""} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -360,20 +342,20 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
 
                         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
                             <FormField<ProductFormSchema>
-                                control={form.control}
+                                control={form.control as any}
                                 name="sku"
                                 render={({ field }) => (
                                     <FormItem>
                                         <FormLabel>SKU interno</FormLabel>
                                         <FormControl>
-                                            <Input placeholder="Ej: NK-732" {...field} />
+                                            <Input placeholder="Ej: NK-732" {...field} value={field.value ?? ""} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
                                 )}
                             />
                             <FormField<ProductFormSchema>
-                                control={form.control}
+                                control={form.control as any}
                                 name="barcode"
                                 render={({ field }) => (
                                     <FormItem>
@@ -384,6 +366,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                                     id="product-barcode-input"
                                                     placeholder="Escanee o ingrese codigo"
                                                     {...field}
+                                                    value={field.value ?? ""}
                                                     onKeyDown={(event) => handleReaderKeyDown("barcode", event)}
                                                 />
                                                 <div className="grid gap-2 md:grid-cols-2">
@@ -425,13 +408,13 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
                         <div className="mt-3 grid gap-3">
                             <FormField<ProductFormSchema>
-                                control={form.control}
+                                control={form.control as any}
                                 name="image_url"
                                 render={({ field }) => (
                                     <FormItem>
                                         <FormLabel>URL de imagen (o carga local)</FormLabel>
                                         <FormControl>
-                                            <Input placeholder="https://..." {...field} />
+                                            <Input placeholder="https://..." {...field} value={field.value ?? ""} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -487,7 +470,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
                         <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
                             <FormField<ProductFormSchema>
-                                control={form.control}
+                                control={form.control as any}
                                 name="location"
                                 render={({ field }) => (
                                     <FormItem>
@@ -498,6 +481,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                                     id="product-location-input"
                                                     placeholder="Ej: A1-R02-F03-C01"
                                                     {...field}
+                                                    value={field.value ?? ""}
                                                     onKeyDown={(event) => handleReaderKeyDown("location", event)}
                                                 />
                                                 <div className="grid gap-2 md:grid-cols-2">
@@ -527,26 +511,26 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
 
                             <div className="grid gap-3 md:grid-cols-2">
                                 <FormField<ProductFormSchema>
-                                    control={form.control}
+                                    control={form.control as any}
                                     name="purchase_price"
                                     render={({ field }) => (
                                         <FormItem>
                                             <FormLabel>Precio compra</FormLabel>
                                             <FormControl>
-                                                <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} />
+                                                <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} value={field.value ?? ""} />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>
                                     )}
                                 />
                                 <FormField<ProductFormSchema>
-                                    control={form.control}
+                                    control={form.control as any}
                                     name="sale_price"
                                     render={({ field }) => (
                                         <FormItem>
                                             <FormLabel>Precio venta</FormLabel>
                                             <FormControl>
-                                                <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} />
+                                                <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} value={field.value ?? ""} />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>
@@ -558,13 +542,13 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         {!isEditMode ? (
                             <div className="mt-3 grid gap-3 md:max-w-xs">
                                 <FormField<ProductFormSchema>
-                                    control={form.control}
+                                    control={form.control as any}
                                     name="stock_initial"
                                     render={({ field }) => (
                                         <FormItem>
                                             <FormLabel>Stock inicial</FormLabel>
                                             <FormControl>
-                                                <Input inputMode="numeric" type="number" min="0" step="1" {...field} />
+                                                <Input inputMode="numeric" type="number" min="0" step="1" {...field} value={field.value ?? ""} />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>

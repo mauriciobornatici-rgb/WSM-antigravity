@@ -54,11 +54,11 @@ function statusIcon(status: OrderStatus) {
     }
 }
 
-const tableHeadClass = "px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-700";
-const tableHeadRightClass = "px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-700";
-const tableCellClass = "whitespace-nowrap px-6 py-4 text-slate-700";
-const tableCellMutedClass = "whitespace-nowrap px-6 py-4 text-sm text-slate-600";
-const tableCellStrongClass = "whitespace-nowrap px-6 py-4 font-semibold text-slate-900";
+const tableHeadClass = "px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300";
+const tableHeadRightClass = "px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300";
+const tableCellClass = "whitespace-nowrap px-6 py-4 text-slate-700 dark:text-slate-300";
+const tableCellMutedClass = "whitespace-nowrap px-6 py-4 text-sm text-slate-600 dark:text-slate-400";
+const tableCellStrongClass = "whitespace-nowrap px-6 py-4 font-semibold text-slate-900 dark:text-slate-100";
 
 export default function PurchaseOrdersPage() {
     const queryClient = useQueryClient();
@@ -112,8 +112,8 @@ export default function PurchaseOrdersPage() {
         <div className="space-y-6 p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-slate-900">Ordenes de compra</h1>
-                    <p className="mt-1 text-slate-600">Gestiona compras y seguimiento de recepcion.</p>
+                    <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100">Ordenes de compra</h1>
+                    <p className="mt-1 text-slate-600 dark:text-slate-400">Gestiona compras y seguimiento de recepcion.</p>
                 </div>
                 <button
                     onClick={() => setIsCreateDialogOpen(true)}
@@ -132,7 +132,7 @@ export default function PurchaseOrdersPage() {
                         className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition ${
                             filter === statusFilter
                                 ? "bg-blue-600 text-white focus-visible:ring-blue-500"
-                                : "bg-slate-100 text-slate-700 hover:bg-slate-200 focus-visible:ring-slate-400"
+                                : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 focus-visible:ring-slate-400"
                         }`}
                     >
                         {statusFilter === "all" ? "Todas" : statusLabel(statusFilter)}
@@ -141,45 +141,45 @@ export default function PurchaseOrdersPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 p-4">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-sm text-slate-600">Total ordenes</p>
-                            <p className="text-2xl font-bold text-slate-900">{orders.length}</p>
+                            <p className="text-sm text-slate-600 dark:text-slate-400">Total ordenes</p>
+                            <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">{orders.length}</p>
                         </div>
-                        <Package className="h-8 w-8 text-blue-600" />
+                        <Package className="h-8 w-8 text-blue-600 dark:text-blue-500" />
                     </div>
                 </div>
-                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 p-4">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-sm text-slate-600">Pendientes</p>
-                            <p className="text-2xl font-bold text-amber-600">{pendingCount}</p>
+                            <p className="text-sm text-slate-600 dark:text-slate-400">Pendientes</p>
+                            <p className="text-2xl font-bold text-amber-600 dark:text-amber-500">{pendingCount}</p>
                         </div>
-                        <Clock className="h-8 w-8 text-amber-600" />
+                        <Clock className="h-8 w-8 text-amber-600 dark:text-amber-500" />
                     </div>
                 </div>
-                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 p-4">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-sm text-slate-600">Recibidas</p>
-                            <p className="text-2xl font-bold text-emerald-600">{receivedCount}</p>
+                            <p className="text-sm text-slate-600 dark:text-slate-400">Recibidas</p>
+                            <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-500">{receivedCount}</p>
                         </div>
-                        <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+                        <CheckCircle2 className="h-8 w-8 text-emerald-600 dark:text-emerald-500" />
                     </div>
                 </div>
-                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 p-4">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-sm text-slate-600">Valor total</p>
-                            <p className="text-2xl font-bold text-slate-900">${totalValue.toLocaleString("es-AR")}</p>
+                            <p className="text-sm text-slate-600 dark:text-slate-400">Valor total</p>
+                            <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">${totalValue.toLocaleString("es-AR")}</p>
                         </div>
-                        <Package className="h-8 w-8 text-slate-400" />
+                        <Package className="h-8 w-8 text-slate-400 dark:text-slate-500" />
                     </div>
                 </div>
             </div>
 
-            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-900">
+            <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 text-slate-900 dark:text-slate-100">
                 {hasLoadError ? (
                     <div className="mx-4 mt-4 flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 md:flex-row md:items-center md:justify-between">
                         <span>No pudimos cargar las ordenes de compra. Reintenta para actualizar los datos.</span>
@@ -197,17 +197,17 @@ export default function PurchaseOrdersPage() {
                         <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
                     </div>
                 ) : orders.length === 0 ? (
-                    <div className="p-12 text-center">
-                        <Package className="mx-auto mb-4 h-16 w-16 text-slate-300" />
-                        <h3 className="mb-2 text-lg font-medium text-slate-900">No hay ordenes para mostrar</h3>
-                        <p className="text-slate-600">
+                    <div className="p-12 text-center bg-white dark:bg-slate-950/40">
+                        <Package className="mx-auto mb-4 h-16 w-16 text-slate-300 dark:text-slate-700" />
+                        <h3 className="mb-2 text-lg font-medium text-slate-900 dark:text-slate-100">No hay ordenes para mostrar</h3>
+                        <p className="text-slate-600 dark:text-slate-400">
                             {filter === "all" ? "Crea la primera orden de compra para comenzar." : `No hay ordenes en estado ${statusLabel(filter)}.`}
                         </p>
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
-                        <table className="w-full min-w-[900px] text-slate-900">
-                        <thead className="border-b border-slate-200 bg-slate-50">
+                        <table className="w-full min-w-[900px] text-slate-900 dark:text-slate-100">
+                        <thead className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60">
                             <tr>
                                 <th className={tableHeadClass}>Numero OC</th>
                                 <th className={tableHeadClass}>Proveedor</th>
@@ -219,13 +219,13 @@ export default function PurchaseOrdersPage() {
                                 <th className={tableHeadRightClass}>Acciones</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-200 text-slate-800">
+                        <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950/40">
                             {orders.map((order) => (
-                                <tr key={order.id} className="transition hover:bg-slate-50">
+                                <tr key={order.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-900/20">
                                     <td className="whitespace-nowrap px-6 py-4">
                                         <div className="flex items-center gap-2">
                                             {statusIcon(order.status)}
-                                            <span className="font-semibold text-slate-900">{order.po_number ?? order.id}</span>
+                                            <span className="font-semibold text-slate-900 dark:text-slate-100">{order.po_number ?? order.id}</span>
                                         </div>
                                     </td>
                                     <td className={tableCellClass}>{order.supplier_name ?? "-"}</td>
@@ -247,14 +247,14 @@ export default function PurchaseOrdersPage() {
                                             <button
                                                 onClick={() => void handleApprove(order.id)}
                                                 disabled={approveOrderMutation.isPending}
-                                                className="rounded bg-green-50 px-2 py-1 text-xs font-semibold uppercase tracking-wider text-green-700 transition hover:bg-green-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-2"
+                                                className="rounded bg-green-50 dark:bg-green-500/10 px-2 py-1 text-xs font-semibold uppercase tracking-wider text-green-700 dark:text-green-400 transition hover:bg-green-100 dark:hover:bg-green-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-2"
                                             >
                                                 Aprobar
                                             </button>
                                         ) : null}
                                         <button
                                             onClick={() => setSelectedOrderId(order.id)}
-                                            className="inline-block align-middle text-blue-700 transition hover:text-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                                            className="inline-block align-middle text-blue-700 dark:text-blue-400 transition hover:text-blue-900 dark:hover:text-blue-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
                                             title="Ver detalles"
                                             aria-label={`Ver detalles de orden ${order.po_number ?? order.id}`}
                                         >

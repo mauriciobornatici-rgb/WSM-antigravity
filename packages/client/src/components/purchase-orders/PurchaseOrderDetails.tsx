@@ -95,13 +95,13 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
 
     return (
         <div className="space-y-6">
-            <div className="grid grid-cols-1 gap-4 rounded-lg border bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="space-y-1">
                     <div className="flex items-center gap-1 text-xs text-muted-foreground">
                         <User className="h-3 w-3" />
                         Proveedor
                     </div>
-                    <div className="font-semibold">{order.supplier_name ?? "-"}</div>
+                    <div className="font-semibold text-slate-900 dark:text-slate-100">{order.supplier_name ?? "-"}</div>
                 </div>
 
                 <div className="space-y-1">
@@ -109,7 +109,7 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
                         <Calendar className="h-3 w-3" />
                         Fecha de orden
                     </div>
-                    <div>{order.order_date ? new Date(order.order_date).toLocaleDateString("es-AR") : "-"}</div>
+                    <div className="text-slate-800 dark:text-slate-200">{order.order_date ? new Date(order.order_date).toLocaleDateString("es-AR") : "-"}</div>
                 </div>
 
                 <div className="space-y-1">
@@ -117,7 +117,7 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
                         <Truck className="h-3 w-3" />
                         Entrega estimada
                     </div>
-                    <div>{order.expected_delivery_date ? new Date(order.expected_delivery_date).toLocaleDateString("es-AR") : "-"}</div>
+                    <div className="text-slate-800 dark:text-slate-200">{order.expected_delivery_date ? new Date(order.expected_delivery_date).toLocaleDateString("es-AR") : "-"}</div>
                 </div>
 
                 <div className="space-y-1">
@@ -127,21 +127,21 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
             </div>
 
             <div className="space-y-3">
-                <h3 className="flex items-center gap-2 font-semibold">
-                    <Package className="h-5 w-5 text-blue-600" />
+                <h3 className="flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-100">
+                    <Package className="h-5 w-5 text-blue-600 dark:text-blue-500" />
                     Items de la orden
                 </h3>
 
-                <div className="rounded-md border">
+                <div className="rounded-md border border-slate-200 dark:border-slate-800">
                     <div className="overflow-x-auto">
                         <Table className="min-w-[680px]">
                         <TableHeader>
-                            <TableRow>
-                                <TableHead>Producto</TableHead>
-                                <TableHead className="text-right">Cant. pedida</TableHead>
-                                <TableHead className="text-right">Cant. recibida</TableHead>
-                                <TableHead className="text-right">Costo unitario</TableHead>
-                                <TableHead className="text-right">Subtotal</TableHead>
+                            <TableRow className="border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+                                <TableHead className="text-slate-700 dark:text-slate-300">Producto</TableHead>
+                                <TableHead className="text-right text-slate-700 dark:text-slate-300">Cant. pedida</TableHead>
+                                <TableHead className="text-right text-slate-700 dark:text-slate-300">Cant. recibida</TableHead>
+                                <TableHead className="text-right text-slate-700 dark:text-slate-300">Costo unitario</TableHead>
+                                <TableHead className="text-right text-slate-700 dark:text-slate-300">Subtotal</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -158,15 +158,15 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
                                     const unitCost = Number(item.unit_cost ?? 0);
                                     const rowKey = item.id ?? `${item.product_id}-${item.sku ?? "sku"}`;
                                     return (
-                                        <TableRow key={rowKey}>
+                                        <TableRow key={rowKey} className="border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900/30">
                                             <TableCell>
-                                                <div className="font-medium">{item.product_name ?? item.name ?? "Producto"}</div>
+                                                <div className="font-medium text-slate-900 dark:text-slate-100">{item.product_name ?? item.name ?? "Producto"}</div>
                                                 <div className="text-xs text-muted-foreground">{item.sku ?? "-"}</div>
                                             </TableCell>
-                                            <TableCell className="text-right">{ordered}</TableCell>
-                                            <TableCell className="text-right">{received}</TableCell>
-                                            <TableCell className="text-right">${unitCost.toLocaleString("es-AR")}</TableCell>
-                                            <TableCell className="text-right font-medium">
+                                            <TableCell className="text-right text-slate-800 dark:text-slate-200">{ordered}</TableCell>
+                                            <TableCell className="text-right text-slate-800 dark:text-slate-200">{received}</TableCell>
+                                            <TableCell className="text-right text-slate-800 dark:text-slate-200">${unitCost.toLocaleString("es-AR")}</TableCell>
+                                            <TableCell className="text-right font-medium text-slate-950 dark:text-slate-100">
                                                 ${(ordered * unitCost).toLocaleString("es-AR")}
                                             </TableCell>
                                         </TableRow>
@@ -180,9 +180,9 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
             </div>
 
             {order.notes ? (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-amber-800">Notas</div>
-                    <p className="text-sm text-amber-900">{order.notes}</p>
+                <div className="rounded-lg border border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 p-4">
+                    <div className="mb-1 text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-400">Notas</div>
+                    <p className="text-sm text-amber-900 dark:text-slate-300">{order.notes}</p>
                 </div>
             ) : null}
 
