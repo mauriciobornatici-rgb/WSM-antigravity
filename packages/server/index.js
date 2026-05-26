@@ -26,6 +26,7 @@ import procurementRouter from './routes/procurementRoutes.js';
 import warrantiesRouter from './routes/warrantiesRoutes.js';
 import dashboardRouter from './routes/dashboardRoutes.js';
 import accountingRouter from './routes/accountingRoutes.js';
+import integrationRouter from './routes/integrationRoutes.js';
 import globalErrorHandler from './middleware/errorMiddleware.js';
 import { authenticateToken, authorizeRoles } from './middleware/authMiddleware.js';
 import { validate, schemas, validateZod, zodSchemas } from './middleware/validationMiddleware.js';
@@ -136,6 +137,10 @@ app.use('/api', authenticateToken, procurementRouter);
 app.use('/api', authenticateToken, warrantiesRouter);
 app.use('/api', authenticateToken, dashboardRouter);
 app.use('/api/accounting', authenticateToken, accountingRouter);
+
+// Integration routes (auth callbacks and webhooks are PUBLIC so TiendaNube can reach them without our JWT)
+// The authorize endpoint requires our JWT
+app.use('/api/integrations', integrationRouter);
 
 // Global Error Handler (Must be last)
 app.use(globalErrorHandler);

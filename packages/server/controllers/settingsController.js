@@ -31,7 +31,8 @@ function buildCompanySettingsResponse(data) {
             address: { street: '', number: '', city: '', state: '', zip: '' },
             socials: { instagram: '', facebook: '', linkedin: '' },
             operation: { tax_rate: DEFAULT_TAX_RATE, default_currency: DEFAULT_CURRENCY },
-            billing: { iibb: '', start_date: '', iva_condition: 'Responsable Inscripto', pos: 1, afip_crt: '', afip_key: '', afip_env: 'homologacion' }
+            billing: { iibb: '', start_date: '', iva_condition: 'Responsable Inscripto', pos: 1, afip_crt: '', afip_key: '', afip_env: 'homologacion' },
+            integrations: { tiendanube_access_token: '', tiendanube_store_id: '' }
         };
     }
 
@@ -71,6 +72,12 @@ function buildCompanySettingsResponse(data) {
             afip_crt: data.billing_afip_crt || '',
             afip_key: data.billing_afip_key || '',
             afip_env: data.billing_afip_env || 'homologacion'
+        },
+        integrations: {
+            tiendanube_access_token: data.tiendanube_access_token || '',
+            tiendanube_store_id: data.tiendanube_store_id || '',
+            tiendanube_client_id: data.tiendanube_client_id || '',
+            tiendanube_client_secret: data.tiendanube_client_secret || ''
         }
     };
 }
@@ -89,7 +96,7 @@ export const getCompanyPublicProfile = catchAsync(async (req, res) => {
 });
 
 export const updateCompanySettings = catchAsync(async (req, res) => {
-    const { identity, contact, address, socials, operation, billing } = req.body;
+    const { identity, contact, address, socials, operation, billing, integrations } = req.body;
     const [previousRows] = await pool.query('SELECT * FROM company_settings WHERE id = 1 LIMIT 1');
     const previous = previousRows[0] || null;
     const safeTaxRate = operation?.tax_rate == null
@@ -107,9 +114,10 @@ export const updateCompanySettings = catchAsync(async (req, res) => {
             social_instagram, social_facebook, social_linkedin, 
             tax_rate, default_currency,
             billing_iibb, billing_start_date, billing_iva_condition, 
-            billing_pos, billing_afip_crt, billing_afip_key, billing_afip_env
+            billing_pos, billing_afip_crt, billing_afip_key, billing_afip_env,
+            tiendanube_access_token, tiendanube_store_id, tiendanube_client_id, tiendanube_client_secret
         )
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE 
             brand_name = VALUES(brand_name),
             legal_name = VALUES(legal_name),
@@ -131,7 +139,11 @@ export const updateCompanySettings = catchAsync(async (req, res) => {
             billing_pos = VALUES(billing_pos),
             billing_afip_crt = VALUES(billing_afip_crt),
             billing_afip_key = VALUES(billing_afip_key),
-            billing_afip_env = VALUES(billing_afip_env)
+            billing_afip_env = VALUES(billing_afip_env),
+            tiendanube_access_token = VALUES(tiendanube_access_token),
+            tiendanube_store_id = VALUES(tiendanube_store_id),
+            tiendanube_client_id = VALUES(tiendanube_client_id),
+            tiendanube_client_secret = VALUES(tiendanube_client_secret)
     `, [
         identity?.brand_name, identity?.legal_name, identity?.tax_id, identity?.logo_url,
         contact?.phone, contact?.email, contact?.website,
@@ -139,7 +151,8 @@ export const updateCompanySettings = catchAsync(async (req, res) => {
         socials?.instagram, socials?.facebook, socials?.linkedin,
         safeTaxRate, safeCurrency,
         billing?.iibb, billing?.start_date, billing?.iva_condition,
-        billing?.pos || 1, billing?.afip_crt, billing?.afip_key, billing?.afip_env || 'homologacion'
+        billing?.pos || 1, billing?.afip_crt, billing?.afip_key, billing?.afip_env || 'homologacion',
+        integrations?.tiendanube_access_token, integrations?.tiendanube_store_id, integrations?.tiendanube_client_id, integrations?.tiendanube_client_secret
     ]);
 
     const [updatedRows] = await pool.query('SELECT * FROM company_settings WHERE id = 1 LIMIT 1');

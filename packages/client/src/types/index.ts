@@ -145,6 +145,12 @@ export interface CompanySettings {
         afip_key: string
         afip_env: 'homologacion' | 'produccion'
     }
+    integrations?: {
+        tiendanube_access_token?: string
+        tiendanube_store_id?: string
+        tiendanube_client_id?: string
+        tiendanube_client_secret?: string
+    }
 }
 
 export interface SystemSettings {

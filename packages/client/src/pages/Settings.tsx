@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { api } from "@/services/api"
-import type { CompanySettings, SystemSettings, User } from "@/types"
+import type { CompanySettings, SystemSettings, User, Product } from "@/types"
 import type { AuditLogEntry, PaginationMeta, UserCreateInput, UserFormValues, UserUpdateInput } from "@/types/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Building2, Users, Settings2, Save, Plus, Loader2, Pencil, Trash2, History, Eye, ReceiptText, Terminal } from "lucide-react"
+import { Building2, Users, Settings2, Save, Plus, Loader2, Pencil, Trash2, History, Eye, ReceiptText, Terminal, Store } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { UserForm } from "@/components/users/UserForm"
 import { toast } from "sonner"
@@ -44,6 +45,16 @@ export default function SettingsPage() {
     const [saving, setSaving] = useState(false)
     const [testingConnection, setTestingConnection] = useState(false)
     const [connectionLogs, setConnectionLogs] = useState<string[]>([])
+
+    // Tienda Nube State
+    const [tiendanubeProducts, setTiendanubeProducts] = useState<Product[]>([])
+    const [tiendanubeLoading, setTiendanubeLoading] = useState(false)
+    const [tiendanubeSaving, setTiendanubeSaving] = useState(false)
+    const [tiendanubeModifications, setTiendanubeModifications] = useState<Record<string, {
+        tiendanube_sync_enabled: boolean
+        tiendanube_product_id: string
+        tiendanube_variant_id: string
+    }>>({})
 
     // User Form State
     const [userFormOpen, setUserFormOpen] = useState(false)
@@ -110,6 +121,48 @@ export default function SettingsPage() {
             setAuditPage(totalPages)
         }
     }, [auditPage, auditPagination?.totalPages])
+
+    const loadTiendanubeProducts = useCallback(async () => {
+        setTiendanubeLoading(true)
+        try {
+            const response = await api.inventory.getProducts()
+            setTiendanubeProducts(response)
+        } catch (error) {
+            showErrorToast("Error al cargar productos para Tienda Nube", error)
+        } finally {
+            setTiendanubeLoading(false)
+        }
+    }, [])
+
+    useEffect(() => {
+        void loadTiendanubeProducts()
+    }, [loadTiendanubeProducts])
+
+    const handleSaveTiendaNubeLinks = async () => {
+        const modifiedProducts = Object.entries(tiendanubeModifications).map(([id, mods]) => ({
+            id,
+            tiendanube_sync_enabled: mods.tiendanube_sync_enabled,
+            tiendanube_product_id: mods.tiendanube_product_id,
+            tiendanube_variant_id: mods.tiendanube_variant_id
+        }))
+
+        if (modifiedProducts.length === 0) {
+            toast.info("No hay cambios para guardar.")
+            return
+        }
+
+        setTiendanubeSaving(true)
+        try {
+            await api.inventory.bulkUpdateTiendaNube(modifiedProducts)
+            toast.success("Vinculación de productos actualizada")
+            setTiendanubeModifications({})
+            await loadTiendanubeProducts()
+        } catch (error) {
+            showErrorToast("Error al guardar vinculación de productos", error)
+        } finally {
+            setTiendanubeSaving(false)
+        }
+    }
 
     const handleTestConnection = async () => {
         if (!company || !company.billing) {
@@ -285,6 +338,7 @@ export default function SettingsPage() {
                     {currentUser?.role === 'admin' && (
                         <TabsTrigger value="audit" className="flex shrink-0 gap-2"><History className="h-4 w-4" /> Auditoría</TabsTrigger>
                     )}
+                    <TabsTrigger value="tiendanube" className="flex shrink-0 gap-2"><Store className="h-4 w-4" /> Tienda Nube</TabsTrigger>
                 </TabsList>
 
                 {/* --- COMPANY TAB --- */}
@@ -798,6 +852,191 @@ export default function SettingsPage() {
                                 {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Cambios</>}
                             </Button>
                         </CardFooter>
+                    </Card>
+                </TabsContent>
+
+                {/* --- TIENDA NUBE TAB --- */}
+                <TabsContent value="tiendanube" className="space-y-6">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Configuración de Tienda Nube</CardTitle>
+                            <CardDescription>Para conectar tu tienda de forma segura, ingresa las credenciales de tu Aplicación de Tienda Nube y presiona 'Conectar'.</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-6">
+                            {company.integrations?.tiendanube_access_token && company.integrations?.tiendanube_store_id ? (
+                                <div className="p-4 bg-green-50 text-green-700 rounded-md border border-green-200 flex items-center">
+                                    <div className="mr-3">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <p className="font-semibold">¡Conectado exitosamente con Tienda Nube!</p>
+                                        <p className="text-sm">Store ID: {company.integrations.tiendanube_store_id}</p>
+                                    </div>
+                                </div>
+                            ) : null}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-2">
+                                    <Label htmlFor="tn_client_id">Client ID (App ID)</Label>
+                                    <Input
+                                        id="tn_client_id"
+                                        placeholder="Ingresa el Client ID"
+                                        value={company.integrations?.tiendanube_client_id || ''}
+                                        onChange={e => setCompany({
+                                            ...company,
+                                            integrations: {
+                                                ...(company.integrations || {}),
+                                                tiendanube_client_id: e.target.value
+                                            }
+                                        })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="tn_client_secret">Client Secret</Label>
+                                    <Input
+                                        id="tn_client_secret"
+                                        type="password"
+                                        placeholder="Ingresa tu Client Secret"
+                                        value={company.integrations?.tiendanube_client_secret || ''}
+                                        onChange={e => setCompany({
+                                            ...company,
+                                            integrations: {
+                                                ...(company.integrations || {}),
+                                                tiendanube_client_secret: e.target.value
+                                            }
+                                        })}
+                                    />
+                                </div>
+                            </div>
+                        </CardContent>
+                        <CardFooter className="flex justify-between gap-4 border-t pt-4">
+                            <p className="text-sm text-muted-foreground flex-1">
+                                Asegúrate de guardar las credenciales antes de Conectar.
+                            </p>
+                            <Button variant="outline" onClick={handleSaveCompany} disabled={saving}>
+                                {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Credenciales</>}
+                            </Button>
+                            <Button 
+                                onClick={() => {
+                                    window.location.href = 'http://localhost:3001/api/integrations/tiendanube/authorize';
+                                }} 
+                                disabled={!company.integrations?.tiendanube_client_id || !company.integrations?.tiendanube_client_secret}
+                                className="bg-blue-600 hover:bg-blue-700 text-white"
+                            >
+                                Conectar con Tienda Nube
+                            </Button>
+                        </CardFooter>
+                    </Card>
+
+                    <Card>
+                        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <CardTitle>Gestor de Vinculación (Catálogo)</CardTitle>
+                                <CardDescription>Administra qué productos locales se sincronizan y asocia sus IDs en Tienda Nube.</CardDescription>
+                            </div>
+                            <Button onClick={handleSaveTiendaNubeLinks} disabled={tiendanubeSaving}>
+                                {tiendanubeSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Vinculación</>}
+                            </Button>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="overflow-x-auto rounded-md border">
+                                <Table className="min-w-[800px]">
+                                    <TableHeader className="bg-muted/50">
+                                        <TableRow>
+                                            <TableHead>Producto</TableHead>
+                                            <TableHead>Stock Actual</TableHead>
+                                            <TableHead className="text-center">Sincronizar</TableHead>
+                                            <TableHead>TN Product ID</TableHead>
+                                            <TableHead>TN Variant ID</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {tiendanubeLoading ? (
+                                            <TableRow>
+                                                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                                                    <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+                                                    Cargando productos...
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : tiendanubeProducts.length === 0 ? (
+                                            <TableRow>
+                                                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                                                    No hay productos registrados en el sistema.
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : (
+                                            tiendanubeProducts.map((p) => {
+                                                const mods = tiendanubeModifications[p.id] || {
+                                                    tiendanube_sync_enabled: Boolean(p.tiendanube_sync_enabled),
+                                                    tiendanube_product_id: p.tiendanube_product_id || '',
+                                                    tiendanube_variant_id: p.tiendanube_variant_id || ''
+                                                }
+                                                return (
+                                                    <TableRow key={p.id}>
+                                                        <TableCell>
+                                                            <div className="flex flex-col">
+                                                                <span className="font-medium">{p.name}</span>
+                                                                <span className="text-xs text-muted-foreground">SKU: {p.sku}</span>
+                                                            </div>
+                                                        </TableCell>
+                                                        <TableCell>{p.stock_current ?? 0}</TableCell>
+                                                        <TableCell className="text-center">
+                                                            <div className="flex justify-center">
+                                                                <Switch
+                                                                    checked={mods.tiendanube_sync_enabled}
+                                                                    onChange={(e) => {
+                                                                        setTiendanubeModifications({
+                                                                            ...tiendanubeModifications,
+                                                                            [p.id]: {
+                                                                                ...mods,
+                                                                                tiendanube_sync_enabled: e.target.checked
+                                                                            }
+                                                                        })
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Input
+                                                                placeholder="12345678"
+                                                                value={mods.tiendanube_product_id}
+                                                                onChange={(e) => {
+                                                                    setTiendanubeModifications({
+                                                                        ...tiendanubeModifications,
+                                                                        [p.id]: {
+                                                                            ...mods,
+                                                                            tiendanube_product_id: e.target.value
+                                                                        }
+                                                                    })
+                                                                }}
+                                                                className="h-8 max-w-[150px]"
+                                                            />
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Input
+                                                                placeholder="Opcional"
+                                                                value={mods.tiendanube_variant_id}
+                                                                onChange={(e) => {
+                                                                    setTiendanubeModifications({
+                                                                        ...tiendanubeModifications,
+                                                                        [p.id]: {
+                                                                            ...mods,
+                                                                            tiendanube_variant_id: e.target.value
+                                                                        }
+                                                                    })
+                                                                }}
+                                                                className="h-8 max-w-[150px]"
+                                                            />
+                                                        </TableCell>
+                                                    </TableRow>
+                                                )
+                                            })
+                                        )}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        </CardContent>
                     </Card>
                 </TabsContent>
             </Tabs>
