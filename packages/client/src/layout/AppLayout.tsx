@@ -19,11 +19,15 @@ import {
     FileSpreadsheet,
     Printer,
     Landmark,
+    CreditCard,
+    Wallet,
 } from "lucide-react";
 
 export default function AppLayout() {
     const { user, logout } = useAuth();
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(() => (
+        typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)").matches : false
+    ));
     const location = useLocation();
 
     const roleLabels: Record<string, string> = {
@@ -35,16 +39,11 @@ export default function AppLayout() {
 
     const navSections = [
         {
-            title: "General",
+            title: "Operación Comercial",
             items: [
-                { name: "Inicio", href: "/", icon: LayoutDashboard, roles: ["admin", "manager", "cashier", "warehouse"] },
-            ]
-        },
-        {
-            title: "Operaciones y POS",
-            items: [
+                { name: "Inicio", href: "/", icon: LayoutDashboard },
                 { name: "Punto de Venta", href: "/pos", icon: ShoppingCart, roles: ["admin", "cashier"] },
-                { name: "Pedidos y preparación", href: "/orders", icon: ClipboardList, roles: ["admin", "manager", "cashier", "warehouse"] },
+                { name: "Pedidos", href: "/orders", icon: ClipboardList, roles: ["admin", "manager", "cashier", "warehouse"] },
                 { name: "Clientes", href: "/clients", icon: Users, roles: ["admin", "manager", "cashier"] },
             ]
         },
@@ -63,6 +62,9 @@ export default function AppLayout() {
             items: [
                 { name: "Facturación", href: "/invoices", icon: Printer, roles: ["admin", "manager", "cashier"] },
                 { name: "Gestión de caja", href: "/cash-management", icon: Landmark, roles: ["admin", "cashier"] },
+                { name: "Cobranzas", href: "/collections", icon: FileText, roles: ["admin", "manager", "cashier"] },
+                { name: "Pagos Proveedores", href: "/supplier-payments", icon: CreditCard, roles: ["admin", "manager"] },
+                { name: "Cuentas Corrientes", href: "/current-accounts", icon: Wallet, roles: ["admin", "manager", "cashier"] },
                 { name: "Contabilidad", href: "/accounting", icon: FileText, roles: ["admin"] },
                 { name: "Configuración", href: "/settings", icon: Settings, roles: ["admin"] },
             ]
@@ -71,7 +73,10 @@ export default function AppLayout() {
 
     const allNavItems = navSections.flatMap((sec) => sec.items);
     const filteredNavItems = allNavItems.filter((item) => !item.roles || (user && item.roles.includes(user.role)));
-    const activeNavItem = filteredNavItems.find((item) => item.href === location.pathname);
+    const isRouteActive = (href: string) => (
+        href === "/" ? location.pathname === "/" : location.pathname === href || location.pathname.startsWith(`${href}/`)
+    );
+    const activeNavItem = filteredNavItems.find((item) => isRouteActive(item.href));
     const ActiveIcon = activeNavItem?.icon;
 
     const filteredSections = navSections
@@ -114,7 +119,7 @@ export default function AppLayout() {
                             )}
                             <div className="space-y-1">
                                 {sec.items.map((item) => {
-                                    const isActive = location.pathname === item.href;
+                                    const isActive = isRouteActive(item.href);
                                     return (
                                         <Link
                                             key={item.href}

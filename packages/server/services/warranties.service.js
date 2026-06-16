@@ -458,16 +458,28 @@ class CreditNotesService extends BaseService {
                     
                     const invoiceData = {
                         invoice_type: cn.credit_note_type === 'A' ? 'NC_A' : 'NC_B',
-                        client_tax_id: originalInvoice.client_tax_id || null
+                        client_tax_id: originalInvoice.client_tax_id || null,
+                        total_amount: cn.amount,
+                        invoice_number: cn.number
                     };
                     
-                    // We need items for AFIP: we will reconstruct a mock item matching the total amount and VAT of original
-                    const invoiceItems = [
-                        { quantity: 1, unit_price: cn.amount, vat_rate: 21 } // Simplificacion para el CAE de devolucion
+                    // Recuperar ítems reales de la devolución y sus tasas de IVA del catálogo de productos
+                    const [itemsRows] = await pool.query(`
+                        SELECT 
+                            ri.quantity, 
+                            ri.unit_price, 
+                            COALESCE(p.vat_rate, 21) AS vat_rate
+                        FROM client_return_items ri
+                        JOIN products p ON ri.product_id = p.id
+                        WHERE ri.return_id = ?
+                    `, [cn.reference_id]);
+
+                    const invoiceItems = itemsRows.length > 0 ? itemsRows : [
+                        { quantity: 1, unit_price: cn.amount, vat_rate: 21 }
                     ];
 
                     try {
-                        afipRes = await afipService.createVoucher(invoiceData, invoiceItems, companySettings);
+                        afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
                     } catch (err) {
                         throw new Error(`AFIP rechazó la Nota de Crédito: ${err.message}`);
                     }
@@ -475,16 +487,8 @@ class CreditNotesService extends BaseService {
             }
         }
 
-        const cae = afipRes ? afipRes.cae : String(Math.floor(10000000000000 + Math.random() * 90000000000000));
-        let expirationDate = null;
-        if (afipRes && afipRes.cae_expiration_date) {
-            const d = afipRes.cae_expiration_date;
-            expirationDate = `${d.substring(0,4)}-${d.substring(4,6)}-${d.substring(6,8)}`;
-        } else {
-            const exp = new Date();
-            exp.setDate(exp.getDate() + 10);
-            expirationDate = exp.toISOString().slice(0, 10);
-        }
+        const cae = afipRes ? afipRes.cae : null;
+        const expirationDate = afipRes ? afipRes.cae_expiration_date : null;
 
         await pool.query(
             'UPDATE credit_notes SET status = "authorized", cae = ?, cae_expiration_date = ? WHERE id = ?',

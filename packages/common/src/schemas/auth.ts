@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { strongPasswordSchema, uuidSchema } from './common.js';
+import { strongPasswordSchema } from './common.js';
 
 export const loginSchema = z.object({
   email: z.string().email(),

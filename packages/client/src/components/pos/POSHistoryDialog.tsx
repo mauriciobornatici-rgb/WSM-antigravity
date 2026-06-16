@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { showErrorToast } from "@/lib/errorHandling";
@@ -41,8 +41,30 @@ export function POSHistoryDialog({
     const [loadingItems, setLoadingItems] = useState(false);
     const [authorizingId, setAuthorizingId] = useState<string | null>(null);
 
+    // Handle selecting an invoice and loading its items
+    const handleSelectInvoice = useCallback(async (invoice: Invoice) => {
+        setSelectedInvoice(invoice);
+        
+        // If items are not loaded, fetch them
+        if (!invoice.items || invoice.items.length === 0) {
+            setLoadingItems(true);
+            try {
+                const items = await api.getInvoiceItems(invoice.id);
+                const updatedInvoice = { ...invoice, items: items as InvoiceItem[] };
+                setSelectedInvoice(updatedInvoice);
+                
+                // Update in invoices list so we don't refetch next time
+                setInvoices(prev => prev.map(inv => inv.id === invoice.id ? updatedInvoice : inv));
+            } catch (error) {
+                showErrorToast("Error al obtener los detalles de la venta", error);
+            } finally {
+                setLoadingItems(false);
+            }
+        }
+    }, []);
+
     // Load recent invoices
-    const loadInvoices = async () => {
+    const loadInvoices = useCallback(async () => {
         if (!open) return;
         setLoadingList(true);
         try {
@@ -66,35 +88,13 @@ export function POSHistoryDialog({
         } finally {
             setLoadingList(false);
         }
-    };
+    }, [handleSelectInvoice, open, selectedInvoice?.id]);
 
     useEffect(() => {
         if (open) {
             void loadInvoices();
         }
-    }, [open]);
-
-    // Handle selecting an invoice and loading its items
-    const handleSelectInvoice = async (invoice: Invoice) => {
-        setSelectedInvoice(invoice);
-        
-        // If items are not loaded, fetch them
-        if (!invoice.items || invoice.items.length === 0) {
-            setLoadingItems(true);
-            try {
-                const items = await api.getInvoiceItems(invoice.id);
-                const updatedInvoice = { ...invoice, items: items as InvoiceItem[] };
-                setSelectedInvoice(updatedInvoice);
-                
-                // Update in invoices list so we don't refetch next time
-                setInvoices(prev => prev.map(inv => inv.id === invoice.id ? updatedInvoice : inv));
-            } catch (error) {
-                showErrorToast("Error al obtener los detalles de la venta", error);
-            } finally {
-                setLoadingItems(false);
-            }
-        }
-    };
+    }, [loadInvoices, open]);
 
     // AFIP/ARCA authorization
     const handleAuthorize = async (invoiceId: string) => {
@@ -108,7 +108,7 @@ export function POSHistoryDialog({
             if (selectedInvoice?.id === invoiceId) {
                 setSelectedInvoice(prev => prev ? { ...prev, ...updated } : null);
             }
-        } catch (err) {
+        } catch {
             toast.error("Error al autorizar factura con AFIP");
         } finally {
             setAuthorizingId(null);

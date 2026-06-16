@@ -3,6 +3,7 @@ import pool from '../config/db.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
+import financeService from '../services/finance.service.js';
 
 async function calculateShiftExpectedBalance(connection, shiftId) {
     const [payments] = await connection.query(`
@@ -368,4 +369,56 @@ export const createCashTransaction = catchAsync(async (req, res) => {
     } finally {
         connection.release();
     }
+});
+
+export const getPendingInvoices = catchAsync(async (req, res) => {
+    const { client_id } = req.query;
+    let query = `
+        SELECT i.*, c.name AS client_name, c.tax_id AS client_tax_id
+        FROM invoices i
+        LEFT JOIN clients c ON i.client_id = c.id
+        WHERE i.deleted_at IS NULL
+          AND i.payment_status IN ('pending', 'partial')
+    `;
+    const params = [];
+
+    if (client_id) {
+        query += ' AND i.client_id = ?';
+        params.push(client_id);
+    }
+
+    query += ' ORDER BY i.issue_date ASC';
+
+    const [rows] = await pool.query(query, params);
+
+    // Get paid amounts from transactions to compute exact pending amount
+    if (rows.length > 0) {
+        const invoiceIds = rows.map(r => r.id);
+        const [paymentRows] = await pool.query(`
+            SELECT reference_id, SUM(amount) as paid_amount
+            FROM transactions
+            WHERE reference_id IN (?) AND type = 'sale'
+            GROUP BY reference_id
+        `, [invoiceIds]);
+
+        const paidMap = {};
+        for (const pr of paymentRows) {
+            paidMap[pr.reference_id] = Number(pr.paid_amount || 0);
+        }
+
+        for (const row of rows) {
+            const paid = paidMap[row.id] || 0;
+            const total = Number(row.total_amount || 0);
+            row.paid_amount = paid;
+            row.pending_amount = Math.max(0, total - paid);
+        }
+    }
+
+    res.json(rows);
+});
+
+export const registerBulkPayments = catchAsync(async (req, res) => {
+    const userId = req.user?.id || null;
+    const result = await financeService.registerBulkInvoicePayments(req.body, userId);
+    res.json(result);
 });

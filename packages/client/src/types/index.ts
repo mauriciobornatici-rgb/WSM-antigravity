@@ -10,9 +10,13 @@ export interface Product {
     sale_price: number
     stock_current?: number
     stock_min?: number
+    supplier_id?: string
     location?: string
     vat_rate?: number
     created_at: string
+    tiendanube_sync_enabled?: boolean | number
+    tiendanube_product_id?: string
+    tiendanube_variant_id?: string
 }
 
 export interface InventoryItem {
@@ -177,6 +181,7 @@ export interface SupplierPayment {
     id: string
     supplier_id: string
     supplier_name?: string
+    supplier_invoice_id?: string
     amount: number
     payment_date: string
     payment_method?: string
@@ -211,4 +216,21 @@ export interface PurchaseOrder {
     items: PurchaseOrderItem[]
     total_amount: number
     notes?: string
+}
+
+export interface FailedSync {
+    id: string
+    product_id: string
+    tiendanube_product_id: string
+    tiendanube_variant_id: string
+    stock: number
+    attempts: number
+    max_attempts: number
+    status: 'pending' | 'retrying' | 'completed' | 'failed'
+    last_error?: string | null
+    last_attempt_at?: string | null
+    created_at: string
+    updated_at: string
+    product_name?: string
+    product_sku?: string
 }

@@ -1,7 +1,7 @@
 import type { PurchaseOrder } from "@/types";
 
 export type ReceptionsFilter = "all" | "pending_qc" | "approved" | "rejected";
-export type ReceptionsTab = "pending" | "history" | "returns";
+export type ReceptionsTab = "pending" | "history" | "returns" | "invoices";
 
 export type ReceptionRecord = {
     id: string;

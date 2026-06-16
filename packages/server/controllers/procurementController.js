@@ -761,16 +761,14 @@ export const createQualityCheck = catchAsync(async (req, res) => {
 });
 
 export const exportIVACompras = catchAsync(async (req, res) => {
-    // 1. Get all approved receptions
-    const [receptions] = await pool.query(`
-        SELECT r.reception_number, r.remito_number, r.created_at, s.name AS supplier_name, s.tax_id AS supplier_tax_id,
-               COALESCE(SUM(ri.quantity_received * ri.unit_cost), 0) AS subtotal
-        FROM receptions r
-        JOIN suppliers s ON r.supplier_id = s.id
-        JOIN reception_items ri ON ri.reception_id = r.id
-        WHERE r.status = 'approved'
-        GROUP BY r.id, r.reception_number, r.remito_number, r.created_at, s.name, s.tax_id
-        ORDER BY r.created_at DESC
+    // 1. Get all approved supplier invoices
+    const [invoices] = await pool.query(`
+        SELECT si.invoice_number, si.invoice_type, si.issue_date, s.name AS supplier_name, s.tax_id AS supplier_tax_id,
+               si.net_amount, si.vat_amount, si.other_taxes, si.total_amount
+        FROM supplier_invoices si
+        JOIN suppliers s ON si.supplier_id = s.id
+        WHERE si.status = 'approved'
+        ORDER BY si.issue_date DESC
     `);
 
     // 2. Get all approved returns
@@ -789,17 +787,18 @@ export const exportIVACompras = catchAsync(async (req, res) => {
 
     // 3. Merge and sort chronologically
     const records = [];
-    for (const r of receptions) {
-        const sub = Number(r.subtotal || 0);
-        const iva = sub * taxRate;
-        const total = sub + iva;
+    for (const inv of invoices) {
+        const net = Number(inv.net_amount || 0);
+        const iva = Number(inv.vat_amount || 0);
+        const taxes = Number(inv.other_taxes || 0);
+        const total = Number(inv.total_amount || (net + iva + taxes));
         records.push({
-            date: new Date(r.created_at),
-            type: 'Recepción (Ingreso)',
-            number: r.remito_number || r.reception_number,
-            tax_id: r.supplier_tax_id || '-',
-            supplier_name: r.supplier_name,
-            subtotal: sub,
+            date: new Date(inv.issue_date),
+            type: `Factura ${inv.invoice_type}`,
+            number: inv.invoice_number,
+            tax_id: inv.supplier_tax_id || '-',
+            supplier_name: inv.supplier_name,
+            subtotal: net,
             iva: iva,
             total: total
         });

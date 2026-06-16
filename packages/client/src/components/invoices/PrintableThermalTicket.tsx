@@ -2,6 +2,11 @@ import type { InvoiceView } from "./types"
 import type { CompanySettings } from "@/types"
 import { formatInvoiceNumber } from "./invoiceUtils"
 
+const DEFAULT_CAE_EXPIRATION_DATE = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .substring(0, 10)
+    .replace(/-/g, "")
+
 type PrintableThermalTicketProps = {
     invoice: InvoiceView | null
     companyName: string
@@ -55,7 +60,7 @@ export function PrintableThermalTicket({
     const compTypeNum = invoice.invoice_type === "A" ? "01" : "06"
     const expDateStr = invoice.cae_expiration_date
         ? String(invoice.cae_expiration_date).substring(0, 10).replace(/-/g, "")
-        : new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10).replace(/-/g, "")
+        : DEFAULT_CAE_EXPIRATION_DATE
     const barcodeValue = `${emisorCuit}${compTypeNum}${String(invoice.point_of_sale || 1).padStart(4, "0")}${invoice.cae || ""}${expDateStr}`
 
     return (

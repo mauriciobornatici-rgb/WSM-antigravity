@@ -1,5 +1,10 @@
 import type { CompanySettings } from "@/types"
-import type { CreditNoteRow } from "@/pages/ReturnsAndWarranties"
+import type { ClientReturnRow, CreditNoteRow, ClientReturnItemRow } from "@/types/returns"
+
+const DEFAULT_CAE_EXPIRATION_DATE = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .substring(0, 10)
+    .replace(/-/g, "")
 
 type PrintableThermalCreditNoteProps = {
     creditNote: CreditNoteRow | null
@@ -7,7 +12,7 @@ type PrintableThermalCreditNoteProps = {
     companyTaxId: string
     companyAddress: string
     companySettings?: CompanySettings | undefined
-    linkedReturn?: any
+    linkedReturn?: ClientReturnRow | null | undefined
 }
 
 export function PrintableThermalCreditNote({
@@ -53,7 +58,7 @@ export function PrintableThermalCreditNote({
     const compTypeNum = cnType === "A" ? "03" : "08"
     const expDateStr = creditNote.cae_expiration_date
         ? String(creditNote.cae_expiration_date).substring(0, 10).replace(/-/g, "")
-        : new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10).replace(/-/g, "")
+        : DEFAULT_CAE_EXPIRATION_DATE
     const barcodeValue = `${emisorCuit}${compTypeNum}${String(creditNote.point_of_sale || 1).padStart(4, "0")}${creditNote.cae || ""}${expDateStr}`
 
     return (
@@ -91,7 +96,7 @@ export function PrintableThermalCreditNote({
                 </div>
                 <div className="space-y-1">
                     {linkedReturn && linkedReturn.items && linkedReturn.items.length > 0 ? (
-                        linkedReturn.items.map((item: any, index: number) => (
+                        linkedReturn.items.map((item: ClientReturnItemRow, index: number) => (
                             <div key={index} className="text-[10px] space-y-0.5 border-b border-dotted border-slate-200 pb-1 last:border-b-0">
                                 <div className="flex justify-between">
                                     <span className="truncate max-w-[200px]">{item.product_name || "Producto devuelto"}</span>

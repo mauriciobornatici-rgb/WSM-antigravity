@@ -31,6 +31,9 @@
     "noUncheckedSideEffectImports": true,
     "baseUrl": ".",
     "paths": {
+      "@wsm/common": [
+        "../common/src/index.ts"
+      ],
       "@/*": [
         "./src/*"
       ]

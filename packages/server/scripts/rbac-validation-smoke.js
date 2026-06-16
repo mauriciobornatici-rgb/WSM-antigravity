@@ -17,10 +17,17 @@ if (!jwtSecret) {
     process.exit(1);
 }
 
+const roleIds = {
+    admin: '00000000-0000-0000-0000-00000000000a',
+    manager: '00000000-0000-0000-0000-00000000000b',
+    cashier: '00000000-0000-0000-0000-00000000000c',
+    warehouse: '00000000-0000-0000-0000-00000000000d'
+};
+
 function tokenForRole(role) {
     return jwt.sign(
         {
-            id: '00000000-0000-0000-0000-000000000001',
+            id: roleIds[role],
             email: `smoke+${role}@test.local`,
             role
         },

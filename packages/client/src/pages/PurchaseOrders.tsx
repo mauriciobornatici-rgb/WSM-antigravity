@@ -98,7 +98,7 @@ export default function PurchaseOrdersPage() {
     async function handleApprove(orderId: string) {
         try {
             await approveOrderMutation.mutateAsync(orderId);
-            toast.success("Orden aprobada y enviada");
+            toast.success("Orden enviada a proveedor");
         } catch {
             // El manejo global de React Query ya informa el error.
         }
@@ -112,8 +112,8 @@ export default function PurchaseOrdersPage() {
         <div className="space-y-6 p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100">Ordenes de compra</h1>
-                    <p className="mt-1 text-slate-600 dark:text-slate-400">Gestiona compras y seguimiento de recepcion.</p>
+                    <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100">Órdenes de compra</h1>
+                    <p className="mt-1 text-slate-600 dark:text-slate-400">Gestiona compras y seguimiento de recepción.</p>
                 </div>
                 <button
                     onClick={() => setIsCreateDialogOpen(true)}
@@ -144,7 +144,7 @@ export default function PurchaseOrdersPage() {
                 <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 p-4">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-sm text-slate-600 dark:text-slate-400">Total ordenes</p>
+                            <p className="text-sm text-slate-600 dark:text-slate-400">Total órdenes</p>
                             <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">{orders.length}</p>
                         </div>
                         <Package className="h-8 w-8 text-blue-600 dark:text-blue-500" />
@@ -182,7 +182,7 @@ export default function PurchaseOrdersPage() {
             <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 text-slate-900 dark:text-slate-100">
                 {hasLoadError ? (
                     <div className="mx-4 mt-4 flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 md:flex-row md:items-center md:justify-between">
-                        <span>No pudimos cargar las ordenes de compra. Reintenta para actualizar los datos.</span>
+                        <span>No pudimos cargar las órdenes de compra. Reintenta para actualizar los datos.</span>
                         <button
                             type="button"
                             onClick={() => void ordersQuery.refetch()}
@@ -199,9 +199,9 @@ export default function PurchaseOrdersPage() {
                 ) : orders.length === 0 ? (
                     <div className="p-12 text-center bg-white dark:bg-slate-950/40">
                         <Package className="mx-auto mb-4 h-16 w-16 text-slate-300 dark:text-slate-700" />
-                        <h3 className="mb-2 text-lg font-medium text-slate-900 dark:text-slate-100">No hay ordenes para mostrar</h3>
+                        <h3 className="mb-2 text-lg font-medium text-slate-900 dark:text-slate-100">No hay órdenes para mostrar</h3>
                         <p className="text-slate-600 dark:text-slate-400">
-                            {filter === "all" ? "Crea la primera orden de compra para comenzar." : `No hay ordenes en estado ${statusLabel(filter)}.`}
+                            {filter === "all" ? "Crea la primera orden de compra para comenzar." : `No hay órdenes en estado ${statusLabel(filter)}.`}
                         </p>
                     </div>
                 ) : (
@@ -249,7 +249,7 @@ export default function PurchaseOrdersPage() {
                                                 disabled={approveOrderMutation.isPending}
                                                 className="rounded bg-green-50 dark:bg-green-500/10 px-2 py-1 text-xs font-semibold uppercase tracking-wider text-green-700 dark:text-green-400 transition hover:bg-green-100 dark:hover:bg-green-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-2"
                                             >
-                                                Aprobar
+                                                Enviar
                                             </button>
                                         ) : null}
                                         <button

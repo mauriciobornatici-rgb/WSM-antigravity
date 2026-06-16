@@ -135,3 +135,152 @@ test('createProduct rejects data URL image payloads with 400', async (t) => {
 
     assert.equal(createCalled, false);
 });
+
+test('processReceptionApproval throws RECEPTION_NOT_FOUND when reception does not exist', async (t) => {
+    const originalGetConnection = pool.getConnection;
+    
+    const mockConnection = {
+        beginTransaction: async () => {},
+        commit: async () => {},
+        rollback: async () => {},
+        release: () => {},
+        query: async (sql) => {
+            if (sql.includes('SELECT * FROM receptions')) {
+                return [[]];
+            }
+            return [[]];
+        }
+    };
+    
+    pool.getConnection = async () => mockConnection;
+    
+    t.after(() => {
+        pool.getConnection = originalGetConnection;
+    });
+
+    await assert.rejects(
+        () => inventoryService.processReceptionApproval('non-existing-id'),
+        (err) => {
+            assert.equal(err.errorCode, 'RECEPTION_NOT_FOUND');
+            return true;
+        }
+    );
+});
+
+test('processReceptionApproval throws RECEPTION_ALREADY_APPROVED when status is approved', async (t) => {
+    const originalGetConnection = pool.getConnection;
+    
+    const mockConnection = {
+        beginTransaction: async () => {},
+        commit: async () => {},
+        rollback: async () => {},
+        release: () => {},
+        query: async (sql) => {
+            if (sql.includes('SELECT * FROM receptions')) {
+                return [[{ id: 'reception-id', status: 'approved' }]];
+            }
+            return [[]];
+        }
+    };
+    
+    pool.getConnection = async () => mockConnection;
+    
+    t.after(() => {
+        pool.getConnection = originalGetConnection;
+    });
+
+    await assert.rejects(
+        () => inventoryService.processReceptionApproval('reception-id'),
+        (err) => {
+            assert.equal(err.errorCode, 'RECEPTION_ALREADY_APPROVED');
+            return true;
+        }
+    );
+});
+
+test('processReceptionApproval throws RECEPTION_HAS_NO_ITEMS when items list is empty', async (t) => {
+    const originalGetConnection = pool.getConnection;
+    
+    const mockConnection = {
+        beginTransaction: async () => {},
+        commit: async () => {},
+        rollback: async () => {},
+        release: () => {},
+        query: async (sql) => {
+            if (sql.includes('SELECT * FROM receptions')) {
+                return [[{ id: 'reception-id', status: 'draft' }]];
+            }
+            if (sql.includes('SELECT * FROM reception_items')) {
+                return [[]];
+            }
+            return [[]];
+        }
+    };
+    
+    pool.getConnection = async () => mockConnection;
+    
+    t.after(() => {
+        pool.getConnection = originalGetConnection;
+    });
+
+    await assert.rejects(
+        () => inventoryService.processReceptionApproval('reception-id'),
+        (err) => {
+            assert.equal(err.errorCode, 'RECEPTION_HAS_NO_ITEMS');
+            return true;
+        }
+    );
+});
+
+test('processReceptionApproval successfully approves reception, updates stock, updates PO status', async (t) => {
+    const originalGetConnection = pool.getConnection;
+    
+    const queryCalls = [];
+    const mockConnection = {
+        beginTransaction: async () => {},
+        commit: async () => {},
+        rollback: async () => {},
+        release: () => {},
+        query: async (sql, params) => {
+            queryCalls.push({ sql, params });
+            if (sql.includes('SELECT * FROM receptions')) {
+                return [[{ id: 'reception-1', status: 'draft', supplier_id: 'supplier-1', purchase_order_id: 'po-1' }]];
+            }
+            if (sql.includes('SELECT * FROM reception_items')) {
+                return [[{
+                    id: 'item-1',
+                    product_id: 'product-1',
+                    quantity_received: 10,
+                    unit_cost: 50,
+                    po_item_id: 'po-item-1',
+                    location_assigned: 'Depot-A'
+                }]];
+            }
+            if (sql.includes('SELECT id FROM inventory')) {
+                return [[{ id: 'inv-row-1' }]];
+            }
+            if (sql.includes('quantity_ordered') && sql.includes('purchase_order_items')) {
+                return [[{ ordered_qty: 20, received_qty: 20 }]];
+            }
+            return [[]];
+        }
+    };
+    
+    pool.getConnection = async () => mockConnection;
+    
+    t.after(() => {
+        pool.getConnection = originalGetConnection;
+    });
+
+    const result = await inventoryService.processReceptionApproval('reception-1', { approvedBy: 'user-1', actorUserId: 'user-1' });
+    
+    assert.deepEqual(result, { success: true });
+    
+    const updates = queryCalls.filter(c => c.sql.includes('UPDATE'));
+    const inserts = queryCalls.filter(c => c.sql.includes('INSERT'));
+    
+    assert.ok(inserts.some(c => c.sql.includes('INSERT INTO inventory_movements')));
+    assert.ok(updates.some(c => c.sql.includes('UPDATE inventory SET quantity = quantity + ?')));
+    assert.ok(updates.some(c => c.sql.includes('UPDATE purchase_order_items SET quantity_received = quantity_received + ?')));
+    assert.ok(updates.some(c => c.sql.includes('UPDATE purchase_orders SET status = ?')));
+});

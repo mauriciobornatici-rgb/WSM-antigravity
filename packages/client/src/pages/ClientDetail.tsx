@@ -1,99 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, CreditCard, History, Mail, MapPin, Phone, Plus, Printer, ShieldCheck, Trash2, User } from "lucide-react";
-import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { Client, Order, Transaction } from "@/types";
 import type { Invoice } from "@/types/api";
 import { showErrorToast } from "@/lib/errorHandling";
-import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 
-type ClientMovement = {
-    id: string;
-    date: string;
-    type: "sale" | "credit_note" | "return" | "payment" | "adjustment";
-    description: string;
-    amount: number;
-    document_id?: string;
-    related_invoice_id?: string;
-};
-
-type WarrantySummary = {
-    id: string;
-    created_at: string;
-    product_name: string;
-    issue_description: string;
-    status: string;
-};
-
-type ReturnSummary = {
-    id: string;
-    created_at: string;
-    reason: string;
-    status: string;
-    total_amount: number;
-};
-
-type PaymentSummary = {
-    id: string;
-    date: string;
-    type: string;
-    description: string;
-    amount: number;
-    reference_id?: string;
-};
-
-type InvoiceSummary = {
-    id: string;
-    issue_date: string;
-    invoice_type: string;
-    point_of_sale: number;
-    invoice_number: number;
-    status: string;
-    total_amount: number;
-    payment_status?: "pending" | "partial" | "paid";
-};
-
-type CreditNoteSummary = {
-    id: string;
-    number: string;
-    created_at: string;
-    amount: number;
-    status: string;
-};
-
-type PaymentLine = {
-    id: string;
-    method: "cash" | "transfer" | "credit_account" | "card" | "debit_card" | "credit_card" | "qr";
-    amount: string;
-};
-
-const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentLine["method"]; label: string }> = [
-    { value: "cash", label: "Efectivo" },
-    { value: "debit_card", label: "Tarjeta debito" },
-    { value: "credit_card", label: "Tarjeta credito" },
-    { value: "transfer", label: "Transferencia" },
-    { value: "qr", label: "QR" },
-    { value: "credit_account", label: "Cuenta corriente" },
-    { value: "card", label: "Tarjeta" },
-];
-
-function createPaymentLine(defaultAmount = ""): PaymentLine {
-    return {
-        id: crypto.randomUUID(),
-        method: "cash",
-        amount: defaultAmount,
-    };
-}
+// Extracted Subcomponents
+import { ClientHeaderCard } from "@/components/clients/ClientHeaderCard";
+import { ClientTotalsCards } from "@/components/clients/ClientTotalsCards";
+import { ClientMovementsCard } from "@/components/clients/ClientMovementsCard";
+import type { ClientMovement } from "@/components/clients/ClientMovementsCard";
+import { ClientOrdersAndWarrantiesCards } from "@/components/clients/ClientOrdersAndWarrantiesCards";
+import type { WarrantySummary } from "@/components/clients/ClientOrdersAndWarrantiesCards";
+import { ClientDocumentsCards } from "@/components/clients/ClientDocumentsCards";
+import type { InvoiceSummary, CreditNoteSummary, ReturnSummary, PaymentSummary } from "@/components/clients/ClientDocumentsCards";
+import { ClientPaymentDialog } from "@/components/clients/ClientPaymentDialog";
 
 function readText(value: unknown, fallback = "-"): string {
     return typeof value === "string" && value.trim().length > 0 ? value : fallback;
@@ -106,35 +27,6 @@ function readNumber(value: unknown): number {
 
 function readDate(value: unknown): string {
     return typeof value === "string" && value.length > 0 ? value : new Date().toISOString();
-}
-
-function movementLabel(type: ClientMovement["type"]): string {
-    switch (type) {
-        case "sale":
-            return "Venta";
-        case "credit_note":
-            return "Nota de credito";
-        case "return":
-            return "Devolucion";
-        case "adjustment":
-            return "Ajuste";
-        default:
-            return "Pago";
-    }
-}
-
-function movementVariant(type: ClientMovement["type"]): "default" | "secondary" | "outline" | "destructive" {
-    switch (type) {
-        case "credit_note":
-        case "return":
-            return "secondary";
-        case "adjustment":
-            return "outline";
-        case "payment":
-            return "default";
-        default:
-            return "outline";
-    }
 }
 
 function paymentTypeLabel(type: string): string {
@@ -155,57 +47,10 @@ function paymentTypeLabel(type: string): string {
     }
 }
 
-function orderStatusLabel(status: string): string {
-    const normalized = String(status || "").toLowerCase();
-    const labels: Record<string, string> = {
-        pending: "Pendiente",
-        picking: "En picking",
-        packed: "Empaquetado",
-        dispatched: "Despachado",
-        delivered: "Entregado",
-        completed: "Completado",
-        cancelled: "Cancelado",
-    };
-    return labels[normalized] || normalized || "-";
-}
-
-function invoiceStatusLabel(status: string): string {
-    const normalized = String(status || "").toLowerCase();
-    const labels: Record<string, string> = {
-        draft: "Borrador",
-        issued: "Emitida",
-        authorized: "Autorizada",
-        rejected: "Rechazada",
-        cancelled: "Anulada",
-    };
-    return labels[normalized] || normalized || "-";
-}
-
-function invoicePaymentStatusLabel(status: string | undefined): string {
-    const normalized = String(status || "pending").toLowerCase();
-    const labels: Record<string, string> = {
-        pending: "Pendiente",
-        partial: "Parcial",
-        paid: "Pagada",
-    };
-    return labels[normalized] || normalized;
-}
-
-function formatInvoiceLabel(invoice: Pick<InvoiceSummary, "invoice_type" | "point_of_sale" | "invoice_number" | "id">): string {
-    if (!invoice.invoice_number) return invoice.id;
-    const type = String(invoice.invoice_type || "B");
-    const pos = String(Number(invoice.point_of_sale || 1)).padStart(4, "0");
-    const number = String(Number(invoice.invoice_number || 0)).padStart(8, "0");
-    return `${type}-${pos}-${number}`;
-}
-
-function formatMoney(value: number): string {
+const formatMoney = (value: number) => {
     return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(value || 0));
-}
+};
 
-function canPrintMovement(movement: ClientMovement): boolean {
-    return movement.type === "sale" || movement.type === "credit_note" || movement.type === "payment";
-}
 
 function movementPrintTitle(movement: ClientMovement): string {
     if (movement.type === "sale") return "Comprobante de factura";
@@ -300,10 +145,6 @@ export default function ClientDetailPage() {
     const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
     const [creditNotes, setCreditNotes] = useState<CreditNoteSummary[]>([]);
     const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-    const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>("");
-    const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([createPaymentLine()]);
-    const [paymentNotes, setPaymentNotes] = useState("");
-    const [registeringPayment, setRegisteringPayment] = useState(false);
     const [printMovement, setPrintMovement] = useState<ClientMovement | null>(null);
     const [loading, setLoading] = useState(true);
 
@@ -411,26 +252,6 @@ export default function ClientDetailPage() {
         });
     }, [invoicePaidById, invoices]);
 
-    const selectedInvoice = useMemo(() => {
-        if (!selectedInvoiceId) return null;
-        return invoices.find((invoice) => invoice.id === selectedInvoiceId) ?? null;
-    }, [invoices, selectedInvoiceId]);
-
-    const selectedInvoicePaid = useMemo(
-        () => (selectedInvoice ? Number(invoicePaidById.get(selectedInvoice.id) || 0) : 0),
-        [invoicePaidById, selectedInvoice],
-    );
-
-    const selectedInvoicePending = useMemo(() => {
-        if (!selectedInvoice) return 0;
-        return Math.max(0, Number(selectedInvoice.total_amount || 0) - selectedInvoicePaid);
-    }, [selectedInvoice, selectedInvoicePaid]);
-
-    const paymentLinesTotal = useMemo(
-        () => paymentLines.reduce((sum, line) => sum + Number(line.amount || 0), 0),
-        [paymentLines],
-    );
-
     const accountTotals = useMemo(() => {
         const billed = invoices.reduce((sum, invoice) => sum + Number(invoice.total_amount || 0), 0);
         const credited = creditNotes.reduce((sum, note) => sum + Number(note.amount || 0), 0);
@@ -446,77 +267,7 @@ export default function ClientDetailPage() {
         };
     }, [creditNotes, invoices, payments]);
 
-    function openPaymentDialog(invoiceId?: string) {
-        const target = invoiceId || openInvoices[0]?.id || "";
-        setSelectedInvoiceId(target);
-        const targetPending = target
-            ? Math.max(0, Number((invoices.find((invoice) => invoice.id === target)?.total_amount || 0) - Number(invoicePaidById.get(target) || 0)))
-            : 0;
-        const suggested = targetPending > 0 ? String(targetPending.toFixed(2)) : "";
-        setPaymentLines([createPaymentLine(suggested)]);
-        setPaymentNotes("");
-        setPaymentDialogOpen(true);
-    }
-
-    function closePaymentDialog() {
-        setPaymentDialogOpen(false);
-        setSelectedInvoiceId("");
-        setPaymentLines([createPaymentLine()]);
-        setPaymentNotes("");
-        setRegisteringPayment(false);
-    }
-
-    function updatePaymentLine(lineId: string, patch: Partial<PaymentLine>) {
-        setPaymentLines((prev) => prev.map((line) => (line.id === lineId ? { ...line, ...patch } : line)));
-    }
-
-    async function submitPaymentRegistration() {
-        if (!selectedInvoice) {
-            toast.error("Selecciona una factura para registrar el cobro.");
-            return;
-        }
-        if (selectedInvoicePending <= 0) {
-            toast.info("La factura seleccionada ya esta saldada.");
-            return;
-        }
-
-        if (paymentLines.some((line) => Number(line.amount || 0) <= 0)) {
-            toast.error("Existen lineas de pago con monto 0 o vacio.");
-            return;
-        }
-
-        const sanitized = paymentLines
-            .map((line) => ({
-                method: line.method,
-                amount: Number(line.amount || 0),
-            }));
-
-        const totalToRegister = sanitized.reduce((sum, line) => sum + line.amount, 0);
-        if (totalToRegister - selectedInvoicePending > 0.01) {
-            toast.error("El cobro supera el saldo pendiente de la factura seleccionada.");
-            return;
-        }
-
-        try {
-            setRegisteringPayment(true);
-            await api.registerInvoicePayment(selectedInvoice.id, {
-                payments: sanitized,
-                ...(paymentNotes.trim() ? { notes: paymentNotes.trim() } : {}),
-            });
-            toast.success("Cobro registrado", {
-                description: `Se aplicaron $${totalToRegister.toLocaleString("es-AR")} a la factura.`,
-            });
-            closePaymentDialog();
-            await loadClientData();
-        } catch (error) {
-            showErrorToast("No se pudo registrar el cobro", error);
-        } finally {
-            setRegisteringPayment(false);
-        }
-    }
-
     function printMovementVoucher(movement: ClientMovement) {
-        if (!canPrintMovement(movement)) return;
         setPrintMovement(movement);
         window.setTimeout(() => {
             window.print();
@@ -531,9 +282,9 @@ export default function ClientDetailPage() {
         return (
             <div className="space-y-4 p-8 text-center">
                 <h2 className="text-xl font-bold text-red-600">Cliente no encontrado</h2>
-                <Button onClick={() => navigate("/clients")} variant="outline">
+                <button onClick={() => navigate("/clients")} className="px-4 py-2 border rounded-md hover:bg-slate-50">
                     Volver
-                </Button>
+                </button>
             </div>
         );
     }
@@ -541,696 +292,44 @@ export default function ClientDetailPage() {
     return (
         <>
         <div className="space-y-6 print:hidden">
-            <div className="flex items-center gap-3">
-                <Button variant="ghost" onClick={() => navigate("/clients")}>
-                    <ArrowLeft className="mr-2 h-4 w-4" />
-                    Volver
-                </Button>
-                <div>
-                    <h2 className="text-3xl font-bold tracking-tight">{client.name}</h2>
-                    <p className="text-muted-foreground">{client.tax_id}</p>
-                </div>
-            </div>
+            <ClientHeaderCard
+                client={client}
+                accountTotals={accountTotals}
+                openInvoices={openInvoices}
+                onOpenPaymentDialog={() => setPaymentDialogOpen(true)}
+                onBack={() => navigate("/clients")}
+            />
 
-            <div className="grid gap-6 md:grid-cols-3">
-                <Card className="md:col-span-2">
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <User className="h-5 w-5 text-blue-500" />
-                            Datos del cliente
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid gap-3 md:grid-cols-2">
-                        <div className="flex items-center gap-2 text-sm">
-                            <Mail className="h-4 w-4 text-muted-foreground" />
-                            <span>{client.email || "-"}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm">
-                            <Phone className="h-4 w-4 text-muted-foreground" />
-                            <span>{client.phone || "-"}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm md:col-span-2">
-                            <MapPin className="h-4 w-4 text-muted-foreground" />
-                            <span>{client.address || "-"}</span>
-                        </div>
-                    </CardContent>
-                </Card>
+            <ClientTotalsCards accountTotals={accountTotals} />
 
-                <Card className={cn(client.current_account_balance > client.credit_limit ? "border-red-500/40 bg-red-500/5" : "")}>
-                    <CardHeader>
-                        <CardTitle className="flex items-center justify-between gap-2">
-                            <span className="flex items-center gap-2">
-                                <CreditCard className="h-5 w-5 text-green-500" />
-                                Cuenta corriente
-                            </span>
-                            <Button
-                                type="button"
-                                size="sm"
-                                onClick={() => openPaymentDialog()}
-                                disabled={openInvoices.length === 0}
-                            >
-                                <Plus className="mr-1 h-4 w-4" />
-                                Registrar cobro
-                            </Button>
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                        <div>
-                            <p className="text-sm text-muted-foreground">Saldo</p>
-                            <p className={cn("text-3xl font-bold", accountTotals.balance > 0 ? "text-amber-500" : "text-emerald-500")}>
-                                ${accountTotals.balance.toLocaleString("es-AR")}
-                            </p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-muted-foreground">Limite</p>
-                            <p className="font-semibold">${client.credit_limit.toLocaleString("es-AR")}</p>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-                            <div
-                                className="h-full bg-blue-600"
-                                style={{
-                                    width: `${client.credit_limit > 0 ? Math.min(100, (accountTotals.balance / client.credit_limit) * 100) : 0}%`
-                                }}
-                            />
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                            Facturado: ${accountTotals.billed.toLocaleString("es-AR")} | NC: ${accountTotals.credited.toLocaleString("es-AR")} | Cobrado: ${accountTotals.paid.toLocaleString("es-AR")}
-                        </p>
-                    </CardContent>
-                </Card>
-            </div>
+            <ClientMovementsCard
+                movements={movements}
+                onPrint={printMovementVoucher}
+            />
 
-            <div className="grid gap-4 md:grid-cols-4">
-                <Card>
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">Facturado</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <p className="text-2xl font-bold">${accountTotals.billed.toLocaleString("es-AR")}</p>
-                    </CardContent>
-                </Card>
-                <Card>
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">Notas de credito</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <p className="text-2xl font-bold text-amber-500">-${accountTotals.credited.toLocaleString("es-AR")}</p>
-                    </CardContent>
-                </Card>
-                <Card>
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">Cobrado</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <p className="text-2xl font-bold text-emerald-500">-${accountTotals.paid.toLocaleString("es-AR")}</p>
-                    </CardContent>
-                </Card>
-                <Card>
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">Saldo calculado</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <p className={cn("text-2xl font-bold", accountTotals.balance > 0 ? "text-amber-500" : "text-emerald-500")}>
-                            ${accountTotals.balance.toLocaleString("es-AR")}
-                        </p>
-                    </CardContent>
-                </Card>
-            </div>
+            <ClientOrdersAndWarrantiesCards
+                orders={orders}
+                warranties={warranties}
+                onViewInvoice={(invoiceId) => navigate(`/invoices?invoice_id=${encodeURIComponent(invoiceId)}`)}
+            />
 
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                        <History className="h-5 w-5 text-purple-500" />
-                        Resumen integral de cuenta
-                    </CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="max-h-[430px] overflow-auto">
-                        <Table className="min-w-[720px]">
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Fecha</TableHead>
-                                    <TableHead>Descripcion</TableHead>
-                                    <TableHead>Tipo</TableHead>
-                                    <TableHead className="text-right">Monto</TableHead>
-                                    <TableHead className="text-right">Acciones</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {movements.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
-                                            Sin movimientos.
-                                        </TableCell>
-                                    </TableRow>
-                                ) : (
-                                    movements.map((movement) => (
-                                        <TableRow key={movement.id}>
-                                            <TableCell>{new Date(movement.date).toLocaleDateString("es-AR")}</TableCell>
-                                            <TableCell>{movement.description}</TableCell>
-                                            <TableCell>
-                                                <Badge variant={movementVariant(movement.type)}>
-                                                    {movementLabel(movement.type)}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell className={cn("text-right", movement.amount < 0 ? "text-emerald-500" : "text-amber-500")}>
-                                                ${movement.amount.toLocaleString("es-AR")}
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                {canPrintMovement(movement) ? (
-                                                    <Button
-                                                        type="button"
-                                                        size="sm"
-                                                        variant="outline"
-                                                        onClick={() => printMovementVoucher(movement)}
-                                                    >
-                                                        <Printer className="mr-1 h-4 w-4" />
-                                                        Imprimir
-                                                    </Button>
-                                                ) : (
-                                                    <span className="text-muted-foreground">-</span>
-                                                )}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
-                                )}
-                            </TableBody>
-                        </Table>
-                    </div>
-                </CardContent>
-            </Card>
+            <ClientDocumentsCards
+                invoices={invoices}
+                invoicePaidById={invoicePaidById}
+                creditNotes={creditNotes}
+                returns={returns}
+                payments={payments}
+                onPrintMovement={printMovementVoucher}
+            />
 
-            <div className="grid gap-6 lg:grid-cols-2">
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Compras / pedidos</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="overflow-x-auto">
-                            <Table className="min-w-[420px]">
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>ID</TableHead>
-                                        <TableHead>Estado</TableHead>
-                                        <TableHead className="text-right">Total</TableHead>
-                                        <TableHead>Factura</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {orders.length === 0 ? (
-                                        <TableRow>
-                                            <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
-                                                Sin pedidos.
-                                            </TableCell>
-                                        </TableRow>
-                                    ) : (
-                                        orders.map((order) => (
-                                            <TableRow key={order.id}>
-                                                <TableCell className="font-mono text-xs">{order.id}</TableCell>
-                                                <TableCell>
-                                                    <Badge variant="outline">{orderStatusLabel(order.status)}</Badge>
-                                                </TableCell>
-                                                <TableCell className="text-right">${Number(order.total_amount || 0).toLocaleString("es-AR")}</TableCell>
-                                                <TableCell>
-                                                    {order.invoice_id ? (
-                                                        <Button
-                                                            type="button"
-                                                            size="sm"
-                                                            variant="outline"
-                                                            onClick={() => navigate(`/invoices?invoice_id=${encodeURIComponent(String(order.invoice_id))}`)}
-                                                        >
-                                                            Ver
-                                                        </Button>
-                                                    ) : (
-                                                        <span className="text-muted-foreground">-</span>
-                                                    )}
-                                                </TableCell>
-                                            </TableRow>
-                                        ))
-                                    )}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <ShieldCheck className="h-5 w-5 text-indigo-500" />
-                            Garantias
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="overflow-x-auto">
-                            <Table className="min-w-[420px]">
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Fecha</TableHead>
-                                        <TableHead>Producto</TableHead>
-                                        <TableHead>Estado</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {warranties.length === 0 ? (
-                                        <TableRow>
-                                            <TableCell colSpan={3} className="h-20 text-center text-muted-foreground">
-                                                Sin garantias.
-                                            </TableCell>
-                                        </TableRow>
-                                    ) : (
-                                        warranties.map((warranty) => (
-                                            <TableRow key={warranty.id}>
-                                                <TableCell>{new Date(warranty.created_at).toLocaleDateString("es-AR")}</TableCell>
-                                                <TableCell>
-                                                    <div>{warranty.product_name}</div>
-                                                    <div className="text-xs text-muted-foreground">{warranty.issue_description}</div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Badge variant="outline">{warranty.status}</Badge>
-                                                </TableCell>
-                                            </TableRow>
-                                        ))
-                                    )}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Facturas</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="max-h-[380px] overflow-auto">
-                            <Table className="min-w-[760px]">
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Fecha</TableHead>
-                                        <TableHead>Comprobante</TableHead>
-                                        <TableHead>Estado</TableHead>
-                                        <TableHead className="text-right">Total</TableHead>
-                                        <TableHead className="text-right">Pagado</TableHead>
-                                        <TableHead className="text-right">Pendiente</TableHead>
-                                        <TableHead className="text-right">Acciones</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {invoices.length === 0 ? (
-                                        <TableRow>
-                                            <TableCell colSpan={7} className="h-20 text-center text-muted-foreground">
-                                                Sin facturas.
-                                            </TableCell>
-                                        </TableRow>
-                                    ) : (
-                                        invoices.map((invoice) => {
-                                            const paid = Number(invoicePaidById.get(invoice.id) || 0);
-                                            const pending = Math.max(0, Number(invoice.total_amount || 0) - paid);
-                                            return (
-                                                <TableRow key={invoice.id}>
-                                                    <TableCell>{new Date(invoice.issue_date).toLocaleDateString("es-AR")}</TableCell>
-                                                    <TableCell className="font-mono">{formatInvoiceLabel(invoice)}</TableCell>
-                                                    <TableCell>
-                                                        <div className="flex flex-col gap-1">
-                                                            <Badge variant="outline">{invoiceStatusLabel(invoice.status)}</Badge>
-                                                            <Badge variant={pending <= 0.009 ? "default" : "secondary"}>
-                                                                {invoicePaymentStatusLabel(pending <= 0.009 ? "paid" : invoice.payment_status)}
-                                                            </Badge>
-                                                        </div>
-                                                    </TableCell>
-                                                    <TableCell className="text-right">${invoice.total_amount.toLocaleString("es-AR")}</TableCell>
-                                                    <TableCell className="text-right text-emerald-500">${paid.toLocaleString("es-AR")}</TableCell>
-                                                    <TableCell className="text-right font-semibold">${pending.toLocaleString("es-AR")}</TableCell>
-                                                    <TableCell className="text-right">
-                                                        <Button
-                                                            type="button"
-                                                            size="sm"
-                                                            variant="outline"
-                                                            onClick={() => printMovementVoucher({
-                                                                id: `inv-${invoice.id}`,
-                                                                date: invoice.issue_date,
-                                                                type: "sale",
-                                                                description: `Factura ${formatInvoiceLabel(invoice)}`,
-                                                                amount: Number(invoice.total_amount || 0),
-                                                                document_id: invoice.id,
-                                                            })}
-                                                        >
-                                                            <Printer className="mr-1 h-4 w-4" />
-                                                            Imprimir
-                                                        </Button>
-                                                    </TableCell>
-                                                </TableRow>
-                                            );
-                                        })
-                                    )}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Notas de credito</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="max-h-[380px] overflow-auto">
-                            <Table className="min-w-[560px]">
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Fecha</TableHead>
-                                        <TableHead>Comprobante</TableHead>
-                                        <TableHead>Estado</TableHead>
-                                        <TableHead className="text-right">Monto</TableHead>
-                                        <TableHead className="text-right">Acciones</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {creditNotes.length === 0 ? (
-                                        <TableRow>
-                                            <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
-                                                Sin notas de credito.
-                                            </TableCell>
-                                        </TableRow>
-                                    ) : (
-                                        creditNotes.map((note) => (
-                                            <TableRow key={note.id}>
-                                                <TableCell>{new Date(note.created_at).toLocaleDateString("es-AR")}</TableCell>
-                                                <TableCell className="font-mono">{note.number}</TableCell>
-                                                <TableCell>
-                                                    <Badge variant="outline">{note.status}</Badge>
-                                                </TableCell>
-                                                <TableCell className="text-right text-amber-500">-${note.amount.toLocaleString("es-AR")}</TableCell>
-                                                <TableCell className="text-right">
-                                                    <Button
-                                                        type="button"
-                                                        size="sm"
-                                                        variant="outline"
-                                                        onClick={() => printMovementVoucher({
-                                                            id: `cn-${note.id}`,
-                                                            date: note.created_at,
-                                                            type: "credit_note",
-                                                            description: `Nota de credito ${note.number}`,
-                                                            amount: -Math.abs(note.amount),
-                                                            document_id: note.id,
-                                                        })}
-                                                    >
-                                                        <Printer className="mr-1 h-4 w-4" />
-                                                        Imprimir
-                                                    </Button>
-                                                </TableCell>
-                                            </TableRow>
-                                        ))
-                                    )}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Devoluciones</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="overflow-x-auto">
-                            <Table className="min-w-[520px]">
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Fecha</TableHead>
-                                        <TableHead>Motivo</TableHead>
-                                        <TableHead>Estado</TableHead>
-                                        <TableHead className="text-right">Monto</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {returns.length === 0 ? (
-                                        <TableRow>
-                                            <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
-                                                Sin devoluciones.
-                                            </TableCell>
-                                        </TableRow>
-                                    ) : (
-                                        returns.map((row) => (
-                                            <TableRow key={row.id}>
-                                                <TableCell>{new Date(row.created_at).toLocaleDateString("es-AR")}</TableCell>
-                                                <TableCell>{row.reason}</TableCell>
-                                                <TableCell>
-                                                    <Badge variant={row.status === "approved" ? "default" : "outline"}>
-                                                        {row.status}
-                                                    </Badge>
-                                                </TableCell>
-                                                <TableCell className="text-right">
-                                                    ${row.total_amount.toLocaleString("es-AR")}
-                                                </TableCell>
-                                            </TableRow>
-                                        ))
-                                    )}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Pagos y ajustes</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="max-h-[380px] overflow-auto">
-                            <Table className="min-w-[560px]">
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Fecha</TableHead>
-                                        <TableHead>Tipo</TableHead>
-                                        <TableHead>Descripcion</TableHead>
-                                        <TableHead className="text-right">Monto</TableHead>
-                                        <TableHead className="text-right">Acciones</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {payments.length === 0 ? (
-                                        <TableRow>
-                                            <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">
-                                                Sin pagos o ajustes.
-                                            </TableCell>
-                                        </TableRow>
-                                    ) : (
-                                        payments.map((tx) => {
-                                            const txType = String(tx.type).toLowerCase();
-                                            const isPayment = txType === "sale";
-                                            return (
-                                                <TableRow key={tx.id}>
-                                                    <TableCell>{new Date(tx.date).toLocaleDateString("es-AR")}</TableCell>
-                                                    <TableCell>
-                                                        <Badge variant={txType === "adjustment" ? "outline" : "default"}>
-                                                            {paymentTypeLabel(tx.type)}
-                                                        </Badge>
-                                                    </TableCell>
-                                                    <TableCell>{tx.description}</TableCell>
-                                                    <TableCell className={cn("text-right", isPayment ? "text-emerald-500" : "")}>
-                                                        {isPayment ? "-" : ""}${tx.amount.toLocaleString("es-AR")}
-                                                    </TableCell>
-                                                    <TableCell className="text-right">
-                                                        {isPayment ? (
-                                                            <Button
-                                                                type="button"
-                                                                size="sm"
-                                                                variant="outline"
-                                                                onClick={() => printMovementVoucher({
-                                                                    id: `pay-${tx.id}`,
-                                                                    date: tx.date,
-                                                                    type: "payment",
-                                                                    description: tx.description,
-                                                                    amount: -Math.abs(Number(tx.amount || 0)),
-                                                                    document_id: tx.id,
-                                                                    ...(tx.reference_id ? { related_invoice_id: tx.reference_id } : {}),
-                                                                })}
-                                                            >
-                                                                <Printer className="mr-1 h-4 w-4" />
-                                                                Imprimir
-                                                            </Button>
-                                                        ) : (
-                                                            <span className="text-muted-foreground">-</span>
-                                                        )}
-                                                    </TableCell>
-                                                </TableRow>
-                                            );
-                                        })
-                                    )}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    </CardContent>
-                </Card>
-            </div>
-
-            <Dialog open={paymentDialogOpen} onOpenChange={(open) => (open ? setPaymentDialogOpen(true) : closePaymentDialog())}>
-                <DialogContent className="w-[95vw] max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-                    <DialogHeader>
-                        <DialogTitle>Registrar cobro de factura</DialogTitle>
-                        <DialogDescription>
-                            Registra pagos parciales o mixtos para impactar cuenta corriente y estado de pago.
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="space-y-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="invoice-select">Factura</Label>
-                            <Select
-                                value={selectedInvoiceId}
-                                onValueChange={(value) => {
-                                    setSelectedInvoiceId(value);
-                                    const pending = Math.max(
-                                        0,
-                                        Number((invoices.find((invoice) => invoice.id === value)?.total_amount || 0) - Number(invoicePaidById.get(value) || 0))
-                                    );
-                                    setPaymentLines([createPaymentLine(pending > 0 ? String(pending.toFixed(2)) : "")]);
-                                }}
-                            >
-                                <SelectTrigger id="invoice-select">
-                                    <SelectValue placeholder="Selecciona una factura pendiente" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {openInvoices.map((invoice) => {
-                                        const paid = Number(invoicePaidById.get(invoice.id) || 0);
-                                        const pending = Math.max(0, Number(invoice.total_amount || 0) - paid);
-                                        return (
-                                            <SelectItem key={invoice.id} value={invoice.id}>
-                                                {formatInvoiceLabel(invoice)} | Pendiente ${pending.toLocaleString("es-AR")}
-                                            </SelectItem>
-                                        );
-                                    })}
-                                </SelectContent>
-                            </Select>
-                            {openInvoices.length === 0 ? (
-                                <p className="text-xs text-muted-foreground">No hay facturas pendientes para este cliente.</p>
-                            ) : null}
-                        </div>
-
-                        {selectedInvoice ? (
-                            <div className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-3">
-                                <div>
-                                    <p className="text-muted-foreground">Total factura</p>
-                                    <p className="font-semibold">${Number(selectedInvoice.total_amount || 0).toLocaleString("es-AR")}</p>
-                                </div>
-                                <div>
-                                    <p className="text-muted-foreground">Pagado</p>
-                                    <p className="font-semibold text-emerald-500">${selectedInvoicePaid.toLocaleString("es-AR")}</p>
-                                </div>
-                                <div>
-                                    <p className="text-muted-foreground">Pendiente</p>
-                                    <p className="font-semibold text-amber-500">${selectedInvoicePending.toLocaleString("es-AR")}</p>
-                                </div>
-                            </div>
-                        ) : null}
-
-                        <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                                <Label>Lineas de pago</Label>
-                                <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setPaymentLines((prev) => [...prev, createPaymentLine()])}
-                                >
-                                    <Plus className="mr-1 h-4 w-4" />
-                                    Agregar linea
-                                </Button>
-                            </div>
-                            <div className="space-y-2">
-                                {paymentLines.map((line) => (
-                                    <div key={line.id} className="grid gap-2 sm:grid-cols-[1fr_180px_auto]">
-                                        <Select
-                                            value={line.method}
-                                            onValueChange={(value) => updatePaymentLine(line.id, { method: value as PaymentLine["method"] })}
-                                        >
-                                            <SelectTrigger>
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {PAYMENT_METHOD_OPTIONS.map((option) => (
-                                                    <SelectItem key={option.value} value={option.value}>
-                                                        {option.label}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                        <Input
-                                            type="number"
-                                            min={0}
-                                            step="0.01"
-                                            value={line.amount}
-                                            onChange={(event) => updatePaymentLine(line.id, { amount: event.target.value })}
-                                            placeholder="Monto"
-                                        />
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="icon"
-                                            onClick={() =>
-                                                setPaymentLines((prev) => (prev.length <= 1 ? prev : prev.filter((entry) => entry.id !== line.id)))
-                                            }
-                                            disabled={paymentLines.length <= 1}
-                                        >
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label htmlFor="payment-notes">Observaciones</Label>
-                            <Textarea
-                                id="payment-notes"
-                                value={paymentNotes}
-                                onChange={(event) => setPaymentNotes(event.target.value)}
-                                placeholder="Detalle opcional del cobro..."
-                                rows={3}
-                            />
-                        </div>
-
-                        <div className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-3">
-                            <div>
-                                <p className="text-muted-foreground">Total a registrar</p>
-                                <p className="font-semibold">${paymentLinesTotal.toLocaleString("es-AR")}</p>
-                            </div>
-                            <div>
-                                <p className="text-muted-foreground">Pendiente actual</p>
-                                <p className="font-semibold">${selectedInvoicePending.toLocaleString("es-AR")}</p>
-                            </div>
-                            <div>
-                                <p className="text-muted-foreground">Saldo restante</p>
-                                <p className={cn("font-semibold", paymentLinesTotal - selectedInvoicePending > 0.01 ? "text-red-500" : "text-emerald-500")}>
-                                    ${(selectedInvoicePending - paymentLinesTotal).toLocaleString("es-AR")}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                        <Button type="button" variant="outline" onClick={closePaymentDialog}>
-                            Cancelar
-                        </Button>
-                        <Button
-                            type="button"
-                            onClick={() => void submitPaymentRegistration()}
-                            disabled={
-                                registeringPayment || 
-                                !selectedInvoiceId || 
-                                openInvoices.length === 0 || 
-                                paymentLines.some(line => Number(line.amount || 0) <= 0) || 
-                                paymentLinesTotal <= 0 || 
-                                paymentLinesTotal - selectedInvoicePending > 0.01
-                            }
-                        >
-                            {registeringPayment ? "Registrando..." : "Registrar cobro"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+            <ClientPaymentDialog
+                open={paymentDialogOpen}
+                onOpenChange={setPaymentDialogOpen}
+                openInvoices={openInvoices}
+                invoices={invoices}
+                invoicePaidById={invoicePaidById}
+                onSuccess={loadClientData}
+            />
         </div>
 
         <div id="printable-client-document" className="hidden print:block">

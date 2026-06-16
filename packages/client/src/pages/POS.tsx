@@ -111,7 +111,7 @@ export default function POSPage() {
     const categories = useMemo(() => {
         const values = new Set<string>();
         for (const product of products) {
-            values.add(product.category || "Sin categoria");
+        values.add(product.category || "Sin categoría");
         }
         return ["all", ...Array.from(values)];
     }, [products]);
@@ -146,7 +146,7 @@ export default function POSPage() {
             if (!found) return [...current, { ...product, quantity: 1 }];
 
             if (found.quantity >= product.stock) {
-                toast.warning("No hay mas stock disponible");
+                toast.warning("No hay más stock disponible");
                 return current;
             }
             return current.map((item) => (item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item));
@@ -164,7 +164,7 @@ export default function POSPage() {
         );
 
         if (!product) {
-            toast.warning("Codigo no encontrado");
+            toast.warning("Código no encontrado");
             return;
         }
 
@@ -179,7 +179,7 @@ export default function POSPage() {
                     if (item.id !== productId) return item;
                     const nextQuantity = Math.max(0, item.quantity + delta);
                     if (nextQuantity > item.stock) {
-                        toast.warning("No hay mas stock disponible");
+                        toast.warning("No hay más stock disponible");
                         return item;
                     }
                     return { ...item, quantity: nextQuantity };
@@ -384,7 +384,7 @@ export default function POSPage() {
                         onClick={() => navigate("/")}
                     >
                         <ArrowLeft className="h-4 w-4" />
-                        Volver al menu principal
+                        Volver al menú principal
                     </Button>
                     <Button
                         type="button"
@@ -493,7 +493,7 @@ export default function POSPage() {
 
             {activePrintLayout === "a4" && selectedInvoice && (
                 <PrintableInvoiceArea
-                    invoice={selectedInvoice as any}
+                    invoice={selectedInvoice}
                     companyName={companySettings.identity.legal_name || companySettings.identity.brand_name || "Empresa"}
                     companyTaxId={companySettings.identity.tax_id || "No informado"}
                     companyAddress={`${companySettings.address.street} ${companySettings.address.number || ""}, ${companySettings.address.city}`}
@@ -504,7 +504,7 @@ export default function POSPage() {
 
             {activePrintLayout === "thermal" && selectedInvoice && (
                 <PrintableThermalTicket
-                    invoice={selectedInvoice as any}
+                    invoice={selectedInvoice}
                     companyName={companySettings.identity.legal_name || companySettings.identity.brand_name || "Empresa"}
                     companyTaxId={companySettings.identity.tax_id || "No informado"}
                     companyAddress={`${companySettings.address.street} ${companySettings.address.number || ""}, ${companySettings.address.city}`}

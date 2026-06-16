@@ -29,6 +29,12 @@ export const getIncomeStatement = catchAsync(async (req, res) => {
     res.json(incomeStatement);
 });
 
+export const getBalanceSheet = catchAsync(async (req, res) => {
+    const { start_date, end_date } = req.query;
+    const balanceSheet = await accountingService.getBalanceSheet({ start_date, end_date });
+    res.json(balanceSheet);
+});
+
 export const createManualEntry = catchAsync(async (req, res) => {
     const result = await accountingService.createManualEntry(req.body, req.user?.id);
     res.status(201).json(result);

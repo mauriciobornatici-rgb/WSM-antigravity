@@ -3,6 +3,7 @@ import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
 import { applyPaginationHeaders, getPagination } from '../utils/pagination.js';
+import { encrypt, decrypt } from '../utils/crypto.js';
 
 const DEFAULT_TAX_RATE = 0.21;
 const DEFAULT_CURRENCY = 'ARS';
@@ -23,7 +24,7 @@ function normalizeCurrency(value) {
     return trimmed;
 }
 
-function buildCompanySettingsResponse(data) {
+export function buildCompanySettingsResponse(data, { includeSecrets = true } = {}) {
     if (!data) {
         return {
             identity: { brand_name: '', legal_name: '', tax_id: '', logo_url: '' },
@@ -32,7 +33,12 @@ function buildCompanySettingsResponse(data) {
             socials: { instagram: '', facebook: '', linkedin: '' },
             operation: { tax_rate: DEFAULT_TAX_RATE, default_currency: DEFAULT_CURRENCY },
             billing: { iibb: '', start_date: '', iva_condition: 'Responsable Inscripto', pos: 1, afip_crt: '', afip_key: '', afip_env: 'homologacion' },
-            integrations: { tiendanube_access_token: '', tiendanube_store_id: '' }
+            integrations: {
+                tiendanube_access_token: '',
+                tiendanube_store_id: '',
+                tiendanube_client_id: '',
+                tiendanube_client_secret: ''
+            }
         };
     }
 
@@ -69,15 +75,15 @@ function buildCompanySettingsResponse(data) {
             start_date: data.billing_start_date || '',
             iva_condition: data.billing_iva_condition || 'Responsable Inscripto',
             pos: data.billing_pos || 1,
-            afip_crt: data.billing_afip_crt || '',
-            afip_key: data.billing_afip_key || '',
+            afip_crt: includeSecrets ? decrypt(data.billing_afip_crt) || '' : '',
+            afip_key: includeSecrets ? decrypt(data.billing_afip_key) || '' : '',
             afip_env: data.billing_afip_env || 'homologacion'
         },
         integrations: {
-            tiendanube_access_token: data.tiendanube_access_token || '',
+            tiendanube_access_token: includeSecrets ? decrypt(data.tiendanube_access_token) || '' : '',
             tiendanube_store_id: data.tiendanube_store_id || '',
-            tiendanube_client_id: data.tiendanube_client_id || '',
-            tiendanube_client_secret: data.tiendanube_client_secret || ''
+            tiendanube_client_id: includeSecrets ? data.tiendanube_client_id || '' : '',
+            tiendanube_client_secret: includeSecrets ? decrypt(data.tiendanube_client_secret) || '' : ''
         }
     };
 }
@@ -91,7 +97,7 @@ export const getCompanySettings = catchAsync(async (req, res) => {
 export const getCompanyPublicProfile = catchAsync(async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
     const data = rows[0] || null;
-    const payload = buildCompanySettingsResponse(data);
+    const payload = buildCompanySettingsResponse(data, { includeSecrets: false });
     res.json(payload);
 });
 
@@ -151,8 +157,8 @@ export const updateCompanySettings = catchAsync(async (req, res) => {
         socials?.instagram, socials?.facebook, socials?.linkedin,
         safeTaxRate, safeCurrency,
         billing?.iibb, billing?.start_date, billing?.iva_condition,
-        billing?.pos || 1, billing?.afip_crt, billing?.afip_key, billing?.afip_env || 'homologacion',
-        integrations?.tiendanube_access_token, integrations?.tiendanube_store_id, integrations?.tiendanube_client_id, integrations?.tiendanube_client_secret
+        billing?.pos || 1, encrypt(billing?.afip_crt), encrypt(billing?.afip_key), billing?.afip_env || 'homologacion',
+        encrypt(integrations?.tiendanube_access_token), integrations?.tiendanube_store_id, integrations?.tiendanube_client_id, encrypt(integrations?.tiendanube_client_secret)
     ]);
 
     const [updatedRows] = await pool.query('SELECT * FROM company_settings WHERE id = 1 LIMIT 1');

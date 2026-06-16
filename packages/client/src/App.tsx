@@ -26,6 +26,9 @@ const PurchaseOrdersPage = lazy(() => import("@/pages/PurchaseOrders"));
 const ReceptionsPage = lazy(() => import("@/pages/Receptions"));
 const InvoicesPage = lazy(() => import("@/pages/Invoices"));
 const CashManagementPage = lazy(() => import("@/pages/CashManagement"));
+const CollectionsPage = lazy(() => import("@/pages/Collections"));
+const SupplierPaymentsPage = lazy(() => import("@/pages/SupplierPayments"));
+const CurrentAccountsPage = lazy(() => import("@/pages/CurrentAccounts"));
 const PresentationPage = lazy(() => import("@/pages/Presentation"));
 const NotFoundPage = lazy(() => import("@/pages/NotFound"));
 
@@ -194,6 +197,30 @@ function App() {
                     element={
                       <ProtectedRoute allowedRoles={['admin', 'cashier']}>
                         <CashManagementPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/collections"
+                    element={
+                      <ProtectedRoute allowedRoles={['admin', 'manager', 'cashier']}>
+                        <CollectionsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/supplier-payments"
+                    element={
+                      <ProtectedRoute allowedRoles={['admin', 'manager']}>
+                        <SupplierPaymentsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/current-accounts"
+                    element={
+                      <ProtectedRoute allowedRoles={['admin', 'manager', 'cashier']}>
+                        <CurrentAccountsPage />
                       </ProtectedRoute>
                     }
                   />

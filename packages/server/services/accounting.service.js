@@ -538,6 +538,78 @@ class AccountingService {
             connection.release();
         }
     }
+
+    async getBalanceSheet(filters = {}, connection = pool) {
+        // 1. Fetch Trial Balance for the period (which gives final balances)
+        const trialBalance = await this.getTrialBalance(filters, connection);
+        
+        // 2. Fetch Income Statement for the period (to get the Net Result of the exercise)
+        const incomeStatement = await this.getIncomeStatement(filters, connection);
+        const netResult = this._round(incomeStatement.net_result);
+
+        // 3. Group accounts according to RT 9 (Argentine Accounting Standards)
+        const assets = { corriente: [], no_corriente: [], total: 0 };
+        const liabilities = { corriente: [], no_corriente: [], total: 0 };
+        const equity = { items: [], total: 0 };
+
+        for (const acc of trialBalance) {
+            const balance = this._round(acc.final_balance);
+            if (balance === 0 && Number(acc.debit) === 0 && Number(acc.credit) === 0) continue; // Skip empty accounts for clean presentation
+
+            if (acc.type === 'asset') {
+                // RT 9: Corriente vs No Corriente
+                // Accounts starting with '1.1' are Current Assets (Caja, Banco, Créditos por ventas, Inventarios)
+                // Accounts starting with '1.2' are Non-Current Assets (Bienes de Uso)
+                if (acc.code.startsWith('1.1')) {
+                    assets.corriente.push({ code: acc.code, name: acc.name, balance });
+                } else {
+                    assets.no_corriente.push({ code: acc.code, name: acc.name, balance });
+                }
+                assets.total = this._round(assets.total + balance);
+            } else if (acc.type === 'liability') {
+                // Accounts starting with '2.1' are Current Liabilities (Proveedores, Deudas Fiscales)
+                // Accounts starting with '2.2' are Non-Current Liabilities
+                if (acc.code.startsWith('2.1')) {
+                    liabilities.corriente.push({ code: acc.code, name: acc.name, balance });
+                } else {
+                    liabilities.no_corriente.push({ code: acc.code, name: acc.name, balance });
+                }
+                liabilities.total = this._round(liabilities.total + balance);
+            } else if (acc.type === 'equity') {
+                equity.items.push({ code: acc.code, name: acc.name, balance });
+                equity.total = this._round(equity.total + balance);
+            }
+        }
+
+        // 4. Impute the Net Profit/Loss of the exercise into Equity (RT 9 requirement)
+        equity.items.push({
+            code: '3.1.02.99', // Virtual code for Current Exercise profit
+            name: 'Resultado del Ejercicio (Utilidad/Pérdida)',
+            balance: netResult
+        });
+        equity.total = this._round(equity.total + netResult);
+
+        const totalAssets = assets.total;
+        const totalLiabilities = liabilities.total;
+        const totalEquity = equity.total;
+        const totalLiabilitiesAndEquity = this._round(totalLiabilities + totalEquity);
+
+        // Verification equation: Activo = Pasivo + Patrimonio Neto
+        const discrepancy = this._round(Math.abs(totalAssets - totalLiabilitiesAndEquity));
+
+        return {
+            assets,
+            liabilities,
+            equity,
+            totals: {
+                total_assets: totalAssets,
+                total_liabilities: totalLiabilities,
+                total_equity: totalEquity,
+                total_liabilities_and_equity: totalLiabilitiesAndEquity,
+                discrepancy
+            }
+        };
+    }
 }
 
 export default new AccountingService();

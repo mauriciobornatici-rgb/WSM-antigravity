@@ -219,6 +219,281 @@ class FinanceService {
             connection.release();
         }
     }
+
+    async registerBulkInvoicePayments(payload, userId) {
+        const { clientId, allocations, notes } = payload;
+        if (!clientId) throw this._buildValidationError('Falta clientId', 'MISSING_CLIENT_ID');
+        if (!Array.isArray(allocations) || allocations.length === 0) {
+            throw this._buildValidationError('Falta allocations', 'MISSING_ALLOCATIONS');
+        }
+
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            let totalPaid = 0;
+            const results = [];
+
+            for (const alloc of allocations) {
+                const { invoiceId, payments } = alloc;
+                
+                const [invoices] = await connection.query(
+                    'SELECT * FROM invoices WHERE id = ? AND client_id = ? AND deleted_at IS NULL FOR UPDATE',
+                    [invoiceId, clientId]
+                );
+                if (invoices.length === 0) {
+                    throw this._buildValidationError(`Factura ${invoiceId} no encontrada para el cliente`, 'INVOICE_NOT_FOUND');
+                }
+                const invoice = invoices[0];
+                const totalAmount = this._roundMoney(invoice.total_amount || 0);
+
+                const [paymentRows] = await connection.query(
+                    `SELECT COALESCE(SUM(amount), 0) AS paid_amount
+                     FROM transactions
+                     WHERE reference_id = ? AND type = 'sale'`,
+                    [invoiceId]
+                );
+                const paidBefore = this._roundMoney(paymentRows[0]?.paid_amount || 0);
+
+                const normalizedPayments = this._normalizePaymentLines(payments, invoice.payment_method || 'cash');
+                const paidNow = this._roundMoney(
+                    normalizedPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+                );
+                const paidAfter = this._roundMoney(paidBefore + paidNow);
+
+                if (paidAfter > totalAmount + 0.01) {
+                    throw this._buildValidationError(
+                        `El total de pagos (${paidAfter}) supera el total de la factura ${invoiceId} (${totalAmount})`,
+                        'PAYMENTS_EXCEED_TOTAL'
+                    );
+                }
+
+                totalPaid += paidNow;
+
+                const invoiceLabel = `${invoice.invoice_type}-${String(invoice.point_of_sale).padStart(4, '0')}-${String(invoice.invoice_number).padStart(8, '0')}`;
+                await this._registerInvoicePayments(connection, {
+                    invoiceId,
+                    clientId: invoice.client_id || null,
+                    invoiceLabel,
+                    payments: normalizedPayments
+                });
+
+                const paymentStatus = this._resolvePaymentStatus(totalAmount, paidAfter);
+                const paymentMethod = normalizedPayments.length > 1
+                    ? 'multiple'
+                    : normalizedPayments[0]?.method || invoice.payment_method || null;
+
+                await connection.query(
+                    'UPDATE invoices SET payment_status = ?, payment_method = ? WHERE id = ?',
+                    [paymentStatus, paymentMethod, invoiceId]
+                );
+
+                if (invoice.order_id) {
+                    const [orders] = await connection.query(
+                        'SELECT id, status FROM orders WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+                        [invoice.order_id]
+                    );
+                    if (orders.length > 0) {
+                        const currentOrderStatus = this._normalizeOrderStatus(orders[0].status);
+                        const shouldComplete =
+                            paymentStatus === 'paid'
+                            && currentOrderStatus !== 'completed'
+                            && currentOrderStatus !== 'cancelled'
+                            && currentOrderStatus !== 'returned';
+                        const nextOrderStatus = shouldComplete ? 'completed' : currentOrderStatus;
+
+                        await connection.query(
+                            'UPDATE orders SET payment_status = ?, status = ? WHERE id = ?',
+                            [paymentStatus, nextOrderStatus, invoice.order_id]
+                        );
+                    }
+                }
+
+                results.push({
+                    invoiceId,
+                    paid_now: paidNow,
+                    payment_status: paymentStatus
+                });
+            }
+
+            if (totalPaid > 0) {
+                await connection.query(
+                    `UPDATE clients
+                     SET current_account_balance = GREATEST(COALESCE(current_account_balance, 0) - ?, 0)
+                     WHERE id = ?`,
+                    [totalPaid, clientId]
+                );
+            }
+
+            await auditService.log({
+                user_id: userId,
+                action: 'REGISTER_BULK_INVOICE_PAYMENTS',
+                entity_type: 'client',
+                entity_id: clientId,
+                new_values: {
+                    total_paid: totalPaid,
+                    allocations: allocations,
+                    notes: notes || null
+                }
+            });
+
+            await connection.commit();
+            return {
+                success: true,
+                total_paid: totalPaid,
+                invoices: results
+            };
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async registerBulkSupplierPayments(payload, userId) {
+        const { supplierId, allocations, notes } = payload;
+        if (!supplierId) throw this._buildValidationError('Falta supplierId', 'MISSING_SUPPLIER_ID');
+        if (!Array.isArray(allocations) || allocations.length === 0) {
+            throw this._buildValidationError('Falta allocations', 'MISSING_ALLOCATIONS');
+        }
+
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            let totalPaid = 0;
+            const results = [];
+
+            for (const alloc of allocations) {
+                const { invoiceId, payments } = alloc;
+                
+                const [invoices] = await connection.query(
+                    'SELECT * FROM supplier_invoices WHERE id = ? AND supplier_id = ? FOR UPDATE',
+                    [invoiceId, supplierId]
+                );
+                if (invoices.length === 0) {
+                    throw this._buildValidationError(`Factura de proveedor ${invoiceId} no encontrada`, 'INVOICE_NOT_FOUND');
+                }
+                const invoice = invoices[0];
+                const totalAmount = this._roundMoney(invoice.total_amount || 0);
+
+                const [paymentRows] = await connection.query(
+                    `SELECT COALESCE(SUM(amount), 0) AS paid_amount
+                     FROM supplier_payments
+                     WHERE supplier_invoice_id = ?`,
+                    [invoiceId]
+                );
+                const paidBefore = this._roundMoney(paymentRows[0]?.paid_amount || 0);
+
+                const normalizedPayments = this._normalizePaymentLines(payments, 'cash');
+                const paidNow = this._roundMoney(
+                    normalizedPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+                );
+                const paidAfter = this._roundMoney(paidBefore + paidNow);
+
+                if (paidAfter > totalAmount + 0.01) {
+                    throw this._buildValidationError(
+                        `El total de pagos (${paidAfter}) supera el total de la factura de proveedor ${invoiceId} (${totalAmount})`,
+                        'PAYMENTS_EXCEED_TOTAL'
+                    );
+                }
+
+                totalPaid += paidNow;
+
+                // Register supplier payments
+                for (const payment of normalizedPayments) {
+                    const payId = crypto.randomUUID();
+                    await connection.query(
+                        `INSERT INTO supplier_payments (id, supplier_id, amount, payment_date, payment_method, reference_number, notes, supplier_invoice_id)
+                         VALUES (?, ?, ?, NOW(), ?, ?, ?, ?)`,
+                        [
+                            payId,
+                            supplierId,
+                            payment.amount,
+                            payment.method,
+                            payment.reference_number || null,
+                            notes || null,
+                            invoiceId
+                        ]
+                    );
+
+                    // Create expense transactions
+                    await connection.query(
+                        `INSERT INTO transactions (id, type, amount, description, reference_id, supplier_id, date)
+                         VALUES (?, 'expense', ?, ?, ?, ?, NOW())`,
+                        [
+                            crypto.randomUUID(),
+                            payment.amount,
+                            `Pago factura proveedor ${invoice.invoice_number} (${payment.method})`,
+                            payId,
+                            supplierId
+                        ]
+                    );
+
+                    // Journal entry for bookkeeping
+                    const cashAccount = ['transfer', 'bank'].includes(String(payment.method).toLowerCase())
+                        ? '1.1.02.01' // Banco
+                        : '1.1.01.01'; // Caja
+
+                    await accountingService.createJournalEntry(connection, {
+                        date: new Date(),
+                        description: `Pago Factura Proveedor ${invoice.invoice_number} - (${payment.method})`,
+                        reference_type: 'supplier_payment',
+                        reference_id: payId,
+                        lines: [
+                            { account_code: '2.1.01.01', debit: payment.amount, credit: 0, notes: `Cancelación Deuda Proveedor` }, // Proveedores (Pasivo - disminuye)
+                            { account_code: cashAccount, debit: 0, credit: payment.amount, notes: `Pago Factura Proveedor ${invoice.invoice_number}` } // Caja/Banco (Activo - disminuye)
+                        ]
+                    });
+                }
+
+                const paymentStatus = this._resolvePaymentStatus(totalAmount, paidAfter);
+                await connection.query(
+                    'UPDATE supplier_invoices SET payment_status = ? WHERE id = ?',
+                    [paymentStatus, invoiceId]
+                );
+
+                results.push({
+                    invoiceId,
+                    paid_now: paidNow,
+                    payment_status: paymentStatus
+                });
+            }
+
+            // Update supplier account balance
+            await connection.query(
+                `UPDATE suppliers
+                 SET account_balance = GREATEST(COALESCE(account_balance, 0) - ?, 0)
+                 WHERE id = ?`,
+                [totalPaid, supplierId]
+            );
+
+            await auditService.log({
+                user_id: userId,
+                action: 'REGISTER_BULK_SUPPLIER_PAYMENTS',
+                entity_type: 'supplier',
+                entity_id: supplierId,
+                new_values: {
+                    total_paid: totalPaid,
+                    allocations: allocations,
+                    notes: notes || null
+                }
+            });
+
+            await connection.commit();
+            return {
+                success: true,
+                total_paid: totalPaid,
+                invoices: results
+            };
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+    }
 }
 
 export default new FinanceService();

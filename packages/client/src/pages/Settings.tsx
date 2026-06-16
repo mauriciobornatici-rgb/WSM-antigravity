@@ -1,23 +1,23 @@
 import { useState, useEffect, useCallback } from "react"
 import { api } from "@/services/api"
-import type { CompanySettings, SystemSettings, User, Product } from "@/types"
+import type { CompanySettings, SystemSettings, User, Product, FailedSync } from "@/types"
 import type { AuditLogEntry, PaginationMeta, UserCreateInput, UserFormValues, UserUpdateInput } from "@/types/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Building2, Users, Settings2, Save, Plus, Loader2, Pencil, Trash2, History, Eye, ReceiptText, Terminal, Store } from "lucide-react"
-import { Switch } from "@/components/ui/switch"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Building2, Users, Settings2, Loader2, History, ReceiptText, Store } from "lucide-react"
 import { UserForm } from "@/components/users/UserForm"
 import { toast } from "sonner"
 import { useAuth } from "@/context/AuthContext"
-import { safeJsonParse, showErrorToast } from "@/lib/errorHandling"
+import { showErrorToast } from "@/lib/errorHandling"
 import { DEFAULT_COMPANY_SETTINGS, normalizeCompanySettings } from "@/lib/companySettings"
-import { PaginationControls } from "@/components/common/PaginationControls"
+
+// Extracted Tab Components
+import { CompanySettingsTab } from "@/components/settings/CompanySettingsTab"
+import { BillingSettingsTab } from "@/components/settings/BillingSettingsTab"
+import { UsersManagementTab } from "@/components/settings/UsersManagementTab"
+import { AuditLogTab } from "@/components/settings/AuditLogTab"
+import { SystemSettingsTab } from "@/components/settings/SystemSettingsTab"
+import { TiendanubeSettingsTab } from "@/components/settings/TiendanubeSettingsTab"
 
 const buildSystemSettings = (settings: CompanySettings): SystemSettings => ({
     regional: {
@@ -31,6 +31,7 @@ const buildSystemSettings = (settings: CompanySettings): SystemSettings => ({
 })
 
 const AUDIT_PAGE_SIZE = 20
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001"
 
 export default function SettingsPage() {
     const { user: currentUser } = useAuth()
@@ -55,6 +56,14 @@ export default function SettingsPage() {
         tiendanube_product_id: string
         tiendanube_variant_id: string
     }>>({})
+    const [syncingTN, setSyncingTN] = useState(false)
+    const [autoLinkingTN, setAutoLinkingTN] = useState(false)
+
+    // Failed Syncs State
+    const [failedSyncs, setFailedSyncs] = useState<FailedSync[]>([])
+    const [failedSyncsLoading, setFailedSyncsLoading] = useState(false)
+    const [processingSyncId, setProcessingSyncId] = useState<string | null>(null)
+    const [processingAllSyncs, setProcessingAllSyncs] = useState(false)
 
     // User Form State
     const [userFormOpen, setUserFormOpen] = useState(false)
@@ -176,7 +185,7 @@ export default function SettingsPage() {
         try {
             const result = await api.testAfipConnection(company.billing!)
             
-            let currentLogs: string[] = []
+            const currentLogs: string[] = []
             for (let i = 0; i < result.logs.length; i++) {
                 await new Promise(resolve => setTimeout(resolve, 300))
                 const logLine = result.logs[i]
@@ -256,6 +265,73 @@ export default function SettingsPage() {
             setUserLoading(false)
         }
     }
+
+    const handleSyncTN = async () => {
+        setSyncingTN(true)
+        try {
+            const res = await api.syncTiendanubeOrders()
+            toast.success(`Sincronización manual completada. Se importaron ${res.syncedCount} pedidos faltantes.`)
+        } catch (error) {
+            showErrorToast("Error al sincronizar con Tienda Nube", error)
+        } finally {
+            setSyncingTN(false)
+        }
+    }
+
+    const handleAutoLinkTN = async () => {
+        setAutoLinkingTN(true)
+        try {
+            const res = await api.autoLinkTiendanubeCatalog()
+            toast.success(`Vinculación completada con éxito. Variantes leídas de Tienda Nube: ${res.totalVariantsFound}. Enlazadas localmente: ${res.linkedCount}.`)
+            await loadTiendanubeProducts()
+        } catch (error) {
+            showErrorToast("Error al auto-vincular catálogo", error)
+        } finally {
+            setAutoLinkingTN(false)
+        }
+    }
+
+    const loadFailedSyncs = useCallback(async () => {
+        setFailedSyncsLoading(true)
+        try {
+            const res = await api.getFailedSyncs()
+            setFailedSyncs(res)
+        } catch (error) {
+            showErrorToast("Error al cargar cola de reintentos", error)
+        } finally {
+            setFailedSyncsLoading(false)
+        }
+    }, [])
+
+    const handleRetrySync = async (id: string) => {
+        setProcessingSyncId(id)
+        try {
+            await api.retryFailedSync(id)
+            toast.success("Sincronización reintentada con éxito")
+            await loadFailedSyncs()
+        } catch (error) {
+            showErrorToast("Error al reintentar sincronización", error)
+        } finally {
+            setProcessingSyncId(null)
+        }
+    }
+
+    const handleRetryAllSyncs = async () => {
+        setProcessingAllSyncs(true)
+        try {
+            await api.retryAllFailedSyncs()
+            toast.success("Cola de reintentos ejecutada")
+            await loadFailedSyncs()
+        } catch (error) {
+            showErrorToast("Error al procesar la cola de reintentos", error)
+        } finally {
+            setProcessingAllSyncs(false)
+        }
+    }
+
+    useEffect(() => {
+        void loadFailedSyncs()
+    }, [loadFailedSyncs])
 
     const handleUpdateUser = async (data: UserFormValues) => {
         if (!editingUser) return
@@ -341,703 +417,82 @@ export default function SettingsPage() {
                     <TabsTrigger value="tiendanube" className="flex shrink-0 gap-2"><Store className="h-4 w-4" /> Tienda Nube</TabsTrigger>
                 </TabsList>
 
-                {/* --- COMPANY TAB --- */}
-                <TabsContent value="company" className="space-y-6">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Identidad Comercial</CardTitle>
-                            <CardDescription>Datos que aparecerán en facturas y documentos oficiales.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                    <Label>Nombre de Fantasía</Label>
-                                    <Input value={company.identity.brand_name} onChange={e => setCompany({ ...company, identity: { ...company.identity, brand_name: e.target.value } })} />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Razón Social</Label>
-                                    <Input value={company.identity.legal_name} onChange={e => setCompany({ ...company, identity: { ...company.identity, legal_name: e.target.value } })} />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>CUIT / DNI</Label>
-                                    <Input value={company.identity.tax_id} onChange={e => setCompany({ ...company, identity: { ...company.identity, tax_id: e.target.value } })} />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Logo URL</Label>
-                                    <Input value={company.identity.logo_url} onChange={e => setCompany({ ...company, identity: { ...company.identity, logo_url: e.target.value } })} />
-                                </div>
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Contacto y Dirección</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div className="space-y-2">
-                                    <Label>Teléfono</Label>
-                                    <Input value={company.contact.phone} onChange={e => setCompany({ ...company, contact: { ...company.contact, phone: e.target.value } })} />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Correo electronico</Label>
-                                    <Input value={company.contact.email} onChange={e => setCompany({ ...company, contact: { ...company.contact, email: e.target.value } })} />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Sitio web</Label>
-                                    <Input value={company.contact.website} onChange={e => setCompany({ ...company, contact: { ...company.contact, website: e.target.value } })} />
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-1 gap-4 md:grid-cols-6">
-                                <div className="space-y-2 md:col-span-4">
-                                    <Label>Calle y Altura</Label>
-                                    <Input value={`${company.address.street} ${company.address.number}`}
-                                        onChange={e => {
-                                            setCompany({ ...company, address: { ...company.address, street: e.target.value } })
-                                        }}
-                                    />
-                                </div>
-                                <div className="space-y-2 md:col-span-2">
-                                    <Label>Ciudad</Label>
-                                    <Input value={company.address.city} onChange={e => setCompany({ ...company, address: { ...company.address, city: e.target.value } })} />
-                                </div>
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    <Card>
-                        <CardFooter>
-                            <Button className="ml-auto" onClick={handleSaveCompany} disabled={saving}>
-                                {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Cambios</>}
-                            </Button>
-                        </CardFooter>
-                    </Card>
+                <TabsContent value="company">
+                    <CompanySettingsTab
+                        company={company}
+                        setCompany={setCompany}
+                        onSave={handleSaveCompany}
+                        saving={saving}
+                    />
                 </TabsContent>
 
-                {/* --- BILLING / ELECTRONIC INVOICING TAB --- */}
-                <TabsContent value="billing" className="space-y-6">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Configuración de Facturación Electrónica ARCA (AFIP)</CardTitle>
-                            <CardDescription>Establezca los parámetros impositivos y sus credenciales de seguridad para la conexión WSAA/WSFE.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="space-y-4">
-                                    <h3 className="text-lg font-semibold">Datos Impositivos</h3>
-                                    
-                                    <div className="space-y-2">
-                                        <Label htmlFor="iva_condition">Condición ante el IVA</Label>
-                                        <Select
-                                            value={company.billing?.iva_condition || 'Responsable Inscripto'}
-                                            onValueChange={(val) => setCompany({ 
-                                                ...company, 
-                                                billing: { 
-                                                    ...(company.billing || DEFAULT_COMPANY_SETTINGS.billing!), 
-                                                    iva_condition: val 
-                                                } 
-                                            })}
-                                        >
-                                            <SelectTrigger id="iva_condition">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="Responsable Inscripto">IVA Responsable Inscripto</SelectItem>
-                                                <SelectItem value="Monotributista">Responsable Monotributo</SelectItem>
-                                                <SelectItem value="Exento">IVA Exento</SelectItem>
-                                                <SelectItem value="Consumidor Final">Consumidor Final</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <Label htmlFor="iibb">Ingresos Brutos (IIBB)</Label>
-                                        <Input 
-                                            id="iibb"
-                                            placeholder="Exento / Convenio Multilateral / 901-..." 
-                                            value={company.billing?.iibb || ''} 
-                                            onChange={e => setCompany({ 
-                                                ...company, 
-                                                billing: { 
-                                                    ...(company.billing || DEFAULT_COMPANY_SETTINGS.billing!), 
-                                                    iibb: e.target.value 
-                                                } 
-                                            })} 
-                                        />
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <Label htmlFor="start_date">Inicio de Actividades</Label>
-                                        <Input 
-                                            id="start_date"
-                                            type="date" 
-                                            value={company.billing?.start_date || ''} 
-                                            onChange={e => setCompany({ 
-                                                ...company, 
-                                                billing: { 
-                                                    ...(company.billing || DEFAULT_COMPANY_SETTINGS.billing!), 
-                                                    start_date: e.target.value 
-                                                } 
-                                            })} 
-                                        />
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <Label htmlFor="pos">Punto de Venta (AFIP)</Label>
-                                        <Input 
-                                            id="pos"
-                                            type="number" 
-                                            min={1}
-                                            value={company.billing?.pos || 1} 
-                                            onChange={e => setCompany({ 
-                                                ...company, 
-                                                billing: { 
-                                                    ...(company.billing || DEFAULT_COMPANY_SETTINGS.billing!), 
-                                                    pos: Number(e.target.value) || 1 
-                                                } 
-                                            })} 
-                                        />
-                                        <p className="text-xs text-muted-foreground">Debe coincidir con el Punto de Venta electrónico habilitado en el portal de AFIP.</p>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <Label htmlFor="afip_env">Entorno de Conexión</Label>
-                                        <Select
-                                            value={company.billing?.afip_env || 'homologacion'}
-                                            onValueChange={(val: 'homologacion' | 'produccion') => setCompany({ 
-                                                ...company, 
-                                                billing: { 
-                                                    ...(company.billing || DEFAULT_COMPANY_SETTINGS.billing!), 
-                                                    afip_env: val 
-                                                } 
-                                            })}
-                                        >
-                                            <SelectTrigger id="afip_env">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="homologacion">Homologación (Pruebas / Sandbox)</SelectItem>
-                                                <SelectItem value="produccion">Producción (Válido Fiscalmente ⚠️)</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-4">
-                                    <h3 className="text-lg font-semibold">Credenciales Digitales (WSAA)</h3>
-                                    
-                                    <div className="space-y-2">
-                                        <Label htmlFor="afip_crt">Certificado Digital AFIP (.crt)</Label>
-                                        <textarea
-                                            id="afip_crt"
-                                            rows={6}
-                                            className="w-full font-mono text-[11px] p-3 border rounded-md bg-muted/30 focus:outline-none focus:ring-2 focus:ring-ring"
-                                            placeholder="-----BEGIN CERTIFICATE-----\nMIIEuzCCA6OgAwIBAgIDAgEwMA0GCSqGSIb3DQEBCwUAMIGMMQswCQYDVQQGEwJBU...\n-----END CERTIFICATE-----"
-                                            value={company.billing?.afip_crt || ''}
-                                            onChange={e => setCompany({ 
-                                                ...company, 
-                                                billing: { 
-                                                    ...(company.billing || DEFAULT_COMPANY_SETTINGS.billing!), 
-                                                    afip_crt: e.target.value 
-                                                } 
-                                            })}
-                                        />
-                                        <p className="text-xs text-muted-foreground">Certificado X.509 emitido por la Autoridad Certificante de AFIP.</p>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <Label htmlFor="afip_key">Clave Privada (.key)</Label>
-                                        <textarea
-                                            id="afip_key"
-                                            rows={6}
-                                            className="w-full font-mono text-[11px] p-3 border rounded-md bg-muted/30 focus:outline-none focus:ring-2 focus:ring-ring"
-                                            placeholder="-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC6sJpYyD5XWnF3...\n-----END PRIVATE KEY-----"
-                                            value={company.billing?.afip_key || ''}
-                                            onChange={e => setCompany({ 
-                                                ...company, 
-                                                billing: { 
-                                                    ...(company.billing || DEFAULT_COMPANY_SETTINGS.billing!), 
-                                                    afip_key: e.target.value 
-                                                } 
-                                            })}
-                                        />
-                                        <p className="text-xs text-muted-foreground">Clave privada correspondiente al certificado generado.</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="border-t pt-6 space-y-4">
-                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                    <div>
-                                        <h4 className="font-semibold flex items-center gap-2"><Terminal className="h-4 w-4 text-blue-500" /> Banco de Pruebas de Comunicación</h4>
-                                        <p className="text-xs text-muted-foreground">Simula la autenticación en el WSAA y la consulta de estado en el WSFE.</p>
-                                    </div>
-                                    <Button 
-                                        type="button" 
-                                        variant="outline" 
-                                        className="border-blue-500/30 text-blue-500 hover:bg-blue-500/10" 
-                                        onClick={handleTestConnection}
-                                        disabled={testingConnection}
-                                    >
-                                        {testingConnection ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Conectando...</> : "Testear Conexión con ARCA"}
-                                    </Button>
-                                </div>
-
-                                {connectionLogs.length > 0 && (
-                                    <div className="bg-slate-950 text-slate-100 font-mono text-xs p-4 rounded-lg border border-slate-800 max-h-64 overflow-y-auto space-y-1 scrollbar-thin">
-                                        <div className="flex justify-between text-[10px] text-slate-400 border-b border-slate-800 pb-2 mb-2">
-                                            <span>ARCA SOAP SIMULATOR CONSOLE</span>
-                                            <span>STATUS: {testingConnection ? 'RUNNING' : 'DONE'}</span>
-                                        </div>
-                                        {connectionLogs.map((log, index) => {
-                                            let color = "text-slate-300"
-                                            if (log.includes("[ERROR]")) color = "text-red-400 font-bold"
-                                            else if (log.includes("[WARN]")) color = "text-yellow-400"
-                                            else if (log.includes("[OK]")) color = "text-green-400"
-                                            else if (log.includes("[WSAA]") || log.includes("[WSFE]")) color = "text-blue-400"
-                                            return (
-                                                <div key={index} className={`leading-relaxed ${color}`}>
-                                                    {log}
-                                                </div>
-                                            )
-                                        })}
-                                    </div>
-                                )}
-                            </div>
-                        </CardContent>
-                        <CardFooter className="flex justify-end gap-4 border-t pt-4">
-                            <Button onClick={handleSaveCompany} disabled={saving}>
-                                {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Cambios</>}
-                            </Button>
-                        </CardFooter>
-                    </Card>
+                <TabsContent value="billing">
+                    <BillingSettingsTab
+                        company={company}
+                        setCompany={setCompany}
+                        onSave={handleSaveCompany}
+                        saving={saving}
+                        onTestConnection={handleTestConnection}
+                        testingConnection={testingConnection}
+                        connectionLogs={connectionLogs}
+                    />
                 </TabsContent>
 
-                {/* --- USERS TAB --- */}
-                <TabsContent value="users" className="space-y-6">
-                    <Card>
-                        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                                <CardTitle>Gestión de Usuarios</CardTitle>
-                                <CardDescription>Administre roles y accesos al sistema.</CardDescription>
-                            </div>
-                            <Button className="w-full sm:w-auto" onClick={openNewUserForm}><Plus className="mr-2 h-4 w-4" /> Nuevo Usuario</Button>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="overflow-x-auto">
-                                <Table className="min-w-[820px]">
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Nombre</TableHead>
-                                        <TableHead>Correo electronico</TableHead>
-                                        <TableHead>Rol</TableHead>
-                                        <TableHead>Estado</TableHead>
-                                        <TableHead>Último Acceso</TableHead>
-                                        <TableHead className="text-right">Acciones</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {users.map((user) => (
-                                        <TableRow key={user.id}>
-                                            <TableCell className="font-medium">{user.name}</TableCell>
-                                            <TableCell>{user.email}</TableCell>
-                                            <TableCell className="capitalize">{user.role}</TableCell>
-                                            <TableCell>
-                                                <div className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${user.status === 'active' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'}`}>
-                                                    {user.status === 'active' ? 'Activo' : 'Inactivo'}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="text-muted-foreground text-sm">
-                                                {user.last_login ? new Date(user.last_login).toLocaleString() : 'Nunca'}
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                <div className="flex justify-end gap-2">
-                                                    <Button variant="ghost" size="icon" onClick={() => openEditUserForm(user)}>
-                                                        <Pencil className="h-4 w-4" />
-                                                    </Button>
-
-                                                    {currentUser?.id !== user.id && (
-                                                        <Button variant="ghost" size="icon" className="text-red-500 hover:text-red-600 hover:bg-red-100" onClick={() => handleDeleteUser(user.id)}>
-                                                            <Trash2 className="h-4 w-4" />
-                                                        </Button>
-                                                    )}
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                                </Table>
-                            </div>
-                        </CardContent>
-                    </Card>
+                <TabsContent value="users">
+                    <UsersManagementTab
+                        users={users}
+                        currentUser={currentUser}
+                        onOpenNewUserForm={openNewUserForm}
+                        onOpenEditUserForm={openEditUserForm}
+                        onDeleteUser={handleDeleteUser}
+                    />
                 </TabsContent>
 
-                {/* --- AUDIT LOGS TAB --- */}
                 {currentUser?.role === 'admin' && (
-                    <TabsContent value="audit" className="space-y-6">
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>Historial de Modificaciones</CardTitle>
-                                <CardDescription>Registro completo de acciones realizadas por los usuarios en el sistema.</CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="overflow-x-auto">
-                                    <Table className="min-w-[900px]">
-                                    <TableHeader>
-                                        <TableRow>
-                                            <TableHead>Fecha</TableHead>
-                                            <TableHead>Usuario</TableHead>
-                                            <TableHead>Acción</TableHead>
-                                            <TableHead>Entidad</TableHead>
-                                            <TableHead>IP</TableHead>
-                                            <TableHead className="text-right">Detalles</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {auditLoading ? (
-                                            <TableRow>
-                                                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                                                    Cargando auditoria...
-                                                </TableCell>
-                                            </TableRow>
-                                        ) : auditLogs.length === 0 ? (
-                                            <TableRow>
-                                                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                                                    No hay registros de auditoría disponibles.
-                                                </TableCell>
-                                            </TableRow>
-                                        ) : (
-                                            auditLogs.map((log) => (
-                                                <TableRow key={log.id}>
-                                                    <TableCell className="text-sm">
-                                                        {new Date(log.created_at).toLocaleString()}
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        <div className="flex flex-col">
-                                                            <span className="font-medium">{log.user_name || 'Sistema'}</span>
-                                                            <span className="text-xs text-muted-foreground">{log.user_email || ''}</span>
-                                                        </div>
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-semibold uppercase">
-                                                            {log.action.replace(/_/g, ' ')}
-                                                        </code>
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        <div className="flex flex-col">
-                                                            <span className="capitalize">{log.entity_type}</span>
-                                                            <span className="text-[10px] font-mono text-muted-foreground">{log.entity_id}</span>
-                                                        </div>
-                                                    </TableCell>
-                                                    <TableCell className="text-xs text-muted-foreground">
-                                                        {log.ip_address || '-'}
-                                                    </TableCell>
-                                                    <TableCell className="text-right">
-                                                        <Dialog>
-                                                            <DialogTrigger asChild>
-                                                                <Button variant="ghost" size="icon">
-                                                                    <Eye className="h-4 w-4" />
-                                                                </Button>
-                                                            </DialogTrigger>
-                                                            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
-                                                                <DialogHeader>
-                                                                    <DialogTitle>Detalles del Cambio</DialogTitle>
-                                                                    <DialogDescription>
-                                                                        Acción: {log.action} | Ejecutado por: {log.user_name || 'Sistema'}
-                                                                    </DialogDescription>
-                                                                </DialogHeader>
-                                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                                                                    <div className="space-y-2">
-                                                                        <h4 className="text-sm font-semibold">Valores Anteriores</h4>
-                                                                        <pre className="bg-muted p-3 rounded text-[10px] overflow-auto max-h-48 border">
-                                                                            {log.old_values
-                                                                                ? JSON.stringify(safeJsonParse(log.old_values), null, 2)
-                                                                                : 'Ninguno'}
-                                                                        </pre>
-                                                                    </div>
-                                                                    <div className="space-y-2">
-                                                                        <h4 className="text-sm font-semibold text-green-600">Nuevos Valores</h4>
-                                                                        <pre className="bg-green-50/50 dark:bg-green-950/20 p-3 rounded text-[10px] overflow-auto max-h-48 border border-green-200 dark:border-green-800">
-                                                                            {log.new_values
-                                                                                ? JSON.stringify(safeJsonParse(log.new_values), null, 2)
-                                                                                : 'Ninguno'}
-                                                                        </pre>
-                                                                    </div>
-                                                                </div>
-                                                            </DialogContent>
-                                                        </Dialog>
-                                                    </TableCell>
-                                                </TableRow>
-                                            ))
-                                        )}
-                                    </TableBody>
-                                    </Table>
-                                </div>
-                                <PaginationControls
-                                    page={Math.max(1, Number(auditPagination?.page || auditPage))}
-                                    totalPages={Math.max(1, Number(auditPagination?.totalPages || 1))}
-                                    totalCount={Number(auditPagination?.totalCount || auditLogs.length)}
-                                    itemLabel="registro"
-                                    isLoading={auditLoading}
-                                    onPageChange={(nextPage) => setAuditPage(Math.max(1, nextPage))}
-                                />
-                            </CardContent>
-                        </Card>
+                    <TabsContent value="audit">
+                        <AuditLogTab
+                            auditLogs={auditLogs}
+                            auditLoading={auditLoading}
+                            auditPagination={auditPagination}
+                            auditPage={auditPage}
+                            onPageChange={(nextPage) => setAuditPage(Math.max(1, nextPage))}
+                        />
                     </TabsContent>
                 )}
 
-                {/* --- SYSTEM TAB --- */}
-                <TabsContent value="system" className="space-y-6">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Preferencias Regionales y Operativas</CardTitle>
-                            <CardDescription>Configuraciones globales que afectan el comportamiento del sistema.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                                <div className="space-y-2">
-                                    <Label>Moneda Principal</Label>
-                                    <Select
-                                        value={system.regional.currency}
-                                        onValueChange={(val) => setSystem({ ...system, regional: { ...system.regional, currency: val } })}
-                                    >
-                                        <SelectTrigger>
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="ARS">Peso Argentino (ARS)</SelectItem>
-                                            <SelectItem value="USD">Dólar (USD)</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                    <p className="text-[0.8rem] text-muted-foreground">Cambiar la moneda base puede afectar los reportes históricos.</p>
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Zona Horaria</Label>
-                                    <Select
-                                        value={system.regional.timezone}
-                                        onValueChange={(val) => setSystem({ ...system, regional: { ...system.regional, timezone: val } })}
-                                    >
-                                        <SelectTrigger>
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="America/Asuncion">America/Asuncion (GMT-4)</SelectItem>
-                                            <SelectItem value="America/Argentina/Buenos_Aires">Buenos Aires (GMT-3)</SelectItem>
-                                            <SelectItem value="America/New_York">New York (EST)</SelectItem>
-                                            <SelectItem value="UTC">UTC</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Impuesto por Defecto (%)</Label>
-                                    <Input
-                                        type="number"
-                                        value={system.operation.default_tax_rate}
-                                        onChange={(e) => setSystem({ ...system, operation: { ...system.operation, default_tax_rate: Number(e.target.value) } })}
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Alerta de Stock Bajo (Unidades)</Label>
-                                    <Input
-                                        type="number"
-                                        value={system.operation.stock_warning_threshold}
-                                        onChange={(e) => setSystem({ ...system, operation: { ...system.operation, stock_warning_threshold: Number(e.target.value) } })}
-                                    />
-                                </div>
-                            </div>
-                        </CardContent>
-                        <CardFooter>
-                            <Button className="ml-auto" onClick={handleSaveSystem} disabled={saving}>
-                                {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Cambios</>}
-                            </Button>
-                        </CardFooter>
-                    </Card>
+                <TabsContent value="system">
+                    <SystemSettingsTab
+                        system={system}
+                        setSystem={setSystem}
+                        onSave={handleSaveSystem}
+                        saving={saving}
+                    />
                 </TabsContent>
 
-                {/* --- TIENDA NUBE TAB --- */}
-                <TabsContent value="tiendanube" className="space-y-6">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Configuración de Tienda Nube</CardTitle>
-                            <CardDescription>Para conectar tu tienda de forma segura, ingresa las credenciales de tu Aplicación de Tienda Nube y presiona 'Conectar'.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                            {company.integrations?.tiendanube_access_token && company.integrations?.tiendanube_store_id ? (
-                                <div className="p-4 bg-green-50 text-green-700 rounded-md border border-green-200 flex items-center">
-                                    <div className="mr-3">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                        </svg>
-                                    </div>
-                                    <div>
-                                        <p className="font-semibold">¡Conectado exitosamente con Tienda Nube!</p>
-                                        <p className="text-sm">Store ID: {company.integrations.tiendanube_store_id}</p>
-                                    </div>
-                                </div>
-                            ) : null}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="space-y-2">
-                                    <Label htmlFor="tn_client_id">Client ID (App ID)</Label>
-                                    <Input
-                                        id="tn_client_id"
-                                        placeholder="Ingresa el Client ID"
-                                        value={company.integrations?.tiendanube_client_id || ''}
-                                        onChange={e => setCompany({
-                                            ...company,
-                                            integrations: {
-                                                ...(company.integrations || {}),
-                                                tiendanube_client_id: e.target.value
-                                            }
-                                        })}
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label htmlFor="tn_client_secret">Client Secret</Label>
-                                    <Input
-                                        id="tn_client_secret"
-                                        type="password"
-                                        placeholder="Ingresa tu Client Secret"
-                                        value={company.integrations?.tiendanube_client_secret || ''}
-                                        onChange={e => setCompany({
-                                            ...company,
-                                            integrations: {
-                                                ...(company.integrations || {}),
-                                                tiendanube_client_secret: e.target.value
-                                            }
-                                        })}
-                                    />
-                                </div>
-                            </div>
-                        </CardContent>
-                        <CardFooter className="flex justify-between gap-4 border-t pt-4">
-                            <p className="text-sm text-muted-foreground flex-1">
-                                Asegúrate de guardar las credenciales antes de Conectar.
-                            </p>
-                            <Button variant="outline" onClick={handleSaveCompany} disabled={saving}>
-                                {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Credenciales</>}
-                            </Button>
-                            <Button 
-                                onClick={() => {
-                                    window.location.href = 'http://localhost:3001/api/integrations/tiendanube/authorize';
-                                }} 
-                                disabled={!company.integrations?.tiendanube_client_id || !company.integrations?.tiendanube_client_secret}
-                                className="bg-blue-600 hover:bg-blue-700 text-white"
-                            >
-                                Conectar con Tienda Nube
-                            </Button>
-                        </CardFooter>
-                    </Card>
-
-                    <Card>
-                        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                                <CardTitle>Gestor de Vinculación (Catálogo)</CardTitle>
-                                <CardDescription>Administra qué productos locales se sincronizan y asocia sus IDs en Tienda Nube.</CardDescription>
-                            </div>
-                            <Button onClick={handleSaveTiendaNubeLinks} disabled={tiendanubeSaving}>
-                                {tiendanubeSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Vinculación</>}
-                            </Button>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="overflow-x-auto rounded-md border">
-                                <Table className="min-w-[800px]">
-                                    <TableHeader className="bg-muted/50">
-                                        <TableRow>
-                                            <TableHead>Producto</TableHead>
-                                            <TableHead>Stock Actual</TableHead>
-                                            <TableHead className="text-center">Sincronizar</TableHead>
-                                            <TableHead>TN Product ID</TableHead>
-                                            <TableHead>TN Variant ID</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {tiendanubeLoading ? (
-                                            <TableRow>
-                                                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                                                    <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
-                                                    Cargando productos...
-                                                </TableCell>
-                                            </TableRow>
-                                        ) : tiendanubeProducts.length === 0 ? (
-                                            <TableRow>
-                                                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                                                    No hay productos registrados en el sistema.
-                                                </TableCell>
-                                            </TableRow>
-                                        ) : (
-                                            tiendanubeProducts.map((p) => {
-                                                const mods = tiendanubeModifications[p.id] || {
-                                                    tiendanube_sync_enabled: Boolean(p.tiendanube_sync_enabled),
-                                                    tiendanube_product_id: p.tiendanube_product_id || '',
-                                                    tiendanube_variant_id: p.tiendanube_variant_id || ''
-                                                }
-                                                return (
-                                                    <TableRow key={p.id}>
-                                                        <TableCell>
-                                                            <div className="flex flex-col">
-                                                                <span className="font-medium">{p.name}</span>
-                                                                <span className="text-xs text-muted-foreground">SKU: {p.sku}</span>
-                                                            </div>
-                                                        </TableCell>
-                                                        <TableCell>{p.stock_current ?? 0}</TableCell>
-                                                        <TableCell className="text-center">
-                                                            <div className="flex justify-center">
-                                                                <Switch
-                                                                    checked={mods.tiendanube_sync_enabled}
-                                                                    onChange={(e) => {
-                                                                        setTiendanubeModifications({
-                                                                            ...tiendanubeModifications,
-                                                                            [p.id]: {
-                                                                                ...mods,
-                                                                                tiendanube_sync_enabled: e.target.checked
-                                                                            }
-                                                                        })
-                                                                    }}
-                                                                />
-                                                            </div>
-                                                        </TableCell>
-                                                        <TableCell>
-                                                            <Input
-                                                                placeholder="12345678"
-                                                                value={mods.tiendanube_product_id}
-                                                                onChange={(e) => {
-                                                                    setTiendanubeModifications({
-                                                                        ...tiendanubeModifications,
-                                                                        [p.id]: {
-                                                                            ...mods,
-                                                                            tiendanube_product_id: e.target.value
-                                                                        }
-                                                                    })
-                                                                }}
-                                                                className="h-8 max-w-[150px]"
-                                                            />
-                                                        </TableCell>
-                                                        <TableCell>
-                                                            <Input
-                                                                placeholder="Opcional"
-                                                                value={mods.tiendanube_variant_id}
-                                                                onChange={(e) => {
-                                                                    setTiendanubeModifications({
-                                                                        ...tiendanubeModifications,
-                                                                        [p.id]: {
-                                                                            ...mods,
-                                                                            tiendanube_variant_id: e.target.value
-                                                                        }
-                                                                    })
-                                                                }}
-                                                                className="h-8 max-w-[150px]"
-                                                            />
-                                                        </TableCell>
-                                                    </TableRow>
-                                                )
-                                            })
-                                        )}
-                                    </TableBody>
-                                </Table>
-                            </div>
-                        </CardContent>
-                    </Card>
+                <TabsContent value="tiendanube">
+                    <TiendanubeSettingsTab
+                        company={company}
+                        setCompany={setCompany}
+                        onSaveCompany={handleSaveCompany}
+                        saving={saving}
+                        onSyncTN={handleSyncTN}
+                        syncingTN={syncingTN}
+                        onAutoLinkTN={handleAutoLinkTN}
+                        autoLinkingTN={autoLinkingTN}
+                        tiendanubeProducts={tiendanubeProducts}
+                        tiendanubeLoading={tiendanubeLoading}
+                        tiendanubeSaving={tiendanubeSaving}
+                        onSaveTiendaNubeLinks={handleSaveTiendaNubeLinks}
+                        tiendanubeModifications={tiendanubeModifications}
+                        setTiendanubeModifications={setTiendanubeModifications}
+                        apiBaseUrl={API_BASE_URL}
+                        failedSyncs={failedSyncs}
+                        failedSyncsLoading={failedSyncsLoading}
+                        processingSyncId={processingSyncId}
+                        processingAllSyncs={processingAllSyncs}
+                        onRetrySync={handleRetrySync}
+                        onRetryAllSyncs={handleRetryAllSyncs}
+                    />
                 </TabsContent>
             </Tabs>
 
@@ -1051,4 +506,3 @@ export default function SettingsPage() {
         </div>
     )
 }
-

@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
-export const uuidSchema = z.string().uuid();
-export const optionalUuidSchema = z.string().uuid().optional().nullable();
+const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+export const uuidSchema = z.string().regex(uuidRegex, "Invalid UUID");
+export const optionalUuidSchema = z.string().regex(uuidRegex, "Invalid UUID").optional().nullable();
 
 export const isoDateSchema = z.string().datetime();
 export const optionalIsoDateSchema = z.string().datetime().optional().nullable();

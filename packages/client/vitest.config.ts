@@ -7,6 +7,7 @@ export default defineConfig({
     plugins: [react()],
     resolve: {
         alias: {
+            "@wsm/common": path.resolve(__dirname, "../common/src/index.ts"),
             "@": path.resolve(__dirname, "./src"),
         },
     },
@@ -15,5 +16,6 @@ export default defineConfig({
         environment: "jsdom",
         setupFiles: "./src/test/setup.ts",
         css: false,
+        exclude: ["e2e/**", "**/node_modules/**", "**/dist/**"],
     },
 })

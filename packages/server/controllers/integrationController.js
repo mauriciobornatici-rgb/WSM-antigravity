@@ -2,32 +2,41 @@ import axios from 'axios';
 import pool from '../config/db.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
+import tiendaNubeService from '../services/tiendanube.service.js';
+import salesService from '../services/sales.service.js';
+import { encrypt, decrypt } from '../utils/crypto.js';
 
 export const authorizeTiendaNube = catchAsync(async (req, res) => {
     const [rows] = await pool.query('SELECT tiendanube_client_id FROM company_settings LIMIT 1');
     const clientId = rows[0]?.tiendanube_client_id;
-    
+
     if (!clientId) {
-        return res.status(400).send('Tienda Nube Client ID no está configurado en la aplicación.');
+        return res.status(400).send('Tienda Nube Client ID no esta configurado en la aplicacion.');
     }
-    
-    const redirectUrl = `https://www.tiendanube.com/apps/${clientId}/authorize`;
+
+    const state = tiendaNubeService.createOAuthState({ userId: req.user?.id || null });
+    const redirectUrl = `https://www.tiendanube.com/apps/${clientId}/authorize?state=${encodeURIComponent(state)}`;
     res.redirect(redirectUrl);
 });
 
 export const callbackTiendaNube = catchAsync(async (req, res) => {
-    const { code } = req.query;
+    const { code, state } = req.query;
     if (!code) {
         return res.status(400).send('Authorization code no recibido.');
     }
+    if (!state) {
+        return res.status(400).send('OAuth state no recibido.');
+    }
+
+    const oauthState = tiendaNubeService.verifyOAuthState(state);
 
     const [rows] = await pool.query('SELECT tiendanube_client_id, tiendanube_client_secret FROM company_settings LIMIT 1');
     const settings = rows[0] || {};
     const clientId = settings.tiendanube_client_id;
-    const clientSecret = settings.tiendanube_client_secret;
+    const clientSecret = decrypt(settings.tiendanube_client_secret);
 
     if (!clientId || !clientSecret) {
-        return res.status(400).send('Las credenciales OAuth de Tienda Nube no están configuradas.');
+        return res.status(400).send('Las credenciales OAuth de Tienda Nube no estan configuradas.');
     }
 
     try {
@@ -42,18 +51,17 @@ export const callbackTiendaNube = catchAsync(async (req, res) => {
 
         await pool.query(
             'UPDATE company_settings SET tiendanube_access_token = ?, tiendanube_store_id = ? WHERE id = 1',
-            [access_token, user_id]
+            [encrypt(access_token), user_id]
         );
 
         await auditService.log({
-            user_id: req.user?.id || null,
+            user_id: oauthState.userId || null,
             action: 'OAUTH_TIENDANUBE_SUCCESS',
             entity_type: 'company_settings',
             entity_id: '1',
             new_values: { tiendanube_store_id: user_id }
         });
 
-        // Redirigir al usuario al ERP
         res.redirect('/settings?tab=tiendanube&success=1');
     } catch (error) {
         console.error('Error in OAuth callback:', error.response?.data || error.message);
@@ -61,66 +69,85 @@ export const callbackTiendaNube = catchAsync(async (req, res) => {
     }
 });
 
-import salesService from '../services/sales.service.js';
+export const webhookTiendaNube = catchAsync(async (req, res) => {
+    const payload = req.body || {};
+    const signature = req.headers['x-linkedstore-hmac-sha256'];
+    const creds = await tiendaNubeService.getCredentials();
 
-export const webhookOrdersCreated = catchAsync(async (req, res) => {
-    const storeId = req.headers['x-tiendanube-store-id'];
-    const event = req.headers['x-tiendanube-event'];
-    
-    console.log(`[TiendaNube Webhook] Received ${event} for store ${storeId}`);
+    if (!creds?.clientSecret) {
+        return res.status(503).json({ error: 'tiendanube_not_configured' });
+    }
 
-    // Immediately acknowledge receipt to TiendaNube (Webhook best practice)
+    const rawBody = req.rawBody || Buffer.from(JSON.stringify(payload), 'utf8');
+    const verified = tiendaNubeService.verifyWebhookSignature(rawBody, signature, creds.clientSecret);
+    if (!verified) {
+        return res.status(401).json({ error: 'invalid_tiendanube_signature' });
+    }
+
+    console.log(`[TiendaNube Webhook] Received ${payload.event} for store ${payload.store_id}`);
     res.status(200).send('OK');
 
+    setImmediate(async () => {
+        try {
+            const result = await tiendaNubeService.processWebhookEvent(payload, salesService);
+            console.log(`[TiendaNube Webhook] Processed ${payload.event} ${payload.id}: ${result.status}`);
+        } catch (err) {
+            console.error('[TiendaNube Webhook] Error processing webhook async:', err);
+        }
+    });
+});
+
+export const webhookOrdersCreated = webhookTiendaNube;
+
+export const syncRecentOrdersController = catchAsync(async (req, res) => {
     try {
-        const payload = req.body;
+        const syncedCount = await tiendaNubeService.syncRecentOrders(salesService);
+        res.json({ success: true, syncedCount });
+    } catch (error) {
+        console.error('[TiendaNube Sync Error]', error);
+        res.status(500).json({ error: error.message || 'Error sincronizando ordenes' });
+    }
+});
+
+export const getFailedSyncsController = catchAsync(async (req, res) => {
+    const rows = await tiendaNubeService.getFailedSyncs();
+    res.json(rows);
+});
+
+export const retryFailedSyncController = catchAsync(async (req, res) => {
+    const { id } = req.params;
+    try {
+        await tiendaNubeService.retrySync(id);
+        res.json({ success: true, message: 'Reintento exitoso' });
+    } catch (error) {
+        res.status(500).json({ error: error.message || 'Error al reintentar la sincronización' });
+    }
+});
+
+export const retryAllFailedSyncsController = catchAsync(async (req, res) => {
+    try {
+        await tiendaNubeService.processFailedSyncs();
+        res.json({ success: true, message: 'Cola de reintentos ejecutada' });
+    } catch (error) {
+        res.status(500).json({ error: error.message || 'Error al procesar la cola de reintentos' });
+    }
+});
+
+export const autoLinkCatalogController = catchAsync(async (req, res) => {
+    try {
+        const result = await tiendaNubeService.autoLinkCatalog();
         
-        // Example structure of TiendaNube webhook payload for an order:
-        // payload.products is an array of items { sku, quantity, price, name }
-        // payload.customer is { name, email, phone }
-        // payload.billing_address / payload.shipping_address
-        
-        if (!payload || !payload.products || !Array.isArray(payload.products)) {
-            console.log('[TiendaNube Webhook] Invalid or empty products payload');
-            return;
-        }
+        await auditService.log({
+            user_id: req.user?.id || null,
+            action: 'AUTOLINK_TIENDANUBE_CATALOG_SUCCESS',
+            entity_type: 'company_settings',
+            entity_id: '1',
+            new_values: result
+        });
 
-        const items = [];
-        for (const p of payload.products) {
-            if (!p.sku) continue; // Skip products without SKU, we can't map them
-            
-            // Find local product by SKU
-            const [localProducts] = await pool.query('SELECT id FROM products WHERE sku = ? LIMIT 1', [p.sku]);
-            if (localProducts.length > 0) {
-                items.push({
-                    product_id: localProducts[0].id,
-                    quantity: p.quantity || 1
-                });
-            }
-        }
-
-        if (items.length === 0) {
-            console.log('[TiendaNube Webhook] No matching products found locally by SKU.');
-            return;
-        }
-
-        const customerName = payload.customer?.name || payload.billing_address?.name || 'Cliente Tienda Nube';
-        
-        const orderData = {
-            customer_name: customerName,
-            counter_name: 'Sincronización Automática TN',
-            payment_method: payload.payment_details?.method || 'transfer',
-            shipping_method: 'delivery',
-            shipping_address: payload.shipping_address?.address || null,
-            notes: `Orden TN #${payload.id || 'N/A'}. Creada desde Webhook.`,
-            items: items
-        };
-
-        // Create the order locally
-        const newOrder = await salesService.createOrder(orderData, null);
-        console.log(`[TiendaNube Webhook] Successfully created local order ${newOrder.id} for TN Order #${payload.id}`);
-
-    } catch (err) {
-        console.error('[TiendaNube Webhook] Error processing webhook async:', err);
+        res.json({ success: true, ...result });
+    } catch (error) {
+        console.error('[TiendaNube Auto Link Error]', error);
+        res.status(500).json({ error: error.message || 'Error vinculando catálogo automáticamente' });
     }
 });

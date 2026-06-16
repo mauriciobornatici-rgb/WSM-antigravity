@@ -206,6 +206,7 @@ export type QualityCheckCreateInput = {
 
 export type Invoice = {
     id: string;
+    client_id?: string;
     status?: string;
     invoice_type?: string;
     point_of_sale?: number;
@@ -214,6 +215,8 @@ export type Invoice = {
     payment_status?: "pending" | "partial" | "paid";
     payment_method?: string | null;
     issue_date?: string;
+    due_date?: string;
+    created_at?: string;
     customer_name?: string;
     cae?: string;
     cae_expiration_date?: string;
@@ -341,3 +344,71 @@ export type ApiCatalog = {
     supplierPayments: SupplierPayment[];
     companySettings: CompanySettings;
 };
+
+export type BulkPaymentAllocation = {
+    invoiceId: string;
+    payments: InvoicePaymentLineInput[];
+};
+
+export type BulkPaymentInput = {
+    clientId: string;
+    allocations: BulkPaymentAllocation[];
+    notes?: string;
+};
+
+export type BulkPaymentResponse = {
+    success: boolean;
+    total_paid: number;
+    invoices: Array<{
+        invoiceId: string;
+        paid_now: number;
+        payment_status: "pending" | "partial" | "paid";
+    }>;
+};
+
+export type PendingInvoiceResponse = Invoice & {
+    client_name?: string;
+    client_tax_id?: string;
+    paid_amount: number;
+    pending_amount: number;
+};
+
+export type BulkSupplierPaymentAllocation = {
+    invoiceId: string;
+    payments: InvoicePaymentLineInput[];
+};
+
+export type BulkSupplierPaymentInput = {
+    supplierId: string;
+    allocations: BulkSupplierPaymentAllocation[];
+    notes?: string;
+};
+
+export type BulkSupplierPaymentResponse = {
+    success: boolean;
+    total_paid: number;
+    invoices: Array<{
+        invoiceId: string;
+        paid_now: number;
+        payment_status: "pending" | "partial" | "paid";
+    }>;
+};
+
+export type PendingSupplierInvoiceResponse = {
+    id: string;
+    invoice_type: "A" | "B" | "C" | "M";
+    invoice_number: string;
+    issue_date: string;
+    supplier_id: string;
+    supplier_name: string;
+    supplier_tax_id?: string;
+    reception_number?: string;
+    po_number?: string;
+    net_amount: number;
+    vat_amount: number;
+    total_amount: number;
+    paid_amount: number;
+    pending_amount: number;
+    payment_status: "pending" | "partial" | "paid";
+};
+

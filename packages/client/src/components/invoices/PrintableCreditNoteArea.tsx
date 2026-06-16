@@ -1,6 +1,6 @@
 import { CreditNoteDocument } from "./CreditNoteDocument"
 import type { CompanySettings } from "@/types"
-import type { CreditNoteRow } from "@/pages/ReturnsAndWarranties"
+import type { ClientReturnRow, CreditNoteRow } from "@/types/returns"
 
 type PrintableCreditNoteAreaProps = {
     creditNote: CreditNoteRow | null
@@ -9,7 +9,7 @@ type PrintableCreditNoteAreaProps = {
     companyAddress: string
     taxRateLabel: string
     companySettings?: CompanySettings | undefined
-    linkedReturn?: any
+    linkedReturn?: ClientReturnRow | null | undefined
 }
 
 export function PrintableCreditNoteArea({

@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Manual Oficial de Usuario - WSM SportsERP</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+    
+    :root {
+      --primary: #0f172a;
+      --primary-light: #1e293b;
+      --accent: #2563eb;
+      --accent-light: #dbeafe;
+      --success: #16a34a;
+      --success-light: #dcfce7;
+      --warning: #ca8a04;
+      --warning-light: #fef9c3;
+      --danger: #dc2626;
+      --danger-light: #fee2e2;
+      --text: #334155;
+      --text-dark: #0f172a;
+      --bg: #f8fafc;
+      --border: #cbd5e1;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      color: var(--text);
+      line-height: 1.6;
+      background: white;
+      margin: 0;
+      padding: 0;
+      font-size: 11pt;
+    }
+
+    @page {
+      size: A4;
+      margin: 20mm;
+    }
+
+    @page :left {
+      @bottom-left {
+        content: counter(page);
+      }
+    }
+
+    h1, h2, h3, h4 {
+      font-family: 'Outfit', sans-serif;
+      color: var(--text-dark);
+      page-break-after: avoid;
+      font-weight: 700;
+    }
+
+    h1 {
+      font-size: 22pt;
+      border-bottom: 2px solid var(--accent);
+      padding-bottom: 8px;
+      margin-top: 40px;
+      color: var(--primary);
+    }
+
+    h2 {
+      font-size: 16pt;
+      margin-top: 30px;
+      color: var(--primary-light);
+      border-left: 4px solid var(--accent);
+      padding-left: 10px;
+    }
+
+    h3 {
+      font-size: 12pt;
+      color: var(--accent);
+      margin-top: 20px;
+    }
+
+    p {
+      margin: 0 0 12px 0;
+      text-align: justify;
+    }
+
+    .page-break {
+      page-break-before: always;
+    }
+
+    /* Cover Page Styling */
+    .cover-page {
+      height: 257mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+      color: white;
+      padding: 50px;
+      margin: -20mm;
+      page-break-after: always;
+    }
+
+    .cover-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .cover-logo {
+      font-family: 'Outfit', sans-serif;
+      font-size: 24pt;
+      font-weight: 800;
+      letter-spacing: -1px;
+      color: white;
+    }
+
+    .cover-logo span {
+      color: var(--accent);
+    }
+
+    .cover-body {
+      margin-top: 80px;
+    }
+
+    .cover-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 38pt;
+      font-weight: 800;
+      line-height: 1.1;
+      margin-bottom: 15px;
+      letter-spacing: -1px;
+    }
+
+    .cover-subtitle {
+      font-size: 16pt;
+      font-weight: 300;
+      color: #94a3b8;
+      margin-bottom: 40px;
+    }
+
+    .cover-footer {
+      border-top: 1px solid #334155;
+      padding-top: 20px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 9pt;
+      color: #64748b;
+    }
+
+    /* Table of Contents Styling */
+    .toc-title {
+      font-size: 24pt;
+      font-family: 'Outfit', sans-serif;
+      margin-bottom: 30px;
+    }
+
+    .toc-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .toc-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 12px;
+      font-size: 12pt;
+    }
+
+    .toc-name {
+      font-weight: 600;
+      color: var(--primary-light);
+    }
+
+    .toc-dots {
+      flex-grow: 1;
+      border-bottom: 1px dotted var(--border);
+      margin: 0 10px;
+    }
+
+    .toc-page {
+      font-weight: bold;
+      color: var(--accent);
+    }
+
+    /* Standard Elements */
+    .step-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      padding: 18px;
+      margin: 20px 0;
+      page-break-inside: avoid;
+    }
+
+    .step-card h4 {
+      margin: 0 0 10px 0;
+      font-size: 11pt;
+      color: var(--primary-light);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .step-badge {
+      background: var(--accent);
+      color: white;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 8pt;
+      font-weight: 700;
+    }
+
+    .note-box {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-left: 4px solid #3b82f6;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin: 15px 0;
+      page-break-inside: avoid;
+      font-size: 10pt;
+    }
+
+    .caution-box {
+      background: #fee2e2;
+      border: 1px solid #fecaca;
+      border-left: 4px solid #dc2626;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin: 15px 0;
+      page-break-inside: avoid;
+      font-size: 10pt;
+      color: #991b1b;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 8pt;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge-primary { background: var(--accent-light); color: var(--accent); }
+    .badge-success { background: var(--success-light); color: var(--success); }
+    .badge-danger { background: var(--danger-light); color: var(--danger); }
+    .badge-warning { background: var(--warning-light); color: var(--warning); }
+
+    /* Custom Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 15px 0;
+      font-size: 10pt;
+      page-break-inside: avoid;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 10px;
+      text-align: left;
+    }
+
+    th {
+      background-color: var(--primary);
+      color: white;
+      font-family: 'Outfit', sans-serif;
+      font-weight: 600;
+    }
+
+    tr:nth-child(even) {
+      background-color: var(--bg);
+    }
+
+    /* Mockup UI Panels */
+    .mock-panel {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+      margin: 20px 0;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+      page-break-inside: avoid;
+    }
+
+    .mock-header {
+      background: #f1f5f9;
+      padding: 8px 16px;
+      border-bottom: 1px solid #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .mock-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .mock-body {
+      background: white;
+      padding: 15px;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+
+    .mock-menu {
+      display: flex;
+      gap: 15px;
+      border-bottom: 2px solid #f1f5f9;
+      padding-bottom: 8px;
+      margin-bottom: 15px;
+      font-size: 9pt;
+      font-weight: 600;
+      color: #64748b;
+    }
+
+    .mock-menu-active {
+      color: var(--accent);
+      border-bottom: 2px solid var(--accent);
+      margin-bottom: -10px;
+      padding-bottom: 8px;
+    }
+
+    .mock-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 15px;
+    }
+
+    .mock-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .mock-val {
+      font-size: 16pt;
+      font-weight: 700;
+      color: var(--primary);
+      margin: 4px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- COVER PAGE -->
+  <div class="cover-page">
+    <div class="cover-header">
+      <div class="cover-logo">WSM<span>SportsERP</span></div>
+      <div style="font-weight: 600; font-size: 10pt; letter-spacing: 1px; text-transform: uppercase; color: var(--accent);">Documentación Oficial</div>
+    </div>
+    <div class="cover-body">
+      <div class="cover-title">Manual de Usuario<br>y Operaciones</div>
+      <div class="cover-subtitle">Guía integral paso a paso para el control comercial, gestión de stock físico, facturación y contabilidad del sistema WSM ERP.</div>
+      <div style="display: flex; gap: 10px;">
+        <span class="badge" style="background: rgba(37,99,235,0.2); color: #60a5fa; border: 1px solid rgba(37,99,235,0.4); padding: 6px 12px; font-size: 9pt;">Versión 1.2.0</span>
+        <span class="badge" style="background: rgba(22,163,74,0.2); color: #4ade80; border: 1px solid rgba(22,163,74,0.4); padding: 6px 12px; font-size: 9pt;">Producción</span>
+      </div>
+    </div>
+    <div class="cover-footer">
+      <div>© 2026 WSM Software Solutions. Todos los derechos reservados.</div>
+      <div>Publicado: Mayo 2026</div>
+    </div>
+  </div>
+
+  <!-- TABLE OF CONTENTS -->
+  <div class="page-break"></div>
+  <div style="padding: 20px 0;">
+    <div class="toc-title">Índice General de Contenidos</div>
+    <p style="color: #64748b; margin-bottom: 45px;">Este manual ha sido estructurado para acompañar al usuario desde la comprensión inicial del ecosistema hasta los procesos administrativos más avanzados de la organización.</p>
+    
+    <ul class="toc-list">
+      <li class="toc-item">
+        <span class="toc-name">1. Introducción al Ecosistema WSM ERP</span>
+        <span class="toc-dots"></span>
+        <span class="toc-page">03</span>
+      </li>
+      <li class="toc-item">
+        <span class="toc-name">2. Panel de Control y Métricas (Dashboard)</span>
+        <span class="toc-dots"></span>
+        <span class="toc-page">05</span>
+      </li>
+      <li class="toc-item">
+        <span class="toc-name">3. Configuración del Sistema e Integraciones (AFIP & Tienda Nube)</span>
+        <span class="toc-dots"></span>
+        <span class="toc-page">07</span>
+      </li>
+      <li class="toc-item">
+        <span class="toc-name">4. Gestión Física y Logística de Depósito (Picking Móvil)</span>
+        <span class="toc-dots"></span>
+        <span class="toc-page">10</span>
+      </li>
+      <li class="toc-item">
+        <span class="toc-name">5. Compras y Gestión de Proveedores</span>
+        <span class="toc-dots"></span>
+        <span class="toc-page">13</span>
+      </li>
+      <li class="toc-item">
+        <span class="toc-name">6. Ventas, Caja y Facturación Electrónica</span>
+        <span class="toc-dots"></span>
+        <span class="toc-page">15</span>
+      </li>
+      <li class="toc-item">
+        <span class="toc-name">7. Devoluciones, Garantías y RMA</span>
+        <span class="toc-dots"></span>
+        <span class="toc-page">19</span>
+      </li>
+      <li class="toc-item">
+        <span class="toc-name">8. Módulo Contable Avanzado (Uso Profesional)</span>
+        <span class="toc-dots"></span>
+        <span class="toc-page">21</span>
+      </li>
+    </ul>
+
+    <div class="note-box" style="margin-top: 50px;">
+      <strong>¿Cómo utilizar esta guía?</strong><br>
+      Utiliza el buscador integrado en tu lector de archivos PDF (generalmente presionando las teclas <code>Ctrl + F</code> o <code>Cmd + F</code>) e ingresa palabras clave (ejemplo: "Caja", "AFIP", "Picking") para saltar de inmediato a la sección correspondiente.
+    </div>
+  </div>
+
+  <!-- SECTION 1 -->
+  <div class="page-break"></div>
+  <h1>1. Introducción al Ecosistema WSM ERP</h1>
+  <p><strong>WSM ERP</strong> es una plataforma de software modular diseñada para integrar todas las áreas operativas de una empresa comercializadora. Al centralizar la información, se eliminan las planillas de cálculo dispersas, se automatizan las tareas repetitivas y se asegura una trazabilidad contable y física impecable.</p>
+  
+  <h2>1.1 Conceptos Clave del Sistema</h2>
+  <p>La arquitectura del sistema se basa en tres pilares fundamentales que garantizan su solidez:</p>
+  <ul>
+    <li><strong>Sincronización en Tiempo Real:</strong> Cada venta realizada disminuye el stock del mostrador y actualiza automáticamente los canales electrónicos vinculados.</li>
+    <li><strong>Seguridad de Datos y Roles:</strong> Cada empleado cuenta con un perfil diseñado exclusivamente para sus responsabilidades diarias, restringiendo accesos sensibles.</li>
+    <li><strong>Trazabilidad Cruzada:</strong> Un movimiento de stock genera una línea en la auditoría de depósito, la cual repercute de forma directa y transparente en un asiento en el módulo contable.</li>
+  </ul>
+
+  <h2>1.2 Acceso Seguro al Sistema</h2>
+  <p>Para ingresar al sistema por primera vez, el administrador te proporcionará tus credenciales corporativas.</p>
+  
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 1</span> Acceder a la Interfaz de Login</h4>
+    <p>Abre el navegador web en tu computadora o dispositivo móvil e ingresa a la dirección asignada de tu empresa (por ejemplo, <code>https://app.tu-empresa.com</code>).</p>
+  </div>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 2</span> Cargar Credenciales</h4>
+    <p>Ingresa tu correo electrónico registrado y tu contraseña segura temporal. Haz clic en el botón <strong>"Ingresar de Forma Segura"</strong>.</p>
+  </div>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 3</span> Cambio de Contraseña Inicial</h4>
+    <p>Si es tu primera sesión, el sistema te solicitará obligatoriamente definir una nueva contraseña personalizada que cumpla con los estándares de seguridad requeridos (mínimo 8 caracteres, letras y números).</p>
+  </div>
+
+  <h2>1.3 Perfiles de Usuario y Matriz de Roles</h2>
+  <p>Los menús y herramientas habilitados en tu sesión se definen según tu rol jerárquico dentro de la organización. WSM ERP define la siguiente matriz estándar de control:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Rol de Usuario</th>
+        <th>Módulos Visibles</th>
+        <th>Acciones Permitidas</th>
+        <th>Dispositivos Recomendados</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Administrador (Admin)</strong></td>
+        <td>Todos los módulos del ERP</td>
+        <td>Control total, cambios de configuración, gestión de claves AFIP y Tienda Nube.</td>
+        <td>PC de Escritorio / Notebook</td>
+      </tr>
+      <tr>
+        <td><strong>Gerente (Manager)</strong></td>
+        <td>Inventario, Compras, Ventas y Reportes</td>
+        <td>Autorización de órdenes de compra, edición de precios de venta, altas de productos.</td>
+        <td>PC de Escritorio / Tablet</td>
+      </tr>
+      <tr>
+        <td><strong>Cajero (Cashier)</strong></td>
+        <td>Punto de Venta (POS), Clientes, Caja Chica</td>
+        <td>Cobro rápido, apertura y cierre de caja, emisión de facturas o tickets corrientes.</td>
+        <td>PC con lector y ticketera</td>
+      </tr>
+      <tr>
+        <td><strong>Operario (Warehouse)</strong></td>
+        <td>Depósito, Recepciones, Picking</td>
+        <td>Control de stock físico, recepción de mercadería, preparación de despachos.</td>
+        <td>Smartphone / Colector Android</td>
+      </tr>
+      <tr>
+        <td><strong>Contadora (Accountant)</strong></td>
+        <td>Contabilidad, Libro Diario, Asientos</td>
+        <td>Gestión del plan de cuentas, auditoría de asientos contables automáticos y manuales.</td>
+        <td>PC de Escritorio</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- SECTION 2 -->
+  <div class="page-break"></div>
+  <h1>2. Panel de Control y Métricas (Dashboard)</h1>
+  <p>El **Dashboard** es el corazón visual del ERP. Brinda una visión de 360 grados sobre el estado del negocio de manera inmediata tras iniciar sesión, consolidando la información de múltiples canales de venta en una única vista.</p>
+
+  <div class="mock-panel">
+    <div class="mock-header">
+      <div class="mock-dot" style="background:#ef4444;"></div>
+      <div class="mock-dot" style="background:#f59e0b;"></div>
+      <div class="mock-dot" style="background:#10b981;"></div>
+      <span style="font-size: 8pt; font-weight: bold; color: #64748b; margin-left: 10px;">Panel Principal - WSM ERP</span>
+    </div>
+    <div class="mock-body">
+      <div class="mock-menu">
+        <span class="mock-menu-active">Vista General</span>
+        <span>Estadísticas de Venta</span>
+        <span>Monitoreo de Stock</span>
+      </div>
+      <div class="mock-grid">
+        <div class="mock-card">
+          <div style="font-size: 8pt; color: #64748b; font-weight: bold; text-transform: uppercase;">Facturado Hoy (ARS)</div>
+          <div class="mock-val">$1,245,800</div>
+          <div style="font-size: 7pt; color: var(--success); font-weight: bold;">▲ +12.4% vs ayer</div>
+        </div>
+        <div class="mock-card">
+          <div style="font-size: 8pt; color: #64748b; font-weight: bold; text-transform: uppercase;">Alertas de Quiebre</div>
+          <div class="mock-val" style="color: var(--danger);">4 Productos</div>
+          <div style="font-size: 7pt; color: var(--danger); font-weight: bold;">Acción requerida inmediata</div>
+        </div>
+        <div class="mock-card">
+          <div style="font-size: 8pt; color: #64748b; font-weight: bold; text-transform: uppercase;">Pedidos en Picking</div>
+          <div class="mock-val" style="color: var(--warning);">9 Órdenes</div>
+          <div style="font-size: 7pt; color: #64748b;">3 operarios activos en depósito</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>2.1 Tarjetas de Métricas Operativas</h2>
+  <p>En la parte superior de la pantalla se despliegan cuatro indicadores financieros y de stock clave:</p>
+  <ul>
+    <li><strong>Facturación Diaria:</strong> Suma total de las ventas presenciales e integradas (Tienda Nube) confirmadas en el día en curso, neta de impuestos o bruta según tu selección.</li>
+    <li><strong>Caja Abierta:</strong> Muestra el saldo actual disponible en efectivo en la caja del cajero activo.</li>
+    <li><strong>Alertas de Stock Crítico:</strong> Indica el número de productos que han cruzado por debajo de su umbral de stock mínimo. Al hacer clic, te redirige al reporte de compras sugeridas.</li>
+    <li><strong>Órdenes Pendientes:</strong> Total de pedidos que están listos para ser procesados o despachados, requiriendo picking.</li>
+  </ul>
+
+  <h2>2.2 Alertas Críticas de Operación</h2>
+  <p>El sistema genera banners informativos o alertas de color rojo en la esquina derecha del panel en los siguientes casos especiales:</p>
+  <div class="caution-box">
+    <strong>ALERTA DE DESCONEXIÓN AFIP:</strong> Si el webservice de la AFIP experimenta demoras o el certificado SSL está próximo a vencer (menos de 15 días), se mostrará un banner fijo para que contactes al administrador.
+  </div>
+  <div class="note-box">
+    <strong>Sugerencia de Reabastecimiento:</strong> El ERP calcula de forma inteligente qué productos corren riesgo de desabastecimiento según su velocidad de venta promedio de los últimos 30 días, facilitando compras anticipadas.
+  </div>
+
+  <!-- SECTION 3 -->
+  <div class="page-break"></div>
+  <h1>3. Configuración e Integraciones (AFIP & Tienda Nube)</h1>
+  <p>Este módulo es exclusivo del perfil **Administrador** y permite conectar WSM ERP con los proveedores externos de facturación legal y comercio electrónico.</p>
+
+  <h2>3.1 Configuración de Datos Físicos e Impositivos</h2>
+  <p>Para asegurar que los comprobantes impresos cuenten con validez legal, debes completar minuciosamente la ficha corporativa de la organización.</p>
+  
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 1</span> Carga de CUIT y Condición Fiscal</h4>
+    <p>Ingresa a <strong>Configuración > Ajustes Generales</strong>. Carga el CUIT corporativo (sin guiones), selecciona tu condición frente al IVA (ej. Responsable Inscripto) e ingresa la Razón Social exacta.</p>
+  </div>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 2</span> Logotipo e Información para Tickets</h4>
+    <p>Sube el archivo de imagen de tu logo en formato PNG transparente. En el campo "Pie de Página del Ticket", ingresa mensajes personalizados como políticas de cambio o redes sociales.</p>
+  </div>
+
+  <h2>3.2 Conexión con AFIP (Comprobantes en Línea)</h2>
+  <p>El sistema emite facturas A, B, C y Notas de Crédito conectándose de forma directa mediante Web Services con AFIP/ARCA.</p>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Configuración AFIP</span> Carga de Certificados</h4>
+    <p>En la pestaña <strong>Facturación AFIP</strong>:</p>
+    <ol>
+      <li>Sube el archivo <code>.crt</code> (Certificado digital obtenido en la web de AFIP con tu clave fiscal).</li>
+      <li>Sube la clave privada <code>.key</code> generada durante el proceso de solicitud del certificado.</li>
+      <li>Indica el **Número de Punto de Venta** habilitado en AFIP para Factura Electrónica Web Services (no debe coincidir con el de factura manual o controlador fiscal físico).</li>
+    </ol>
+  </div>
+
+  <h2>3.3 Vinculación Automática con Tienda Nube</h2>
+  <p>WSM ERP sincroniza de manera bidireccional el stock físico y las ventas de tu e-commerce Tienda Nube de forma 100% automatizada.</p>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 1</span> Token de Acceso</h4>
+    <p>En **Configuración > Tienda Nube**, ingresa tu <code>Access Token</code> personal y tu <code>Store ID</code> de Tienda Nube corporativo.</p>
+  </div>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 2</span> Activación de Webhooks</h4>
+    <p>Haz clic en el botón <strong>"Conectar Canal Digital"</strong>. El sistema se comunicará con Tienda Nube e instalará los oyentes automáticos (webhooks). A partir de ese momento, cada venta en tu e-commerce creará un pedido en el ERP en menos de 5 segundos.</p>
+  </div>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 3</span> Gestor de Vinculación Masiva</h4>
+    <p>En la tabla inferior, mapearás los artículos del ERP con los de Tienda Nube:</p>
+    <ul>
+      <li>Usa el switch <strong>"Sincronizar Stock"</strong> para indicarle al ERP si deseas que controle el stock de esa publicación digital de forma activa.</li>
+      <li>Carga el <strong>Product ID</strong> y el <strong>Variant ID</strong> que Tienda Nube otorga a cada publicación en su panel de administración.</li>
+    </ul>
+  </div>
+
+  <!-- SECTION 4 -->
+  <div class="page-break"></div>
+  <h1>4. Gestión Física y Logística de Depósito</h1>
+  <p>El control del stock es fundamental. El ERP permite estructurar el almacén físico en sub-ubicaciones exactas, logrando un control absoluto de las existencias y facilitando la tarea de preparación de pedidos mediante dispositivos móviles.</p>
+
+  <h2>4.1 Estructuración Física de Depósitos</h2>
+  <p>Para no perder tiempo buscando mercadería, WSM ERP divide tu espacio físico en una estructura jerárquica que definirá las rutas de recolección:</p>
+  
+  <div class="mock-panel" style="max-width: 500px; margin: 15px auto;">
+    <div class="mock-header">
+      <span style="font-size: 8pt; font-weight: bold; color: #64748b;">Jerarquía del Depósito</span>
+    </div>
+    <div class="mock-body" style="font-size: 9pt;">
+      <div style="font-weight: bold; color: var(--accent);">DEPÓSITO CENTRAL</div>
+      <div style="margin-left: 20px; border-left: 2px solid #e2e8f0; padding-left: 10px;">
+        <div style="font-weight: bold; color: var(--primary-light);">Pasillo A (Calzados)</div>
+        <div style="margin-left: 20px; border-left: 2px solid #e2e8f0; padding-left: 10px; color:#64748b;">
+          Estante 01 - Nivel Alto<br>
+          Estante 02 - Nivel Bajo
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>4.2 Alta de Producto y Definición Física</h2>
+  <p>Al dar de alta un producto en el menú **Inventario**, completas la información para control físico y comercial:</p>
+  <ul>
+    <li><strong>SKU Único:</strong> Código alfanumérico identificador. Recomendamos un patrón sistemático (ej. <code>CALZ-ZAP-RUN-42</code>).</li>
+    <li><strong>Stock de Alerta (Mínimo):</strong> Límite bajo el cual el sistema sugerirá compras.</li>
+    <li><strong>Asignación de Ubicaciones:</strong> Puedes dividir el stock de un mismo producto en múltiples estantes (ej. 10 unidades en Mostrador para exhibición y 90 unidades en Pasillo A para resguardo).</li>
+  </ul>
+
+  <h2>4.3 Movimientos de Stock y Trazabilidad Interna</h2>
+  <p>Cualquier egreso o transferencia física debe ser respaldada en el sistema para evitar pérdidas de mercadería.</p>
+  
+  <div class="step-card">
+    <h4><span class="step-badge">Paso a Paso</span> Registrar un Movimiento Interno</h4>
+    <p>Si deseas mover stock entre sectores del depósito:</p>
+    <ol>
+      <li>Ingresa a **Inventario**, busca tu producto y presiona **"Mover Stock"**.</li>
+      <li>Selecciona la **Ubicación de Origen** (ej. Pasillo A) y la **Ubicación de Destino** (ej. Mostrador).</li>
+      <li>Digita la cantidad exacta a transferir.</li>
+      <li>Escribe un motivo breve (ej. "Reabastecimiento de salón de ventas").</li>
+      <li>Presiona **"Confirmar Transferencia"**. El sistema registrará el movimiento con fecha, hora y el usuario que realizó la acción.</li>
+    </ol>
+  </div>
+
+  <h2>4.4 El Proceso de Picking Móvil (Depósito)</h2>
+  <p>Esta es la herramienta estrella para el operario que camina el depósito con su celular.</p>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Fase de Preparación</span> Preparar Pedidos Paso a Paso</h4>
+    <p>Cuando un pedido en e-commerce o salón de ventas está pagado:</p>
+    <ol>
+      <li>El operario abre la aplicación en su teléfono, ingresa a **Pedidos** y verá el estado <span class="badge badge-warning">Listo para Picking</span>. Presiona **"Iniciar Preparación"**.</li>
+      <li>El ERP calcula la ruta más corta y le muestra la lista de recolección ordenada físicamente:
+        <br><em>Ejemplo: "Dirígete a Pasillo A - Estante 02. Toma 1 par de ZAP-RUN-42".</em>
+      </li>
+      <li>El operario toma las unidades físicas, escanea o verifica visualmente el SKU y tilda la casilla ✅ en su pantalla.</li>
+      <li>Si hay faltante (discrepancia), el operario marca "Reportar Faltante". El sistema congela la orden y alerta al área de compras para auditar la estantería.</li>
+      <li>Al confirmar todos los ítems, el sistema cambia el estado del pedido de forma automática a <span class="badge badge-success">Listo para Despacho</span> y emite la etiqueta de envío.</li>
+    </ol>
+  </div>
+
+  <!-- SECTION 5 -->
+  <div class="page-break"></div>
+  <h1>5. Compras y Gestión de Proveedores</h1>
+  <p>El ciclo comercial sano de tu empresa inicia con una compra ordenada. Este módulo permite documentar la relación con los distribuidores, emitir órdenes formales y controlar el ingreso físico de la mercadería para evitar fraudes.</p>
+
+  <h2>5.1 Registro y Categorización de Proveedores</h2>
+  <p>Ve a **Proveedores (Suppliers)** e ingresa sus fichas técnicas:</p>
+  <ul>
+    <li>CUIT, Razón Social e Información Bancaria para transferencias de pago.</li>
+    <li>Tiempo de Entrega Prometido (para auditar demoras del camión).</li>
+    <li>Categorías de productos que provee, facilitando filtros de compra masiva.</li>
+  </ul>
+
+  <h2>5.2 Generación de Órdenes de Compra</h2>
+  <p>La Orden de Compra (OC) es el documento formal de solicitud de mercadería.</p>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 1</span> Crear la Orden de Compra</h4>
+    <p>Ve a **Órdenes de Compra > Nueva Orden**. Selecciona el proveedor del menú desplegable. El ERP completará sus plazos comerciales automáticamente.</p>
+  </div>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 2</span> Agregar Ítems y Precios Pactados</h4>
+    <p>Suma los productos a solicitar. El sistema cargará el último precio de costo registrado, pero podrás modificarlo si el proveedor aplicó variaciones en su lista de precios vigente.</p>
+  </div>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 3</span> Firma y Envío</h4>
+    <p>Guarda la orden. Quedará en estado <span class="badge badge-warning">Pendiente de Aprobación</span>. Un usuario de perfil Gerente o Admin revisa y presiona "Aprobar". El sistema descarga el PDF oficial listo para enviar por email.</p>
+  </div>
+
+  <h2>5.3 Recepción de Mercadería e Impacto Automatizado</h2>
+  <p>Este paso es crítico para asegurar que lo facturado por el proveedor coincide exactamente con lo ingresado a tu almacén físico.</p>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Control de Recepción</span> Ingreso Seguro de Stock</h4>
+    <p>Cuando el camión del proveedor arriba a la empresa:</p>
+    <ol>
+      <li>El operario de depósito va a **Recepciones**, selecciona la Orden de Compra que coincide con el remito del transporte.</li>
+      <li>Debe auditar físicamente bulto por bulto e ir ingresando las cantidades reales recibidas en la grilla.</li>
+      <li><strong>Escenario A (Recepción Perfecta):</strong> Si coincide todo, presiona "Confirmar Recepción Completa". El ERP aumenta el stock físico general, cambia el estado a <span class="badge badge-success">Recibido</span> y genera el asiento contable de ingreso de mercadería en el Libro Diario.</li>
+      <li><strong>Escenario B (Recepción Parcial / Mercadería Dañada):</strong> Si faltan cajas o vienen artículos fallados, el operario anota las cantidades reales e ingresa un comentario. El sistema ingresará al stock solo lo sano y mantendrá la Orden de Compra como <span class="badge badge-warning">Recibido Parcial</span> para reclamar el saldo pendiente al distribuidor.</li>
+    </ol>
+  </div>
+
+  <!-- SECTION 6 -->
+  <div class="page-break"></div>
+  <h1>6. Ventas, Caja y Facturación Electrónica</h1>
+  <p>Este módulo consolida las ventas presenciales en mostrador, las cuentas corrientes y la facturación legal AFIP, asegurando que tu dinero físico y digital esté perfectamente conciliado.</p>
+
+  <h2>6.1 Operatoria Veloz del Punto de Venta (POS)</h2>
+  <p>Diseñado para que los cajeros realicen cobros rápidos sin retrasar la fila de clientes.</p>
+
+  <div class="step-card">
+    <h4><span class="step-badge">POS</span> Paso a Paso para una Venta Presencial</h4>
+    <p>Para cobrar a un cliente en salón de ventas:</p>
+    <ol>
+      <li>En la barra lateral, presiona **Punto de Venta (POS)**.</li>
+      <li><strong>Agregar Productos:</strong> Escribe palabras clave en el buscador o dispara con el lector láser al código de barra del artículo. Se agregará al carrito inmediatamente.</li>
+      <li><strong>Seleccionar Cliente:</strong> Por defecto, se asignará a "Consumidor Final". Si el cliente requiere factura formal personalizada, búscalo por nombre o CUIT en la barra superior.</li>
+      <li><strong>Métodos de Pago Integrados (Pagos Mixtos):</strong> Presiona "Cobrar". Podrás dividir el cobro si el cliente lo solicita.
+        <br><em>Ejemplo: $10,000 en Efectivo y $35,000 con Tarjeta de Débito.</em>
+      </li>
+      <li>Presiona **"Finalizar Transacción"**. El sistema abre el cajón monedero, descuenta el stock de la ubicación de salón de ventas, genera el asiento automático y emite el ticket físico de cobro.</li>
+    </ol>
+  </div>
+
+  <h2>6.2 Fichas de Clientes y Gestión de Cuentas Corrientes</h2>
+  <p>Si vendes mercadería bajo modalidad de crédito comercial o pago diferido:</p>
+  <ul>
+    <li><strong>Límite de Crédito:</strong> Puedes fijar un monto máximo de deuda permitida para cada cliente en su ficha técnica. El POS bloqueará la venta a plazo si supera dicho saldo.</li>
+    <li><strong>Consulta de Saldos:</strong> Al hacer clic en un cliente, verás su estado de cuenta corriente en tiempo real: Facturas adeudadas, pagos parciales ingresados y cheques pendientes.</li>
+    <li><strong>Registrar Cobranzas:</strong> Cuando el cliente se acerca a saldar su deuda, presionas "Registrar Cobro", ingresas el monto cobrado y el sistema lo asocia automáticamente a la factura más antigua adeudada para mantener el orden.</li>
+  </ul>
+
+  <h2>6.3 Facturación Electrónica Oficial (AFIP)</h2>
+  <p>WSM ERP se comunica directamente con los servidores de AFIP/ARCA para dotar de plena validez legal a tus ventas mediante la asignación instantánea del CAE.</p>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Procedimiento</span> Facturar una Venta Confirmada</h4>
+    <p>Para emitir la factura de forma electrónica:</p>
+    <ol>
+      <li>Ve al menú **Facturas (Invoices)**. Verás la lista de tickets emitidos en el POS u órdenes de Tienda Nube sin facturar aún.</li>
+      <li>Haz clic en **"Generar Factura"** sobre la operación deseada.</li>
+      <li>El sistema autodetectará la condición fiscal del cliente y te sugerirá el tipo de comprobante:
+        <ul>
+          <li><strong>Factura A:</strong> Si tu empresa es Responsable Inscripto y el cliente también (requiere CUIT válido).</li>
+          <li><strong>Factura B:</strong> Si el cliente es Consumidor Final, Monotributista o Exento.</li>
+        </ul>
+      </li>
+      <li>Presiona **"Autorizar en AFIP"**. El ERP envía la información digital firmada con tu clave SSL.</li>
+      <li>Si AFIP aprueba la operación, recibirás en pantalla el código **CAE (Código de Autorización Electrónico)** y la fecha de vencimiento. El sistema generará el PDF reglamentario con código de barras en formato A4 listo para imprimir o enviar.</li>
+    </ol>
+  </div>
+
+  <div class="caution-box">
+    <strong>IMPORTANTE EN FACTURAS A:</strong> AFIP exige obligatoriamente que las Facturas A identifiquen CUITs activos en el padrón de contribuyentes. Si el CUIT tiene la CUIT bloqueada o inactiva, la conexión devolverá un mensaje de error explicativo y no generará la factura hasta subsanar el CUIT en la ficha del cliente.
+  </div>
+
+  <h2>6.4 Gestión y Control de Caja Registradora</h2>
+  <p>Garantiza que el efectivo físico coincida con los registros digitales mediante arqueos de control estrictos.</p>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Flujo Diario</span> Operatoria Diaria del Cajero</h4>
+    <p>El cajero debe respetar rigurosamente la siguiente secuencia:</p>
+    <ol>
+      <li><strong>Apertura de Turno:</strong> Al iniciar la jornada, ingresa a **Caja** y haz clic en "Abrir Caja". Digita el monto físico de dinero en efectivo con el que inicias tu turno (cambio inicial).</li>
+      <li><strong>Registro de Movimientos de Caja Chica:</strong> Si necesitas retirar efectivo de la caja para un gasto de librería menor o pago de flete, registra un "Egreso de Caja" indicando el motivo detallado y adjuntando el comprobante de pago.</li>
+      <li><strong>Cierre de Caja y Arqueo:</strong> Al finalizar tu turno de trabajo:
+        <ul>
+          <li>Selecciona "Cerrar Caja".</li>
+          <li>Cuenta billete por billete el dinero físico real que tienes en tu cajón e ingresa el monto total en el sistema.</li>
+          <li>El sistema cruzará la suma física contra el arqueo teórico (Dinero Inicial + Ventas en Efectivo - Gastos Registrados).</li>
+          <li><strong>Reporte de Conciliación:</strong> Emitirá un informe mostrando si tu saldo es perfecto, o si presenta sobrantes o faltantes de dinero para su posterior análisis gerencial.</li>
+        </ul>
+      </li>
+    </ol>
+  </div>
+
+  <!-- SECTION 7 -->
+  <div class="page-break"></div>
+  <h1>7. Devoluciones, Garantías y RMA</h1>
+  <p>La atención posventa define la lealtad del cliente. Este módulo te permite procesar cambios de mercadería, gestionar garantías del fabricante y analizar fallas recurrentes de stock.</p>
+
+  <h2>7.1 Procesamiento de Devoluciones de Clientes</h2>
+  <p>Cuando un cliente acude al salón de ventas para devolver o cambiar un producto previamente facturado:</p>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 1</span> Localizar la Compra Original</h4>
+    <p>Ingresa al menú **Devoluciones > Nueva Devolución**. Escribe el número de la factura o busca la compra en el historial del cliente.</p>
+  </div>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 2</span> Inspección Física e Imputación de Estado</h4>
+    <p>Selecciona los productos y las cantidades que el cliente desea reintegrar. Deberás clasificar de forma obligatoria el estado físico real de la mercadería recibida:</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Clasificación del Estado</th>
+          <th>Destino Físico del Producto</th>
+          <th>Impacto Automatizado en Stock</th>
+          <th>Acción Administrativa</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="badge badge-success">Apto Venta (Sellable)</span></td>
+          <td>Reingresa al salón de ventas o depósito.</td>
+          <td>Incrementa de inmediato el stock físico disponible.</td>
+          <td>Listo para volverse a facturar.</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-danger">Rotura / Pérdida (Loss)</span></td>
+          <td>Se envía directamente al sector de descarte / scrap.</td>
+          <td>No se altera el stock comercial.</td>
+          <td>Se genera un asiento por pérdida financiera automática.</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-warning">Garantía Proveedor (RMA)</span></td>
+          <td>Se traslada al área de resguardo de fallas del proveedor.</td>
+          <td>Se bloquea el stock para la venta.</td>
+          <td>Se genera una orden de envío de RMA al proveedor.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Paso 3</span> Emisión del Crédito Compensatorio</h4>
+    <p>Una vez confirmada la recepción física, el sistema te preguntará la modalidad de compensación para el cliente:</p>
+    <ul>
+      <li><strong>Nota de Crédito (AFIP):</strong> Emite el comprobante legal que anula la factura total o parcialmente, dejando saldo a favor en la cuenta corriente del cliente.</li>
+      <li><strong>Cambio de Producto Directo:</strong> Te lleva a la pantalla del POS cargando el saldo a favor para facturar el nuevo artículo seleccionado de forma instantánea.</li>
+    </ul>
+  </div>
+
+  <h2>7.2 Envío de RMA a Proveedores (Mercadería Fallada)</h2>
+  <p>Cuando acumulas artículos fallados clasificados como <span class="badge badge-warning">Garantía Proveedor</span>:</p>
+  <ol>
+    <li>Ve a la pestaña **RMA Proveedores > Nuevo Envío**.</li>
+    <li>Selecciona al Proveedor responsable y el sistema te filtrará los productos guardados de su marca.</li>
+    <li>Agrega los artículos y presiona **"Generar Envío RMA"**. Esto descargará el listado de reclamo técnico para pegar en el bulto de despacho.</li>
+    <li>Al recibir la nota de crédito o el producto de reemplazo del fabricante, marcas la orden de RMA como "Saldada", ingresando el nuevo artículo sano a tu stock.</li>
+  </ol>
+
+  <!-- SECTION 8 -->
+  <div class="page-break"></div>
+  <h1>8. Módulo Contable Avanzado (Uso Profesional)</h1>
+  <p>Este módulo es de uso exclusivo para el perfil de **Contadora / Administrador Financiero**. Ofrece el control total sobre el plan de cuentas, el libro diario digital y la auditoría de cada movimiento impositivo de la organización.</p>
+
+  <h2>8.1 Estructura del Plan de Cuentas</h2>
+  <p>La primera pestaña del módulo contable despliega la estructura jerárquica de cuentas (sistema de árbol estándar de contabilidad conteniendo Activos, Pasivos, Patrimonio Neto, Ingresos y Egresos).</p>
+  <ul>
+    <li><strong>Creación de Cuentas Auxiliares:</strong> Haz clic en "Nueva Cuenta". Deberás asignarle una cuenta madre, un nombre descriptivo y su tipo de naturaleza contable.
+      <br><em>Ejemplo: Crear "Banco Galicia Cuenta Corriente" bajo la cuenta madre "Bancos" (Activo Circulante).</em>
+    </li>
+    <li><strong>Editar / Bloquear Cuentas:</strong> Podrás renombrar cuentas siempre y cuando no posean registros históricos de asientos. Para cuentas viejas en desuso, puedes tildar la opción "Inactiva" para evitar que sigan sumando movimientos.</li>
+  </ul>
+
+  <h2>8.2 Libro Diario Contable y Auditoría</h2>
+  <p>El ERP registra en tiempo real e independiente cada suceso comercial de tu empresa, transformando las ventas, cobros y compras en asientos contables balanceados de partida doble de forma automática.</p>
+  
+  <div class="note-box">
+    <strong>Trazabilidad de Asiento Automático:</strong><br>
+    Al vender $45,000 en el POS en efectivo, el sistema genera de forma invisible el siguiente asiento:<br>
+    • <strong>DEBITO:</strong> Caja Central ($45,000)<br>
+    • <strong>CREDITO:</strong> Ingresos por Ventas ($45,000)
+  </div>
+
+  <h2>8.3 Gestión de Asientos Contables Manuales</h2>
+  <p>Para aquellos registros no automatizados por el ERP (ejemplo: amortización de maquinaria, devengamiento de sueldos de empleados, o liquidación de impuestos de fin de mes), debes cargarlos de forma manual:</p>
+
+  <div class="step-card">
+    <h4><span class="step-badge">Procedimiento</span> Creación de Asiento Manual Paso a Paso</h4>
+    <ol>
+      <li>Ingresa a **Contabilidad > Libro Diario** y presiona el botón **"Nuevo Asiento Manual"**.</li>
+      <li>Ingresa la **Fecha de Registro** y una **Descripción Clara** del hecho económico (ej. "Liquidación de Impuesto a las Ganancias período 05/2026").</li>
+      <li>En la grilla de líneas del asiento, agrega las cuentas a debitar e ingresar sus montos en la columna **Debe**.</li>
+      <li>Agrega las cuentas a acreditar e ingresar sus montos en la columna **Haber**.</li>
+      <li><strong>Regla de Validación Estricta (Cuadrado):</strong> El sistema impedirá guardar el asiento si la suma de la columna Debe no es idéntica a la suma del Haber. El saldo de diferencia en pantalla debe ser exactamente <code>$0.00</code>.</li>
+      <li>Presiona **"Publicar Asiento"** para integrarlo formalmente a los reportes financieros del período.</li>
+    </ol>
+  </div>
+
+  <h2>8.4 Corrección de Errores: Poder Absoluto de la Contadora</h2>
+  <p>En WSM ERP, el perfil **Contadora** posee la capacidad de auditar cada movimiento registrado por el resto de los perfiles comerciales de la empresa:</p>
+  <ul>
+    <li><strong>Editar Asientos Manuales:</strong> Permite corregir cuentas mal asignadas o montos digitados con errores de teclado.</li>
+    <li><strong>Anulación con Trazabilidad (Contrasiento):</strong> Si un asiento automático o manual presenta un error grave y ya fue publicado, la contadora puede presionar el botón **"Anular Asiento (Reversar)"**. El sistema generará automáticamente un contrasiento (los débitos pasan a ser créditos y viceversa) por el mismo valor nominal, anulando el impacto financiero sin borrar la línea histórica del error, garantizando el cumplimiento de las normativas de auditoría legal vigentes.</li>
+  </ul>
+
+</body>
+</html>

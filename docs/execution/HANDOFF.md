@@ -1,5 +1,26 @@
 # Handoff Fast Resume
 
+Last reviewed: 2026-06-15  
+Primary continuity source: `docs/execution/BITACORA_INTEGRAL.md`  
+Current score estimate: 88/100
+
+## Resume First
+
+Before implementing anything, read:
+1. `docs/execution/BITACORA_INTEGRAL.md`
+2. `docs/execution/STATE.md`
+3. `docs/execution/CHANGELOG_EXECUTION.md`
+4. `docs/execution/LOGICA_UX_REVIEW_2026-06-14.md`
+
+Immediate next work should stay in P1/P2 stabilization:
+- keep backend tests, frontend unit tests, frontend lint and frontend build green
+- frontend timeline view is now available from `Inventario -> Trazabilidad`
+- backend timeline now includes inventory, lots, series, audit, orders, invoices, client returns, warranties and supplier returns
+- Tiendanube integration is now fully prepared for production/staging connection: OAuth state signed, HMAC webhook verify, API 2025-03, and failed syncs retry queue (A2) with automatic 5-min interval sweeps and settings retry console.
+- latest logic/UX review says not to add broad new modules before validating traceability with real data and adding exception queues.
+
+---
+
 Last updated: 2026-02-22  
 Branch: `main`  
 Checkpoint commit: `7f92656`
@@ -30,10 +51,33 @@ Checkpoint commit: `7f92656`
 
 ## Quick Validation Commands
 ```bash
-npm -w @wsm/server run test
-npm -w @wsm/client run lint
-npm -w @wsm/client run build
+npm run validate
 ```
+
+In this Codex environment, `npm` is not available in PATH. Use embedded Node and local binaries as documented in `BITACORA_INTEGRAL.md` if needed.
+
+Traceability API:
+```bash
+GET /api/traceability/timeline?product_id=<id>&limit=100
+GET /api/traceability/timeline?sku=<sku>&limit=100
+GET /api/traceability/timeline?barcode=<barcode>&limit=100
+```
+
+Latest logic/UX priorities:
+1. Validate Tiendanube against a real HTTPS staging backend.
+2. Validate `Inventario -> Trazabilidad` with real product/SKU/barcode data.
+3. Add direct "Ver trazabilidad" access from product rows.
+4. Extend timeline with shipping/reception logistics events.
+
+Tiendanube connection checklist:
+- Backend public HTTPS URL required; webhooks cannot use localhost.
+- Tiendanube callback URL: `https://<backend-publico>/api/integrations/tiendanube/callback`.
+- Tiendanube webhook URL: `https://<backend-publico>/api/integrations/tiendanube/webhooks`.
+- Minimum scopes: `read_orders`, `write_products`; recommended add `read_customers`.
+- ERP settings must contain Client ID and Client Secret before pressing connect.
+4. Make quality control visible before stock becomes available.
+5. Add recovery queue for POS sales with invoice pending/error.
+6. Build current-account workbench for collections and supplier payments.
 
 ## Detailed Context
 - `docs/execution/STATE.md`

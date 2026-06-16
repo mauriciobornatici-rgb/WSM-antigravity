@@ -1,7 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { CreditNoteDocument } from "./CreditNoteDocument"
 import type { CompanySettings } from "@/types"
-import type { CreditNoteRow } from "@/pages/ReturnsAndWarranties"
+import type { ClientReturnRow, CreditNoteRow } from "@/types/returns"
 
 type CreditNotePreviewDialogProps = {
     open: boolean
@@ -14,7 +14,7 @@ type CreditNotePreviewDialogProps = {
     onClose: () => void
     onAuthorize?: (cn: CreditNoteRow) => void | Promise<void>
     companySettings?: CompanySettings
-    linkedReturn?: any
+    linkedReturn?: ClientReturnRow | null
 }
 
 export function CreditNotePreviewDialog({

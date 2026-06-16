@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, TrendingDown, ShieldAlert, Sparkles, RefreshCw, MapPin, Move, Search } from "lucide-react";
+import { Activity, Plus, TrendingDown, ShieldAlert, Sparkles, RefreshCw, MapPin, Move, Search } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,6 +11,7 @@ import type { PaginationMeta } from "@/types/api";
 import { getErrorMessage, showErrorToast } from "@/lib/errorHandling";
 import { fetchInventorySnapshot, invalidateInventorySnapshotCache, type ProductWithStock } from "@/lib/inventorySnapshot";
 import { ProductForm, type ProductFormSubmitData } from "@/components/products/ProductForm";
+import { TraceabilityPanel } from "@/components/products/TraceabilityPanel";
 import { InventoryTable } from "@/components/products/InventoryTable";
 import { PaginationControls } from "@/components/common/PaginationControls";
 import { Button } from "@/components/ui/button";
@@ -182,8 +183,8 @@ export default function InventoryPage() {
         for (const item of inventoryItems) {
             const loc = String(item.location || "General").trim();
             // Apply search filter if active
-            const pName = String((item as any).product_name || "").toLowerCase();
-            const pSku = String((item as any).sku || "").toLowerCase();
+            const pName = String(item.product?.name || "").toLowerCase();
+            const pSku = String(item.product?.sku || "").toLowerCase();
             const pLoc = loc.toLowerCase();
             const q = locationSearch.toLowerCase();
             
@@ -375,6 +376,10 @@ export default function InventoryPage() {
                             </span>
                         )}
                     </TabsTrigger>
+                    <TabsTrigger value="traceability" className="gap-2 shrink-0">
+                        <Activity className="h-4 w-4 text-emerald-500" />
+                        Trazabilidad
+                    </TabsTrigger>
                 </TabsList>
 
                 {/* Catalog tab */}
@@ -471,8 +476,8 @@ export default function InventoryPage() {
                                                         {items.map(item => (
                                                             <TableRow key={item.id} className="hover:bg-transparent border-b border-slate-100 dark:border-slate-800/40">
                                                                 <TableCell className="px-3 py-2 text-xs">
-                                                                    <div className="font-bold text-slate-700 dark:text-slate-300">{(item as any).sku}</div>
-                                                                    <div className="text-[10px] text-slate-400 truncate max-w-[150px]">{(item as any).product_name}</div>
+                                                                    <div className="font-bold text-slate-700 dark:text-slate-300">{item.product?.sku || "-"}</div>
+                                                                    <div className="text-[10px] text-slate-400 truncate max-w-[150px]">{item.product?.name || "Producto sin nombre"}</div>
                                                                 </TableCell>
                                                                 <TableCell className="px-3 py-2 text-xs">
                                                                     <div className="space-y-1 text-right ml-auto max-w-[150px]">
@@ -579,7 +584,7 @@ export default function InventoryPage() {
                                             {criticalProducts.map((p) => {
                                                 const checked = Boolean(selectedReplenishItems[p.id]);
                                                 const suggested = Math.max(1, Number(p.stock_min || 0) * 2 - Number(p.stock_current || 0));
-                                                const itemValue = selectedReplenishItems[p.id] || { quantity: suggested, supplierId: (p as any).supplier_id || "" };
+                                                const itemValue = selectedReplenishItems[p.id] || { quantity: suggested, supplierId: p.supplier_id || "" };
                                                 const itemCost = Number(p.purchase_price || 0) * itemValue.quantity;
                                                 return (
                                                     <TableRow key={p.id} className={checked ? "bg-slate-50 dark:bg-slate-900/30" : ""}>
@@ -587,7 +592,7 @@ export default function InventoryPage() {
                                                             <input
                                                                 type="checkbox"
                                                                 checked={checked}
-                                                                onChange={() => toggleReplenishItem(p.id, suggested, (p as any).supplier_id || "")}
+                                                                onChange={() => toggleReplenishItem(p.id, suggested, p.supplier_id || "")}
                                                                 className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
                                                             />
                                                         </TableCell>
@@ -634,6 +639,10 @@ export default function InventoryPage() {
                             )}
                         </CardContent>
                     </Card>
+                </TabsContent>
+
+                <TabsContent value="traceability" className="space-y-4">
+                    <TraceabilityPanel />
                 </TabsContent>
             </Tabs>
 

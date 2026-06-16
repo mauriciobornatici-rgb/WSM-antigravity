@@ -27,10 +27,12 @@ import warrantiesRouter from './routes/warrantiesRoutes.js';
 import dashboardRouter from './routes/dashboardRoutes.js';
 import accountingRouter from './routes/accountingRoutes.js';
 import integrationRouter from './routes/integrationRoutes.js';
+import traceabilityRouter from './routes/traceabilityRoutes.js';
 import globalErrorHandler from './middleware/errorMiddleware.js';
 import { authenticateToken, authorizeRoles } from './middleware/authMiddleware.js';
 import { validate, schemas, validateZod, zodSchemas } from './middleware/validationMiddleware.js';
 import * as userController from './controllers/userController.js';
+import tiendaNubeService from './services/tiendanube.service.js';
 
 const app = express();
 const env = getEnvConfig();
@@ -47,8 +49,14 @@ app.use(helmet());
 const corsOrigins = env.corsOrigins;
 app.use(cors({ origin: corsOrigins, credentials: true }));
 
-const defaultJsonParser = express.json({ limit: '10kb' });
-const uploadsJsonParser = express.json({ limit: '2mb' });
+const captureRawBody = (req, res, buffer) => {
+    if (req.originalUrl?.startsWith('/api/integrations/tiendanube/webhooks')) {
+        req.rawBody = Buffer.from(buffer);
+    }
+};
+
+const defaultJsonParser = express.json({ limit: '10kb', verify: captureRawBody });
+const uploadsJsonParser = express.json({ limit: '2mb', verify: captureRawBody });
 
 // Product image uploads require larger payload than default API json limit.
 app.use('/api/products/image-upload', uploadsJsonParser);
@@ -136,6 +144,7 @@ app.use('/api', authenticateToken, financeRouter);
 app.use('/api', authenticateToken, procurementRouter);
 app.use('/api', authenticateToken, warrantiesRouter);
 app.use('/api', authenticateToken, dashboardRouter);
+app.use('/api', authenticateToken, traceabilityRouter);
 app.use('/api/accounting', authenticateToken, accountingRouter);
 
 // Integration routes (auth callbacks and webhooks are PUBLIC so TiendaNube can reach them without our JWT)
@@ -156,6 +165,16 @@ Server listening on port ${port}
 Health Check: http://localhost:${port}/api/health
 =========================================
             `);
+
+            // Start Tienda Nube background failed syncs retry queue (runs every 5 minutes)
+            const syncInterval = setInterval(() => {
+                tiendaNubeService.processFailedSyncs().catch(err => {
+                    console.error('[TiendaNube Background Sync] Error:', err);
+                });
+            }, 5 * 60 * 1000);
+
+            // unref() to allow Node.js to exit cleanly if needed (e.g. during test sweeps or shutdown)
+            syncInterval.unref();
         });
     } catch (err) {
         console.error("Critical Database Initialization Failure:", err);

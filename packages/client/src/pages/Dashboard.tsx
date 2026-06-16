@@ -118,7 +118,7 @@ export default function Dashboard() {
 
             setDailySales(data.dailySalesHistory || []);
 
-            const recentActivities = (data.activities || []).map((row: any) => ({
+            const recentActivities = (data.activities || []).map((row) => ({
                 id: row.id,
                 title: row.title,
                 subtitle: formatRelativeTime(row.date),

@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      "@wsm/common": path.resolve(__dirname, "../common/src/index.ts"),
       "@": path.resolve(__dirname, "./src"),
     },
   },

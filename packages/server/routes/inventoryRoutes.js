@@ -12,6 +12,7 @@ const advancedInventoryRoles = authorizeRoles('admin', 'manager', 'warehouse');
 router.get('/products', inventoryReadRoles, validateZod(zodSchemas.productFilters), inventoryController.getProducts);
 router.post('/products/image-upload', inventoryWriteRoles, validateZod(zodSchemas.uploadProductImage), inventoryController.uploadProductImage);
 router.post('/products', inventoryWriteRoles, validateZod(zodSchemas.product), inventoryController.createProduct);
+router.post('/products/tiendanube/bulk-update', inventoryWriteRoles, inventoryController.bulkUpdateTiendaNube);
 router.put('/products/:id', inventoryWriteRoles, validateZod(zodSchemas.product), inventoryController.updateProduct);
 router.delete('/products/:id', inventoryWriteRoles, validate(schemas.idParam), inventoryController.deleteProduct);
 router.get('/products/:id/movements', inventoryReadRoles, validate(schemas.idParam), inventoryController.getProductMovements);

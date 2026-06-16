@@ -18,5 +18,6 @@ router.post('/journal-entries/:id/reverse', accountingRoles, accountingControlle
 
 router.get('/trial-balance', accountingRoles, accountingController.getTrialBalance);
 router.get('/income-statement', accountingRoles, accountingController.getIncomeStatement);
+router.get('/balance-sheet', accountingRoles, accountingController.getBalanceSheet);
 
 export default router;

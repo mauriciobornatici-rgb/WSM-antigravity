@@ -10,9 +10,13 @@
     "dev": "npm -w @wsm/client run dev",
     "server": "npm -w @wsm/server run start",
     "dev:all": "concurrently \"npm run server\" \"npm run dev\"",
+    "build:common": "npm -w @wsm/common run build",
     "build": "npm -w @wsm/client run build",
     "lint": "npm -w @wsm/client run lint",
     "test": "npm -w @wsm/client run test",
+    "test:client": "npm -w @wsm/client run test",
+    "test:server": "npm -w @wsm/server run test",
+    "validate": "npm -w @wsm/common run build && npm -w @wsm/server run test && npm -w @wsm/client run lint && npm -w @wsm/client run test && npm -w @wsm/client run build",
     "smoke:rbac": "npm -w @wsm/server run smoke:rbac",
     "smoke:integrity": "npm -w @wsm/server run smoke:integrity",
     "audit": "npm audit --workspaces"

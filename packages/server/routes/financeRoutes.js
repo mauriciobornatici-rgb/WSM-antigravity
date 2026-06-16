@@ -6,6 +6,7 @@ import { authorizeRoles } from '../middleware/authMiddleware.js';
 const router = express.Router();
 const accountingRoles = authorizeRoles('admin');
 const cashRoles = authorizeRoles('admin', 'cashier');
+const collectionsRoles = authorizeRoles('admin', 'manager', 'cashier');
 
 // Transactions
 router.get('/transactions', accountingRoles, validate(schemas.transactionsFilters), financeController.getTransactions);
@@ -20,5 +21,9 @@ router.post('/cash-registers/:id/open', cashRoles, validate(schemas.cashShiftOpe
 // Cash shifts
 router.post('/cash-shifts/:id/close', cashRoles, validate(schemas.cashShiftClose), financeController.closeShift);
 router.post('/cash-shifts/:id/payments', cashRoles, validate(schemas.shiftPayment), financeController.addShiftPayment);
+
+// Collections
+router.get('/collections/pending-invoices', collectionsRoles, financeController.getPendingInvoices);
+router.post('/collections', collectionsRoles, financeController.registerBulkPayments);
 
 export default router;

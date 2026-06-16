@@ -1,12 +1,34 @@
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import Afip from '@afipsdk/afip.js';
+import { decrypt } from '../utils/crypto.js';
 
 class AfipService {
     constructor() {
         this.instances = new Map(); // Cache Afip instances by CUIT
+        this.createdTempFiles = new Set();
+
+        // Register exit handlers to securely delete temporal keys and certs
+        process.on('exit', () => this.cleanupTempFilesSync());
+        process.on('SIGINT', () => { this.cleanupTempFilesSync(); process.exit(); });
+        process.on('SIGTERM', () => { this.cleanupTempFilesSync(); process.exit(); });
+        process.on('SIGHUP', () => { this.cleanupTempFilesSync(); process.exit(); });
+    }
+
+    cleanupTempFilesSync() {
+        for (const filePath of this.createdTempFiles) {
+            try {
+                if (fsSync.existsSync(filePath)) {
+                    fsSync.unlinkSync(filePath);
+                }
+            } catch (err) {
+                // Silent catch on process exit
+            }
+        }
+        this.createdTempFiles.clear();
     }
 
     async _getAfipInstance(companySettings) {
@@ -16,8 +38,8 @@ class AfipService {
         const env = companySettings?.billing_afip_env || 'homologacion';
         const isProduction = env === 'produccion';
         
-        const cert = companySettings?.billing_afip_crt;
-        const key = companySettings?.billing_afip_key;
+        const cert = decrypt(companySettings?.billing_afip_crt);
+        const key = decrypt(companySettings?.billing_afip_key);
 
         if (!cert || !key) {
             throw new Error("Certificado (.crt) o llave (.key) de AFIP no configurados");
@@ -36,8 +58,11 @@ class AfipService {
         const certPath = path.join(tmpDir, certFileName);
         const keyPath = path.join(tmpDir, keyFileName);
 
-        await fs.writeFile(certPath, cert, 'utf8');
-        await fs.writeFile(keyPath, key, 'utf8');
+        await fs.writeFile(certPath, cert, { encoding: 'utf8', mode: 0o600 });
+        await fs.writeFile(keyPath, key, { encoding: 'utf8', mode: 0o600 });
+
+        this.createdTempFiles.add(certPath);
+        this.createdTempFiles.add(keyPath);
 
         const afip = new Afip({
             CUIT: parseInt(cuit, 10),
@@ -186,6 +211,90 @@ class AfipService {
             console.error("AFIP Error:", error);
             throw new Error(`AFIP: ${error.message || 'Error al generar CAE'}`);
         }
+    }
+
+    async authorizeVoucher(invoiceData, invoiceItems, companySettings) {
+        let afipRes = null;
+
+        // Call AFIP only for non-tickets
+        if (invoiceData.invoice_type !== 'TK') {
+            try {
+                // 1. Prevención de Split-Brain (Comprobación de último comprobante emitido)
+                const lastVoucherNumber = await this.getLastVoucher(invoiceData.invoice_type, companySettings);
+                
+                if (lastVoucherNumber > 0) {
+                    const lastVoucherInfo = await this.getVoucherInfo(invoiceData.invoice_type, lastVoucherNumber, companySettings);
+                    
+                    if (lastVoucherInfo) {
+                        const localTotal = Math.round(Number(invoiceData.total_amount) * 100) / 100;
+                        const afipTotal = lastVoucherInfo.ImpTotal;
+                        
+                        const localDocType = this._getDocType(invoiceData.client_tax_id);
+                        const localDocNumber = localDocType === 99 ? 0 : parseInt(String(invoiceData.client_tax_id).replace(/\D/g, ''), 10);
+                        
+                        // Si el monto total y el documento del cliente coinciden con el último voucher emitido,
+                        // asumimos que fue la petición de esta factura que llegó a AFIP pero cuyo response perdimos.
+                        if (afipTotal === localTotal && lastVoucherInfo.DocNro === localDocNumber) {
+                            console.log(`[AFIP Split-Brain] Recuperando comprobante previo coincidente: ${lastVoucherNumber}`);
+                            afipRes = {
+                                cae: lastVoucherInfo.CodAutorizacion,
+                                cae_expiration_date: lastVoucherInfo.FchVto,
+                                invoice_number: lastVoucherNumber
+                            };
+                        }
+                    }
+                }
+
+                // 2. Si no es un split-brain, pedimos uno nuevo
+                if (!afipRes) {
+                    afipRes = await this.createVoucher(invoiceData, invoiceItems, companySettings);
+                }
+            } catch (err) {
+                throw new Error(`Fallo autorización AFIP: ${err.message}`);
+            }
+        }
+
+        const cae = afipRes ? afipRes.cae : null;
+        const expirationDate = afipRes ? this.formatExpirationDate(afipRes.cae_expiration_date) : null;
+        const finalInvoiceNumber = afipRes ? afipRes.invoice_number : invoiceData.invoice_number;
+
+        return {
+            cae,
+            cae_expiration_date: expirationDate,
+            invoice_number: finalInvoiceNumber
+        };
+    }
+
+    async getLastVoucher(invoiceType, companySettings) {
+        const afip = await this._getAfipInstance(companySettings);
+        const posNumber = parseInt(companySettings?.billing_pos || 1, 10);
+        const voucherType = this._getInvoiceType(invoiceType);
+        try {
+            return await afip.ElectronicBilling.getLastVoucher(posNumber, voucherType);
+        } catch (error) {
+            console.error("AFIP getLastVoucher Error:", error);
+            throw error;
+        }
+    }
+
+    async getVoucherInfo(invoiceType, voucherNumber, companySettings) {
+        const afip = await this._getAfipInstance(companySettings);
+        const posNumber = parseInt(companySettings?.billing_pos || 1, 10);
+        const voucherType = this._getInvoiceType(invoiceType);
+        try {
+            return await afip.ElectronicBilling.getVoucherInfo(voucherNumber, posNumber, voucherType);
+        } catch (error) {
+            console.error("AFIP getVoucherInfo Error:", error);
+            return null; // Si no existe o hay error
+        }
+    }
+
+    formatExpirationDate(dateStr) {
+        if (!dateStr || String(dateStr).length !== 8) return null;
+        const year = dateStr.substring(0, 4);
+        const month = dateStr.substring(4, 6);
+        const day = dateStr.substring(6, 8);
+        return `${year}-${month}-${day}`;
     }
 }
 

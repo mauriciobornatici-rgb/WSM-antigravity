@@ -31,7 +31,7 @@ export function CheckoutSuccessDialog({
             const updated = await api.authorizeInvoice(invoiceState.id);
             setInvoiceState(updated);
             toast.success("Factura autorizada exitosamente con CAE");
-        } catch (err) {
+        } catch {
             toast.error("Error al autorizar factura con AFIP");
         } finally {
             setAuthorizing(false);

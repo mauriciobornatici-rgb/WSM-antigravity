@@ -1,28 +1,79 @@
 # Execution State Snapshot
 
-Last updated: 2026-02-22
+Last reviewed: 2026-06-15
+Current continuity source: `docs/execution/BITACORA_INTEGRAL.md`
+Current score estimate: 88/100
+Immediate priority: validate Tiendanube OAuth/webhook flow against a real HTTPS staging URL, then validate inventory traceability with real data.
+Latest UX/business review: `docs/execution/LOGICA_UX_REVIEW_2026-06-14.md`
+
+## 2026-06-15 Execution Snapshot
+
+Resolved on 2026-06-15:
+- Implemented Tienda Nube stock sync retry queue (A2) with `failed_syncs` table and automatic interval retries.
+- Added failed syncs listing and manual retry trigger in settings e-commerce panel.
+- Expanded backend test suite with queueing and retry verification.
+
+Resolved on 2026-06-14:
+- Fixed `authorizeInvoice` audit payload variable in `packages/server/services/sales.service.js`.
+- Added regression coverage in `packages/server/test/sales.service.test.js`.
+- Aligned TiendaNube bulk update route between client and server.
+- Added client contract coverage in `packages/client/src/services/api.test.ts`.
+- Restored frontend build by aliasing `@wsm/common` for client tooling.
+- Separated Vitest unit tests from Playwright e2e specs.
+- Backend tests pass, frontend unit tests pass, frontend build passes.
+- Frontend lint passes with warnings only.
+- Frontend lint now passes with 0 errors and 0 warnings.
+- Backend sales unit tests no longer attempt the detected real audit DB write.
+- Root `npm run validate` now defines the canonical local validation sequence.
+- `npm run validate` could not be executed in this Codex environment because `npm` is absent from PATH; the same sequence was verified with the embedded Node runtime and local binaries.
+- Facturacion/postventa frontend types were tightened: credit note print/preview components, returns analytics, client return items, supplier return items.
+- Frontend lint is now clean with 0 errors and 0 warnings.
+- Tightened frontend contracts across API, POS, products, suppliers, inventory, orders, receptions, dashboard and accounting.
+- Added first traceability timeline slice:
+  - backend `TraceabilityService`
+  - `GET /api/traceability/timeline`
+  - client `api.traceability.getTimeline`
+  - regression tests for service normalization and client route contract.
+- Added business logic/UX review for purchases, receptions, POS, orders, current accounts and post-sale flows.
+- Improved operator clarity:
+  - parent navigation stays active on nested routes
+  - purchase order action copy now says `Enviar` when moving to `sent`
+  - visible POS/reception/purchase texts cleaned up.
+- Added first visible frontend traceability slice in `Inventario -> Trazabilidad`:
+  - search by SKU, barcode or product id
+  - timeline states for initial, loading, no results and error
+  - focused helper tests for filter construction and event formatting.
+- Extended backend traceability timeline with commercial/post-sale sources:
+  - orders
+  - invoices
+  - client returns
+  - warranty claims
+  - supplier returns
+- Stabilized `authorizeInvoice` CAE expiration regression test by fixing the test clock.
+- Prepared Tiendanube integration for real connection:
+  - settings validation preserves integration credentials
+  - API client uses Tiendanube `2025-03`
+  - stock sync uses official variant stock endpoint
+  - OAuth state is signed/verified
+  - webhooks verify HMAC and process by order id
+  - imported orders persist external source/id
+  - public company profile redacts Tiendanube secrets
+
+See `docs/execution/BITACORA_INTEGRAL.md` for the detailed roadmap, priorities, product vision, current percentages, and no-repeat continuity rules.
+
+---
+
+Last updated: 2026-06-15
 Status: IN_PROGRESS
-Current block: P2 - Operacion comercial (Picking/Facturacion/Cobranza)
-Current task: Estabilizar flujo Picking + Factura a cuenta corriente + registro de cobros parciales/mixtos
+Current block: P1 - Business Consistency / Integrations
+Current task: Implementar generación de código QR en facturas AFIP (RG 4892) e integración de Padrón AFIP (autocompletar CUIT).
 Branch: `main`
 Head: `7f92656`
 
 ## Resume From Here
-1. Validar en staging el flujo completo de picking:
-   - ingreso a `/picking/:id` sin errores de validacion al abrir
-   - `Finalizar picking` con faltante `0` cambia estado a `packed` (listo para retiro/envio)
-   - `Cerrar con faltantes` deja estado visible y trazable (badge naranja)
-2. Confirmar que `Pedidos` refleja estado post-picking en tiempo real:
-   - no quedan pedidos en `pending` luego de finalizar correctamente
-   - badges de listo para retiro/envio se muestran segun `shipping_method`
-3. Validar nueva regla de facturacion:
-   - al emitir factura desde pedido NO registra cobro automatico
-   - la factura queda con `payment_status = pending`
-   - el saldo se gestiona luego en cuenta corriente (pagos parciales/mixtos)
-4. Implementar siguiente bloque funcional:
-   - pantalla/flujo de registro de cobros de facturas pendientes (con split de medios de pago)
-   - impacto en `transactions` + `orders/invoices.payment_status`
-5. Mantener validacion incremental completa en cada lote:
+1. Diseñar e implementar generación de código QR para facturas electrónicas de AFIP (cumplimiento RG 4892).
+2. Diseñar e implementar integración con el Padrón de AFIP (A/B) para autocompletar la condición fiscal y datos del cliente al ingresar CUIT.
+3. Ejecutar validaciones en cada paso:
    - `npm -w @wsm/server run test`
    - `npm -w @wsm/client run lint`
    - `npm -w @wsm/client run build`
@@ -846,7 +897,7 @@ Head: `7f92656`
     - `npm -w @wsm/client run build`
 
 ## Next After Current Task
-P2.8 continuation - validacion funcional en staging de paginacion UI + plan operativo de rotacion de secretos.
+Tiendanube staging validation - publish backend through HTTPS, configure Tiendanube app callback/webhook URLs, load Client ID/Secret in ERP settings, run OAuth, map one product variant, then create one controlled Tiendanube order and verify local order import + stock sync.
 
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):

@@ -8,12 +8,14 @@ import type {
     CompanySettings,
     InventoryItem,
     Order,
+    OrderItem,
     Product,
     PurchaseOrder,
     Supplier,
     SupplierPayment,
     Transaction,
     User,
+    FailedSync,
 } from "@/types";
 import type {
     AuditLogEntry,
@@ -52,10 +54,185 @@ import type {
     InventoryMovementInput,
     InvoicePaymentRegisterInput,
     InvoicePaymentRegisterResponse,
+    BulkPaymentInput,
+    BulkPaymentResponse,
+    PendingInvoiceResponse,
+    BulkSupplierPaymentInput,
+    BulkSupplierPaymentResponse,
+    PendingSupplierInvoiceResponse
 } from "@/types/api";
 import { httpClient, isApiError } from "./httpClient";
 
 type GenericRecord = Record<string, unknown>;
+
+export type ReturnsAnalyticsResponse = {
+    totalLossAmount?: number;
+    topReasons?: Array<{
+        reason: string;
+        count: number;
+    }>;
+    topDefectiveProducts?: Array<{
+        name: string;
+        count: number;
+    }>;
+};
+
+export type DashboardStatsResponse = {
+    salesToday: number;
+    salesYesterday: number;
+    todayOperations: number;
+    pendingOrders: number;
+    readyToDispatch: number;
+    lowStockCount: number;
+    completionRate: number;
+    closedOrdersCount: number;
+    totalActionable: number;
+    dailySalesHistory?: Array<{
+        label: string;
+        amount: number;
+    }>;
+    activities?: Array<{
+        id: string;
+        title: string;
+        date?: string;
+        amount?: number;
+        positive?: boolean;
+    }>;
+    pickerLeaderboard?: Array<{
+        picker_name: string;
+        sessions_count: number;
+        total_picked: number;
+        avg_duration_sec: number;
+        shortage_count: number;
+    }>;
+};
+
+export type ChartAccountResponse = {
+    code: string;
+    name: string;
+    type: "asset" | "liability" | "equity" | "revenue" | "expense";
+    active: boolean;
+    total_debit: number;
+    total_credit: number;
+    balance: number;
+};
+
+export type JournalEntryResponse = {
+    id: string;
+    entry_number: number;
+    date: string;
+    description: string;
+    reference_type: string;
+    reference_id: string;
+    lines: Array<{
+        id: string;
+        account_code: string;
+        account_name: string;
+        account_type: string;
+        debit: number;
+        credit: number;
+        notes: string;
+    }>;
+};
+
+export type TrialBalanceItemResponse = {
+    code: string;
+    name: string;
+    type: string;
+    initial_balance: number;
+    debit: number;
+    credit: number;
+    final_balance: number;
+};
+
+export type IncomeStatementResponse = {
+    revenues: Array<{ code: string; name: string; balance: number }>;
+    expenses: Array<{ code: string; name: string; balance: number }>;
+    total_revenues: number;
+    total_expenses: number;
+    net_result: number;
+};
+
+export type BalanceSheetAccount = {
+    code: string;
+    name: string;
+    balance: number;
+};
+
+export type BalanceSheetResponse = {
+    assets: {
+        corriente: BalanceSheetAccount[];
+        no_corriente: BalanceSheetAccount[];
+    };
+    liabilities: {
+        corriente: BalanceSheetAccount[];
+        no_corriente: BalanceSheetAccount[];
+    };
+    equity: {
+        items: BalanceSheetAccount[];
+    };
+    totals: {
+        total_assets: number;
+        total_liabilities: number;
+        total_equity: number;
+        total_liabilities_and_equity: number;
+        discrepancy: number;
+    };
+};
+
+export type SupplierInvoiceResponse = {
+    id: string;
+    invoice_type: "A" | "B" | "C" | "M";
+    invoice_number: string;
+    issue_date: string;
+    due_date?: string;
+    status?: string;
+    created_at?: string;
+    supplier_name: string;
+    supplier_tax_id?: string;
+    reception_number?: string;
+    po_number?: string;
+    net_amount: number;
+    vat_amount: number;
+    total_amount: number;
+};
+
+export type TraceabilityEvent = {
+    id: string;
+    occurred_at: string;
+    event_type: "inventory_movement" | "batch" | "serial" | "audit" | string;
+    title: string;
+    description: string;
+    product_id?: string | null;
+    product_name?: string | null;
+    sku?: string | null;
+    quantity?: number | null;
+    from_location?: string | null;
+    to_location?: string | null;
+    reference_type?: string | null;
+    reference_id?: string | null;
+    actor_name?: string | null;
+    source_table: string;
+    metadata?: GenericRecord;
+};
+
+export type TraceabilityTimelineFilters = {
+    product_id?: string;
+    sku?: string;
+    barcode?: string;
+    limit?: number;
+};
+
+type ManualJournalEntryInput = {
+    date: string;
+    description: string;
+    lines: Array<{
+        account_code: string;
+        debit: number;
+        credit: number;
+        notes: string | null;
+    }>;
+};
 
 type ProductUpsertInput =
     Partial<Omit<Product, "id" | "created_at">> & {
@@ -282,7 +459,7 @@ export const api = {
     getOrderSummary: (id: string) =>
         httpClient.get<{
             order: Order;
-            items: Array<any>;
+            items: OrderItem[];
             summary: { total_items: number; total_picked: number; completion_percent: number };
             picking_session?: {
                 id: string;
@@ -299,7 +476,7 @@ export const api = {
 
     // ==================== DASHBOARD ====================
     getDashboardStats: () =>
-        httpClient.get<any>("/api/dashboard/stats"),
+        httpClient.get<DashboardStatsResponse>("/api/dashboard/stats"),
 
     // ==================== RETURNS ====================
     getReturns: (filters?: { supplier_id?: string; status?: string }) =>
@@ -311,15 +488,15 @@ export const api = {
     approveReturn: (id: string) =>
         httpClient.post<{ success: boolean; message?: string }>(`/api/returns/${id}/approve`),
 
-    getSupplierReturns: () =>
-        httpClient.get<GenericRecord[]>("/api/supplier-returns"),
+    getSupplierReturns: (filters?: { supplier_id?: string }) =>
+        httpClient.get<GenericRecord[]>(withQuery("/api/supplier-returns", filters)),
 
     // ==================== CLIENT RETURNS ====================
     getClientReturns: (filters?: { client_id?: string; status?: string }) =>
         httpClient.get<GenericRecord[]>(withQuery("/api/client-returns", filters)),
 
     getReturnsAnalytics: () =>
-        httpClient.get<any>("/api/client-returns/analytics"),
+        httpClient.get<ReturnsAnalyticsResponse>("/api/client-returns/analytics"),
 
     createClientReturn: (data: ClientReturnCreateInput) =>
         httpClient.post<{ id: string } & GenericRecord>("/api/client-returns", data),
@@ -356,6 +533,21 @@ export const api = {
 
     updateCompanySettings: (settings: CompanySettings) =>
         httpClient.put<{ success: boolean }>("/api/settings/company", settings),
+
+    syncTiendanubeOrders: () =>
+        httpClient.post<{ success: boolean; syncedCount: number }>("/api/integrations/tiendanube/sync-orders"),
+
+    autoLinkTiendanubeCatalog: () =>
+        httpClient.post<{ success: boolean; totalVariantsFound: number; linkedCount: number }>("/api/integrations/tiendanube/auto-link"),
+
+    getFailedSyncs: () =>
+        httpClient.get<FailedSync[]>("/api/integrations/tiendanube/failed-syncs"),
+
+    retryFailedSync: (id: string) =>
+        httpClient.post<{ success: boolean; message: string }>(`/api/integrations/tiendanube/failed-syncs/${id}/retry`),
+
+    retryAllFailedSyncs: () =>
+        httpClient.post<{ success: boolean; message: string }>("/api/integrations/tiendanube/failed-syncs/retry-all"),
 
     testAfipConnection: (billing: NonNullable<CompanySettings["billing"]>) =>
         httpClient.post<{ success: boolean; logs: string[]; nextVoucherNumber: number }>("/api/settings/afip/test-connection", billing),
@@ -423,6 +615,25 @@ export const api = {
     createSupplierPayment: (data: SupplierPaymentCreateInput) =>
         httpClient.post<{ success: boolean; ids: string[]; total: number }>("/api/supplier-payments", data),
 
+    // ==================== SUPPLIER INVOICES ====================
+    getSupplierInvoices: (filters?: { supplier_id?: string; status?: string }) =>
+        httpClient.get<SupplierInvoiceResponse[]>(withQuery("/api/supplier-invoices", filters)),
+
+    createSupplierInvoice: (data: {
+        invoice_number: string;
+        invoice_type: "A" | "B" | "C" | "M";
+        supplier_id: string;
+        reception_id?: string;
+        purchase_order_id?: string;
+        issue_date: string;
+        due_date?: string;
+        net_amount: number;
+        vat_amount: number;
+        other_taxes?: number;
+        total_amount?: number;
+        notes?: string;
+    }) => httpClient.post<{ id: string; success: boolean; total_amount: number }>("/api/supplier-invoices", data),
+
     // ==================== PURCHASE ORDERS ====================
     getPurchaseOrders: (filters?: { supplier_id?: string; status?: string }) =>
         httpClient.get<PurchaseOrder[]>(withQuery("/api/purchase-orders", filters)),
@@ -484,6 +695,22 @@ export const api = {
     registerInvoicePayment: (invoiceId: string, data: InvoicePaymentRegisterInput) =>
         httpClient.post<InvoicePaymentRegisterResponse>(`/api/invoices/${invoiceId}/payments`, data),
 
+    // ==================== COLLECTIONS (CUENTA CORRIENTE) ====================
+    getPendingInvoices: (filters?: { client_id?: string }) =>
+        httpClient.get<PendingInvoiceResponse[]>("/api/collections/pending-invoices" + (filters?.client_id ? `?client_id=${filters.client_id}` : "")),
+
+    registerBulkInvoicePayments: (data: BulkPaymentInput) =>
+        httpClient.post<BulkPaymentResponse>("/api/collections", data),
+
+    // ==================== SUPPLIER PAYMENTS (PAGOS PROVEEDORES) ====================
+    getPendingSupplierInvoices: (filters?: { supplier_id?: string }) =>
+        httpClient.get<PendingSupplierInvoiceResponse[]>("/api/supplier-invoices/pending" + (filters?.supplier_id ? `?supplier_id=${filters.supplier_id}` : "")),
+
+    registerBulkSupplierPayments: (data: BulkSupplierPaymentInput) =>
+        httpClient.post<BulkSupplierPaymentResponse>("/api/supplier-payments/bulk", data),
+
+
+
     // ==================== CASH MANAGEMENT ====================
     getCashRegisters: () =>
         httpClient.get<CashRegister[]>("/api/cash-registers"),
@@ -511,39 +738,55 @@ export const api = {
 
     // ==================== DOUBLE-ENTRY ACCOUNTING ====================
     getChartOfAccounts: () =>
-        httpClient.get<any[]>("/api/accounting/chart-of-accounts"),
+        httpClient.get<ChartAccountResponse[]>("/api/accounting/chart-of-accounts"),
 
     getJournalEntries: (filters?: { start_date?: string; end_date?: string }) =>
-        httpClient.get<any[]>(withQuery("/api/accounting/journal-entries", filters)),
+        httpClient.get<JournalEntryResponse[]>(withQuery("/api/accounting/journal-entries", filters)),
 
     getTrialBalance: (filters?: { start_date?: string; end_date?: string }) =>
-        httpClient.get<any[]>(withQuery("/api/accounting/trial-balance", filters)),
+        httpClient.get<TrialBalanceItemResponse[]>(withQuery("/api/accounting/trial-balance", filters)),
 
     getIncomeStatement: (filters?: { start_date?: string; end_date?: string }) =>
-        httpClient.get<any>(withQuery("/api/accounting/income-statement", filters)),
+        httpClient.get<IncomeStatementResponse>(withQuery("/api/accounting/income-statement", filters)),
+
+    getBalanceSheet: (filters?: { start_date?: string; end_date?: string }) =>
+        httpClient.get<BalanceSheetResponse>(withQuery("/api/accounting/balance-sheet", filters)),
 
     createAccount: (data: { code: string; name: string; type: string; active: boolean }) =>
-        httpClient.post<any>("/api/accounting/chart-of-accounts", data),
+        httpClient.post<GenericRecord>("/api/accounting/chart-of-accounts", data),
 
     updateAccount: (code: string, data: { name: string; active: boolean }) =>
-        httpClient.put<any>(`/api/accounting/chart-of-accounts/${code}`, data),
+        httpClient.put<GenericRecord>(`/api/accounting/chart-of-accounts/${code}`, data),
 
     deleteAccount: (code: string) =>
-        httpClient.del<any>(`/api/accounting/chart-of-accounts/${code}`),
+        httpClient.del<GenericRecord>(`/api/accounting/chart-of-accounts/${code}`),
 
-    createManualJournalEntry: (data: any) =>
-        httpClient.post<any>("/api/accounting/journal-entries", data),
+    createManualJournalEntry: (data: ManualJournalEntryInput) =>
+        httpClient.post<GenericRecord>("/api/accounting/journal-entries", data),
 
-    updateJournalEntry: (id: string, data: any) =>
-        httpClient.put<any>(`/api/accounting/journal-entries/${id}`, data),
+    updateJournalEntry: (id: string, data: GenericRecord) =>
+        httpClient.put<GenericRecord>(`/api/accounting/journal-entries/${id}`, data),
 
     reverseJournalEntry: (id: string) =>
-        httpClient.post<any>(`/api/accounting/journal-entries/${id}/reverse`),
+        httpClient.post<GenericRecord>(`/api/accounting/journal-entries/${id}/reverse`),
 
     deleteJournalEntry: (id: string) =>
-        httpClient.del<any>(`/api/accounting/journal-entries/${id}`),
+        httpClient.del<GenericRecord>(`/api/accounting/journal-entries/${id}`),
 
     // ==================== WMS TRANSFER ====================
     transferStock: (data: { product_id: string; from_location: string; to_location: string; quantity: number }) =>
-        httpClient.post<any>("/api/inventory/transfer", data),
+        httpClient.post<GenericRecord>("/api/inventory/transfer", data),
+
+    // ==================== TRACEABILITY ====================
+    traceability: {
+        getTimeline: (filters: TraceabilityTimelineFilters) =>
+            httpClient.get<TraceabilityEvent[]>(withQuery("/api/traceability/timeline", filters)),
+    },
+
+    // ==================== INVENTORY NAMESPACE ====================
+    inventory: {
+        getProducts: (filters?: QueryParams) => httpClient.get<Product[]>(withQuery("/api/products", filters)),
+        bulkUpdateTiendaNube: (products: {id: string, tiendanube_sync_enabled: boolean, tiendanube_product_id: string, tiendanube_variant_id: string}[]) =>
+            httpClient.post<GenericRecord>("/api/products/tiendanube/bulk-update", { products }),
+    },
 };

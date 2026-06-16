@@ -1,5 +1,6 @@
 import express from 'express';
 import * as procurementController from '../controllers/procurementController.js';
+import * as supplierInvoiceController from '../controllers/supplierInvoiceController.js';
 import { validate, schemas } from '../middleware/validationMiddleware.js';
 import { authorizeRoles } from '../middleware/authMiddleware.js';
 
@@ -32,6 +33,13 @@ router.post('/returns/:id/approve', supplierReturnRoles, validate(schemas.idPara
 // Supplier payments
 router.get('/supplier-payments', supplierPaymentRoles, validate(schemas.supplierPaymentFilters), procurementController.getSupplierPayments);
 router.post('/supplier-payments', supplierPaymentRoles, validate(schemas.supplierPaymentCreate), procurementController.createSupplierPayment);
+
+// Supplier Invoices
+router.get('/supplier-invoices/pending', purchaseOrderReadRoles, supplierInvoiceController.getPendingSupplierInvoices);
+router.get('/supplier-invoices', purchaseOrderReadRoles, validate(schemas.supplierInvoiceFilters), supplierInvoiceController.getSupplierInvoices);
+router.post('/supplier-invoices', purchaseOrderWriteRoles, validate(schemas.supplierInvoiceCreate), supplierInvoiceController.createSupplierInvoice);
+router.post('/supplier-payments/bulk', supplierPaymentRoles, supplierInvoiceController.registerBulkSupplierPayments);
+
 
 // Quality checks
 router.post('/quality-checks', qualityRoles, validate(schemas.qualityCheck), procurementController.createQualityCheck);

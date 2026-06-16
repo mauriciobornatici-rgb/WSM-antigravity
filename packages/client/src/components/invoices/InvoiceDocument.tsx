@@ -93,7 +93,7 @@ export function InvoiceDocument({
                                 setAuthorizing(true)
                                 try {
                                     await onAuthorize(invoice)
-                                } catch (err) {
+                                } catch {
                                     // Error is toasted at parent page
                                 } finally {
                                     setAuthorizing(false)

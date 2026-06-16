@@ -92,7 +92,7 @@ class SalesService extends BaseService {
         const [stockRows] = await connection.query(
             `SELECT id, location, quantity, reserved_quantity, (quantity - reserved_quantity) AS available_quantity
              FROM inventory
-             WHERE product_id = ? AND (quantity - reserved_quantity) > 0
+             WHERE product_id = ? AND (quantity - reserved_quantity) > 0 AND location NOT IN ('Cuarentena', 'Devoluciones a Proveedores', 'Mermas')
              ORDER BY (quantity - reserved_quantity) DESC
              FOR UPDATE`,
             [productId]
@@ -240,8 +240,9 @@ class SalesService extends BaseService {
                     id, client_id, counter_user_id, customer_name, counter_name,
                     total_amount, status, payment_status, payment_method,
                     shipping_method, shipping_address, estimated_delivery,
-                    recipient_name, recipient_dni, delivery_notes, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    recipient_name, recipient_dni, delivery_notes, notes,
+                    external_source, external_id
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     orderId,
                     orderData.client_id || null,
@@ -256,7 +257,9 @@ class SalesService extends BaseService {
                     orderData.recipient_name || null,
                     orderData.recipient_dni || null,
                     orderData.delivery_notes || null,
-                    orderData.notes || null
+                    orderData.notes || null,
+                    orderData.external_source || null,
+                    orderData.external_id || null
                 ]
             );
 
@@ -1247,29 +1250,11 @@ class SalesService extends BaseService {
         // 2. Get invoice items for AFIP detail
         const [invoiceItems] = await pool.query('SELECT * FROM invoice_items WHERE invoice_id = ?', [invoiceId]);
 
-        let afipRes = null;
-        if (invoiceData.invoice_type !== 'TK') {
-            // Call AFIP only for non-tickets
-            try {
-                afipRes = await afipService.createVoucher(invoiceData, invoiceItems, companySettings);
-            } catch (err) {
-                throw new Error(`Fallo autorización AFIP: ${err.message}`);
-            }
-        }
+        const afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
 
-        const cae = afipRes ? afipRes.cae : String(Math.floor(10000000000000 + Math.random() * 90000000000000));
-        let expirationDate = null;
-        if (afipRes && afipRes.cae_expiration_date) {
-            // Format YYYYMMDD to YYYY-MM-DD
-            const d = afipRes.cae_expiration_date;
-            expirationDate = `${d.substring(0,4)}-${d.substring(4,6)}-${d.substring(6,8)}`;
-        } else {
-            const exp = new Date();
-            exp.setDate(exp.getDate() + 10);
-            expirationDate = exp.toISOString().slice(0, 10);
-        }
-
-        const finalInvoiceNumber = afipRes ? afipRes.invoice_number : invoiceData.invoice_number;
+        const cae = afipRes.cae;
+        const expirationDate = afipRes.cae_expiration_date;
+        const finalInvoiceNumber = afipRes.invoice_number;
 
         const connection = await pool.getConnection();
         await connection.beginTransaction();
@@ -1347,7 +1332,7 @@ class SalesService extends BaseService {
                 action: 'AUTHORIZE_INVOICE',
                 entity_type: 'invoice',
                 entity_id: invoiceId,
-                new_values: { cae, cae_expiration_date: expiration.toISOString().slice(0, 10) }
+                new_values: { cae, cae_expiration_date: expirationDate }
             });
 
             await connection.commit();

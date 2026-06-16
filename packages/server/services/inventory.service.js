@@ -55,6 +55,7 @@ class InventoryService extends BaseService {
             LEFT JOIN (
                 SELECT product_id, SUM(quantity) AS total_quantity, SUM(reserved_quantity) AS total_reserved
                 FROM inventory
+                WHERE location NOT IN ('Cuarentena', 'Devoluciones a Proveedores', 'Mermas')
                 GROUP BY product_id
             ) inv ON inv.product_id = p.id
             WHERE p.deleted_at IS NULL
@@ -112,6 +113,15 @@ class InventoryService extends BaseService {
             ORDER BY p.name ASC, i.location ASC
         `);
         return rows;
+    }
+
+    async getProductStock(productId) {
+        const [rows] = await pool.query(`
+            SELECT SUM(quantity) AS total_stock
+            FROM inventory
+            WHERE product_id = ? AND location NOT IN ('Cuarentena', 'Devoluciones a Proveedores', 'Mermas')
+        `, [productId]);
+        return Number(rows[0]?.total_stock || 0);
     }
 
     async createProduct(productData, userId) {
@@ -240,12 +250,9 @@ class InventoryService extends BaseService {
         // We do this without await so it doesn't block the database transaction
         setImmediate(async () => {
             try {
-                const inventory = await this.getInventoryWithDetails();
-                const productInv = inventory.find(i => i.product_id === movementData.product_id);
-                if (productInv) {
-                    const tiendanubeService = (await import('./tiendanube.service.js')).default;
-                    await tiendanubeService.syncStock(movementData.product_id, productInv.quantity);
-                }
+                const totalStock = await this.getProductStock(movementData.product_id);
+                const tiendanubeService = (await import('./tiendanube.service.js')).default;
+                await tiendanubeService.syncStock(movementData.product_id, totalStock);
             } catch (err) {
                 console.error('[TiendaNube Sync] Error calculating stock for sync:', err);
             }
@@ -398,59 +405,88 @@ class InventoryService extends BaseService {
             for (const item of items) {
                 const location = item.location_assigned || 'General';
 
-                await connection.query(`
-                    INSERT INTO inventory_movements (
-                        id, type, product_id, to_location, quantity, unit_cost,
-                        reference_type, reference_id, performed_by
-                    ) VALUES (?, 'reception', ?, ?, ?, ?, 'reception', ?, ?)
-                `, [
-                    crypto.randomUUID(),
-                    item.product_id,
-                    location,
-                    item.quantity_received,
-                    item.unit_cost || 0,
-                    receptionId,
-                    actorUserId
-                ]);
+                // Check if there is a quality check for this product and reception
+                const [qcRows] = await connection.query(`
+                    SELECT quantity_passed, quantity_failed
+                    FROM quality_checks
+                    WHERE reception_id = ? AND product_id = ?
+                    LIMIT 1
+                `, [receptionId, item.product_id]);
 
-                if (item.batch_number) {
+                let passedQty = item.quantity_received;
+                let failedQty = 0;
+
+                if (qcRows.length > 0) {
+                    passedQty = Number(qcRows[0].quantity_passed ?? item.quantity_received);
+                    failedQty = Number(qcRows[0].quantity_failed ?? 0);
+                }
+
+                if (passedQty + failedQty !== item.quantity_received) {
+                    passedQty = item.quantity_received;
+                    failedQty = 0;
+                }
+
+                const updateStock = async (loc, qty, isFailed = false) => {
+                    if (qty <= 0) return;
+
                     await connection.query(`
-                        INSERT INTO product_batches (
-                            id, product_id, batch_number, expiration_date, supplier_id, reception_id,
-                            quantity_initial, quantity_current, location
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON DUPLICATE KEY UPDATE
-                            quantity_current = quantity_current + VALUES(quantity_initial),
-                            expiration_date = VALUES(expiration_date)
+                        INSERT INTO inventory_movements (
+                            id, type, product_id, to_location, quantity, unit_cost,
+                            reference_type, reference_id, performed_by, reason
+                        ) VALUES (?, 'reception', ?, ?, ?, ?, 'reception', ?, ?, ?)
                     `, [
                         crypto.randomUUID(),
                         item.product_id,
-                        item.batch_number,
-                        item.expiration_date || null,
-                        reception.supplier_id,
+                        loc,
+                        qty,
+                        item.unit_cost || 0,
                         receptionId,
-                        item.quantity_received,
-                        item.quantity_received,
-                        location
+                        actorUserId,
+                        isFailed ? 'Control de Calidad: Mercadería defectuosa segregada' : 'Recepción aprobada'
                     ]);
-                }
 
-                const [existingInventory] = await connection.query(
-                    'SELECT id FROM inventory WHERE product_id = ? AND location = ? LIMIT 1',
-                    [item.product_id, location]
-                );
+                    const [existingInventory] = await connection.query(
+                        'SELECT id FROM inventory WHERE product_id = ? AND location = ? LIMIT 1',
+                        [item.product_id, loc]
+                    );
 
-                if (existingInventory.length > 0) {
-                    await connection.query(
-                        'UPDATE inventory SET quantity = quantity + ? WHERE id = ?',
-                        [item.quantity_received, existingInventory[0].id]
-                    );
-                } else {
-                    await connection.query(
-                        'INSERT INTO inventory (id, product_id, location, quantity) VALUES (?, ?, ?, ?)',
-                        [crypto.randomUUID(), item.product_id, location, item.quantity_received]
-                    );
-                }
+                    if (existingInventory.length > 0) {
+                        await connection.query(
+                            'UPDATE inventory SET quantity = quantity + ? WHERE id = ?',
+                            [qty, existingInventory[0].id]
+                        );
+                    } else {
+                        await connection.query(
+                            'INSERT INTO inventory (id, product_id, location, quantity) VALUES (?, ?, ?, ?)',
+                            [crypto.randomUUID(), item.product_id, loc, qty]
+                        );
+                    }
+
+                    if (item.batch_number) {
+                        await connection.query(`
+                            INSERT INTO product_batches (
+                                id, product_id, batch_number, expiration_date, supplier_id, reception_id,
+                                quantity_initial, quantity_current, location
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE
+                                quantity_current = quantity_current + VALUES(quantity_initial),
+                                expiration_date = VALUES(expiration_date)
+                        `, [
+                            crypto.randomUUID(),
+                            item.product_id,
+                            item.batch_number,
+                            item.expiration_date || null,
+                            reception.supplier_id,
+                            receptionId,
+                            qty,
+                            qty,
+                            loc
+                        ]);
+                    }
+                };
+
+                await updateStock(location, passedQty, false);
+                await updateStock('Cuarentena', failedQty, true);
 
                 if (item.po_item_id) {
                     await connection.query(

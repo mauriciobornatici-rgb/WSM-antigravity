@@ -212,3 +212,9 @@ export const transferStock = catchAsync(async (req, res) => {
     );
     res.json(result);
 });
+
+export const bulkUpdateTiendaNube = catchAsync(async (req, res) => {
+    const { products } = req.body;
+    const result = await inventoryService.bulkUpdateTiendaNube(products, req.user?.id);
+    res.json(result);
+});

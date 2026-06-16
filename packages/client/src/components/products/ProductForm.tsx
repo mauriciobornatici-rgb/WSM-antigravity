@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Camera, ImagePlus, ScanLine, Trash2, Upload } from "lucide-react";
-import { useForm, useWatch } from "react-hook-form";
+import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
 import * as z from "zod";
 import { createProductSchema } from "@wsm/common";
@@ -31,6 +31,7 @@ const productSchema = createProductSchema.extend({
 });
 
 type ProductFormSchema = z.infer<typeof productSchema>;
+const productFormResolver = zodResolver(productSchema) as Resolver<ProductFormSchema>;
 
 export type ProductFormSubmitData = {
     sku: string;
@@ -79,7 +80,7 @@ async function readFileAsDataUrl(file: File): Promise<string> {
 
 export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProps) {
     const form = useForm<ProductFormSchema>({
-        resolver: zodResolver(productSchema) as any,
+        resolver: productFormResolver,
         defaultValues: {
             sku: initialData?.sku ?? "",
             barcode: initialData?.barcode ?? "",
@@ -304,7 +305,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     return (
         <>
             <Form {...form}>
-                <form onSubmit={form.handleSubmit(handleSubmit as any)} className="space-y-5 pb-1">
+                <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-5 pb-1">
                     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.95fr)]">
                         <div className="rounded-xl border p-4 sm:p-5">
                         <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
@@ -313,7 +314,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
                         <div className="mt-3 grid gap-3 md:grid-cols-2">
                             <FormField<ProductFormSchema>
-                                control={form.control as any}
+                                control={form.control}
                                 name="name"
                                 render={({ field }) => (
                                     <FormItem>
@@ -326,7 +327,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 )}
                             />
                             <FormField<ProductFormSchema>
-                                control={form.control as any}
+                                control={form.control}
                                 name="category"
                                 render={({ field }) => (
                                     <FormItem>
@@ -342,7 +343,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
 
                         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
                             <FormField<ProductFormSchema>
-                                control={form.control as any}
+                                control={form.control}
                                 name="sku"
                                 render={({ field }) => (
                                     <FormItem>
@@ -355,7 +356,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 )}
                             />
                             <FormField<ProductFormSchema>
-                                control={form.control as any}
+                                control={form.control}
                                 name="barcode"
                                 render={({ field }) => (
                                     <FormItem>
@@ -408,7 +409,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
                         <div className="mt-3 grid gap-3">
                             <FormField<ProductFormSchema>
-                                control={form.control as any}
+                                control={form.control}
                                 name="image_url"
                                 render={({ field }) => (
                                     <FormItem>
@@ -470,7 +471,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         </div>
                         <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
                             <FormField<ProductFormSchema>
-                                control={form.control as any}
+                                control={form.control}
                                 name="location"
                                 render={({ field }) => (
                                     <FormItem>
@@ -511,7 +512,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
 
                             <div className="grid gap-3 md:grid-cols-2">
                                 <FormField<ProductFormSchema>
-                                    control={form.control as any}
+                                    control={form.control}
                                     name="purchase_price"
                                     render={({ field }) => (
                                         <FormItem>
@@ -524,7 +525,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     )}
                                 />
                                 <FormField<ProductFormSchema>
-                                    control={form.control as any}
+                                    control={form.control}
                                     name="sale_price"
                                     render={({ field }) => (
                                         <FormItem>
@@ -542,7 +543,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         {!isEditMode ? (
                             <div className="mt-3 grid gap-3 md:max-w-xs">
                                 <FormField<ProductFormSchema>
-                                    control={form.control as any}
+                                    control={form.control}
                                     name="stock_initial"
                                     render={({ field }) => (
                                         <FormItem>

@@ -12,7 +12,7 @@ type ReceptionsHistorySectionProps = {
     filter: ReceptionsFilter;
     approving: boolean;
     onFilterChange: (status: ReceptionsFilter) => void;
-    onApproveReception: (id: string, receptionNumber: string) => void;
+    onApproveReception: (reception: ReceptionRecord) => void;
 };
 
 export function ReceptionsHistorySection({
@@ -108,7 +108,7 @@ export function ReceptionsHistorySection({
                                     <td className="px-6 py-4 text-right">
                                         {reception.status === "pending_qc" ? (
                                             <button
-                                                onClick={() => onApproveReception(reception.id, reception.reception_number)}
+                                                onClick={() => onApproveReception(reception)}
                                                 disabled={approving}
                                                 className="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white transition hover:bg-green-700"
                                             >

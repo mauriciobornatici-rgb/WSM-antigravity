@@ -2,7 +2,12 @@ import { useState } from "react"
 import { AlertTriangle, ShieldCheck, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { CompanySettings } from "@/types"
-import type { CreditNoteRow } from "@/pages/ReturnsAndWarranties"
+import type { ClientReturnRow, CreditNoteRow, ClientReturnItemRow } from "@/types/returns"
+
+const DEFAULT_CAE_EXPIRATION_DATE = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .substring(0, 10)
+    .replace(/-/g, "")
 
 type CreditNoteDocumentProps = {
     creditNote: CreditNoteRow
@@ -13,7 +18,7 @@ type CreditNoteDocumentProps = {
     printMode?: boolean | undefined
     onAuthorize?: ((cn: CreditNoteRow) => void | Promise<void>) | undefined
     companySettings?: CompanySettings | undefined
-    linkedReturn?: any
+    linkedReturn?: ClientReturnRow | null | undefined
     onClose?: (() => void) | undefined
 }
 
@@ -22,7 +27,6 @@ export function CreditNoteDocument({
     companyName,
     companyTaxId,
     companyAddress,
-    taxRateLabel: _taxRateLabel,
     printMode = false,
     onAuthorize,
     companySettings,
@@ -63,7 +67,7 @@ export function CreditNoteDocument({
     const compTypeNum = cnType === "A" ? "03" : "08"
     const expDateStr = creditNote.cae_expiration_date
         ? String(creditNote.cae_expiration_date).substring(0, 10).replace(/-/g, "")
-        : new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10).replace(/-/g, "")
+        : DEFAULT_CAE_EXPIRATION_DATE
     const barcodeValue = `${emisorCuit}${compTypeNum}${String(creditNote.point_of_sale || 1).padStart(4, "0")}${creditNote.cae || ""}${expDateStr}`
 
     return (
@@ -90,7 +94,7 @@ export function CreditNoteDocument({
                                 setAuthorizing(true)
                                 try {
                                     await onAuthorize(creditNote)
-                                } catch (err) {
+                                } catch {
                                     // Error handled in parent page
                                 } finally {
                                     setAuthorizing(false)
@@ -173,7 +177,7 @@ export function CreditNoteDocument({
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-sm text-slate-800">
                         {linkedReturn && linkedReturn.items && linkedReturn.items.length > 0 ? (
-                            linkedReturn.items.map((item: any, idx: number) => {
+                            linkedReturn.items.map((item: ClientReturnItemRow, idx: number) => {
                                 const sub = Number(item.quantity || 0) * Number(item.unit_price || 0);
                                 return (
                                     <tr key={idx} className="hover:bg-slate-50/50">
