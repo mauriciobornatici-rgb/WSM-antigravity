@@ -1,10 +1,14 @@
 import type { CompanySettings } from "@/types"
 import type { ClientReturnRow, CreditNoteRow, ClientReturnItemRow } from "@/types/returns"
+import { buildAfipQrUrl } from "./afipQr"
+import { AfipQrImage } from "./AfipQrImage"
 
-const DEFAULT_CAE_EXPIRATION_DATE = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .substring(0, 10)
-    .replace(/-/g, "")
+function defaultCaeExpirationDate(): string {
+    return new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .substring(0, 10)
+        .replace(/-/g, "")
+}
 
 type PrintableThermalCreditNoteProps = {
     creditNote: CreditNoteRow | null
@@ -27,38 +31,21 @@ export function PrintableThermalCreditNote({
 
     const cnType = creditNote.credit_note_type || "B"
 
-    const getAfipQrValue = () => {
-        const cleanCuit = companyTaxId.replace(/-/g, "") || "20123456789"
-        const cleanClientCuit = "99999999999"
-        const qrData = {
-            ver: 1,
-            fecha: creditNote.created_at ? String(creditNote.created_at).substring(0, 10) : new Date().toISOString().substring(0, 10),
-            cuit: Number(cleanCuit) || 20123456789,
-            ptoVta: Number(creditNote.point_of_sale || 1),
-            tipoCmp: cnType === "A" ? 3 : 8,
-            nroCmp: Number(creditNote.number.split("-").pop() || 1),
-            importe: Number(creditNote.amount || 0),
-            moneda: "PES",
-            cotiz: 1,
-            tipoDocRec: cleanClientCuit.length > 8 ? 80 : 99,
-            nroDocRec: Number(cleanClientCuit) || 99999999999,
-            tipoCodAut: "E",
-            codAut: Number(creditNote.cae) || 0
-        }
-        try {
-            const jsonStr = JSON.stringify(qrData)
-            const b64 = btoa(unescape(encodeURIComponent(jsonStr)))
-            return `https://www.afip.gob.ar/fe/qr/?p=${b64}`
-        } catch {
-            return "https://www.afip.gob.ar/fe/qr/?p=mock"
-        }
-    }
+    const afipQrUrl = buildAfipQrUrl({
+        emisorCuit: companyTaxId,
+        invoiceType: cnType === "A" ? "NC_A" : "NC_B",
+        pointOfSale: creditNote.point_of_sale ?? null,
+        invoiceNumber: Number(creditNote.number.split("-").pop() || 0),
+        issueDate: creditNote.created_at ? String(creditNote.created_at) : null,
+        totalAmount: creditNote.amount,
+        cae: creditNote.cae ?? null,
+    })
 
     const emisorCuit = companyTaxId.replace(/-/g, "") || "20123456789"
     const compTypeNum = cnType === "A" ? "03" : "08"
     const expDateStr = creditNote.cae_expiration_date
         ? String(creditNote.cae_expiration_date).substring(0, 10).replace(/-/g, "")
-        : DEFAULT_CAE_EXPIRATION_DATE
+        : defaultCaeExpirationDate()
     const barcodeValue = `${emisorCuit}${compTypeNum}${String(creditNote.point_of_sale || 1).padStart(4, "0")}${creditNote.cae || ""}${expDateStr}`
 
     return (
@@ -140,29 +127,21 @@ export function PrintableThermalCreditNote({
                         <p>VTO. CAE: {creditNote.cae_expiration_date ? new Date(creditNote.cae_expiration_date).toLocaleDateString("es-AR") : "-"}</p>
                     </div>
 
-                    {/* Compact Simulated QR Code */}
+                    {/* Compact AFIP QR Code (generado localmente) */}
                     <div className="flex items-center justify-center gap-2 border border-slate-400 p-1.5 bg-white rounded-sm select-none text-left">
-                        <div className="w-12 h-12 shrink-0 bg-white border border-slate-200 p-0.5 rounded flex flex-wrap gap-[0.5px]">
-                            {Array.from({ length: 49 }).map((_, idx) => {
-                                const isCorner = 
-                                    (idx < 5 && idx % 7 < 2) || 
-                                    (idx < 15 && idx >= 10 && idx % 7 < 2) || 
-                                    (idx >= 25 && idx % 7 < 2) ||
-                                    (idx < 5 && idx % 7 >= 4) ||
-                                    (idx >= 40 && idx % 7 < 2) ||
-                                    (idx % 9 === 0) || (idx % 5 === 0);
-                                return (
-                                    <div 
-                                        key={idx} 
-                                        className={`w-[5px] h-[5px] ${isCorner ? 'bg-slate-900' : 'bg-slate-200'}`} 
-                                    />
-                                )
-                            })}
-                        </div>
+                        {afipQrUrl && (
+                            <AfipQrImage
+                                url={afipQrUrl}
+                                size={120}
+                                className="w-12 h-12 shrink-0 bg-white border border-slate-200 p-0.5 rounded"
+                            />
+                        )}
                         <div className="text-[8px] space-y-0.5 text-slate-800 leading-tight">
                             <span className="bg-slate-900 text-white px-1 py-0.2 rounded font-black text-[7px] tracking-wider">ARCA/AFIP</span>
                             <p className="font-bold">Nota de Crédito Autorizada</p>
-                            <p className="font-mono text-[6px] text-slate-500 max-w-[130px] truncate">{getAfipQrValue().substring(0, 24)}...</p>
+                            {afipQrUrl && (
+                                <p className="font-mono text-[6px] text-slate-500 max-w-[130px] truncate">{afipQrUrl.substring(0, 24)}...</p>
+                            )}
                         </div>
                     </div>
 

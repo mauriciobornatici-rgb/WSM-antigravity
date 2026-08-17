@@ -1,11 +1,17 @@
 import type { InvoiceView } from "./types"
 import type { CompanySettings } from "@/types"
 import { formatInvoiceNumber } from "./invoiceUtils"
+import { buildAfipQrUrlFromInvoice } from "./afipQr"
+import { AfipQrImage } from "./AfipQrImage"
 
-const DEFAULT_CAE_EXPIRATION_DATE = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .substring(0, 10)
-    .replace(/-/g, "")
+// Calculado en cada render: si se calcula al cargar el módulo queda vencido
+// cuando la app permanece abierta varios días.
+function defaultCaeExpirationDate(): string {
+    return new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .substring(0, 10)
+        .replace(/-/g, "")
+}
 
 type PrintableThermalTicketProps = {
     invoice: InvoiceView | null
@@ -29,38 +35,13 @@ export function PrintableThermalTicket({
         ? `${Number(companySettings.operation.tax_rate * 100).toFixed(0)}%`
         : "21%"
 
-    const getAfipQrValue = () => {
-        const cleanCuit = companyTaxId.replace(/-/g, "") || "20123456789"
-        const cleanClientCuit = (invoice.client_tax_id || "99999999999").replace(/-/g, "")
-        const qrData = {
-            ver: 1,
-            fecha: invoice.issue_date ? String(invoice.issue_date).substring(0, 10) : new Date().toISOString().substring(0, 10),
-            cuit: Number(cleanCuit) || 20123456789,
-            ptoVta: Number(invoice.point_of_sale || 1),
-            tipoCmp: invoice.invoice_type === "A" ? 1 : 6,
-            nroCmp: Number(invoice.invoice_number || 1),
-            importe: Number(invoice.total_amount || 0),
-            moneda: "PES",
-            cotiz: 1,
-            tipoDocRec: cleanClientCuit.length > 8 ? 80 : 99,
-            nroDocRec: Number(cleanClientCuit) || 99999999999,
-            tipoCodAut: "E",
-            codAut: Number(invoice.cae) || 0
-        }
-        try {
-            const jsonStr = JSON.stringify(qrData)
-            const b64 = btoa(unescape(encodeURIComponent(jsonStr)))
-            return `https://www.afip.gob.ar/fe/qr/?p=${b64}`
-        } catch {
-            return "https://www.afip.gob.ar/fe/qr/?p=mock"
-        }
-    }
+    const afipQrUrl = buildAfipQrUrlFromInvoice(invoice, companyTaxId)
 
     const emisorCuit = companyTaxId.replace(/-/g, "") || "20123456789"
     const compTypeNum = invoice.invoice_type === "A" ? "01" : "06"
     const expDateStr = invoice.cae_expiration_date
         ? String(invoice.cae_expiration_date).substring(0, 10).replace(/-/g, "")
-        : DEFAULT_CAE_EXPIRATION_DATE
+        : defaultCaeExpirationDate()
     const barcodeValue = `${emisorCuit}${compTypeNum}${String(invoice.point_of_sale || 1).padStart(4, "0")}${invoice.cae || ""}${expDateStr}`
 
     return (
@@ -144,17 +125,21 @@ export function PrintableThermalTicket({
                         <p>VTO. CAE: {invoice.cae_expiration_date ? new Date(invoice.cae_expiration_date).toLocaleDateString("es-AR") : "-"}</p>
                     </div>
 
-                    {/* Real AFIP QR Code */}
+                    {/* Real AFIP QR Code (generado localmente) */}
                     <div className="flex items-center justify-center gap-2 border border-slate-400 p-1.5 bg-white rounded-sm select-none">
-                        <img
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(getAfipQrValue())}`}
-                            alt="AFIP QR Code"
-                            className="w-12 h-12 shrink-0 bg-white border border-slate-200 p-0.5 rounded"
-                        />
+                        {afipQrUrl && (
+                            <AfipQrImage
+                                url={afipQrUrl}
+                                size={120}
+                                className="w-12 h-12 shrink-0 bg-white border border-slate-200 p-0.5 rounded"
+                            />
+                        )}
                         <div className="text-[8px] space-y-0.5 text-slate-800 leading-tight text-left">
                             <span className="bg-slate-900 text-white px-1 py-0.2 rounded font-black text-[7px] tracking-wider">ARCA/AFIP</span>
                             <p className="font-bold">Factura Autorizada</p>
-                            <p className="font-mono text-[6px] text-slate-500 max-w-[130px] truncate">{getAfipQrValue().substring(0, 24)}...</p>
+                            {afipQrUrl && (
+                                <p className="font-mono text-[6px] text-slate-500 max-w-[130px] truncate">{afipQrUrl.substring(0, 24)}...</p>
+                            )}
                         </div>
                     </div>
 
