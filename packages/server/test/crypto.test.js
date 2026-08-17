@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encrypt, decrypt } from '../utils/crypto.js';
+
+// crypto.js reads the key lazily, so setting env vars per-test works.
+process.env.ENCRYPTION_KEY = 'a'.repeat(64);
+
+const { encrypt, decrypt } = await import('../utils/crypto.js');
 
 test('encrypt and decrypt roundtrip produces original text', () => {
     const plainText = 'MI_SECRETO_AFIP_SUPER_CONFIDENCIAL_123';
@@ -27,12 +31,30 @@ test('decrypt returns falsy input unchanged', () => {
     assert.equal(decrypt(''), '');
 });
 
-test('decrypt falls back to original string on tampered cipher', () => {
+test('decrypt throws on tampered cipher instead of returning ciphertext', () => {
     const encrypted = encrypt('TEXTO_A_ALTERAR');
     const parts = encrypted.split(':');
     // Alter cipher text
     const tampered = `${parts[0]}:ff${parts[1].slice(2)}:${parts[2]}`;
 
-    const decrypted = decrypt(tampered);
-    assert.equal(decrypted, tampered);
+    assert.throws(() => decrypt(tampered), /Decryption failed/);
+});
+
+test('decrypt falls back to legacy default key for pre-rotation values', () => {
+    const currentEnv = process.env.ENCRYPTION_KEY;
+    process.env.ENCRYPTION_KEY = 'default_wsm_secret_key_change_me_in_prod';
+    const legacyEncrypted = encrypt('VALOR_CIFRADO_CON_CLAVE_VIEJA');
+    process.env.ENCRYPTION_KEY = currentEnv;
+
+    assert.equal(decrypt(legacyEncrypted), 'VALOR_CIFRADO_CON_CLAVE_VIEJA');
+});
+
+test('encrypt and decrypt throw when ENCRYPTION_KEY is missing', () => {
+    const currentEnv = process.env.ENCRYPTION_KEY;
+    delete process.env.ENCRYPTION_KEY;
+    try {
+        assert.throws(() => encrypt('x'), /ENCRYPTION_KEY is required/);
+    } finally {
+        process.env.ENCRYPTION_KEY = currentEnv;
+    }
 });

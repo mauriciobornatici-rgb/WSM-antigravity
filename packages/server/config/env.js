@@ -85,6 +85,7 @@ export function getEnvConfig() {
         jwtExpiresIn: String(process.env.JWT_EXPIRES_IN || '8h').trim(),
         corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS, isDevelopment ? ['http://localhost:5173'] : []),
         trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
+        encryptionKey: process.env.ENCRYPTION_KEY || '',
         dbSsl: parseBooleanEnv('DB_SSL', false),
         dbSslRejectUnauthorized: parseBooleanEnv('DB_SSL_REJECT_UNAUTHORIZED', true),
         allowInsecureNonDev: parseBooleanEnv('ALLOW_INSECURE_NON_DEV', false),
@@ -102,6 +103,13 @@ export function getEnvConfig() {
 
     if (!config.jwtSecret) {
         errors.push('JWT_SECRET is required');
+    }
+
+    if (config.isNonDevelopment && !config.encryptionKey) {
+        errors.push('ENCRYPTION_KEY is required in staging/production (used to encrypt integration credentials at rest)');
+    }
+    if (isDevelopment && !config.encryptionKey) {
+        warnings.push('ENCRYPTION_KEY is not set: integration credentials will fail to encrypt/decrypt. Generate one with node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
     }
 
     if (!config.jwtExpiresIn) {
