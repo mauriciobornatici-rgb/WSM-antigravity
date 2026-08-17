@@ -31,4 +31,4 @@ dist-ssr
 *.zip
 *.corrupt.bak
 packages/server/uploads/
-"playwright-report/"  
+playwright-report/
