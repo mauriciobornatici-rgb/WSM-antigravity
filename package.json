@@ -22,9 +22,7 @@
     "audit": "npm audit --workspaces"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
-  },
-  "dependencies": {
-    "puppeteer": "^24.37.5"
+    "concurrently": "^9.2.1",
+    "puppeteer": "^25.7.0"
   }
 }
