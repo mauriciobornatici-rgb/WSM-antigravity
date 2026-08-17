@@ -1,5 +1,39 @@
 # Execution Changelog
 
+## 2026-08-04
+
+### Added / Security & Refactoring
+- `packages/server/domains/sales/InvoiceAuthorizationUseCase.js` [NEW]
+  - Extracted invoice authorization, AFIP CAE request orchestration, and automatic sales/CMV journal entries.
+- `packages/server/domains/sales/CreateOrderUseCase.js` [NEW]
+  - Extracted order creation, stock reservation and marketplace integration payload handling.
+- `packages/server/domains/procurement/GoodsReceptionService.js` [NEW]
+  - Extracted goods reception approval, quality control segregation to Quarantine, batch/expiry updates and PO status updates.
+- `packages/server/domains/procurement/PurchaseOrderService.js` [NEW]
+  - Extracted Purchase Orders sequence generation, retrieval, and transaction-safe creation logic.
+- `packages/server/domains/procurement/SupplierReturnService.js` [NEW]
+  - Extracted supplier return approval, stock decrement, accounting entries and ledger adjustments.
+- `packages/server/domains/procurement/SupplierPaymentService.js` [NEW]
+  - Extracted supplier payments recording, ledger balance reduction and cash expense transaction logging.
+- `packages/client/src/context/ThemeContextObject.ts` [NEW], `ThemeContext.tsx` [NEW] & `packages/client/src/hooks/useTheme.ts` [NEW]
+  - Created global theme context provider supporting persistent Dark (Modo Noche) and Light (Modo Día) modes.
+- `packages/client/src/layout/AppLayout.tsx` & `packages/client/src/pages/POS.tsx`
+  - Integrated header Theme Toggle buttons (Sun / Moon) with high contrast CSS token mappings.
+- `packages/client/src/hooks/usePOSHotkeys.ts` [NEW]
+  - Implemented keyboard shortcuts for point of sale operation (F2, F4, F8, Esc).
+- `packages/client/src/components/invoices/InvoiceDocument.tsx` & `PrintableThermalTicket.tsx`
+  - Integrated real AFIP RG 4892 QR Code image rendering for scan verification.
+- `packages/server/test/crypto.test.js` [NEW]
+  - Created unit tests for AES-256-GCM encryption, decryption, and legacy plain text fallback.
+- `packages/client/src/lib/pickingUtils.ts` [NEW] & `packages/client/src/lib/pickingUtils.test.ts` [NEW]
+  - Extracted picking domain logic and added 5 Vitest unit tests.
+- `packages/server/services/afip.service.js`
+  - Injected `.crt` and `.key` credentials directly in memory into `@afipsdk/afip.js`, eliminating temp file writing to OS `/tmp`.
+- `packages/server/controllers/settingsController.js`
+  - Protected existing encrypted credentials from partial settings payloads.
+- `packages/server/services/sales.service.js`, `packages/server/services/inventory.service.js` & `packages/server/controllers/procurementController.js`
+  - Delegated complex workflows to standalone domain use cases.
+
 ## 2026-06-15
 
 ### Changed

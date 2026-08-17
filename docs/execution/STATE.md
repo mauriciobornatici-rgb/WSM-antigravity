@@ -1,10 +1,34 @@
 # Execution State Snapshot
 
-Last reviewed: 2026-06-15
+Last reviewed: 2026-08-04
 Current continuity source: `docs/execution/BITACORA_INTEGRAL.md`
-Current score estimate: 88/100
-Immediate priority: validate Tiendanube OAuth/webhook flow against a real HTTPS staging URL, then validate inventory traceability with real data.
-Latest UX/business review: `docs/execution/LOGICA_UX_REVIEW_2026-06-14.md`
+Current score estimate: 92/100
+Immediate priority: Descomposición de controladores procurement y refactorización de Custom Hooks de UI.
+
+## 2026-08-04 Execution Snapshot (Refactorización Modular & Seguridad)
+
+Resolved on 2026-08-04:
+- **Seguridad en Memoria ARCA (AFIP)**: Modificado `afip.service.js` para inyectar `.crt` y `.key` PEM directamente en memoria al SDK de ARCA, eliminando la escritura de credenciales en la carpeta `/tmp` del sistema operativo.
+- **Preservación de Secretos Encubiertos**: Modificado `settingsController.js` para evitar borrado/sobrescritura accidental de tokens de Tienda Nube y ARCA en peticiones de configuración parciales.
+- **Arnés de Pruebas**:
+  - Creado `packages/server/test/crypto.test.js` para probar cifrado AES-256-GCM.
+  - Creado `packages/client/src/lib/pickingUtils.test.ts` con 5 pruebas unitarias en Vitest.
+  - Corregidos errores estrictos de TypeScript en `afipQr.ts` y `pickingUtils.test.ts`.
+- **Descomposición Modular Backend (Clean Architecture)**:
+  - Creado dominio `packages/server/domains/sales/` con `CreateOrderUseCase.js` e `InvoiceAuthorizationUseCase.js`.
+  - Creado dominio `packages/server/domains/procurement/` con `GoodsReceptionService.js`, `PurchaseOrderService.js`, `SupplierReturnService.js` y `SupplierPaymentService.js`.
+  - Servidores y controladores refactorizados como fachadas delegadas limpias.
+- **Mejoras Operativas Internas (100/100 UX & Agilidad)**:
+  - **Reporte Consolidado Cierre Z de Caja**: Creado `ZReportDialog.tsx` e integrado en `CashManagement.tsx` con soporte de previsualización e impresión directa de comprobante de Cierre Z de turno.
+  - **Buscador Universal y Paleta de Comandos (`Ctrl + K`)**: Creado `CommandPalette.tsx` e integrado en `AppLayout.tsx` permitiendo navegación instantánea a todos los módulos y búsqueda en vivo de productos por SKU/nombre con precios y stock.
+  - **Exportador de Datos CSV**: Creado `exportUtils.ts` (con BOM UTF-8 para compatibilidad perfecta con Microsoft Excel) y agregada exportación CSV en **Inventario WMS** y **Proveedores**.
+  - **Nuevas Pruebas Unitarias**: Creado `exportUtils.test.ts` con 2 pruebas en Vitest.
+- **Soporte Completo de Temas & Corrección de Contraste (Modo Noche & Modo Día)**:
+  - Agregada directiva `@variant dark (&:where(.dark, .dark *));` en `index.css` para forzar que las clases utilitarias `dark:` responda exclusivamente a la clase `.dark` de HTML y no a la preferencia de SO del navegador en Modo Día.
+  - Refactorizados componentes UI base (`select.tsx`, `dropdown-menu.tsx`, `dialog.tsx`) eliminando fondos oscuros estáticos (`bg-slate-950`/`bg-slate-900`) por tokens de diseño dinámicos (`bg-popover`, `bg-background`, `text-popover-foreground`).
+  - Rediseñada la tarjeta de proveedores en `Suppliers.tsx` (encabezado `bg-muted/40` y texto `text-foreground` de alto contraste en 100% de la tarjeta).
+  - Ajustada la barra lateral (`AppLayout.tsx`) con contraste tipográfico mejorado en encabezados de sección (`text-slate-400 font-extrabold`) e ítems de navegación.
+- **Validación Canónica**: `npm run validate` 100% verde (66/66 backend, 17/17 Vitest client, 0 errores TS/ESLint, build Vite OK).
 
 ## 2026-06-15 Execution Snapshot
 
