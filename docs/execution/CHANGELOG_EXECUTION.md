@@ -1,5 +1,43 @@
 # Execution Changelog
 
+## 2026-08-16
+
+### Auditoría integral + remediación de hallazgos críticos/altos
+
+- Seguridad / secretos
+  - `packages/server/utils/crypto.js`
+    - `ENCRYPTION_KEY` ahora es obligatoria (hard-fail). Se eliminó el fallback silencioso a texto plano: si el dato no descifra con la clave actual se intenta la clave legacy default (para valores pre-rotación) y si tampoco, se lanza error explícito.
+  - `packages/server/config/env.js`
+    - Validación de `ENCRYPTION_KEY` en arranque (error en staging/production, warning en development).
+  - `packages/server/scripts/set-admin-password.js` & `reset-pwd.js`
+    - Sin contraseñas hardcodeadas: toman `<email> <password>` por CLI, validan política de password e incrementan `token_version` (revoca sesiones).
+  - `.env` (no versionado): `DB_SSL=true` para la BD remota, `ENCRYPTION_KEY` y `JWT_SECRET` rotados. Pendiente humano: rotar `DB_PASSWORD` desde el panel de Hostinger.
+  - `.env.example`: documentada `ENCRYPTION_KEY`.
+- Transaccionalidad / integridad
+  - `packages/server/domains/sales/InvoiceAuthorizationUseCase.js`
+    - Todo el flujo dentro de una TX con `SELECT ... FOR UPDATE` sobre la factura: dos autorizaciones concurrentes ya no pueden duplicar el llamado a AFIP. 404 correcto si no existe.
+  - `packages/server/services/audit.service.js` (+ call sites en `sales.service.js`, `finance.service.js`, `CreateOrderUseCase.js`)
+    - `auditService.log(data, executor)` acepta la conexión de la TX: el audit entry ahora committea/rolbackea junto con la operación monetaria.
+- Integración Tienda Nube
+  - `packages/server/controllers/integrationController.js`
+    - Webhook procesa ANTES de responder: ante fallo responde 500 para que Tienda Nube re-entregue (la tabla de eventos mantiene idempotencia). Sin rawBody → 500 explícito (no se re-serializa el body, que rompía la firma). OAuth callback actualiza el `id` real de `company_settings` (antes hardcodeado a 1).
+  - `packages/server/routes/integrationRoutes.js`
+    - Syncs manuales y cola de reintentos restringidos a `admin` (`authorizeRoles`).
+- Fix fiscal (frontend)
+  - `packages/client/src/components/invoices/AfipQrImage.tsx` [NEW]
+    - QR generado localmente con `qrcode` (sin api.qrserver.com): la impresión fiscal funciona sin internet.
+  - `InvoiceDocument.tsx`, `PrintableThermalTicket.tsx`, `CreditNoteDocument.tsx`, `PrintableThermalCreditNote.tsx`
+    - Usan `afipQr.ts` (payload RG 4892 con `ctz` correcto, NC_A/NC_B mapeados a 3/8). Se eliminaron ~120 líneas duplicadas y los QR "decorativos" falsos. `DEFAULT_CAE_EXPIRATION_DATE` ahora se calcula por render (no quedaba vencido tras días abierta la app).
+- Performance / BD
+  - `packages/server/migrations/026_add_relational_query_indexes.sql` [NEW]
+    - Índices secundarios para joins/filtros frecuentes (order_items, invoice_items, movements, barcode POS, audit_logs, supplier/receptions/returns). Aplicada a la BD remota.
+  - `packages/server/tools/backup_db.js`
+    - `--single-transaction --routines --triggers --events`, password vía `MYSQL_PWD` (fuera del listado de procesos), soporte `--ssl`, retención de 10 backups.
+- Dependencias / higiene
+  - `axios` declarado en `@wsm/server` (era dependencia fantasma); `npm audit fix` → 0 vulnerabilidades (react-router, express-rate-limit, qs, etc.); `puppeteer` movido a devDependencies de la raíz.
+  - Commits del trabajo pendiente de 2026-08-04 (dominios DDD, tests, migraciones 024/025, theme/palette/hooks, manual de usuario) que estaba sin versionar (~2 meses). Des-trackeados artefactos generados (`playwright-report`).
+- Tests: server 82/82 OK, client 20/20 OK, lint OK, build OK.
+
 ## 2026-08-04
 
 ### Added / Security & Refactoring

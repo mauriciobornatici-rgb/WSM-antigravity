@@ -1,9 +1,29 @@
 # Execution State Snapshot
 
-Last reviewed: 2026-08-04
+Last reviewed: 2026-08-16
 Current continuity source: `docs/execution/BITACORA_INTEGRAL.md`
-Current score estimate: 92/100
-Immediate priority: Descomposición de controladores procurement y refactorización de Custom Hooks de UI.
+Current score estimate: 93/100
+Immediate priority: Descomposición de controladores procurement, refactorización de Custom Hooks de UI y migración de páginas restantes a TanStack Query.
+
+## 2026-08-16 Execution Snapshot (Auditoría integral + remediación)
+
+Resolved on 2026-08-16 (detalle completo en `CHANGELOG_EXECUTION.md`):
+- **Auditoría integral** de arquitectura, backend, frontend, seguridad/datos y calidad de ingeniería (sin modificar código). Hallazgos críticos remediados en el mismo día.
+- **Seguridad**: `ENCRYPTION_KEY` obligatoria sin fallback silencioso (con descifrado legacy para datos pre-rotación); scripts admin sin contraseñas hardcodeadas (validan política y revocan sesiones); `.env` con `DB_SSL=true` + claves rotadas; `ENCRYPTION_KEY` validada en arranque.
+- **Transaccionalidad**: autorización AFIP con `FOR UPDATE` (sin doble llamada concurrente a ARCA); audit log transaccional (commitea con la operación).
+- **Tienda Nube**: webhook procesa antes de responder (500 → re-entrega del proveedor), raw body estricto, callback sin `id=1` hardcodeado, syncs manuales solo admin.
+- **Fix fiscal**: los 4 documentos impresos usan `afipQr.ts` (RG 4892, campo `ctz`) y generan el QR localmente (`qrcode`) — antes imprimían QR inválido (`cotiz`) vía api.qrserver.com y las notas de crédito tenían QR decorativo falso.
+- **BD/perf**: migración `026` con índices de consultas frecuentes (aplicada a remota); backup con `--single-transaction`, `MYSQL_PWD` y retención.
+- **Dependencias**: axios declarado, `npm audit fix` → 0 vulnerabilidades, puppeteer a devDependencies.
+- **Git**: 2 meses de trabajo sin commitear ahora versionados en grupos lógicos; artefactos generados des-trackeados.
+- **Validación**: server 82/82, client 20/20, lint 0/0, build OK.
+
+Open decisions / pendientes humanos:
+- Rotar `DB_PASSWORD` de la BD remota desde el panel de Hostinger y separar credenciales dev/prod (el `.env` local aún apunta a la BD real).
+- Re-guardar credenciales de Tienda Nube/AFIP desde Settings para re-cifrarlas con la nueva `ENCRYPTION_KEY` (el descifrado legacy funciona mientras tanto).
+- Asientos contables aún editables/borrables físicamente: pendiente modelo de inmutabilidad con contrasientos.
+- `deliverOrder`/`pickOrderItem` sin TX (riesgo de estado a medias en picking/despacho).
+- Cobertura frontend: sin tests de componentes; E2E con un solo spec fuera de CI.
 
 ## 2026-08-04 Execution Snapshot (Refactorización Modular & Seguridad)
 
