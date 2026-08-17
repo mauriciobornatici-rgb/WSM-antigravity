@@ -50,8 +50,8 @@ export const callbackTiendaNube = catchAsync(async (req, res) => {
         const { access_token, user_id } = response.data;
 
         await pool.query(
-            'UPDATE company_settings SET tiendanube_access_token = ?, tiendanube_store_id = ? WHERE id = 1',
-            [encrypt(access_token), user_id]
+            'UPDATE company_settings SET tiendanube_access_token = ?, tiendanube_store_id = ? WHERE id = ?',
+            [encrypt(access_token), user_id, rows[0].id]
         );
 
         await auditService.log({
@@ -78,23 +78,30 @@ export const webhookTiendaNube = catchAsync(async (req, res) => {
         return res.status(503).json({ error: 'tiendanube_not_configured' });
     }
 
-    const rawBody = req.rawBody || Buffer.from(JSON.stringify(payload), 'utf8');
-    const verified = tiendaNubeService.verifyWebhookSignature(rawBody, signature, creds.clientSecret);
+    // Without the raw bytes the HMAC cannot be verified; re-serializing the
+    // parsed body produces a different signature and would silently reject.
+    if (!req.rawBody) {
+        console.error('[TiendaNube Webhook] rawBody unavailable: check express.json verify option');
+        return res.status(500).json({ error: 'raw_body_unavailable' });
+    }
+
+    const verified = tiendaNubeService.verifyWebhookSignature(req.rawBody, signature, creds.clientSecret);
     if (!verified) {
         return res.status(401).json({ error: 'invalid_tiendanube_signature' });
     }
 
     console.log(`[TiendaNube Webhook] Received ${payload.event} for store ${payload.store_id}`);
-    res.status(200).send('OK');
 
-    setImmediate(async () => {
-        try {
-            const result = await tiendaNubeService.processWebhookEvent(payload, salesService);
-            console.log(`[TiendaNube Webhook] Processed ${payload.event} ${payload.id}: ${result.status}`);
-        } catch (err) {
-            console.error('[TiendaNube Webhook] Error processing webhook async:', err);
-        }
-    });
+    // Process before answering: on failure we return 5xx so Tienda Nube
+    // re-delivers the event (the webhook_events table keeps it idempotent).
+    try {
+        const result = await tiendaNubeService.processWebhookEvent(payload, salesService);
+        console.log(`[TiendaNube Webhook] Processed ${payload.event} ${payload.id}: ${result.status}`);
+        return res.status(200).send('OK');
+    } catch (err) {
+        console.error('[TiendaNube Webhook] Error processing webhook:', err);
+        return res.status(500).json({ error: 'webhook_processing_failed' });
+    }
 });
 
 export const webhookOrdersCreated = webhookTiendaNube;

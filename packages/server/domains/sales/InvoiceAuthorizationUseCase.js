@@ -5,29 +5,38 @@ import afipService from '../../services/afip.service.js';
 
 export class InvoiceAuthorizationUseCase {
     async execute(invoiceId, userId) {
-        const [rows] = await pool.query('SELECT * FROM invoices WHERE id = ?', [invoiceId]);
-        if (rows.length === 0) throw new Error('Invoice not found');
-        if (rows[0].status === 'authorized') return rows[0];
-        
-        const invoiceData = rows[0];
-
-        // 1. Get company settings
-        const [settingsRows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
-        const companySettings = settingsRows[0] || {};
-        
-        // 2. Get invoice items for AFIP detail
-        const [invoiceItems] = await pool.query('SELECT * FROM invoice_items WHERE invoice_id = ?', [invoiceId]);
-
-        const afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
-
-        const cae = afipRes.cae;
-        const expirationDate = afipRes.cae_expiration_date;
-        const finalInvoiceNumber = afipRes.invoice_number;
-
+        // The whole flow runs inside a transaction with a row lock, so two
+        // concurrent authorizations cannot both reach the AFIP call.
         const connection = await pool.getConnection();
         await connection.beginTransaction();
 
         try {
+            const [rows] = await connection.query('SELECT * FROM invoices WHERE id = ? FOR UPDATE', [invoiceId]);
+            if (rows.length === 0) {
+                const notFound = new Error('Invoice not found');
+                notFound.statusCode = 404;
+                throw notFound;
+            }
+            if (rows[0].status === 'authorized') {
+                await connection.commit();
+                return rows[0];
+            }
+
+            const invoiceData = rows[0];
+
+            // 1. Get company settings
+            const [settingsRows] = await connection.query('SELECT * FROM company_settings LIMIT 1');
+            const companySettings = settingsRows[0] || {};
+
+            // 2. Get invoice items for AFIP detail
+            const [invoiceItems] = await connection.query('SELECT * FROM invoice_items WHERE invoice_id = ?', [invoiceId]);
+
+            const afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
+
+            const cae = afipRes.cae;
+            const expirationDate = afipRes.cae_expiration_date;
+            const finalInvoiceNumber = afipRes.invoice_number;
+
             await connection.query(
                 'UPDATE invoices SET status = "authorized", cae = ?, cae_expiration_date = ?, invoice_number = ? WHERE id = ?',
                 [cae, expirationDate, finalInvoiceNumber, invoiceId]
@@ -39,19 +48,19 @@ export class InvoiceAuthorizationUseCase {
             const debitAccount = ['cash', 'card', 'debit_card', 'credit_card', 'qr'].includes(String(invoice.payment_method).toLowerCase())
                 ? '1.1.01.01'
                 : '1.1.03.01';
-                
+
             const invoiceLabel = `${invoice.invoice_type}-${String(invoice.point_of_sale).padStart(4, '0')}-${String(invoice.invoice_number).padStart(8, '0')}`;
             const saleAmount = Math.round((Number(invoice.total_amount) - Number(invoice.vat_amount)) * 100) / 100;
-            
+
             const saleLines = [
                 { account_code: debitAccount, debit: Number(invoice.total_amount), credit: 0, notes: `Venta Factura ${invoiceLabel}` },
                 { account_code: '4.1.01.01', debit: 0, credit: saleAmount, notes: 'Ingreso por Ventas' }
             ];
-            
+
             if (Number(invoice.vat_amount) > 0) {
                 saleLines.push({ account_code: '2.1.02.02', debit: 0, credit: Number(invoice.vat_amount), notes: 'IVA Débito Fiscal 21%' });
             }
-            
+
             let sumDeb = saleLines.reduce((s, l) => s + l.debit, 0);
             let sumCred = saleLines.reduce((s, l) => s + l.credit, 0);
             const diff = sumDeb - sumCred;
@@ -101,7 +110,7 @@ export class InvoiceAuthorizationUseCase {
                 entity_type: 'invoice',
                 entity_id: invoiceId,
                 new_values: { cae, cae_expiration_date: expirationDate }
-            });
+            }, connection);
 
             await connection.commit();
             return invoice;

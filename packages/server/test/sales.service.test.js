@@ -297,7 +297,13 @@ test('authorizeInvoice stores CAE expiration date in audit payload without rolli
                 return [{ affectedRows: 1 }];
             }
             if (statement.startsWith('SELECT * FROM invoices WHERE id = ?')) {
-                return [[authorizedInvoice]];
+                return [[statement.includes('FOR UPDATE') ? issuedInvoice : authorizedInvoice]];
+            }
+            if (statement.startsWith('SELECT * FROM company_settings')) {
+                return [[{}]];
+            }
+            if (statement.startsWith('SELECT * FROM invoice_items')) {
+                return [[]];
             }
             if (statement.includes('INSERT INTO journal_entries')) {
                 return [{ affectedRows: 1 }];
@@ -307,6 +313,9 @@ test('authorizeInvoice stores CAE expiration date in audit payload without rolli
             }
             if (statement.includes('SELECT ii.quantity, p.purchase_price, p.cost_price')) {
                 return [[]];
+            }
+            if (statement.includes('INSERT INTO audit_logs')) {
+                return [{ affectedRows: 1 }];
             }
 
             throw new Error(`Unexpected connection SQL inside authorizeInvoice test: ${statement}`);
@@ -343,7 +352,7 @@ test('authorizeInvoice stores CAE expiration date in audit payload without rolli
         assert.equal(committed, true);
         assert.equal(rolledBack, false);
 
-        const auditCall = poolCalls.find((entry) => entry.sql.includes('INSERT INTO audit_logs'));
+        const auditCall = connectionCalls.find((entry) => entry.sql.includes('INSERT INTO audit_logs'));
         assert.ok(auditCall);
         const auditPayload = JSON.parse(auditCall.params[5]);
         assert.equal(auditPayload.cae_expiration_date, null);

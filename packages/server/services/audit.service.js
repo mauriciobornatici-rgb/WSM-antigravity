@@ -4,12 +4,15 @@ class AuditService {
     /**
      * Log a business action
      * @param {Object} data { user_id, action, entity_type, entity_id, old_values, new_values, ip_address }
+     * @param {Object} [executor] - mysql2 connection/pool. Pass the open transaction
+     *   connection when logging inside one, so the audit entry commits or rolls
+     *   back together with the business operation.
      */
-    async log(data) {
+    async log(data, executor = pool) {
         try {
             const sql = `
-                INSERT INTO audit_logs 
-                (user_id, action, entity_type, entity_id, old_values, new_values, ip_address) 
+                INSERT INTO audit_logs
+                (user_id, action, entity_type, entity_id, old_values, new_values, ip_address)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             `;
             const params = [
@@ -22,7 +25,7 @@ class AuditService {
                 data.ip_address || null
             ];
 
-            await pool.query(sql, params);
+            await executor.query(sql, params);
         } catch (err) {
             // We never fail a request because of a logging error, but we log it to console
             console.error('Audit Log Error:', err);

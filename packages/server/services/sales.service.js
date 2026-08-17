@@ -903,7 +903,7 @@ class SalesService extends BaseService {
                     paid_amount: paymentData.paidAmount,
                     payment_status: paymentData.paymentStatus
                 }
-            });
+            }, connection);
 
             await connection.commit();
             return {
@@ -1076,7 +1076,7 @@ class SalesService extends BaseService {
                     paid_amount: paymentData.paidAmount,
                     payment_status: paymentData.paymentStatus
                 }
-            });
+            }, connection);
 
             await connection.commit();
             return {

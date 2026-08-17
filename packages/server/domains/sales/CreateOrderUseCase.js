@@ -168,7 +168,7 @@ export class CreateOrderUseCase {
                     points_redeemed: pointsRedeemed,
                     points_earned: pointsEarned
                 }
-            });
+            }, connection);
 
             await connection.commit();
             return { id: orderId, total_amount: finalTotal, points_earned: pointsEarned, points_redeemed: pointsRedeemed };

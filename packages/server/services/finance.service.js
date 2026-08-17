@@ -200,7 +200,7 @@ class FinanceService {
                     payments: normalizedPayments,
                     notes: payload?.notes || null
                 }
-            });
+            }, connection);
 
             await connection.commit();
             return {
@@ -335,7 +335,7 @@ class FinanceService {
                     allocations: allocations,
                     notes: notes || null
                 }
-            });
+            }, connection);
 
             await connection.commit();
             return {
@@ -479,7 +479,7 @@ class FinanceService {
                     allocations: allocations,
                     notes: notes || null
                 }
-            });
+            }, connection);
 
             await connection.commit();
             return {
