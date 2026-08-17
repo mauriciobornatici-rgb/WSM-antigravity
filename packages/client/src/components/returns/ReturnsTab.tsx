@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
 import { showErrorToast } from "@/lib/errorHandling"
+import { formatMoney } from "@/lib/formatters"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -194,8 +195,8 @@ export function ReturnsTab() {
                                                     {returnStatusLabel(row.status)}
                                                 </Badge>
                                             </TableCell>
-                                            <TableCell className="text-right">
-                                                ${row.total_amount.toLocaleString("es-AR")}
+                                            <TableCell className="text-right font-mono font-bold">
+                                                {formatMoney(row.total_amount)}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 {row.status !== "approved" ? (

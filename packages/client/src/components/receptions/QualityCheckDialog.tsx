@@ -98,44 +98,44 @@ export function QualityCheckDialog({
 
     return (
         <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className="max-w-2xl bg-white text-slate-900 border border-slate-200">
+            <DialogContent className="w-[95vw] max-w-2xl max-h-[92vh] overflow-y-auto bg-card text-card-foreground border border-border">
                 <DialogHeader>
                     <DialogTitle className="text-xl font-bold">Control de Calidad y Aprobación</DialogTitle>
-                    <DialogDescription className="text-slate-600">
-                        Inspección del remito <span className="font-semibold text-slate-800">{reception.reception_number}</span> de {reception.supplier_name}.
+                    <DialogDescription className="text-muted-foreground">
+                        Inspección del remito <span className="font-semibold text-foreground">{reception.reception_number}</span> de {reception.supplier_name}.
                         Verifica e ingresa las cantidades aprobadas y defectuosas por cada producto.
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="my-4 space-y-4 max-h-[380px] overflow-y-auto pr-1">
                     {items.map((item, index) => (
-                        <div key={item.productId} className="rounded-lg border border-slate-200 p-4 space-y-3 bg-slate-50/50">
+                        <div key={item.productId} className="rounded-lg border border-border p-4 space-y-3 bg-muted/30">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                                 <div>
-                                    <h4 className="font-semibold text-slate-900 text-sm">{item.productName}</h4>
-                                    <p className="text-xs text-slate-500">SKU: {item.sku} | Recibido: <span className="font-semibold">{item.quantityReceived}</span> unid.</p>
+                                    <h4 className="font-semibold text-foreground text-sm">{item.productName}</h4>
+                                    <p className="text-xs text-muted-foreground">SKU: {item.sku} | Recibido: <span className="font-semibold text-foreground">{item.quantityReceived}</span> unid.</p>
                                 </div>
                                 <div className="flex items-center gap-3">
                                     <div className="space-y-1">
-                                        <Label className="text-xs text-slate-600">Aprobadas</Label>
+                                        <Label className="text-xs text-muted-foreground">Aprobadas</Label>
                                         <Input
                                             type="number"
                                             min={0}
                                             max={item.quantityReceived}
                                             value={item.quantityPassed}
                                             onChange={(e) => handleUpdateQty(index, "quantityPassed", e.target.value)}
-                                            className="w-20 text-center h-8 bg-white border-slate-300"
+                                            className="w-20 text-center h-8 bg-background border-input text-foreground"
                                         />
                                     </div>
                                     <div className="space-y-1">
-                                        <Label className="text-xs text-slate-600">Defectuosas</Label>
+                                        <Label className="text-xs text-muted-foreground">Defectuosas</Label>
                                         <Input
                                             type="number"
                                             min={0}
                                             max={item.quantityReceived}
                                             value={item.quantityFailed}
                                             onChange={(e) => handleUpdateQty(index, "quantityFailed", e.target.value)}
-                                            className="w-20 text-center h-8 bg-white border-slate-300 text-red-600 font-semibold"
+                                            className="w-20 text-center h-8 bg-background border-input text-rose-600 dark:text-rose-400 font-semibold"
                                         />
                                     </div>
                                 </div>
@@ -143,12 +143,12 @@ export function QualityCheckDialog({
 
                             {item.quantityFailed > 0 && (
                                 <div className="space-y-1 animate-in fade-in duration-200">
-                                    <Label className="text-xs text-red-700 font-medium">Detalle del defecto</Label>
+                                    <Label className="text-xs text-rose-700 dark:text-rose-400 font-medium">Detalle del defecto</Label>
                                     <Input
                                         placeholder="Ej: Costura descosida, suela despegada, talle incorrecto..."
                                         value={item.defectDescription}
                                         onChange={(e) => handleUpdateDefect(index, e.target.value)}
-                                        className="h-8 bg-white border-red-300 focus-visible:ring-red-400"
+                                        className="h-8 bg-background border-rose-300 dark:border-rose-800 focus-visible:ring-rose-400 text-foreground"
                                     />
                                 </div>
                             )}
@@ -162,26 +162,26 @@ export function QualityCheckDialog({
                             placeholder="Notas generales de la inspección del lote..."
                             value={notes}
                             onChange={(e) => setNotes(e.target.value)}
-                            className="bg-white border-slate-300 min-h-[60px]"
+                            className="bg-background border-input text-foreground min-h-[60px]"
                         />
                     </div>
                 </div>
 
                 {validationError && (
-                    <div className="flex items-start gap-2 rounded-md bg-amber-50 p-3 text-sm text-amber-800 border border-amber-200">
-                        <AlertCircle className="h-5 w-5 shrink-0 text-amber-600" />
+                    <div className="flex items-start gap-2 rounded-md bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300 border border-amber-500/20">
+                        <AlertCircle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
                         <span>{validationError}</span>
                     </div>
                 )}
 
                 <DialogFooter className="gap-2 sm:gap-0">
-                    <Button variant="outline" onClick={onClose} disabled={submitting} className="border-slate-300">
+                    <Button variant="outline" onClick={onClose} disabled={submitting} className="border-border">
                         Cancelar
                     </Button>
                     <Button
                         onClick={handleConfirm}
                         disabled={!!validationError || submitting}
-                        className="bg-blue-600 hover:bg-blue-700 text-white font-medium"
+                        className="bg-primary text-primary-foreground hover:bg-primary/90 font-medium"
                     >
                         {submitting ? "Procesando..." : "Aprobar y Registrar QC"}
                     </Button>

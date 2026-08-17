@@ -245,9 +245,9 @@ export default function SupplierPaymentsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Paso 1: Seleccionar Proveedor */}
                 <div className="lg:col-span-3">
-                    <Card className="bg-slate-900/40 backdrop-blur border-slate-800">
+                    <Card>
                         <CardHeader className="pb-4">
-                            <CardTitle className="text-lg font-semibold text-slate-200">
+                            <CardTitle className="text-lg font-semibold">
                                 1. Seleccione el Proveedor
                             </CardTitle>
                             <CardDescription>
@@ -256,7 +256,7 @@ export default function SupplierPaymentsPage() {
                         </CardHeader>
                         <CardContent className="space-y-4">
                             {isLoading ? (
-                                <div className="h-10 w-full bg-slate-800/50 animate-pulse rounded-md" />
+                                <div className="h-10 w-full bg-muted animate-pulse rounded-md" />
                             ) : (
                                 <Select 
                                     value={selectedSupplierId} 
@@ -267,10 +267,10 @@ export default function SupplierPaymentsPage() {
                                         setPaymentNotes("");
                                     }}
                                 >
-                                    <SelectTrigger className="w-full bg-slate-950 border-slate-800 text-slate-200 h-11 focus:ring-blue-500">
-                                        <SelectValue placeholder="Seleccione un proveedor..." />
+                                    <SelectTrigger className="w-full bg-background border-input text-foreground h-11 focus:ring-blue-500">
+                                        <SelectValue placeholder="Buscar o seleccionar proveedor..." />
                                     </SelectTrigger>
-                                    <SelectContent className="bg-slate-950 border-slate-800 text-slate-200">
+                                    <SelectContent className="bg-popover border-border text-popover-foreground">
                                         {sortedSuppliers.length === 0 ? (
                                             <div className="py-6 text-center text-muted-foreground text-sm">
                                                 No se encontraron proveedores.
@@ -279,7 +279,7 @@ export default function SupplierPaymentsPage() {
                                             sortedSuppliers.map((sup) => {
                                                 const debt = suppliersWithDebtMap.get(sup.id) || 0;
                                                 return (
-                                                    <SelectItem key={sup.id} value={sup.id} className="focus:bg-blue-600/30">
+                                                    <SelectItem key={sup.id} value={sup.id}>
                                                         {sup.name} (Saldo: {formatMoney(sup.account_balance)} {debt > 0 ? `/ Facturas: ${formatMoney(debt)}` : ""})
                                                     </SelectItem>
                                                 );
@@ -289,14 +289,14 @@ export default function SupplierPaymentsPage() {
                                 </Select>
                             )}
                             {selectedSupplier && (
-                                <div className="flex flex-col sm:flex-row gap-4 p-3.5 rounded-lg border border-slate-800 bg-slate-950/40 text-sm text-slate-400 mt-4">
+                                <div className="flex flex-col sm:flex-row gap-4 p-3.5 rounded-lg border border-border bg-muted/40 text-sm text-muted-foreground mt-4">
                                     <div>
-                                        <span className="text-xs uppercase tracking-wider text-slate-500 block">Proveedor</span>
-                                        <span className="font-semibold text-slate-200 text-base">{selectedSupplier.name}</span>
+                                        <span className="text-xs uppercase tracking-wider text-muted-foreground block">Proveedor</span>
+                                        <span className="font-semibold text-foreground text-base">{selectedSupplier.name}</span>
                                     </div>
                                     <div className="sm:ml-auto text-sm sm:text-right">
-                                        <span className="text-xs uppercase tracking-wider text-slate-500 block">Saldo en Cuenta Corriente</span>
-                                        <span className="font-bold text-slate-200 text-base">{formatMoney(selectedSupplier.account_balance)}</span>
+                                        <span className="text-xs uppercase tracking-wider text-muted-foreground block">Saldo en Cuenta Corriente</span>
+                                        <span className="font-bold text-foreground font-mono text-base">{formatMoney(selectedSupplier.account_balance)}</span>
                                     </div>
                                 </div>
                             )}
@@ -308,10 +308,10 @@ export default function SupplierPaymentsPage() {
                     <>
                         {/* Paso 2: Seleccionar Facturas */}
                         <div className="lg:col-span-2 space-y-6">
-                            <Card className="bg-slate-900/40 backdrop-blur border-slate-800">
+                            <Card>
                                 <CardHeader className="pb-4 flex flex-row items-center justify-between">
                                     <div>
-                                        <CardTitle className="text-lg font-semibold text-slate-200">
+                                        <CardTitle className="text-lg font-semibold">
                                             2. Seleccione las Facturas a Pagar
                                         </CardTitle>
                                         <CardDescription>
@@ -323,7 +323,7 @@ export default function SupplierPaymentsPage() {
                                             variant="ghost"
                                             size="sm"
                                             onClick={toggleAllInvoices}
-                                            className="text-blue-400 hover:text-blue-300 hover:bg-slate-800"
+                                            className="text-primary hover:bg-muted"
                                         >
                                             {selectedInvoiceIds.size === supplierInvoices.length
                                                 ? "Deseleccionar Todo"
@@ -332,14 +332,14 @@ export default function SupplierPaymentsPage() {
                                     )}
                                 </CardHeader>
                                 <CardContent className="p-0">
-                                    <div className="border-t border-slate-800 overflow-x-auto">
-                                        <Table>
+                                    <div className="border-t border-border overflow-x-auto">
+                                        <Table className="min-w-[650px]">
                                             <TableHeader>
-                                                <TableRow className="border-slate-800 hover:bg-transparent">
+                                                <TableRow className="border-border hover:bg-transparent">
                                                     <TableHead className="w-[50px] text-center">
                                                         <input 
                                                             type="checkbox"
-                                                            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                                                            className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
                                                             checked={supplierInvoices.length > 0 && selectedInvoiceIds.size === supplierInvoices.length}
                                                             onChange={toggleAllInvoices}
                                                         />
@@ -348,7 +348,7 @@ export default function SupplierPaymentsPage() {
                                                     <TableHead>Fecha</TableHead>
                                                     <TableHead className="text-right">Total</TableHead>
                                                     <TableHead className="text-right">Pagado</TableHead>
-                                                    <TableHead className="text-right">Pendiente</TableHead>
+                                                    <TableHead className="text-right font-bold text-amber-600 dark:text-amber-400">Pendiente</TableHead>
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
@@ -362,28 +362,28 @@ export default function SupplierPaymentsPage() {
                                                     supplierInvoices.map((inv) => (
                                                         <TableRow 
                                                             key={inv.id} 
-                                                            className={cn("cursor-pointer border-slate-800/50", selectedInvoiceIds.has(inv.id) && "bg-slate-800/30")}
+                                                            className={cn("cursor-pointer border-border", selectedInvoiceIds.has(inv.id) && "bg-muted/50")}
                                                             onClick={() => toggleInvoiceSelection(inv.id)}
                                                         >
                                                             <TableCell className="text-center">
                                                                 <input 
                                                                     type="checkbox"
-                                                                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                                                                    className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
                                                                     checked={selectedInvoiceIds.has(inv.id)}
                                                                     onChange={() => toggleInvoiceSelection(inv.id)}
                                                                     onClick={(e) => e.stopPropagation()}
                                                                 />
                                                             </TableCell>
                                                             <TableCell className="font-medium">
-                                                                <div className="flex items-center gap-2 text-slate-300">
-                                                                    <Receipt className="h-4 w-4 text-slate-500" />
+                                                                <div className="flex items-center gap-2 text-foreground">
+                                                                    <Receipt className="h-4 w-4 text-muted-foreground" />
                                                                     {formatInvoiceLabel(inv)}
                                                                 </div>
                                                             </TableCell>
-                                                            <TableCell className="text-slate-400">{new Date(inv.issue_date || "").toLocaleDateString()}</TableCell>
-                                                            <TableCell className="text-right text-slate-300">{formatMoney(inv.total_amount)}</TableCell>
-                                                            <TableCell className="text-right text-emerald-500">{formatMoney(inv.paid_amount)}</TableCell>
-                                                            <TableCell className="text-right text-orange-400 font-semibold">{formatMoney(inv.pending_amount)}</TableCell>
+                                                            <TableCell className="text-muted-foreground">{new Date(inv.issue_date || "").toLocaleDateString()}</TableCell>
+                                                            <TableCell className="text-right font-mono text-foreground">{formatMoney(inv.total_amount)}</TableCell>
+                                                            <TableCell className="text-right font-mono text-emerald-600 dark:text-emerald-400">{formatMoney(inv.paid_amount)}</TableCell>
+                                                            <TableCell className="text-right font-mono text-amber-600 dark:text-amber-400 font-semibold">{formatMoney(inv.pending_amount)}</TableCell>
                                                         </TableRow>
                                                     ))
                                                 )}
@@ -396,9 +396,9 @@ export default function SupplierPaymentsPage() {
 
                         {/* Paso 3: Registrar Pago */}
                         <div className="space-y-6">
-                            <Card className="bg-slate-900/40 backdrop-blur border-slate-800">
+                            <Card>
                                 <CardHeader className="pb-4">
-                                    <CardTitle className="text-lg font-semibold text-slate-200">
+                                    <CardTitle className="text-lg font-semibold">
                                         3. Detalle del Pago
                                     </CardTitle>
                                     <CardDescription>
@@ -410,15 +410,15 @@ export default function SupplierPaymentsPage() {
                                         {paymentLines.map((line, idx) => (
                                             <div key={line.id} className="flex gap-2 items-end">
                                                 <div className="flex-1 space-y-1.5">
-                                                    {idx === 0 && <Label className="text-xs text-slate-400">Método</Label>}
+                                                    {idx === 0 && <Label className="text-xs text-muted-foreground">Método</Label>}
                                                     <Select
                                                         value={line.method}
                                                         onValueChange={(val) => updatePaymentLine(line.id, { method: val as PaymentLine["method"] })}
                                                     >
-                                                        <SelectTrigger className="bg-slate-950 border-slate-800 text-slate-200 h-10">
+                                                        <SelectTrigger className="bg-background border-input text-foreground h-10">
                                                             <SelectValue />
                                                         </SelectTrigger>
-                                                        <SelectContent className="bg-slate-950 border-slate-800 text-slate-200">
+                                                        <SelectContent className="bg-popover border-border text-popover-foreground">
                                                             {PAYMENT_METHOD_OPTIONS.map((opt) => (
                                                                 <SelectItem key={opt.value} value={opt.value}>
                                                                     {opt.label}
@@ -429,13 +429,13 @@ export default function SupplierPaymentsPage() {
                                                 </div>
 
                                                 <div className="flex-1 space-y-1.5">
-                                                    {idx === 0 && <Label className="text-xs text-slate-400">Monto</Label>}
+                                                    {idx === 0 && <Label className="text-xs text-muted-foreground">Monto</Label>}
                                                     <Input
                                                         type="number"
                                                         value={line.amount}
                                                         onChange={(e) => updatePaymentLine(line.id, { amount: e.target.value })}
                                                         placeholder="0.00"
-                                                        className="bg-slate-950 border-slate-800 text-slate-200 h-10 text-right"
+                                                        className="bg-background border-input text-foreground h-10 text-right font-mono"
                                                     />
                                                 </div>
 
@@ -444,7 +444,7 @@ export default function SupplierPaymentsPage() {
                                                         variant="ghost"
                                                         size="icon"
                                                         onClick={() => setPaymentLines(prev => prev.filter(p => p.id !== line.id))}
-                                                        className="text-rose-400 hover:text-rose-300 hover:bg-slate-800 h-10 w-10 shrink-0"
+                                                        className="text-destructive hover:bg-destructive/10 h-10 w-10 shrink-0"
                                                     >
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
@@ -468,7 +468,7 @@ export default function SupplierPaymentsPage() {
                                             value={paymentNotes}
                                             onChange={(e) => setPaymentNotes(e.target.value)}
                                             placeholder="Detalle de cheques, números de transferencia, etc."
-                                            className="bg-slate-950 border-slate-800 text-slate-200 min-h-[80px]"
+                                            className="bg-background border-input text-foreground min-h-[80px]"
                                         />
                                     </div>
 

@@ -5,6 +5,7 @@ import { TableSkeleton } from "@/components/common/Skeletons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { formatMoney } from "@/lib/formatters";
 
 type InventoryTableProps = {
     loading: boolean;
@@ -67,11 +68,11 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
                                 <TableCell>
                                     <Badge variant="secondary">{product.category}</Badge>
                                 </TableCell>
-                                <TableCell className="text-right">
-                                    ${Number(product.purchase_price || 0).toLocaleString("es-AR")}
+                                <TableCell className="text-right font-mono text-muted-foreground">
+                                    {formatMoney(product.purchase_price)}
                                 </TableCell>
-                                <TableCell className="text-right font-semibold text-emerald-600">
-                                    ${Number(product.sale_price || 0).toLocaleString("es-AR")}
+                                <TableCell className="text-right font-semibold font-mono text-emerald-600 dark:text-emerald-400">
+                                    {formatMoney(product.sale_price)}
                                 </TableCell>
                                 <TableCell className="text-right">
                                     <div className="inline-flex items-center gap-2">

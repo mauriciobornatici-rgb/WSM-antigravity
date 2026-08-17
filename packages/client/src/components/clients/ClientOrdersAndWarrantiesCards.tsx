@@ -33,9 +33,7 @@ function orderStatusLabel(status: string): string {
     return labels[normalized] || normalized || "-";
 }
 
-const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(value || 0));
-};
+import { formatMoney } from "@/lib/formatters";
 
 export function ClientOrdersAndWarrantiesCards({
     orders,

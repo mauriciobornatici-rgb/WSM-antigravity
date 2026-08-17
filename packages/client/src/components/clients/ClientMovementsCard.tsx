@@ -20,9 +20,7 @@ interface ClientMovementsCardProps {
     onPrint: (movement: ClientMovement) => void;
 }
 
-const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(value || 0));
-};
+import { formatMoney } from "@/lib/formatters";
 
 function movementLabel(type: ClientMovement["type"]): string {
     switch (type) {

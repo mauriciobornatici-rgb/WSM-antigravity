@@ -99,9 +99,7 @@ function paymentTypeLabel(type: string): string {
     }
 }
 
-const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(value || 0));
-};
+import { formatMoney } from "@/lib/formatters";
 
 export function ClientDocumentsCards({
     invoices,

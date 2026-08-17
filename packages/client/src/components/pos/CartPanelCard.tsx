@@ -1,6 +1,7 @@
 import { CreditCard, Plus, Trash2, UserPlus } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { CartPanelProps } from "@/components/pos/types";
+import { formatMoney } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -47,9 +48,14 @@ export function CartPanelCard({
                         </Button>
                     </div>
                     {selectedClient ? (
-                        <div className="rounded-md border bg-muted/20 p-2 text-xs">
-                            <div>{selectedClient.name}</div>
-                            <div className="text-muted-foreground">{selectedClient.tax_id}</div>
+                        <div className="rounded-md border bg-muted/20 p-2 text-xs flex justify-between items-center">
+                            <div>
+                                <div className="font-semibold">{selectedClient.name}</div>
+                                <div className="text-muted-foreground">{selectedClient.tax_id}</div>
+                            </div>
+                            <div className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20 px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1">
+                                <span>⭐</span> {selectedClient.loyalty_points || 0} pts
+                            </div>
                         </div>
                     ) : null}
                 </div>
@@ -106,15 +112,15 @@ export function CartPanelCard({
                 <div className="space-y-1 rounded-md border bg-muted/20 p-3 text-sm">
                     <div className="flex justify-between">
                         <span>Subtotal</span>
-                        <span>${subtotal.toLocaleString("es-AR")}</span>
+                        <span>{formatMoney(subtotal)}</span>
                     </div>
                     <div className="flex justify-between">
                         <span>{taxLabel}</span>
-                        <span>${taxAmount.toLocaleString("es-AR")}</span>
+                        <span>{formatMoney(taxAmount)}</span>
                     </div>
                     <div className="flex justify-between font-bold">
                         <span>Total</span>
-                        <span>${grandTotal.toLocaleString("es-AR")}</span>
+                        <span>{formatMoney(grandTotal)}</span>
                     </div>
                 </div>
 

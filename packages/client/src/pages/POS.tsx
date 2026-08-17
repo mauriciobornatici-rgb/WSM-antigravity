@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, History } from "lucide-react";
+import { ArrowLeft, History, Moon, Sun } from "lucide-react";
 import { toast } from "sonner";
+import { useTheme } from "@/hooks/useTheme";
 import { api } from "@/services/api";
 import type { Client, CompanySettings } from "@/types";
 import type { CashRegister, CashShiftSummary, Invoice } from "@/types/api";
@@ -13,10 +14,13 @@ import { PaymentDialog } from "@/components/pos/PaymentDialog";
 import { ProductCatalogCard } from "@/components/pos/ProductCatalogCard";
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog";
 import { POSHistoryDialog } from "@/components/pos/POSHistoryDialog";
-import type { CartItem, InvoiceType, NewClientForm, PaymentSplit, POSProduct } from "@/components/pos/types";
+import type { InvoiceType, NewClientForm, PaymentSplit, POSProduct } from "@/components/pos/types";
 import { Button } from "@/components/ui/button";
 import { PrintableInvoiceArea } from "@/components/invoices/PrintableInvoiceArea";
 import { PrintableThermalTicket } from "@/components/invoices/PrintableThermalTicket";
+import { usePOSCart } from "@/hooks/usePOSCart";
+import { usePOSHotkeys } from "@/hooks/usePOSHotkeys";
+import { playScanErrorBeep } from "@/lib/scanAudio";
 
 function roundMoney(value: number): number {
     return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -28,9 +32,19 @@ function defaultPaymentSplit(amount = 0): PaymentSplit {
 
 export default function POSPage() {
     const navigate = useNavigate();
+    const { theme, toggleTheme } = useTheme();
     const [products, setProducts] = useState<POSProduct[]>([]);
     const [clients, setClients] = useState<Client[]>([]);
-    const [cart, setCart] = useState<CartItem[]>([]);
+    const {
+        cart,
+        setCart,
+        addToCart,
+        updateQuantity,
+        removeFromCart,
+        subtotal,
+        taxAmount,
+        grandTotal,
+    } = usePOSCart();
     const [loading, setLoading] = useState(true);
 
     const [search, setSearch] = useState("");
@@ -64,6 +78,30 @@ export default function POSPage() {
     const [currentShift, setCurrentShift] = useState<CashShiftSummary | null>(null);
     const [activePrintLayout, setActivePrintLayout] = useState<'a4' | 'thermal' | null>(null);
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+
+    usePOSHotkeys({
+        onSearchFocus: () => {
+            const inputEl = document.querySelector<HTMLInputElement>("input[type='search'], input[placeholder*='Buscar']");
+            inputEl?.focus();
+        },
+        onPaymentOpen: () => {
+            if (cart.length > 0) {
+                setPaymentDialogOpen(true);
+            } else {
+                toast.warning("El carrito está vacío");
+            }
+        },
+        onEscape: () => {
+            setSearch("");
+            setPaymentDialogOpen(false);
+            setClientDialogOpen(false);
+            setHistoryDialogOpen(false);
+        },
+        onToggleInvoice: () => {
+            setEmitInvoice((prev) => !prev);
+            toast.info(`Facturación fiscal AFIP: ${!emitInvoice ? "Activada" : "Desactivada"}`);
+        },
+    });
 
     const handlePrint = (layout: 'a4' | 'thermal', invoice: Invoice) => {
         setActivePrintLayout(layout);
@@ -135,24 +173,6 @@ export default function POSPage() {
         [clients, selectedClientId],
     );
 
-    function addToCart(product: POSProduct) {
-        if (product.stock <= 0) {
-            toast.warning("Producto sin stock");
-            return;
-        }
-
-        setCart((current) => {
-            const found = current.find((item) => item.id === product.id);
-            if (!found) return [...current, { ...product, quantity: 1 }];
-
-            if (found.quantity >= product.stock) {
-                toast.warning("No hay más stock disponible");
-                return current;
-            }
-            return current.map((item) => (item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item));
-        });
-    }
-
     function handleCatalogScan(rawValue: string) {
         const scannedValue = rawValue.trim().toLowerCase();
         if (!scannedValue) return;
@@ -165,43 +185,13 @@ export default function POSPage() {
 
         if (!product) {
             toast.warning("Código no encontrado");
+            playScanErrorBeep();
             return;
         }
 
         addToCart(product);
         setSearch("");
     }
-
-    function updateQuantity(productId: string, delta: number) {
-        setCart((current) =>
-            current
-                .map((item) => {
-                    if (item.id !== productId) return item;
-                    const nextQuantity = Math.max(0, item.quantity + delta);
-                    if (nextQuantity > item.stock) {
-                        toast.warning("No hay más stock disponible");
-                        return item;
-                    }
-                    return { ...item, quantity: nextQuantity };
-                })
-                .filter((item) => item.quantity > 0),
-        );
-    }
-
-    function removeFromCart(productId: string) {
-        setCart((current) => current.filter((item) => item.id !== productId));
-    }
-
-    const subtotal = roundMoney(cart.reduce((sum, item) => sum + Number(item.sale_price || 0) * item.quantity, 0));
-    const taxAmount = roundMoney(
-        cart.reduce((sum, item) => {
-            const itemVatRate = item.vat_rate != null ? Number(item.vat_rate) : 21.00;
-            const lineNet = roundMoney(item.quantity * Number(item.sale_price || 0));
-            const lineVat = roundMoney(lineNet * (itemVatRate / 100));
-            return sum + lineVat;
-        }, 0),
-    );
-    const grandTotal = roundMoney(subtotal + taxAmount);
 
     async function createClient() {
         if (!newClient.name || !newClient.tax_id) {
@@ -394,6 +384,16 @@ export default function POSPage() {
                     >
                         <History className="h-4 w-4" />
                         Historial de Ventas / Reimprimir
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full gap-2 sm:w-auto"
+                        onClick={toggleTheme}
+                        title={theme === "dark" ? "Cambiar a Modo Día" : "Cambiar a Modo Noche"}
+                    >
+                        {theme === "dark" ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-indigo-500" />}
+                        {theme === "dark" ? "Modo Día" : "Modo Noche"}
                     </Button>
                 </div>
                 <p className="text-sm text-muted-foreground">Terminal de venta</p>

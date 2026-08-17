@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Receipt } from "lucide-react";
+import { Plus, Trash2, Receipt, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -38,9 +38,7 @@ function createPaymentLine(defaultAmount = ""): PaymentLine {
     };
 }
 
-const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(value || 0));
-};
+import { formatMoney } from "@/lib/formatters";
 
 function formatInvoiceLabel(invoice: PendingInvoiceResponse): string {
     const type = String(invoice.invoice_type || "B");
@@ -261,7 +259,7 @@ export default function CollectionsPage() {
                         </CardContent>
                     </Card>
 
-                    {selectedClientId && (
+                    {selectedClientId ? (
                         <Card className="flex-1">
                             <CardHeader className="flex flex-row items-center justify-between pb-2">
                                 <div>
@@ -272,67 +270,77 @@ export default function CollectionsPage() {
                                 </div>
                             </CardHeader>
                             <CardContent className="p-0">
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow>
-                                            <TableHead className="w-[50px] text-center">
-                                                <input 
-                                                    type="checkbox"
-                                                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
-                                                    checked={selectedInvoiceIds.size > 0 && selectedInvoiceIds.size === clientInvoices.length}
-                                                    onChange={toggleAllInvoices}
-                                                />
-                                            </TableHead>
-                                            <TableHead>Comprobante</TableHead>
-                                            <TableHead>Fecha</TableHead>
-                                            <TableHead className="text-right">Total</TableHead>
-                                            <TableHead className="text-right">Pagado</TableHead>
-                                            <TableHead className="text-right">Pendiente</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {clientInvoices.length === 0 ? (
+                                <div className="overflow-x-auto">
+                                    <Table className="min-w-[680px]">
+                                        <TableHeader>
                                             <TableRow>
-                                                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                                                    No se encontraron facturas pendientes.
-                                                </TableCell>
+                                                <TableHead className="w-[50px] text-center">
+                                                    <input 
+                                                        type="checkbox"
+                                                        className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
+                                                        checked={selectedInvoiceIds.size > 0 && selectedInvoiceIds.size === clientInvoices.length}
+                                                        onChange={toggleAllInvoices}
+                                                    />
+                                                </TableHead>
+                                                <TableHead>Comprobante</TableHead>
+                                                <TableHead>Fecha</TableHead>
+                                                <TableHead className="text-right">Total</TableHead>
+                                                <TableHead className="text-right">Pagado</TableHead>
+                                                <TableHead className="text-right font-bold text-amber-600 dark:text-amber-400">Pendiente</TableHead>
                                             </TableRow>
-                                        ) : (
-                                            clientInvoices.map((inv) => (
-                                                <TableRow 
-                                                    key={inv.id} 
-                                                    className={cn("cursor-pointer", selectedInvoiceIds.has(inv.id) && "bg-muted/50")}
-                                                    onClick={() => toggleInvoiceSelection(inv.id)}
-                                                >
-                                                    <TableCell className="text-center">
-                                                        <input 
-                                                            type="checkbox"
-                                                            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
-                                                            checked={selectedInvoiceIds.has(inv.id)}
-                                                            onChange={() => toggleInvoiceSelection(inv.id)}
-                                                            onClick={(e) => e.stopPropagation()}
-                                                        />
-                                                    </TableCell>
-                                                    <TableCell className="font-medium">
-                                                        <div className="flex items-center gap-2">
-                                                            <Receipt className="h-4 w-4 text-muted-foreground" />
-                                                            {formatInvoiceLabel(inv)}
-                                                        </div>
-                                                    </TableCell>
-                                                    <TableCell>{new Date(inv.issue_date || "").toLocaleDateString()}</TableCell>
-                                                    <TableCell className="text-right">{formatMoney(inv.total_amount)}</TableCell>
-                                                    <TableCell className="text-right text-emerald-600 dark:text-emerald-400">
-                                                        {formatMoney(inv.paid_amount)}
-                                                    </TableCell>
-                                                    <TableCell className="text-right font-semibold text-amber-600 dark:text-amber-500">
-                                                        {formatMoney(inv.pending_amount)}
+                                        </TableHeader>
+                                        <TableBody>
+                                            {clientInvoices.length === 0 ? (
+                                                <TableRow>
+                                                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                                                        No se encontraron facturas pendientes para este cliente.
                                                     </TableCell>
                                                 </TableRow>
-                                            ))
-                                        )}
-                                    </TableBody>
-                                </Table>
+                                            ) : (
+                                                clientInvoices.map((inv) => (
+                                                    <TableRow 
+                                                        key={inv.id} 
+                                                        className={cn("cursor-pointer", selectedInvoiceIds.has(inv.id) && "bg-muted/50")}
+                                                        onClick={() => toggleInvoiceSelection(inv.id)}
+                                                    >
+                                                        <TableCell className="text-center">
+                                                            <input 
+                                                                type="checkbox"
+                                                                className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
+                                                                checked={selectedInvoiceIds.has(inv.id)}
+                                                                onChange={() => toggleInvoiceSelection(inv.id)}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            />
+                                                        </TableCell>
+                                                        <TableCell className="font-medium">
+                                                            <div className="flex items-center gap-2">
+                                                                <Receipt className="h-4 w-4 text-muted-foreground" />
+                                                                {formatInvoiceLabel(inv)}
+                                                            </div>
+                                                        </TableCell>
+                                                        <TableCell>{new Date(inv.issue_date || "").toLocaleDateString()}</TableCell>
+                                                        <TableCell className="text-right font-mono">{formatMoney(inv.total_amount)}</TableCell>
+                                                        <TableCell className="text-right font-mono">{formatMoney(inv.paid_amount)}</TableCell>
+                                                        <TableCell className="text-right font-bold font-mono text-amber-600 dark:text-amber-400">
+                                                            {formatMoney(Number(inv.total_amount) - Number(inv.paid_amount))}
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ))
+                                            )}
+                                        </TableBody>
+                                    </Table>
+                                </div>
                             </CardContent>
+                        </Card>
+                    ) : (
+                        <Card className="flex-1 flex flex-col items-center justify-center p-12 text-center border-dashed">
+                            <div className="rounded-full bg-primary/10 p-4 mb-3">
+                                <Users className="h-8 w-8 text-primary" />
+                            </div>
+                            <h3 className="font-semibold text-lg">Selecciona un cliente</h3>
+                            <p className="text-sm text-muted-foreground max-w-sm mt-1">
+                                Elige un cliente con deuda arriba para cargar sus facturas pendientes y armar el cobro.
+                            </p>
                         </Card>
                     )}
                 </div>

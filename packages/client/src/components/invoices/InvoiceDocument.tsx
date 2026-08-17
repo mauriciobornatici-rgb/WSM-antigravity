@@ -223,23 +223,11 @@ export function InvoiceDocument({
 
                             <div className="flex flex-col gap-4 sm:flex-row sm:items-stretch sm:justify-start">
                                 <div className="flex items-center gap-2 border-2 border-slate-900 p-2 bg-white rounded-sm select-none shrink-0">
-                                    <div className="w-16 h-16 shrink-0 bg-white border border-slate-300 p-1 rounded flex flex-wrap gap-[1px]">
-                                        {Array.from({ length: 64 }).map((_, idx) => {
-                                            const isCorner = 
-                                                (idx < 8 && idx % 8 < 3) || 
-                                                (idx < 24 && idx >= 16 && idx % 8 < 3) || 
-                                                (idx >= 40 && idx < 48 && idx % 8 < 3) ||
-                                                (idx < 8 && idx % 8 >= 5) ||
-                                                (idx >= 56 && idx % 8 < 3) ||
-                                                (idx % 11 === 0) || (idx % 7 === 0);
-                                            return (
-                                                <div 
-                                                    key={idx} 
-                                                    className={`w-[6px] h-[6px] ${isCorner ? 'bg-slate-900' : 'bg-slate-300'}`} 
-                                                />
-                                            )
-                                        })}
-                                    </div>
+                                    <img
+                                        src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(getAfipQrValue())}`}
+                                        alt="AFIP QR Code"
+                                        className="w-16 h-16 shrink-0 bg-white border border-slate-300 p-0.5 rounded"
+                                    />
                                     <div className="text-[10px] space-y-0.5 text-slate-700 leading-tight">
                                         <div className="font-black text-slate-900 flex items-center gap-1">
                                             <span className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white px-1 py-0.5 rounded text-[8px] tracking-wider uppercase font-black">ARCA</span>

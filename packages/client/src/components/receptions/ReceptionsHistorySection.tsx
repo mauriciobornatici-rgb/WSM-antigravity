@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, Clock, PackageCheck } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, PackageCheck, Tag } from "lucide-react";
 import { receptionStatusLabel, statusBadgeClass } from "./receptionStatus";
 import type { ReceptionRecord, ReceptionsFilter } from "./types";
 
@@ -13,6 +13,7 @@ type ReceptionsHistorySectionProps = {
     approving: boolean;
     onFilterChange: (status: ReceptionsFilter) => void;
     onApproveReception: (reception: ReceptionRecord) => void;
+    onPrintLabels?: (reception: ReceptionRecord) => void;
 };
 
 export function ReceptionsHistorySection({
@@ -21,6 +22,7 @@ export function ReceptionsHistorySection({
     approving,
     onFilterChange,
     onApproveReception,
+    onPrintLabels,
 }: ReceptionsHistorySectionProps) {
     return (
         <div className="space-y-4">
@@ -105,12 +107,22 @@ export function ReceptionsHistorySection({
                                     <td className={tableCellClass}>
                                         <span className={statusBadgeClass(reception.status)}>{receptionStatusLabel(reception.status)}</span>
                                     </td>
-                                    <td className="px-6 py-4 text-right">
+                                    <td className="px-6 py-4 text-right flex items-center justify-end gap-2">
+                                        {onPrintLabels && (
+                                            <button
+                                                onClick={() => onPrintLabels(reception)}
+                                                className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                                                title="Imprimir etiquetas de códigos de barras"
+                                            >
+                                                <Tag className="h-3.5 w-3.5 text-blue-600" />
+                                                Etiquetas
+                                            </button>
+                                        )}
                                         {reception.status === "pending_qc" ? (
                                             <button
                                                 onClick={() => onApproveReception(reception)}
                                                 disabled={approving}
-                                                className="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white transition hover:bg-green-700"
+                                                className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-green-700"
                                             >
                                                 Aprobar
                                             </button>

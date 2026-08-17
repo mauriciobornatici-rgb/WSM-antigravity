@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom"
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Toaster } from "sonner"
 import { AuthProvider } from "@/context/AuthContext"
+import { ThemeProvider } from "@/context/ThemeContext"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import AppLayout from "@/layout/AppLayout"
 import ErrorBoundary from "@/components/common/ErrorBoundary"
@@ -59,7 +60,8 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <BrowserRouter>
             <Suspense fallback={<Loader />}>
@@ -248,6 +250,7 @@ function App() {
           <Toaster />
         </AuthProvider>
       </QueryClientProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   )
 }

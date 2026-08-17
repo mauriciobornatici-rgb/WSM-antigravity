@@ -5,6 +5,8 @@ export interface Product {
     name: string
     description: string
     category: string
+    size?: string | null
+    color?: string | null
     image_url?: string | null
     purchase_price: number
     sale_price: number
@@ -40,6 +42,7 @@ export interface Client {
     address: string
     current_account_balance: number
     credit_limit: number
+    loyalty_points?: number
     created_at: string
 }
 

@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
 import { showErrorToast } from "@/lib/errorHandling"
+import { formatMoney } from "@/lib/formatters"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -169,18 +170,15 @@ export function CreditNotesTab({
                                             </TableCell>
                                             <TableCell>
                                                 {row.cae ? (
-                                                    <span className="text-xs font-mono font-bold text-green-600">
+                                                    <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
                                                         {row.cae}
                                                     </span>
                                                 ) : (
                                                     <span className="text-muted-foreground">-</span>
                                                 )}
                                             </TableCell>
-                                            <TableCell className="text-right font-bold">
-                                                $
-                                                {row.amount.toLocaleString("es-AR", {
-                                                    minimumFractionDigits: 2,
-                                                })}
+                                            <TableCell className="text-right font-mono font-bold">
+                                                {formatMoney(row.amount)}
                                             </TableCell>
                                             <TableCell className="flex justify-end gap-1 text-right">
                                                 {row.status === "issued" && (

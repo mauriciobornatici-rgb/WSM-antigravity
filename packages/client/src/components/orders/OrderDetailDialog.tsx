@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { CircleDashed, Package, FileText, Truck } from "lucide-react"
 import { api } from "@/services/api"
+import { formatMoney } from "@/lib/formatters"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
@@ -23,7 +24,7 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-3xl no-print print:hidden">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-3xl no-print print:hidden bg-card text-card-foreground border-border shadow-2xl">
                 <DialogHeader>
                     <DialogTitle>Detalle del Pedido</DialogTitle>
                     <DialogDescription>
@@ -68,7 +69,7 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
 
                         return (
                             <div className="space-y-6">
-                                <div className="grid gap-4 sm:grid-cols-2 rounded-lg border p-4 bg-muted/10">
+                                <div className="grid gap-4 sm:grid-cols-2 rounded-lg border border-border p-4 bg-muted/40">
                                     <div>
                                         <h4 className="font-semibold text-sm text-muted-foreground mb-2">
                                             Información del Pedido
@@ -76,7 +77,7 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                         <div className="space-y-1 text-sm">
                                             <p>
                                                 <strong>Pedido ID:</strong>{" "}
-                                                <span className="font-mono text-xs">{detailOrder.id}</span>
+                                                <span className="font-mono text-xs text-muted-foreground">{detailOrder.id}</span>
                                             </p>
                                             <p>
                                                 <strong>Fecha Creación:</strong>{" "}
@@ -91,8 +92,8 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                             </p>
                                             <p>
                                                 <strong>Total Comercial:</strong>{" "}
-                                                <strong className="text-foreground">
-                                                    ${Number(detailOrder.total_amount || 0).toLocaleString("es-AR")}
+                                                <strong className="text-foreground font-mono font-bold">
+                                                    {formatMoney(detailOrder.total_amount || 0)}
                                                 </strong>
                                             </p>
                                         </div>
@@ -133,12 +134,12 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                     </div>
                                 </div>
 
-                                <div className="grid gap-4 sm:grid-cols-2 border-b pb-4">
+                                <div className="grid gap-4 sm:grid-cols-2 border-b border-border pb-4">
                                     <div className="text-sm">
                                         <span className="text-muted-foreground block text-xs uppercase font-bold tracking-wider">
                                             Cliente
                                         </span>
-                                        <span className="font-medium text-base">
+                                        <span className="font-medium text-base text-foreground">
                                             {detailOrder.client_name ||
                                                 detailOrder.customer_name ||
                                                 "Consumidor Final"}
@@ -148,18 +149,18 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                         <span className="text-muted-foreground block text-xs uppercase font-bold tracking-wider">
                                             Operador de Venta
                                         </span>
-                                        <span className="font-medium text-base">
+                                        <span className="font-medium text-base text-foreground">
                                             {detailOrder.counter_name || "Sistema"}
                                         </span>
                                     </div>
                                 </div>
 
                                 <div className="space-y-2">
-                                    <h4 className="font-semibold text-sm">Artículos del Pedido</h4>
-                                    <div className="rounded-md border overflow-hidden">
+                                    <h4 className="font-semibold text-sm text-foreground">Artículos del Pedido</h4>
+                                    <div className="rounded-md border border-border overflow-x-auto bg-card">
                                         <Table>
                                             <TableHeader>
-                                                <TableRow>
+                                                <TableRow className="border-border bg-muted/30">
                                                     <TableHead>Ubicación</TableHead>
                                                     <TableHead>SKU</TableHead>
                                                     <TableHead>Producto</TableHead>
@@ -173,13 +174,13 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                                 {detailItems.map((item: OrderItem, idx: number) => {
                                                     const subtotal = Number(item.quantity || 0) * Number(item.unit_price || 0)
                                                     return (
-                                                        <TableRow key={`${item.id}-${idx}`}>
+                                                        <TableRow key={`${item.id}-${idx}`} className="border-border">
                                                             <TableCell className="font-mono font-bold text-xs">
                                                                 {item.location || "Sin Ubicación"}
                                                             </TableCell>
                                                             <TableCell className="font-mono text-xs">{item.sku}</TableCell>
-                                                            <TableCell className="text-sm">{item.product_name}</TableCell>
-                                                            <TableCell className="text-right font-semibold">
+                                                            <TableCell className="text-sm font-medium">{item.product_name}</TableCell>
+                                                            <TableCell className="text-right font-mono font-semibold">
                                                                 {item.quantity}
                                                             </TableCell>
                                                             <TableCell className="text-right font-mono">
@@ -187,18 +188,18 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                                                     className={
                                                                         Number(item.picked_quantity || 0) <
                                                                         Number(item.quantity || 0)
-                                                                            ? "text-amber-500 font-bold"
-                                                                            : "text-emerald-500"
+                                                                            ? "text-amber-600 dark:text-amber-400 font-bold"
+                                                                            : "text-emerald-600 dark:text-emerald-400 font-bold"
                                                                     }
                                                                 >
                                                                     {item.picked_quantity || 0}
                                                                 </span>
                                                             </TableCell>
                                                             <TableCell className="text-right font-mono">
-                                                                ${Number(item.unit_price || 0).toLocaleString("es-AR")}
+                                                                {formatMoney(item.unit_price || 0)}
                                                             </TableCell>
-                                                            <TableCell className="text-right font-mono font-semibold">
-                                                                ${subtotal.toLocaleString("es-AR")}
+                                                            <TableCell className="text-right font-mono font-bold">
+                                                                {formatMoney(subtotal)}
                                                             </TableCell>
                                                         </TableRow>
                                                     )
@@ -208,7 +209,7 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                     </div>
                                 </div>
 
-                                <div className="space-y-3 rounded-lg border p-4 bg-emerald-500/5">
+                                <div className="space-y-3 rounded-lg border border-border p-4 bg-emerald-500/10 dark:bg-emerald-950/20">
                                     <h4 className="font-semibold text-sm flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
                                         <Package className="h-4 w-4" /> Audición WMS (Sistemas de Depósito)
                                     </h4>
@@ -218,7 +219,7 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                                 <span className="text-muted-foreground block text-xs">
                                                     Operario Responsable
                                                 </span>
-                                                <span className="font-medium">
+                                                <span className="font-medium text-foreground">
                                                     {detailSession.picker_name || `Picker ID: ${detailSession.picker_id}`}
                                                 </span>
                                             </div>
@@ -226,15 +227,15 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                                 <span className="text-muted-foreground block text-xs">
                                                     Tiempo Transcurrido
                                                 </span>
-                                                <span className="font-medium">{durationText}</span>
+                                                <span className="font-medium text-foreground">{durationText}</span>
                                             </div>
                                             <div>
                                                 <span className="text-muted-foreground block text-xs">
                                                     Velocidad del Operario
                                                 </span>
-                                                <span className="font-medium">{speedText}</span>
+                                                <span className="font-medium text-foreground">{speedText}</span>
                                             </div>
-                                            <div className="sm:col-span-3 border-t pt-2 mt-1 grid grid-cols-2 gap-2 text-xs">
+                                            <div className="sm:col-span-3 border-t border-border/50 pt-2 mt-1 grid grid-cols-2 gap-2 text-xs">
                                                 <p>
                                                     <strong>Inicio Picking:</strong>{" "}
                                                     {new Date(detailSession.started_at).toLocaleString("es-AR")}
@@ -256,19 +257,19 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                 </div>
 
                                 {detailOrder.notes && (
-                                    <div className="rounded-md border p-3 bg-slate-50 dark:bg-slate-900/50 text-sm">
+                                    <div className="rounded-md border border-border p-3 bg-muted/40 text-sm">
                                         <strong className="block mb-1 text-xs uppercase tracking-wider text-muted-foreground">
                                             Observaciones del Pedido
                                         </strong>
-                                        <p className="text-slate-700 dark:text-slate-350">{detailOrder.notes}</p>
+                                        <p className="text-foreground">{detailOrder.notes}</p>
                                     </div>
                                 )}
                                 {detailOrder.delivery_notes && (
-                                    <div className="rounded-md border p-3 bg-amber-500/5 text-sm">
+                                    <div className="rounded-md border border-amber-500/20 p-3 bg-amber-500/10 dark:bg-amber-950/20 text-sm">
                                         <strong className="block mb-1 text-xs uppercase tracking-wider text-amber-700 dark:text-amber-400">
                                             Instrucciones de Despacho
                                         </strong>
-                                        <p className="text-amber-900 dark:text-amber-300">{detailOrder.delivery_notes}</p>
+                                        <p className="text-foreground">{detailOrder.delivery_notes}</p>
                                     </div>
                                 )}
 

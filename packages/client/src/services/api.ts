@@ -478,6 +478,9 @@ export const api = {
     getDashboardStats: () =>
         httpClient.get<DashboardStatsResponse>("/api/dashboard/stats"),
 
+    getSizeColorAnalytics: () =>
+        httpClient.get<Array<{ category: string; size: string; units_sold: number }>>("/api/dashboard/size-color-analytics"),
+
     // ==================== RETURNS ====================
     getReturns: (filters?: { supplier_id?: string; status?: string }) =>
         httpClient.get<GenericRecord[]>(withQuery("/api/returns", filters)),

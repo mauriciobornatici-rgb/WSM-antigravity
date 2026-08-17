@@ -1,4 +1,4 @@
-import { ArrowLeft, Mail, Phone, MapPin, CreditCard, Plus, User } from "lucide-react";
+import { ArrowLeft, Mail, Phone, MapPin, CreditCard, Plus, User, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -17,9 +17,7 @@ interface ClientHeaderCardProps {
     onBack: () => void;
 }
 
-const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(value || 0));
-};
+import { formatMoney } from "@/lib/formatters";
 
 export function ClientHeaderCard({
     client,
@@ -72,15 +70,34 @@ export function ClientHeaderCard({
                                 <CreditCard className="h-5 w-5 text-green-500" />
                                 Cuenta corriente
                             </span>
-                            <Button
-                                type="button"
-                                size="sm"
-                                onClick={onOpenPaymentDialog}
-                                disabled={openInvoices.length === 0}
-                            >
-                                <Plus className="mr-1 h-4 w-4" />
-                                Registrar cobro
-                            </Button>
+                            <div className="flex items-center gap-1.5">
+                                {client.phone && accountTotals.balance > 0 && (
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        className="bg-green-500/10 text-green-600 hover:bg-green-500/20 border-green-500/30 font-semibold"
+                                        onClick={() => {
+                                            const cleanPhone = String(client.phone || "").replace(/\D/g, "");
+                                            const message = `Hola ${client.name}, le enviamos el resumen de su cuenta corriente en SportsERP. Su saldo pendiente es de ${formatMoney(accountTotals.balance)}. Muchas gracias.`;
+                                            window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, "_blank");
+                                        }}
+                                        title="Enviar recordatorio de cobro por WhatsApp"
+                                    >
+                                        <MessageCircle className="mr-1 h-4 w-4" />
+                                        WhatsApp
+                                    </Button>
+                                )}
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={onOpenPaymentDialog}
+                                    disabled={openInvoices.length === 0}
+                                >
+                                    <Plus className="mr-1 h-4 w-4" />
+                                    Registrar cobro
+                                </Button>
+                            </div>
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-3">

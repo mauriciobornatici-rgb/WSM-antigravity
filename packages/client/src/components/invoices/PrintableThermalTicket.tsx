@@ -144,25 +144,13 @@ export function PrintableThermalTicket({
                         <p>VTO. CAE: {invoice.cae_expiration_date ? new Date(invoice.cae_expiration_date).toLocaleDateString("es-AR") : "-"}</p>
                     </div>
 
-                    {/* Compact Simulated QR Code */}
+                    {/* Real AFIP QR Code */}
                     <div className="flex items-center justify-center gap-2 border border-slate-400 p-1.5 bg-white rounded-sm select-none">
-                        <div className="w-12 h-12 shrink-0 bg-white border border-slate-200 p-0.5 rounded flex flex-wrap gap-[0.5px]">
-                            {Array.from({ length: 49 }).map((_, idx) => {
-                                const isCorner = 
-                                    (idx < 5 && idx % 7 < 2) || 
-                                    (idx < 15 && idx >= 10 && idx % 7 < 2) || 
-                                    (idx >= 25 && idx % 7 < 2) ||
-                                    (idx < 5 && idx % 7 >= 4) ||
-                                    (idx >= 40 && idx % 7 < 2) ||
-                                    (idx % 9 === 0) || (idx % 5 === 0);
-                                return (
-                                    <div 
-                                        key={idx} 
-                                        className={`w-[5px] h-[5px] ${isCorner ? 'bg-slate-900' : 'bg-slate-200'}`} 
-                                    />
-                                )
-                            })}
-                        </div>
+                        <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(getAfipQrValue())}`}
+                            alt="AFIP QR Code"
+                            className="w-12 h-12 shrink-0 bg-white border border-slate-200 p-0.5 rounded"
+                        />
                         <div className="text-[8px] space-y-0.5 text-slate-800 leading-tight text-left">
                             <span className="bg-slate-900 text-white px-1 py-0.2 rounded font-black text-[7px] tracking-wider">ARCA/AFIP</span>
                             <p className="font-bold">Factura Autorizada</p>

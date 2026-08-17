@@ -44,9 +44,7 @@ function formatInvoiceLabel(invoice: Pick<InvoiceSummary, "invoice_type" | "poin
     return `${type}-${pos}-${number}`;
 }
 
-const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(value || 0));
-};
+import { formatMoney } from "@/lib/formatters";
 
 interface ClientPaymentDialogProps {
     open: boolean;

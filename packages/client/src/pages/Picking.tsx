@@ -4,7 +4,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, Box, Check, ScanLine } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
-import { isApiError } from "@/services/httpClient";
 import { queryKeys } from "@/lib/queryKeys";
 import type { Order } from "@/types";
 import { showErrorToast } from "@/lib/errorHandling";
@@ -15,86 +14,23 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { usePickingSession } from "@/hooks/usePickingSession";
+import { playScanErrorBeep, playScanSuccessBeep } from "@/lib/scanAudio";
 
-function sortItemsByLocation(order: Order, descending: boolean = true): Order {
-    const items = order.items || [];
-    const sortedItems = [...items].sort((left, right) => {
-        const locA = left.location || "";
-        const locB = right.location || "";
-        if (locA === locB) return 0;
-        if (!locA) return 1;
-        if (!locB) return -1;
-        return descending ? locB.localeCompare(locA) : locA.localeCompare(locB);
-    });
-    return {
-        ...order,
-        items: sortedItems,
-    };
-}
-
-function toPickedFlag(order: Order): Order {
-    const items = order.items || [];
-    return {
-        ...order,
-        items: items.map((item) => ({
-            ...item,
-            picked: Number(item.picked_quantity || 0) >= Number(item.quantity || 0),
-        })),
-    };
-}
-
-function isPickableStatus(status: string): boolean {
-    return status === "pending" || status === "picking";
-}
-
-function itemRemainingQuantity(item: Order["items"][number]): number {
-    return Math.max(0, Number(item.quantity || 0) - Number(item.picked_quantity || 0));
-}
-
-function itemIsComplete(item: Order["items"][number]): boolean {
-    return itemRemainingQuantity(item) === 0;
-}
-
-function itemIsPartial(item: Order["items"][number]): boolean {
-    return Number(item.picked_quantity || 0) > 0 && itemRemainingQuantity(item) > 0;
-}
-
-function orderTotalQuantity(order: Order): number {
-    const items = order.items || [];
-    return items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-}
-
-function orderPickedQuantity(order: Order): number {
-    const items = order.items || [];
-    return items.reduce((sum, item) => sum + Number(item.picked_quantity || 0), 0);
-}
-
-function orderMissingQuantity(order: Order): number {
-    return Math.max(0, orderTotalQuantity(order) - orderPickedQuantity(order));
-}
-
-function orderHasShortage(order: Order): boolean {
-    return orderMissingQuantity(order) > 0;
-}
-
-function readyStatusLabel(order: Order): string {
-    if (order.shipping_method === "pickup") return "Listo para retiro";
-    if (order.shipping_method === "delivery") return "Listo para envio";
-    return "Listo para despacho";
-}
-
-function statusLabel(status: Order["status"]): string {
-    const labels: Record<Order["status"], string> = {
-        pending: "Pendiente",
-        picking: "En picking",
-        packed: "Empaquetado",
-        dispatched: "Despachado",
-        delivered: "Entregado",
-        completed: "Completado",
-        cancelled: "Cancelado",
-    };
-    return labels[status] ?? status;
-}
+import {
+    isPickableStatus,
+    itemIsComplete,
+    itemIsPartial,
+    itemRemainingQuantity,
+    orderHasShortage,
+    orderMissingQuantity,
+    orderPickedQuantity,
+    orderTotalQuantity,
+    readyStatusLabel,
+    sortItemsByLocation,
+    statusLabel,
+    toPickedFlag,
+} from "@/lib/pickingUtils";
 
 export default function PickingPage() {
     const { id } = useParams<{ id?: string }>();
@@ -180,35 +116,7 @@ export default function PickingPage() {
     const pendingScanRemaining = pendingScanItem ? itemRemainingQuantity(pendingScanItem) : 0;
     const canPick = selectedOrder ? isPickableStatus(selectedOrder.status) : false;
 
-    async function transitionToPacked(orderId: string): Promise<void> {
-        const summary = await api.getOrderSummary(orderId);
-        let currentStatus = String(summary.order?.status || "").toLowerCase();
-
-        if (currentStatus === "packed") return;
-
-        if (currentStatus === "pending") {
-            try {
-                await api.updateOrderStatus(orderId, "picking");
-                currentStatus = "picking";
-            } catch (error) {
-                if (isApiError(error) && error.status === 400) {
-                    throw new Error("El backend rechazo el estado 'picking'. Reinicia el servidor con la ultima version.");
-                }
-                throw error;
-            }
-        }
-
-        if (currentStatus === "picking") {
-            await api.updateOrderStatus(orderId, "packed");
-            return;
-        }
-
-        if (currentStatus === "packed" || currentStatus === "dispatched" || currentStatus === "delivered" || currentStatus === "completed") {
-            return;
-        }
-
-        throw new Error(`No se puede cerrar picking desde estado '${currentStatus || "desconocido"}'.`);
-    }
+    const { transitionToPacked } = usePickingSession();
 
     useEffect(() => {
         if (!pendingScanItem) return;
@@ -237,12 +145,14 @@ export default function PickingPage() {
                     setIsLocationVerified(true);
                     setPickingStep('barcode');
                     toast.success("¡Ubicación confirmada!");
+                    playScanSuccessBeep();
                     void api.recordPickingEvent(selectedOrder.id, {
                         product_id: pendingScanItem.product_id,
                         action_type: 'location_verified',
                         location_code: targetLoc
                     });
                 } else {
+                    playScanErrorBeep();
                     toast.error(`Ubicación incorrecta: ${scannedText}`, {
                         description: `Debes ir a la ubicación: ${pendingScanItem.location || "Sin ubicación"}`,
                     });
@@ -254,12 +164,14 @@ export default function PickingPage() {
                     setIsBarcodeVerified(true);
                     setPickingStep('quantity');
                     toast.success("¡Producto verificado!");
+                    playScanSuccessBeep();
                     void api.recordPickingEvent(selectedOrder.id, {
                         product_id: pendingScanItem.product_id,
                         action_type: 'barcode_scanned',
                         barcode_scanned: scannedText
                     });
                 } else {
+                    playScanErrorBeep();
                     toast.error(`Producto incorrecto`, {
                         description: `Se esperaba el SKU/Código: ${pendingScanItem.sku}`,
                     });
@@ -586,13 +498,13 @@ export default function PickingPage() {
                                                 ? "bg-emerald-600 border-emerald-600 text-white" 
                                                 : pickingStep === 'location' 
                                                     ? "bg-blue-600 border-blue-600 text-white animate-pulse" 
-                                                    : "border-slate-300 text-slate-400"
+                                                    : "border-border text-muted-foreground"
                                         )}>
                                             {isLocationVerified ? "✓" : "1"}
                                         </span>
-                                        <span className={isLocationVerified ? "text-emerald-500" : pickingStep === 'location' ? "text-blue-500" : "text-slate-400"}>Ubicación</span>
+                                        <span className={isLocationVerified ? "text-emerald-600 dark:text-emerald-400" : pickingStep === 'location' ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground"}>Ubicación</span>
                                     </div>
-                                    <div className="h-[1px] w-8 bg-slate-300 dark:bg-slate-700" />
+                                    <div className="h-[1px] w-8 bg-border" />
                                     <div className="flex items-center gap-2">
                                         <span className={cn(
                                             "flex h-6 w-6 items-center justify-center rounded-full border text-xs",
@@ -600,21 +512,21 @@ export default function PickingPage() {
                                                 ? "bg-emerald-600 border-emerald-600 text-white" 
                                                 : pickingStep === 'barcode' 
                                                     ? "bg-blue-600 border-blue-600 text-white animate-pulse" 
-                                                    : "border-slate-300 text-slate-400"
+                                                    : "border-border text-muted-foreground"
                                         )}>
                                             {isBarcodeVerified ? "✓" : "2"}
                                         </span>
-                                        <span className={isBarcodeVerified ? "text-emerald-500" : pickingStep === 'barcode' ? "text-blue-500" : "text-slate-400"}>Producto</span>
+                                        <span className={isBarcodeVerified ? "text-emerald-600 dark:text-emerald-400" : pickingStep === 'barcode' ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground"}>Producto</span>
                                     </div>
-                                    <div className="h-[1px] w-8 bg-slate-300 dark:bg-slate-700" />
+                                    <div className="h-[1px] w-8 bg-border" />
                                     <div className="flex items-center gap-2">
                                         <span className={cn(
                                             "flex h-6 w-6 items-center justify-center rounded-full border text-xs",
-                                            pickingStep === 'quantity' ? "bg-blue-600 border-blue-600 text-white animate-pulse" : "border-slate-300 text-slate-400"
+                                            pickingStep === 'quantity' ? "bg-blue-600 border-blue-600 text-white animate-pulse" : "border-border text-muted-foreground"
                                         )}>
                                             3
                                         </span>
-                                        <span className={pickingStep === 'quantity' ? "text-blue-500 animate-pulse" : "text-slate-400"}>Cantidad</span>
+                                        <span className={pickingStep === 'quantity' ? "text-blue-600 dark:text-blue-400 animate-pulse" : "text-muted-foreground"}>Cantidad</span>
                                     </div>
                                 </div>
 
@@ -769,13 +681,13 @@ export default function PickingPage() {
                                             ? "border-emerald-500/40 bg-emerald-500/10 dark:border-emerald-500/50 dark:bg-emerald-500/10 hover:bg-emerald-500/5 cursor-default"
                                             : warning
                                                 ? "border-amber-500/40 bg-amber-500/10 dark:border-amber-400/50 dark:bg-amber-500/10 hover:border-amber-500"
-                                                : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/70 hover:border-blue-500 dark:hover:border-blue-400",
+                                                : "border-border bg-card text-card-foreground hover:border-blue-500 dark:hover:border-blue-400",
                                 )}
                             >
                                 <CardContent className="space-y-3 p-4">
                                     <div className="flex items-center justify-between">
                                         <Badge variant="outline">{item.location || "Sin ubicacion"}</Badge>
-                                        <span className="font-mono text-xs text-slate-500 dark:text-slate-300">{item.sku}</span>
+                                        <span className="font-mono text-xs text-muted-foreground">{item.sku}</span>
                                     </div>
                                     <h3
                                         className={cn(
@@ -783,13 +695,13 @@ export default function PickingPage() {
                                             complete
                                                 ? "text-emerald-700 line-through dark:text-emerald-300"
                                                 : warning
-                                                    ? "text-amber-200"
-                                                    : "text-slate-900 dark:text-slate-100",
+                                                    ? "text-amber-700 dark:text-amber-300"
+                                                    : "text-foreground",
                                         )}
                                     >
                                         {item.product_name}
                                     </h3>
-                                    <div className="flex items-center justify-between text-sm text-slate-700 dark:text-slate-200">
+                                    <div className="flex items-center justify-between text-sm text-foreground">
                                         <span>
                                             Cantidad: <strong>{item.quantity}</strong>
                                         </span>
@@ -797,7 +709,7 @@ export default function PickingPage() {
                                             Recolectado: <strong>{item.picked_quantity || 0}</strong>
                                         </span>
                                     </div>
-                                    <div className={cn("text-xs", remaining > 0 ? "text-amber-300" : "text-emerald-300")}>
+                                    <div className={cn("text-xs font-medium", remaining > 0 ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400")}>
                                         {remaining > 0 ? `Faltante: ${remaining}` : "Item completo"}
                                     </div>
                                     <div className="flex justify-end">
@@ -808,7 +720,7 @@ export default function PickingPage() {
                                                     ? "bg-emerald-600 text-white"
                                                     : warning
                                                         ? "bg-amber-500 text-slate-950"
-                                                        : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300",
+                                                        : "bg-muted text-muted-foreground",
                                             )}
                                         >
                                             {complete ? <Check className="h-4 w-4" /> : warning ? <AlertTriangle className="h-4 w-4" /> : <Box className="h-4 w-4" />}
@@ -834,7 +746,7 @@ export default function PickingPage() {
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {pickableOrders.length === 0 ? (
-                    <Card>
+                    <Card className="md:col-span-2 lg:col-span-3">
                         <CardContent className="p-8 text-center text-muted-foreground">
                             No hay pedidos pendientes de picking.
                         </CardContent>
@@ -843,7 +755,7 @@ export default function PickingPage() {
                     pickableOrders.map((order) => (
                         <Card
                             key={order.id}
-                            className="cursor-pointer border-l-4 border-l-blue-500 transition hover:bg-slate-50 dark:border-l-blue-400 dark:hover:bg-slate-900/70"
+                            className="cursor-pointer border-l-4 border-l-blue-500 transition hover:bg-muted/50 dark:border-l-blue-400"
                         >
                             <CardHeader>
                                 <div className="flex items-start justify-between">

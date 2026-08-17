@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext"
 import { api } from "@/services/api"
 import type { Order } from "@/types"
 import { queryKeys } from "@/lib/queryKeys"
+import { formatMoney } from "@/lib/formatters"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -313,7 +314,7 @@ export default function OrdersPage() {
                                                 (order.status === "packed" || order.status === "dispatched") ? (
                                                     <input
                                                         type="checkbox"
-                                                        className="h-4 w-4 rounded border-slate-350 accent-primary cursor-pointer"
+                                                        className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
                                                         checked={selectedOrderIds.includes(order.id)}
                                                         onChange={() => toggleOrderSelection(order.id)}
                                                     />
@@ -341,8 +342,8 @@ export default function OrdersPage() {
                                                 </div>
                                             </TableCell>
                                             <TableCell>{renderStatusBadge(order.status, order)}</TableCell>
-                                            <TableCell className="text-right">
-                                                ${Number(order.total_amount || 0).toLocaleString("es-AR")}
+                                            <TableCell className="text-right font-mono font-medium">
+                                                {formatMoney(order.total_amount)}
                                             </TableCell>
                                             <TableCell>
                                                 {order.invoice_id ? (
@@ -486,7 +487,7 @@ export default function OrdersPage() {
 
             {/* Floating Selection Bar */}
             {selectedOrderIds.length > 0 && (
-                <div className="fixed bottom-6 left-1/2 z-[45] -translate-x-1/2 flex items-center justify-between gap-4 rounded-full border border-primary/25 bg-slate-900 px-6 py-3 text-white shadow-2xl animate-in slide-in-from-bottom duration-300 no-print print:hidden">
+                <div className="fixed bottom-6 left-1/2 z-[45] -translate-x-1/2 flex items-center justify-between gap-4 rounded-full border border-border bg-popover px-6 py-3 text-popover-foreground shadow-2xl animate-in slide-in-from-bottom duration-300 no-print print:hidden">
                     <span className="text-sm font-semibold">
                         {selectedOrderIds.length}{" "}
                         {selectedOrderIds.length === 1 ? "pedido seleccionado" : "pedidos seleccionados"}
@@ -494,7 +495,7 @@ export default function OrdersPage() {
                     <div className="flex gap-2">
                         <Button
                             size="sm"
-                            className="rounded-full bg-primary hover:bg-primary/95 text-white"
+                            className="rounded-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
                             onClick={() => setManifestDialogOpen(true)}
                         >
                             Generar Hoja de Ruta
@@ -502,7 +503,7 @@ export default function OrdersPage() {
                         <Button
                             size="sm"
                             variant="ghost"
-                            className="rounded-full hover:bg-slate-800 text-slate-400 hover:text-white"
+                            className="rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
                             onClick={() => setSelectedOrderIds([])}
                         >
                             Limpiar
