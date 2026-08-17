@@ -6,6 +6,8 @@ import { nextDocumentSequence } from '../utils/documentSequence.js';
 import financeService from './finance.service.js';
 import accountingService from './accounting.service.js';
 import afipService from './afip.service.js';
+import invoiceAuthorizationUseCase from '../domains/sales/InvoiceAuthorizationUseCase.js';
+import createOrderUseCase from '../domains/sales/CreateOrderUseCase.js';
 
 class SalesService extends BaseService {
     constructor() {
@@ -78,48 +80,8 @@ class SalesService extends BaseService {
         return err;
     }
 
-    async _decreaseInventoryForOrder(connection, { orderId, productId, productName, quantity }) {
-        const requestedQty = Number.parseInt(String(quantity), 10);
-        if (!Number.isFinite(requestedQty) || requestedQty <= 0) {
-            const err = new Error(`Cantidad invalida para producto ${productName || productId}`);
-            err.statusCode = 400;
-            err.status = 'fail';
-            err.errorCode = 'INVALID_QUANTITY';
-            throw err;
-        }
-
-        // Query available stock: quantity - reserved_quantity
-        const [stockRows] = await connection.query(
-            `SELECT id, location, quantity, reserved_quantity, (quantity - reserved_quantity) AS available_quantity
-             FROM inventory
-             WHERE product_id = ? AND (quantity - reserved_quantity) > 0 AND location NOT IN ('Cuarentena', 'Devoluciones a Proveedores', 'Mermas')
-             ORDER BY (quantity - reserved_quantity) DESC
-             FOR UPDATE`,
-            [productId]
-        );
-
-        const availableQty = stockRows.reduce((sum, row) => sum + Number(row.available_quantity || 0), 0);
-        if (availableQty < requestedQty) {
-            throw this._buildStockError(productId, productName, requestedQty, availableQty);
-        }
-
-        let remaining = requestedQty;
-        for (const row of stockRows) {
-            if (remaining <= 0) break;
-            const rowAvailable = Number(row.available_quantity || 0);
-            const consume = Math.min(rowAvailable, remaining);
-            if (consume <= 0) continue;
-
-            await connection.query(
-                'UPDATE inventory SET reserved_quantity = reserved_quantity + ? WHERE id = ?',
-                [consume, row.id]
-            );
-            remaining -= consume;
-        }
-
-        if (remaining > 0) {
-            throw this._buildStockError(productId, productName, requestedQty, availableQty);
-        }
+    async _decreaseInventoryForOrder(connection, payload) {
+        return createOrderUseCase._decreaseInventoryForOrder(connection, payload);
     }
 
     async _restoreInventoryForCancelledOrder(connection, orderId, originalStatus = 'pending') {
@@ -200,104 +162,7 @@ class SalesService extends BaseService {
     }
 
     async createOrder(orderData, userId) {
-        const orderId = crypto.randomUUID();
-        const connection = await pool.getConnection();
-
-        try {
-            await connection.beginTransaction();
-
-            const productIds = orderData.items.map((item) => item.product_id);
-            const [products] = await connection.query(
-                'SELECT id, sale_price, name FROM products WHERE id IN (?)',
-                [productIds]
-            );
-            const priceByProduct = new Map(products.map((p) => [p.id, Number(p.sale_price || 0)]));
-            const nameByProduct = new Map(products.map((p) => [p.id, p.name || p.id]));
-
-            for (const item of orderData.items) {
-                if (!priceByProduct.has(item.product_id)) {
-                    throw new Error(`Producto no encontrado: ${item.product_id}`);
-                }
-            }
-
-            const computedTotal = orderData.items.reduce(
-                (sum, item) => sum + Number(item.quantity) * priceByProduct.get(item.product_id),
-                0
-            );
-
-            let counterName = String(orderData.counter_name || '').trim();
-            if (!counterName && userId) {
-                const [users] = await connection.query(
-                    'SELECT name FROM users WHERE id = ? LIMIT 1',
-                    [userId]
-                );
-                counterName = String(users[0]?.name || '').trim();
-            }
-            const resolvedCounterName = counterName || null;
-
-            await connection.query(
-                `INSERT INTO orders (
-                    id, client_id, counter_user_id, customer_name, counter_name,
-                    total_amount, status, payment_status, payment_method,
-                    shipping_method, shipping_address, estimated_delivery,
-                    recipient_name, recipient_dni, delivery_notes, notes,
-                    external_source, external_id
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    orderId,
-                    orderData.client_id || null,
-                    userId || orderData.counter_user_id || null,
-                    orderData.customer_name || null,
-                    resolvedCounterName,
-                    computedTotal,
-                    orderData.payment_method || 'cash',
-                    orderData.shipping_method || null,
-                    orderData.shipping_address || null,
-                    orderData.estimated_delivery || null,
-                    orderData.recipient_name || null,
-                    orderData.recipient_dni || null,
-                    orderData.delivery_notes || null,
-                    orderData.notes || null,
-                    orderData.external_source || null,
-                    orderData.external_id || null
-                ]
-            );
-
-            for (const item of orderData.items) {
-                await this._decreaseInventoryForOrder(connection, {
-                    orderId,
-                    productId: item.product_id,
-                    productName: nameByProduct.get(item.product_id),
-                    quantity: item.quantity
-                });
-
-                const itemId = crypto.randomUUID();
-                const unitPrice = priceByProduct.get(item.product_id);
-                await connection.query(
-                    'INSERT INTO order_items (id, order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?, ?)',
-                    [itemId, orderId, item.product_id, item.quantity, unitPrice]
-                );
-            }
-
-            await auditService.log({
-                user_id: userId,
-                action: 'CREATE_ORDER',
-                entity_type: 'order',
-                entity_id: orderId,
-                new_values: {
-                    ...orderData,
-                    total_amount: computedTotal
-                }
-            });
-
-            await connection.commit();
-            return { id: orderId, total_amount: computedTotal };
-        } catch (err) {
-            await connection.rollback();
-            throw err;
-        } finally {
-            connection.release();
-        }
+        return createOrderUseCase.execute(orderData, userId);
     }
 
     async transitionOrderStatus(orderId, requestedStatus, userId) {
@@ -1237,112 +1102,7 @@ class SalesService extends BaseService {
 
 
     async authorizeInvoice(invoiceId, userId) {
-        const [rows] = await pool.query('SELECT * FROM invoices WHERE id = ?', [invoiceId]);
-        if (rows.length === 0) throw new Error('Invoice not found');
-        if (rows[0].status === 'authorized') return rows[0];
-        
-        const invoiceData = rows[0];
-
-        // 1. Get company settings
-        const [settingsRows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
-        const companySettings = settingsRows[0] || {};
-        
-        // 2. Get invoice items for AFIP detail
-        const [invoiceItems] = await pool.query('SELECT * FROM invoice_items WHERE invoice_id = ?', [invoiceId]);
-
-        const afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
-
-        const cae = afipRes.cae;
-        const expirationDate = afipRes.cae_expiration_date;
-        const finalInvoiceNumber = afipRes.invoice_number;
-
-        const connection = await pool.getConnection();
-        await connection.beginTransaction();
-
-        try {
-            await connection.query(
-                'UPDATE invoices SET status = "authorized", cae = ?, cae_expiration_date = ?, invoice_number = ? WHERE id = ?',
-                [cae, expirationDate, finalInvoiceNumber, invoiceId]
-            );
-
-            const [updatedInvoiceRows] = await connection.query('SELECT * FROM invoices WHERE id = ?', [invoiceId]);
-            const invoice = updatedInvoiceRows[0];
-
-            const debitAccount = ['cash', 'card', 'debit_card', 'credit_card', 'qr'].includes(String(invoice.payment_method).toLowerCase())
-                ? '1.1.01.01'
-                : '1.1.03.01';
-                
-            const invoiceLabel = `${invoice.invoice_type}-${String(invoice.point_of_sale).padStart(4, '0')}-${String(invoice.invoice_number).padStart(8, '0')}`;
-            const saleAmount = Math.round((Number(invoice.total_amount) - Number(invoice.vat_amount)) * 100) / 100;
-            
-            const saleLines = [
-                { account_code: debitAccount, debit: Number(invoice.total_amount), credit: 0, notes: `Venta Factura ${invoiceLabel}` },
-                { account_code: '4.1.01.01', debit: 0, credit: saleAmount, notes: 'Ingreso por Ventas' }
-            ];
-            
-            if (Number(invoice.vat_amount) > 0) {
-                saleLines.push({ account_code: '2.1.02.02', debit: 0, credit: Number(invoice.vat_amount), notes: 'IVA Débito Fiscal 21%' });
-            }
-            
-            let sumDeb = saleLines.reduce((s, l) => s + l.debit, 0);
-            let sumCred = saleLines.reduce((s, l) => s + l.credit, 0);
-            const diff = sumDeb - sumCred;
-            if (Math.abs(diff) > 0 && Math.abs(diff) < 0.05) {
-                saleLines[1].credit = Math.round((saleLines[1].credit + diff) * 100) / 100;
-            }
-
-            await accountingService.createJournalEntry(connection, {
-                date: invoice.issue_date,
-                description: `Asiento de Venta - Factura ${invoiceLabel}`,
-                reference_type: 'invoice',
-                reference_id: invoice.id,
-                lines: saleLines
-            });
-
-            const [itemCosts] = await connection.query(`
-                SELECT ii.quantity, p.purchase_price, p.cost_price
-                FROM invoice_items ii
-                JOIN products p ON ii.product_id = p.id
-                WHERE ii.invoice_id = ?
-            `, [invoiceId]);
-
-            let totalCmv = 0;
-            for (const item of itemCosts) {
-                const cost = Number(item.purchase_price || item.cost_price || 0);
-                const qty = Number(item.quantity || 0);
-                totalCmv += cost * qty;
-            }
-            totalCmv = Math.round(totalCmv * 100) / 100;
-
-            if (totalCmv > 0) {
-                await accountingService.createJournalEntry(connection, {
-                    date: invoice.issue_date,
-                    description: `Costo de Mercadería Vendida - Factura ${invoiceLabel}`,
-                    reference_type: 'invoice',
-                    reference_id: invoice.id,
-                    lines: [
-                        { account_code: '5.1.01.01', debit: totalCmv, credit: 0, notes: 'Costo de Ventas (CMV)' },
-                        { account_code: '1.1.04.01', debit: 0, credit: totalCmv, notes: 'Salida de Inventario' }
-                    ]
-                });
-            }
-
-            await auditService.log({
-                user_id: userId,
-                action: 'AUTHORIZE_INVOICE',
-                entity_type: 'invoice',
-                entity_id: invoiceId,
-                new_values: { cae, cae_expiration_date: expirationDate }
-            });
-
-            await connection.commit();
-            return invoice;
-        } catch (error) {
-            await connection.rollback();
-            throw error;
-        } finally {
-            connection.release();
-        }
+        return invoiceAuthorizationUseCase.execute(invoiceId, userId);
     }
 
     async getInvoices(filters = {}) {

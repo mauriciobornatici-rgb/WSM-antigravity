@@ -50,24 +50,11 @@ class AfipService {
             return this.instances.get(cacheKey);
         }
 
-        // afip.js requiere los archivos en disco
-        const tmpDir = os.tmpdir();
-        const certFileName = `afip_cert_${cuit}_${isProduction}.crt`;
-        const keyFileName = `afip_key_${cuit}_${isProduction}.key`;
-        
-        const certPath = path.join(tmpDir, certFileName);
-        const keyPath = path.join(tmpDir, keyFileName);
-
-        await fs.writeFile(certPath, cert, { encoding: 'utf8', mode: 0o600 });
-        await fs.writeFile(keyPath, key, { encoding: 'utf8', mode: 0o600 });
-
-        this.createdTempFiles.add(certPath);
-        this.createdTempFiles.add(keyPath);
-
+        // Pass cert and key contents directly in memory without writing to disk
         const afip = new Afip({
             CUIT: parseInt(cuit, 10),
-            cert: certPath,
-            key: keyPath,
+            cert: cert,
+            key: key,
             production: isProduction
         });
 

@@ -6,6 +6,9 @@ import auditService from '../services/audit.service.js';
 import accountingService from '../services/accounting.service.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
 import getRequestIp from '../utils/requestIp.js';
+import purchaseOrderService from '../domains/procurement/PurchaseOrderService.js';
+import supplierReturnService from '../domains/procurement/SupplierReturnService.js';
+import supplierPaymentService from '../domains/procurement/SupplierPaymentService.js';
 
 async function getTaxRate(connection) {
     const conn = connection || pool;
@@ -82,48 +85,7 @@ async function decreaseInventory(connection, productId, quantityToRemove) {
 }
 
 export const getPurchaseOrders = catchAsync(async (req, res) => {
-    const { supplier_id, status } = req.query;
-    let query = `
-        SELECT po.*, s.name AS supplier_name
-        FROM purchase_orders po
-        LEFT JOIN suppliers s ON po.supplier_id = s.id
-        WHERE 1=1
-    `;
-    const params = [];
-
-    if (supplier_id) {
-        query += ' AND po.supplier_id = ?';
-        params.push(supplier_id);
-    }
-    if (status) {
-        query += ' AND po.status = ?';
-        params.push(status);
-    }
-    query += ' ORDER BY po.created_at DESC';
-
-    const [orders] = await pool.query(query, params);
-    if (orders.length === 0) {
-        return res.json(orders);
-    }
-
-    const orderIds = orders.map((o) => o.id);
-    const [allItems] = await pool.query(`
-        SELECT poi.*, p.name AS product_name, p.sku
-        FROM purchase_order_items poi
-        LEFT JOIN products p ON poi.product_id = p.id
-        WHERE poi.purchase_order_id IN (?)
-    `, [orderIds]);
-
-    const itemsByOrder = {};
-    for (const item of allItems) {
-        if (!itemsByOrder[item.purchase_order_id]) itemsByOrder[item.purchase_order_id] = [];
-        itemsByOrder[item.purchase_order_id].push(item);
-    }
-
-    for (const order of orders) {
-        order.items = itemsByOrder[order.id] || [];
-    }
-
+    const orders = await purchaseOrderService.getPurchaseOrders(req.query);
     res.json(orders);
 });
 
@@ -154,75 +116,8 @@ export const getPurchaseOrder = catchAsync(async (req, res) => {
 });
 
 export const createPurchaseOrder = catchAsync(async (req, res) => {
-    const { supplier_id, order_date, expected_delivery_date, items, notes } = req.body;
-    const id = crypto.randomUUID();
-
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
-
-        const poNumber = await nextPONumber(connection);
-        const taxRate = await getTaxRate(connection);
-
-        let subtotal = 0;
-        for (const item of items) {
-            const qty = Number(item.quantity_ordered || item.quantity || 0);
-            subtotal += qty * Number(item.unit_cost || 0);
-        }
-        const taxAmount = subtotal * taxRate;
-        const totalAmount = subtotal + taxAmount;
-
-        await connection.query(`
-            INSERT INTO purchase_orders (
-                id, po_number, supplier_id, order_date, expected_delivery_date, status, subtotal, tax_amount, total_amount, notes
-            ) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)
-        `, [
-            id,
-            poNumber,
-            supplier_id,
-            order_date || new Date().toISOString().slice(0, 10),
-            expected_delivery_date || null,
-            subtotal,
-            taxAmount,
-            totalAmount,
-            notes || null
-        ]);
-
-        for (const item of items) {
-            const qty = Number(item.quantity_ordered || item.quantity || 0);
-            await connection.query(`
-                INSERT INTO purchase_order_items (id, purchase_order_id, product_id, quantity_ordered, unit_cost)
-                VALUES (?, ?, ?, ?, ?)
-            `, [crypto.randomUUID(), id, item.product_id, qty, item.unit_cost]);
-        }
-
-        await connection.commit();
-        await auditService.log({
-            user_id: req.user?.id || null,
-            action: 'CREATE_PURCHASE_ORDER',
-            entity_type: 'purchase_order',
-            entity_id: id,
-            new_values: {
-                id,
-                po_number: poNumber,
-                supplier_id,
-                order_date: order_date || new Date().toISOString().slice(0, 10),
-                expected_delivery_date: expected_delivery_date || null,
-                subtotal,
-                tax_amount: taxAmount,
-                total_amount: totalAmount,
-                notes: notes || null,
-                items
-            },
-            ip_address: getRequestIp(req)
-        });
-        res.json({ id, po_number: poNumber });
-    } catch (err) {
-        await connection.rollback();
-        throw err;
-    } finally {
-        connection.release();
-    }
+    const result = await purchaseOrderService.createPurchaseOrder(req.body, req.user?.id, getRequestIp(req));
+    res.json(result);
 });
 
 export const updatePurchaseOrderStatus = catchAsync(async (req, res) => {
@@ -511,194 +406,37 @@ export const createReturn = catchAsync(async (req, res) => {
 
 export const approveReturn = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const connection = await pool.getConnection();
-
     try {
-        await connection.beginTransaction();
-
-        const [returns] = await connection.query('SELECT * FROM supplier_returns WHERE id = ? FOR UPDATE', [id]);
-        if (returns.length === 0) {
-            await connection.rollback();
+        const result = await supplierReturnService.approveSupplierReturn(id, req.user?.id, getRequestIp(req));
+        res.json(result);
+    } catch (err) {
+        if (err.errorCode === 'RETURN_NOT_FOUND') {
             return res.status(404).json({ error: 'not_found', message: 'Devolucion no encontrada' });
         }
-        const supplierReturn = returns[0];
-        if (supplierReturn.status === 'approved') {
-            await connection.rollback();
+        if (err.errorCode === 'RETURN_ALREADY_APPROVED') {
             return res.status(400).json({ error: 'already_approved', message: 'La devolucion ya fue aprobada' });
         }
-
-        const [items] = await connection.query('SELECT * FROM supplier_return_items WHERE return_id = ?', [id]);
-        if (items.length === 0) {
-            throw new Error('La devolucion no tiene items');
-        }
-
-        let totalAmount = 0;
-        for (const item of items) {
-            await decreaseInventory(connection, item.product_id, Number(item.quantity));
-            totalAmount += Number(item.quantity) * Number(item.unit_cost || 0);
-
-            await connection.query(`
-                INSERT INTO inventory_movements (
-                    id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
-                ) VALUES (?, 'return', ?, ?, ?, ?, ?, 'supplier_return', ?)
-            `, [
-                crypto.randomUUID(),
-                item.product_id,
-                'General',
-                item.quantity,
-                item.unit_cost || 0,
-                item.reason || 'Return to supplier',
-                id
-            ]);
-        }
-
-        await connection.query('UPDATE supplier_returns SET status = "approved" WHERE id = ?', [id]);
-
-        await accountingService.createJournalEntry(connection, {
-            description: `Devolución a proveedor ${supplierReturn.return_number}`,
-            reference_type: 'supplier_return',
-            reference_id: id,
-            lines: [
-                { account_code: '2.1.01.01', debit: totalAmount, credit: 0 },
-                { account_code: '1.1.04.01', debit: 0, credit: totalAmount }
-            ]
-        });
-
-        await connection.query(`
-            INSERT INTO transactions (id, type, amount, description, reference_id, supplier_id)
-            VALUES (?, 'expense', ?, ?, ?, ?)
-        `, [
-            crypto.randomUUID(),
-            totalAmount,
-            `Devolucion a proveedor ${supplierReturn.return_number}`,
-            id,
-            supplierReturn.supplier_id
-        ]);
-
-        await connection.query(`
-            UPDATE suppliers
-            SET account_balance = GREATEST(COALESCE(account_balance, 0) - ?, 0)
-            WHERE id = ?
-        `, [totalAmount, supplierReturn.supplier_id]);
-
-        await connection.commit();
-        await auditService.log({
-            user_id: req.user?.id || null,
-            action: 'APPROVE_SUPPLIER_RETURN',
-            entity_type: 'supplier_return',
-            entity_id: id,
-            old_values: { status: supplierReturn.status },
-            new_values: { status: 'approved', total_amount: totalAmount },
-            ip_address: getRequestIp(req)
-        });
-        res.json({ success: true, message: 'Devolucion aprobada correctamente' });
-    } catch (err) {
-        await connection.rollback();
         throw err;
-    } finally {
-        connection.release();
     }
 });
 
 export const getSupplierPayments = catchAsync(async (req, res) => {
-    const { supplier_id } = req.query;
-    let query = `
-        SELECT sp.*, s.name AS supplier_name
-        FROM supplier_payments sp
-        LEFT JOIN suppliers s ON sp.supplier_id = s.id
-        WHERE 1=1
-    `;
-    const params = [];
-    if (supplier_id) {
-        query += ' AND sp.supplier_id = ?';
-        params.push(supplier_id);
-    }
-    query += ' ORDER BY sp.payment_date DESC, sp.created_at DESC';
-
-    const [rows] = await pool.query(query, params);
+    const rows = await supplierPaymentService.getSupplierPayments(req.query.supplier_id);
     res.json(rows);
 });
 
 export const createSupplierPayment = catchAsync(async (req, res) => {
-    const { supplier_id, payment_date, notes, payments } = req.body;
-
-    if (!supplier_id) {
-        return res.status(400).json({ error: 'missing_supplier', message: 'supplier_id es obligatorio' });
-    }
-    if (!Array.isArray(payments) || payments.length === 0) {
-        return res.status(400).json({ error: 'missing_payments', message: 'Debe incluir al menos una linea de pago' });
-    }
-
-    const connection = await pool.getConnection();
     try {
-        await connection.beginTransaction();
-
-        let total = 0;
-        const createdIds = [];
-        for (const payment of payments) {
-            const amount = Number(payment.amount || 0);
-            if (amount <= 0) continue;
-
-            const id = crypto.randomUUID();
-            createdIds.push(id);
-            total += amount;
-
-            await connection.query(`
-                INSERT INTO supplier_payments (id, supplier_id, amount, payment_date, payment_method, reference_number, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            `, [
-                id,
-                supplier_id,
-                amount,
-                payment_date || new Date().toISOString().slice(0, 10),
-                payment.payment_method || 'Efectivo',
-                payment.reference_number || null,
-                notes || null
-            ]);
-        }
-
-        if (total <= 0) {
-            throw new Error('El monto total del pago debe ser mayor a 0');
-        }
-
-        await connection.query(`
-            UPDATE suppliers
-            SET account_balance = GREATEST(COALESCE(account_balance, 0) - ?, 0)
-            WHERE id = ?
-        `, [total, supplier_id]);
-
-        await connection.query(`
-            INSERT INTO transactions (id, type, amount, description, reference_id, supplier_id)
-            VALUES (?, 'expense', ?, ?, ?, ?)
-        `, [
-            crypto.randomUUID(),
-            total,
-            'Pago a proveedor',
-            createdIds[0] || null,
-            supplier_id
-        ]);
-
-        await connection.commit();
-        await auditService.log({
-            user_id: req.user?.id || null,
-            action: 'CREATE_SUPPLIER_PAYMENT',
-            entity_type: 'supplier_payment',
-            entity_id: createdIds[0] || null,
-            new_values: {
-                supplier_id,
-                payment_date: payment_date || new Date().toISOString().slice(0, 10),
-                notes: notes || null,
-                payment_ids: createdIds,
-                total
-            },
-            ip_address: getRequestIp(req)
-        });
-        res.json({ success: true, ids: createdIds, total });
+        const result = await supplierPaymentService.createSupplierPayment(req.body, req.user?.id, getRequestIp(req));
+        res.json(result);
     } catch (err) {
-        await connection.rollback();
+        if (err.errorCode === 'MISSING_SUPPLIER') {
+            return res.status(400).json({ error: 'missing_supplier', message: err.message });
+        }
+        if (err.errorCode === 'MISSING_PAYMENTS') {
+            return res.status(400).json({ error: 'missing_payments', message: err.message });
+        }
         throw err;
-    } finally {
-        connection.release();
     }
 });
 

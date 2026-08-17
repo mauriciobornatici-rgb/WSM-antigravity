@@ -112,6 +112,13 @@ export const updateCompanySettings = catchAsync(async (req, res) => {
         ? normalizeCurrency(previous?.default_currency)
         : normalizeCurrency(operation.default_currency);
 
+    const safeAfipCrt = billing?.afip_crt !== undefined ? (billing.afip_crt ? encrypt(billing.afip_crt) : '') : previous?.billing_afip_crt;
+    const safeAfipKey = billing?.afip_key !== undefined ? (billing.afip_key ? encrypt(billing.afip_key) : '') : previous?.billing_afip_key;
+    const safeTnToken = integrations?.tiendanube_access_token !== undefined ? (integrations.tiendanube_access_token ? encrypt(integrations.tiendanube_access_token) : '') : previous?.tiendanube_access_token;
+    const safeTnSecret = integrations?.tiendanube_client_secret !== undefined ? (integrations.tiendanube_client_secret ? encrypt(integrations.tiendanube_client_secret) : '') : previous?.tiendanube_client_secret;
+    const safeTnStoreId = integrations?.tiendanube_store_id !== undefined ? (integrations.tiendanube_store_id || '') : previous?.tiendanube_store_id;
+    const safeTnClientId = integrations?.tiendanube_client_id !== undefined ? (integrations.tiendanube_client_id || '') : previous?.tiendanube_client_id;
+
     await pool.query(`
         INSERT INTO company_settings (
             id, brand_name, legal_name, tax_id, logo_url, 
@@ -151,14 +158,14 @@ export const updateCompanySettings = catchAsync(async (req, res) => {
             tiendanube_client_id = VALUES(tiendanube_client_id),
             tiendanube_client_secret = VALUES(tiendanube_client_secret)
     `, [
-        identity?.brand_name, identity?.legal_name, identity?.tax_id, identity?.logo_url,
-        contact?.phone, contact?.email, contact?.website,
-        address?.street, address?.city,
-        socials?.instagram, socials?.facebook, socials?.linkedin,
+        identity?.brand_name ?? previous?.brand_name, identity?.legal_name ?? previous?.legal_name, identity?.tax_id ?? previous?.tax_id, identity?.logo_url ?? previous?.logo_url,
+        contact?.phone ?? previous?.contact_phone, contact?.email ?? previous?.contact_email, contact?.website ?? previous?.contact_website,
+        address?.street ?? previous?.address_street, address?.city ?? previous?.address_city,
+        socials?.instagram ?? previous?.social_instagram, socials?.facebook ?? previous?.social_facebook, socials?.linkedin ?? previous?.social_linkedin,
         safeTaxRate, safeCurrency,
-        billing?.iibb, billing?.start_date, billing?.iva_condition,
-        billing?.pos || 1, encrypt(billing?.afip_crt), encrypt(billing?.afip_key), billing?.afip_env || 'homologacion',
-        encrypt(integrations?.tiendanube_access_token), integrations?.tiendanube_store_id, integrations?.tiendanube_client_id, encrypt(integrations?.tiendanube_client_secret)
+        billing?.iibb ?? previous?.billing_iibb, billing?.start_date ?? previous?.billing_start_date, billing?.iva_condition ?? previous?.billing_iva_condition,
+        billing?.pos || previous?.billing_pos || 1, safeAfipCrt, safeAfipKey, billing?.afip_env || previous?.billing_afip_env || 'homologacion',
+        safeTnToken, safeTnStoreId, safeTnClientId, safeTnSecret
     ]);
 
     const [updatedRows] = await pool.query('SELECT * FROM company_settings WHERE id = 1 LIMIT 1');
