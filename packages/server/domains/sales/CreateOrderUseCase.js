@@ -62,6 +62,24 @@ export class CreateOrderUseCase {
         try {
             await connection.beginTransaction();
 
+            if (orderData.external_source && orderData.external_id) {
+                const [existingOrders] = await connection.query(
+                    `SELECT id, total_amount
+                     FROM orders
+                     WHERE external_source = ? AND external_id = ?
+                     LIMIT 1`,
+                    [orderData.external_source, orderData.external_id]
+                );
+                if (existingOrders.length > 0) {
+                    await connection.rollback();
+                    return {
+                        id: existingOrders[0].id,
+                        total_amount: Number(existingOrders[0].total_amount || 0),
+                        idempotent_replay: true
+                    };
+                }
+            }
+
             const productIds = orderData.items.map((item) => item.product_id);
             const [products] = await connection.query(
                 'SELECT id, sale_price, name FROM products WHERE id IN (?)',
@@ -192,6 +210,22 @@ export class CreateOrderUseCase {
             return { id: orderId, total_amount: finalTotal, points_earned: pointsEarned, points_redeemed: pointsRedeemed };
         } catch (err) {
             await connection.rollback();
+            if (err?.code === 'ER_DUP_ENTRY' && orderData.external_source && orderData.external_id) {
+                const [existingOrders] = await pool.query(
+                    `SELECT id, total_amount
+                     FROM orders
+                     WHERE external_source = ? AND external_id = ?
+                     LIMIT 1`,
+                    [orderData.external_source, orderData.external_id]
+                );
+                if (existingOrders.length > 0) {
+                    return {
+                        id: existingOrders[0].id,
+                        total_amount: Number(existingOrders[0].total_amount || 0),
+                        idempotent_replay: true
+                    };
+                }
+            }
             throw err;
         } finally {
             connection.release();

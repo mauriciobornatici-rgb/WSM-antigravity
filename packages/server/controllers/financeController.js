@@ -4,29 +4,7 @@ import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
 import financeService from '../services/finance.service.js';
-
-async function calculateShiftExpectedBalance(connection, shiftId) {
-    const [payments] = await connection.query(`
-        SELECT
-            COALESCE(SUM(CASE WHEN type IN ('sale', 'income') THEN amount ELSE 0 END), 0) AS inflow,
-            COALESCE(SUM(CASE WHEN type IN ('refund', 'expense') THEN amount ELSE 0 END), 0) AS outflow
-        FROM shift_payments
-        WHERE shift_id = ?
-    `, [shiftId]);
-
-    const [shifts] = await connection.query(
-        'SELECT opening_balance FROM cash_shifts WHERE id = ? LIMIT 1',
-        [shiftId]
-    );
-    const openingBalance = shifts.length > 0 ? Number(shifts[0].opening_balance || 0) : 0;
-    const expected = openingBalance + Number(payments[0].inflow || 0) - Number(payments[0].outflow || 0);
-    return {
-        opening_balance: openingBalance,
-        inflow: Number(payments[0].inflow || 0),
-        outflow: Number(payments[0].outflow || 0),
-        expected_balance: expected
-    };
-}
+import { calculateShiftExpectedBalance } from '../services/cashShift.service.js';
 
 export const getTransactions = catchAsync(async (req, res) => {
     const { supplier_id, client_id, type, start_date, end_date } = req.query;
@@ -253,12 +231,33 @@ export const addShiftPayment = catchAsync(async (req, res) => {
         await connection.beginTransaction();
 
         const [shifts] = await connection.query(
-            'SELECT id FROM cash_shifts WHERE id = ? AND status = "open" LIMIT 1',
+            'SELECT id FROM cash_shifts WHERE id = ? AND status = "open" LIMIT 1 FOR UPDATE',
             [id]
         );
         if (shifts.length === 0) {
             await connection.rollback();
             return res.status(404).json({ error: 'not_found', message: 'Turno abierto no encontrado' });
+        }
+
+        if (order_id) {
+            const resolvedMethod = payment_method || 'cash';
+            const resolvedType = type || 'sale';
+            const [existingPayments] = await connection.query(
+                `SELECT id
+                 FROM shift_payments
+                 WHERE shift_id = ? AND order_id = ? AND payment_method = ? AND type = ?
+                 LIMIT 1`,
+                [id, order_id, resolvedMethod, resolvedType]
+            );
+            if (existingPayments.length > 0) {
+                const summary = await calculateShiftExpectedBalance(connection, id);
+                await connection.commit();
+                return res.json({
+                    id: existingPayments[0].id,
+                    expected_balance: summary.expected_balance,
+                    idempotent_replay: true
+                });
+            }
         }
 
         const paymentId = crypto.randomUUID();

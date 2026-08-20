@@ -31,7 +31,11 @@ export const getOrders = catchAsync(async (req, res) => {
 });
 
 export const createOrder = catchAsync(async (req, res) => {
-    const result = await salesService.createOrder(req.body, req.user?.id);
+    const { idempotency_key: idempotencyKey, ...body } = req.body;
+    const orderData = idempotencyKey
+        ? { ...body, external_source: 'pos', external_id: idempotencyKey }
+        : body;
+    const result = await salesService.createOrder(orderData, req.user?.id);
     res.json(result);
 });
 

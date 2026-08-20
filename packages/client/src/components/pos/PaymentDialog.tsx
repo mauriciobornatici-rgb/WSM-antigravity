@@ -1,4 +1,5 @@
-import { Plus, Trash2, UserPlus } from "lucide-react";
+import { useState } from "react";
+import { Plus, Trash2, UserPlus, Banknote, CheckCircle2 } from "lucide-react";
 import type { Client } from "@/types";
 import type { InvoiceType, PaymentMethod, PaymentSplit } from "@/components/pos/types";
 import { INVOICE_TYPE_OPTIONS, PAYMENT_METHOD_OPTIONS } from "@/components/pos/types";
@@ -7,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { formatMoney } from "@/lib/formatters";
 
 type PaymentDialogProps = {
     open: boolean;
@@ -32,6 +34,7 @@ function roundMoney(value: number): number {
 }
 
 const CONSUMIDOR_FINAL_VALUE = "__consumidor_final__";
+const QUICK_CASH_AMOUNTS = [1000, 2000, 5000, 10000, 20000, 50000];
 
 export function PaymentDialog({
     open,
@@ -51,6 +54,8 @@ export function PaymentDialog({
     processing,
     onConfirm,
 }: PaymentDialogProps) {
+    const [cashTendered, setCashTendered] = useState<number | "">("");
+
     const paidAmount = roundMoney(paymentSplits.reduce((sum, line) => sum + Number(line.amount || 0), 0));
     const difference = roundMoney(grandTotal - paidAmount);
     const hasBalanceError = Math.abs(difference) > 0.01;
@@ -59,13 +64,31 @@ export function PaymentDialog({
     );
     const hasClientError = hasCreditAccountPayment && !selectedClientId;
 
+    const hasCashSplit = paymentSplits.some((line) => line.method === "cash");
+    const cashRequired = roundMoney(paymentSplits.reduce(
+        (sum, line) => sum + (line.method === "cash" ? Number(line.amount || 0) : 0),
+        0,
+    ));
+    const numericTendered = typeof cashTendered === "number" ? cashTendered : 0;
+    const changeDue = numericTendered > cashRequired ? roundMoney(numericTendered - cashRequired) : 0;
+
+    function handleOpenChange(nextOpen: boolean) {
+        if (!nextOpen) setCashTendered("");
+        onOpenChange(nextOpen);
+    }
+
+    function handleConfirm() {
+        setCashTendered("");
+        onConfirm();
+    }
+
     function addSplitLine() {
         onPaymentSplitsChange([
             ...paymentSplits,
             {
                 id: crypto.randomUUID(),
                 method: "cash",
-                amount: 0,
+                amount: Math.max(0, difference),
             },
         ]);
     }
@@ -88,28 +111,39 @@ export function PaymentDialog({
         );
     }
 
+    function handleQuickCash(amount: number) {
+        setCashTendered(amount);
+        const first = paymentSplits[0];
+        if (paymentSplits.length === 1 && first && first.method === "cash") {
+            updateSplitAmount(first.id, grandTotal);
+        }
+    }
+
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto border border-slate-200 bg-white text-slate-900 sm:max-w-2xl dark:border-slate-800 dark:bg-[#020a24] dark:text-slate-100">
+        <Dialog open={open} onOpenChange={handleOpenChange}>
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto border border-border bg-card text-card-foreground sm:max-w-2xl">
                 <DialogHeader>
-                    <DialogTitle>Confirmar cobro</DialogTitle>
-                    <DialogDescription className="text-slate-500 dark:text-slate-300">
-                        Puedes dividir el pago entre varios métodos.
+                    <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                        <Banknote className="h-5 w-5 text-primary" />
+                        Confirmar cobro
+                    </DialogTitle>
+                    <DialogDescription className="text-muted-foreground">
+                        Selecciona o divide los medios de pago y calcula el cambio en efectivo.
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="space-y-4">
                     <div className="space-y-2">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <Label>Cliente</Label>
+                            <Label className="text-xs font-semibold">Cliente</Label>
                             <Button
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                className="w-full gap-2 sm:w-auto"
+                                className="w-full gap-2 sm:w-auto h-7 text-xs"
                                 onClick={onOpenClientDialog}
                             >
-                                <UserPlus className="h-4 w-4" />
+                                <UserPlus className="h-3.5 w-3.5" />
                                 Nuevo cliente
                             </Button>
                         </div>
@@ -119,47 +153,52 @@ export function PaymentDialog({
                                 onClientChange(value === CONSUMIDOR_FINAL_VALUE ? "" : value)
                             }
                         >
-                            <SelectTrigger>
+                            <SelectTrigger className="h-9">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value={CONSUMIDOR_FINAL_VALUE}>Consumidor final</SelectItem>
                                 {clients.map((client) => (
                                     <SelectItem key={client.id} value={client.id}>
-                                        {client.name}
+                                        {client.name} {client.tax_id ? `(${client.tax_id})` : ""}
                                     </SelectItem>
                                 ))}
                             </SelectContent>
                         </Select>
                         {selectedClient ? (
-                            <div className="rounded-md border border-slate-200 bg-slate-50/80 p-2 text-xs dark:border-slate-700 dark:bg-slate-950/40">
-                                <div className="font-medium">{selectedClient.name}</div>
-                                <div className="text-slate-500 dark:text-slate-300">{selectedClient.tax_id}</div>
+                            <div className="rounded-md border bg-muted/20 p-2 text-xs flex justify-between items-center">
+                                <div>
+                                    <div className="font-semibold">{selectedClient.name}</div>
+                                    <div className="text-muted-foreground">{selectedClient.tax_id}</div>
+                                </div>
+                                <div className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded text-[11px] font-bold">
+                                    ⭐ {selectedClient.loyalty_points || 0} pts
+                                </div>
                             </div>
                         ) : (
-                            <p className="text-xs text-slate-500 dark:text-slate-300">Se emitira como consumidor final.</p>
+                            <p className="text-xs text-muted-foreground">Se emitirá como consumidor final.</p>
                         )}
                     </div>
 
                     <div className="space-y-2">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <Label>Medios de pago</Label>
-                            <Button type="button" variant="outline" size="sm" className="w-full gap-2 sm:w-auto" onClick={addSplitLine}>
-                                <Plus className="h-4 w-4" />
-                                Agregar línea
+                            <Label className="text-xs font-semibold">Medios de pago</Label>
+                            <Button type="button" variant="outline" size="sm" className="w-full gap-1 sm:w-auto h-7 text-xs" onClick={addSplitLine}>
+                                <Plus className="h-3.5 w-3.5" />
+                                Agregar medio de pago
                             </Button>
                         </div>
                         <div className="space-y-2">
                             {paymentSplits.map((line) => (
                                 <div
                                     key={line.id}
-                                    className="grid gap-2 rounded-md border border-slate-200 bg-slate-50/60 p-2 md:grid-cols-[minmax(0,1fr)_160px_auto] dark:border-slate-700 dark:bg-slate-950/40"
+                                    className="grid gap-2 rounded-md border bg-muted/20 p-2 md:grid-cols-[minmax(0,1fr)_160px_auto] items-center"
                                 >
                                     <Select
                                         value={line.method}
                                         onValueChange={(value) => updateSplitMethod(line.id, value as PaymentMethod)}
                                     >
-                                        <SelectTrigger>
+                                        <SelectTrigger className="h-9" aria-label="Medio de pago">
                                             <SelectValue />
                                         </SelectTrigger>
                                         <SelectContent>
@@ -171,88 +210,157 @@ export function PaymentDialog({
                                         </SelectContent>
                                     </Select>
                                     <Input
+                                        aria-label="Monto asignado al medio de pago"
                                         type="number"
                                         min="0"
                                         step="0.01"
                                         value={line.amount}
                                         onChange={(event) => updateSplitAmount(line.id, Number(event.target.value))}
                                         placeholder="Monto"
+                                        className="h-9 font-mono font-bold"
                                     />
                                     <Button
                                         type="button"
                                         variant="ghost"
-                                        className="w-full md:w-auto"
+                                        size="icon"
+                                        className="h-9 w-9 text-muted-foreground hover:text-destructive"
                                         disabled={paymentSplits.length <= 1}
                                         onClick={() => removeSplitLine(line.id)}
-                                        title="Eliminar linea"
+                                        title="Eliminar línea"
+                                        aria-label="Eliminar línea de pago"
                                     >
-                                        <Trash2 className="h-4 w-4 text-red-500 dark:text-red-400" />
+                                        <Trash2 className="h-4 w-4" />
                                     </Button>
                                 </div>
                             ))}
                         </div>
                     </div>
 
+                    {/* Calculadora de Vuelto / Efectivo */}
+                    {hasCashSplit && (
+                        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-2.5">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-xs font-semibold flex items-center gap-1.5 text-blue-700 dark:text-blue-300">
+                                    <Banknote className="h-4 w-4" /> Calculadora de Efectivo & Vuelto
+                                </Label>
+                                <button
+                                    type="button"
+                                    onClick={() => handleQuickCash(grandTotal)}
+                                    className="text-[11px] font-semibold text-primary hover:underline"
+                                >
+                                    Importe Exacto ({formatMoney(grandTotal)})
+                                </button>
+                            </div>
+
+                            <div className="flex flex-wrap gap-1.5">
+                                {QUICK_CASH_AMOUNTS.filter((amt) => amt >= grandTotal || amt >= cashRequired).slice(0, 5).map((amt) => (
+                                    <Button
+                                        key={amt}
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleQuickCash(amt)}
+                                        className="h-7 text-xs font-mono font-semibold"
+                                    >
+                                        ${amt.toLocaleString("es-AR")}
+                                    </Button>
+                                ))}
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                                <div>
+                                    <Label htmlFor="cash-tendered" className="text-[11px] text-muted-foreground">Paga con (recibido):</Label>
+                                    <Input
+                                        id="cash-tendered"
+                                        type="number"
+                                        min="0"
+                                        step="100"
+                                        placeholder={`Ej: ${grandTotal}`}
+                                        value={cashTendered}
+                                        onChange={(e) => setCashTendered(e.target.value === "" ? "" : Number(e.target.value))}
+                                        className="h-9 font-mono font-bold text-base"
+                                    />
+                                </div>
+                                <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2 flex flex-col justify-center">
+                                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                                        <CheckCircle2 className="h-3.5 w-3.5" /> Vuelto a Entregar
+                                    </span>
+                                    <span className="text-lg font-black font-mono text-emerald-600 dark:text-emerald-400">
+                                        {formatMoney(changeDue)}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {hasClientError ? (
-                        <p className="text-sm font-medium text-red-600 dark:text-red-400">
-                            Debes seleccionar cliente para usar cuenta corriente.
+                        <p className="text-xs font-medium text-destructive bg-destructive/10 p-2 rounded border border-destructive/20">
+                            Debes seleccionar un cliente registrado para vender a cuenta corriente.
                         </p>
                     ) : null}
 
-                    <label className="flex items-center gap-2 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={emitInvoice}
-                            onChange={(event) => onEmitInvoiceChange(event.target.checked)}
-                            className="h-4 w-4 accent-blue-600"
-                        />
-                        Emitir factura
-                    </label>
+                    <div className="flex items-center justify-between p-2 rounded-md border bg-muted/20">
+                        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={emitInvoice}
+                                onChange={(event) => onEmitInvoiceChange(event.target.checked)}
+                                className="h-4 w-4 accent-primary rounded cursor-pointer"
+                            />
+                            Emitir Comprobante Fiscal Electrónico (AFIP)
+                        </label>
+                        {emitInvoice && (
+                            <div className="flex items-center gap-2">
+                                <Label className="text-xs">Tipo:</Label>
+                                <Select value={invoiceType} onValueChange={(value) => onInvoiceTypeChange(value as InvoiceType)}>
+                                    <SelectTrigger className="h-7 w-28 text-xs">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {INVOICE_TYPE_OPTIONS.map((type) => (
+                                            <SelectItem key={type.value} value={type.value}>
+                                                {type.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        )}
+                    </div>
 
-                    {emitInvoice ? (
-                        <div className="space-y-2">
-                            <Label>Tipo de factura</Label>
-                            <Select value={invoiceType} onValueChange={(value) => onInvoiceTypeChange(value as InvoiceType)}>
-                                <SelectTrigger>
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {INVOICE_TYPE_OPTIONS.map((type) => (
-                                        <SelectItem key={type.value} value={type.value}>
-                                            {type.label}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                    <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+                        <div className="flex items-center justify-between text-muted-foreground">
+                            <span>Total Venta</span>
+                            <span className="font-semibold font-mono text-foreground text-base">{formatMoney(grandTotal)}</span>
                         </div>
-                    ) : null}
-
-                    <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 shadow-inner dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100">
-                        <div className="flex items-center justify-between">
-                            <span className="text-slate-600 dark:text-slate-300">Total venta</span>
-                            <span className="font-semibold">${grandTotal.toLocaleString("es-AR")}</span>
+                        <div className="flex items-center justify-between text-muted-foreground">
+                            <span>Total Asignado</span>
+                            <span className="font-semibold font-mono text-foreground">{formatMoney(paidAmount)}</span>
                         </div>
-                        <div className="mt-1 flex items-center justify-between">
-                            <span className="text-slate-600 dark:text-slate-300">Total asignado</span>
-                            <span className="font-semibold">${paidAmount.toLocaleString("es-AR")}</span>
-                        </div>
-                        <div className="mt-1 flex items-center justify-between">
-                            <span className="text-slate-600 dark:text-slate-300">Diferencia</span>
+                        <div className="flex items-center justify-between pt-1 border-t">
+                            <span className="font-medium">Diferencia</span>
                             <span
-                                className={hasBalanceError ? "font-semibold text-red-600 dark:text-red-400" : "font-semibold text-emerald-600 dark:text-emerald-400"}
+                                className={`font-mono font-bold ${
+                                    hasBalanceError ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"
+                                }`}
                             >
-                                ${difference.toLocaleString("es-AR")}
+                                {formatMoney(difference)}
                             </span>
                         </div>
                     </div>
                 </div>
 
-                <div className="flex flex-col-reverse gap-2 border-t border-slate-200 pt-3 dark:border-slate-700 sm:flex-row sm:justify-end">
-                    <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+                    <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
                         Cancelar
                     </Button>
-                    <Button type="button" onClick={onConfirm} disabled={processing || hasBalanceError || hasClientError}>
-                        {processing ? "Procesando..." : "Confirmar venta"}
+                    <Button
+                        type="button"
+                        className="font-bold h-10 px-6 shadow-md"
+                        onClick={handleConfirm}
+                        disabled={processing || hasBalanceError || hasClientError}
+                    >
+                        {processing ? "Procesando..." : "Confirmar Cobro"}
                     </Button>
                 </div>
             </DialogContent>

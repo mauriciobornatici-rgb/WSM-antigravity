@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, History, Moon, Sun } from "lucide-react";
+import { ArrowLeft, History, Moon, PauseCircle, RefreshCw, Sun, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "@/hooks/useTheme";
 import { api } from "@/services/api";
@@ -14,6 +14,7 @@ import { PaymentDialog } from "@/components/pos/PaymentDialog";
 import { ProductCatalogCard } from "@/components/pos/ProductCatalogCard";
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog";
 import { POSHistoryDialog } from "@/components/pos/POSHistoryDialog";
+import { ParkedCartsDialog } from "@/components/pos/ParkedCartsDialog";
 import type { InvoiceType, NewClientForm, PaymentSplit, POSProduct } from "@/components/pos/types";
 import { Button } from "@/components/ui/button";
 import { PrintableInvoiceArea } from "@/components/invoices/PrintableInvoiceArea";
@@ -21,6 +22,11 @@ import { PrintableThermalTicket } from "@/components/invoices/PrintableThermalTi
 import { usePOSCart } from "@/hooks/usePOSCart";
 import { usePOSHotkeys } from "@/hooks/usePOSHotkeys";
 import { playScanErrorBeep } from "@/lib/scanAudio";
+import {
+    enqueueOfflineSale,
+    getOfflineQueue,
+    syncOfflineSales,
+} from "@/lib/offlineSalesQueue";
 
 function roundMoney(value: number): number {
     return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -44,6 +50,10 @@ export default function POSPage() {
         subtotal,
         taxAmount,
         grandTotal,
+        parkedCarts,
+        parkCurrentCart,
+        restoreParkedCart,
+        deleteParkedCart,
     } = usePOSCart();
     const [loading, setLoading] = useState(true);
 
@@ -72,12 +82,68 @@ export default function POSPage() {
     const [lastOrderId, setLastOrderId] = useState<string | null>(null);
     const [lastInvoice, setLastInvoice] = useState<Invoice | null>(null);
     const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
+    const [parkedDialogOpen, setParkedDialogOpen] = useState(false);
 
     const [companySettings, setCompanySettings] = useState<CompanySettings>(DEFAULT_COMPANY_SETTINGS);
     const [currentRegister, setCurrentRegister] = useState<CashRegister | null>(null);
     const [currentShift, setCurrentShift] = useState<CashShiftSummary | null>(null);
-    const [activePrintLayout, setActivePrintLayout] = useState<'a4' | 'thermal' | null>(null);
+    const [activePrintLayout, setActivePrintLayout] = useState<"a4" | "thermal" | null>(null);
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+
+    const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== "undefined" ? navigator.onLine : true);
+    const [offlineQueueCount, setOfflineQueueCount] = useState<number>(() => getOfflineQueue().length);
+    const [syncingOffline, setSyncingOffline] = useState(false);
+
+    const refreshOfflineCount = useCallback(() => {
+        setOfflineQueueCount(getOfflineQueue().length);
+    }, []);
+
+    const handleSyncOffline = useCallback(async () => {
+        const queue = getOfflineQueue();
+        if (queue.length === 0) return;
+
+        try {
+            setSyncingOffline(true);
+            const res = await syncOfflineSales({
+                createOrder: api.createOrder,
+                createInvoice: api.createInvoice,
+                addShiftPayment: api.addShiftPayment,
+            });
+
+            refreshOfflineCount();
+            if (res.synced > 0) {
+                toast.success(`Sincronización completada: ${res.synced} venta(s) procesada(s).`);
+            }
+            if (res.failed > 0) {
+                toast.error(`${res.failed} venta(s) no pudieron sincronizarse. Se reintentará luego.`);
+            }
+        } catch {
+            toast.error("Error al sincronizar cola offline.");
+        } finally {
+            setSyncingOffline(false);
+        }
+    }, [refreshOfflineCount]);
+
+    // Online/Offline network monitoring
+    useEffect(() => {
+        const handleOnline = () => {
+            setIsOnline(true);
+            toast.success("Conexión restablecida.");
+            void handleSyncOffline();
+        };
+        const handleOffline = () => {
+            setIsOnline(false);
+            toast.warning("Sin conexión. Las ventas se guardarán en la cola offline de contingencia.");
+        };
+
+        window.addEventListener("online", handleOnline);
+        window.addEventListener("offline", handleOffline);
+
+        return () => {
+            window.removeEventListener("online", handleOnline);
+            window.removeEventListener("offline", handleOffline);
+        };
+    }, [handleSyncOffline]);
 
     usePOSHotkeys({
         onSearchFocus: () => {
@@ -96,14 +162,27 @@ export default function POSPage() {
             setPaymentDialogOpen(false);
             setClientDialogOpen(false);
             setHistoryDialogOpen(false);
+            setParkedDialogOpen(false);
         },
         onToggleInvoice: () => {
-            setEmitInvoice((prev) => !prev);
-            toast.info(`Facturación fiscal AFIP: ${!emitInvoice ? "Activada" : "Desactivada"}`);
+            setEmitInvoice((prev) => {
+                const next = !prev;
+                toast.info(`Facturación fiscal AFIP: ${next ? "Activada" : "Desactivada"}`);
+                return next;
+            });
+        },
+        onClearCart: () => {
+            if (cart.length > 0) {
+                setCart([]);
+                toast.info("Carrito vaciado");
+            }
+        },
+        onOpenHistory: () => {
+            setHistoryDialogOpen(true);
         },
     });
 
-    const handlePrint = (layout: 'a4' | 'thermal', invoice: Invoice) => {
+    const handlePrint = (layout: "a4" | "thermal", invoice: Invoice) => {
         setActivePrintLayout(layout);
         setSelectedInvoice(invoice);
         setTimeout(() => {
@@ -149,7 +228,7 @@ export default function POSPage() {
     const categories = useMemo(() => {
         const values = new Set<string>();
         for (const product of products) {
-        values.add(product.category || "Sin categoría");
+            values.add(product.category || "Sin categoría");
         }
         return ["all", ...Array.from(values)];
     }, [products]);
@@ -238,12 +317,17 @@ export default function POSPage() {
             return;
         }
 
-        const positiveSplits = paymentSplits
+        const normalizedSplits = paymentSplits
             .map((line) => ({
                 method: line.method,
                 amount: roundMoney(Number(line.amount || 0)),
             }))
             .filter((line) => line.amount > 0);
+        const amountsByMethod = new Map<PaymentSplit["method"], number>();
+        for (const line of normalizedSplits) {
+            amountsByMethod.set(line.method, roundMoney((amountsByMethod.get(line.method) || 0) + line.amount));
+        }
+        const positiveSplits = Array.from(amountsByMethod, ([method, amount]) => ({ method, amount }));
 
         if (positiveSplits.length === 0) {
             toast.error("Debes cargar al menos un monto de pago");
@@ -276,6 +360,7 @@ export default function POSPage() {
         const previousClientId = selectedClientId;
         const previousEmitInvoice = emitInvoice;
         const previousPaymentSplits = [...paymentSplits];
+        const checkoutIdempotencyKey = crypto.randomUUID();
 
         const soldByProduct = cart.reduce<Record<string, number>>((acc, item) => {
             acc[item.id] = (acc[item.id] || 0) + item.quantity;
@@ -294,6 +379,31 @@ export default function POSPage() {
         setEmitInvoice(false);
         setPaymentSplits([defaultPaymentSplit(0)]);
         setPaymentDialogOpen(false);
+
+        // Si estamos sin conexión directa a internet, encolamos inmediatamente en modo contingencia
+        if (!navigator.onLine) {
+            enqueueOfflineSale({
+                idempotency_key: checkoutIdempotencyKey,
+                customer_name: selectedClient?.name || "Consumidor final",
+                ...(previousClientId ? { client_id: previousClientId } : {}),
+                payment_method: primaryPaymentMethod,
+                payments: positiveSplits.map((p) => ({ method: p.method, amount: p.amount })),
+                items: previousCart.map((i) => ({
+                    product_id: i.id,
+                    name: i.name,
+                    quantity: i.quantity,
+                    sale_price: Number(i.sale_price),
+                    vat_rate: i.vat_rate != null ? Number(i.vat_rate) : 21,
+                })),
+                emit_invoice: previousEmitInvoice,
+                invoice_type: invoiceType,
+                shift_id: currentShift.id,
+            });
+            refreshOfflineCount();
+            toast.warning("Sin red: Venta guardada en la cola offline de contingencia.");
+            return;
+        }
+
         setSuccessDialogOpen(true);
 
         try {
@@ -301,6 +411,7 @@ export default function POSPage() {
             setLastInvoice(null);
 
             const orderPayload: Parameters<typeof api.createOrder>[0] = {
+                idempotency_key: checkoutIdempotencyKey,
                 customer_name: selectedClient?.name || "Consumidor final",
                 payment_method: primaryPaymentMethod,
                 items: previousCart.map((item) => ({
@@ -349,15 +460,40 @@ export default function POSPage() {
 
             toast.success("Venta registrada con éxito");
         } catch (error) {
-            // 2. Rollback state to prior values on checkout error
-            setProducts(previousProducts);
-            setCart(previousCart);
-            setSelectedClientId(previousClientId);
-            setEmitInvoice(previousEmitInvoice);
-            setPaymentSplits(previousPaymentSplits);
-            setSuccessDialogOpen(false);
-            setPaymentDialogOpen(true);
-            showErrorToast("Error al procesar la venta. El carrito ha sido restaurado.", error);
+            // Si el servidor falló por error de red o timeout, guardamos en cola offline
+            const isNetworkError = !navigator.onLine || (error instanceof Error && (error.message.includes("fetch") || error.message.includes("network") || error.message.includes("timeout")));
+            if (isNetworkError) {
+                enqueueOfflineSale({
+                    idempotency_key: checkoutIdempotencyKey,
+                    customer_name: selectedClient?.name || "Consumidor final",
+                    ...(previousClientId ? { client_id: previousClientId } : {}),
+                    payment_method: primaryPaymentMethod,
+                    payments: positiveSplits.map((p) => ({ method: p.method, amount: p.amount })),
+                    items: previousCart.map((i) => ({
+                        product_id: i.id,
+                        name: i.name,
+                        quantity: i.quantity,
+                        sale_price: Number(i.sale_price),
+                        vat_rate: i.vat_rate != null ? Number(i.vat_rate) : 21,
+                    })),
+                    emit_invoice: previousEmitInvoice,
+                    invoice_type: invoiceType,
+                    shift_id: currentShift.id,
+                });
+                refreshOfflineCount();
+                setSuccessDialogOpen(false);
+                toast.warning("Fallo de conexión: La venta quedó resguardada en cola offline.");
+            } else {
+                // Rollback state to prior values on non-network validation error
+                setProducts(previousProducts);
+                setCart(previousCart);
+                setSelectedClientId(previousClientId);
+                setEmitInvoice(previousEmitInvoice);
+                setPaymentSplits(previousPaymentSplits);
+                setSuccessDialogOpen(false);
+                setPaymentDialogOpen(true);
+                showErrorToast("Error al procesar la venta. El carrito ha sido restaurado.", error);
+            }
         } finally {
             setProcessing(false);
         }
@@ -365,38 +501,92 @@ export default function POSPage() {
 
     return (
         <div className="space-y-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            {/* Barra superior de control & estado */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between bg-card/60 p-3 rounded-lg border">
+                <div className="flex flex-wrap items-center gap-2">
                     <Button
                         type="button"
                         variant="outline"
-                        className="w-full gap-2 sm:w-auto"
+                        size="sm"
+                        className="gap-1.5"
                         onClick={() => navigate("/")}
                     >
                         <ArrowLeft className="h-4 w-4" />
-                        Volver al menú principal
+                        <span className="hidden sm:inline">Volver</span>
                     </Button>
                     <Button
                         type="button"
                         variant="outline"
-                        className="w-full gap-2 sm:w-auto border-blue-800/30 bg-blue-950/20 text-blue-400 hover:bg-blue-950/40 hover:text-blue-300"
+                        size="sm"
+                        className="gap-1.5 border-blue-800/30 bg-blue-950/20 text-blue-400 hover:bg-blue-950/40 hover:text-blue-300"
                         onClick={() => setHistoryDialogOpen(true)}
                     >
                         <History className="h-4 w-4" />
-                        Historial de Ventas / Reimprimir
+                        <span>Historial</span>
+                        <kbd className="hidden md:inline-block text-[9px] bg-muted/40 px-1 rounded font-mono">F3</kbd>
                     </Button>
+
                     <Button
                         type="button"
                         variant="outline"
-                        className="w-full gap-2 sm:w-auto"
+                        size="sm"
+                        className={`gap-1.5 ${parkedCarts.length > 0 ? "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold" : ""}`}
+                        onClick={() => setParkedDialogOpen(true)}
+                        title="Ventas en espera"
+                    >
+                        <PauseCircle className="h-4 w-4" />
+                        <span>En Espera ({parkedCarts.length})</span>
+                    </Button>
+
+                    {offlineQueueCount > 0 && (
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="gap-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                            onClick={() => void handleSyncOffline()}
+                            disabled={syncingOffline}
+                        >
+                            <RefreshCw className={`h-3.5 w-3.5 ${syncingOffline ? "animate-spin" : ""}`} />
+                            <span>Sincronizar Offline ({offlineQueueCount})</span>
+                        </Button>
+                    )}
+
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
                         onClick={toggleTheme}
                         title={theme === "dark" ? "Cambiar a Modo Día" : "Cambiar a Modo Noche"}
                     >
                         {theme === "dark" ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-indigo-500" />}
-                        {theme === "dark" ? "Modo Día" : "Modo Noche"}
                     </Button>
                 </div>
-                <p className="text-sm text-muted-foreground">Terminal de venta</p>
+
+                <div className="flex items-center gap-3 text-xs">
+                    {/* Indicador de red */}
+                    <div className="flex items-center gap-1.5 font-medium">
+                        {isOnline ? (
+                            <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                <Wifi className="h-3 w-3" /> Online
+                            </span>
+                        ) : (
+                            <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                                <WifiOff className="h-3 w-3" /> Modo Contingencia Offline
+                            </span>
+                        )}
+                    </div>
+
+                    {/* Atajos de ayuda */}
+                    <div className="hidden lg:flex items-center gap-2 text-muted-foreground bg-muted/30 px-2.5 py-1 rounded border text-[11px] font-mono">
+                        <span><kbd className="bg-background px-1 py-0.5 rounded border">F2</kbd> Buscar</span>
+                        <span><kbd className="bg-background px-1 py-0.5 rounded border">F4</kbd> Cobrar</span>
+                        <span><kbd className="bg-background px-1 py-0.5 rounded border">F8</kbd> AFIP</span>
+                        <span><kbd className="bg-background px-1 py-0.5 rounded border">F9</kbd> Vaciar</span>
+                        <span><kbd className="bg-background px-1 py-0.5 rounded border">Esc</kbd> Salir</span>
+                    </div>
+                </div>
             </div>
 
             <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2fr)_380px]">
@@ -424,6 +614,7 @@ export default function POSPage() {
                         cart={cart}
                         onRemoveFromCart={removeFromCart}
                         onUpdateQuantity={updateQuantity}
+                        onClearCart={() => setCart([])}
                         subtotal={subtotal}
                         taxLabel={taxLabel}
                         taxAmount={taxAmount}
@@ -489,6 +680,21 @@ export default function POSPage() {
                 open={historyDialogOpen}
                 onOpenChange={setHistoryDialogOpen}
                 onPrint={handlePrint}
+            />
+
+            <ParkedCartsDialog
+                open={parkedDialogOpen}
+                onOpenChange={setParkedDialogOpen}
+                parkedCarts={parkedCarts}
+                hasActiveCart={cart.length > 0}
+                onParkCurrentCart={(label) => parkCurrentCart(label, selectedClientId || undefined)}
+                onRestoreCart={(id) => {
+                    const restored = restoreParkedCart(id);
+                    if (restored?.clientId) {
+                        setSelectedClientId(restored.clientId);
+                    }
+                }}
+                onDeleteCart={deleteParkedCart}
             />
 
             {activePrintLayout === "a4" && selectedInvoice && (

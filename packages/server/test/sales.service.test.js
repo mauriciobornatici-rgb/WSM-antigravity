@@ -88,6 +88,9 @@ test('createOrder persists external source and id for imported marketplace order
             const statement = String(sql);
             connectionCalls.push({ sql: statement, params });
 
+            if (statement.includes('FROM orders') && statement.includes('external_source = ?')) {
+                return [[]];
+            }
             if (statement.includes('SELECT id, sale_price, name FROM products')) {
                 return [[{ id: 'prod-1', sale_price: 100, name: 'Botin Pro' }]];
             }
@@ -139,6 +142,72 @@ test('createOrder persists external source and id for imported marketplace order
     } finally {
         pool.getConnection = originalGetConnection;
         auditService.log = originalAuditLog;
+    }
+});
+
+test('createOrder returns an existing order for an idempotent replay', async () => {
+    let rolledBack = false;
+    const connection = {
+        async beginTransaction() {},
+        async commit() {},
+        async rollback() { rolledBack = true; },
+        release() {},
+        async query(sql) {
+            if (String(sql).includes('external_source = ?')) {
+                return [[{ id: 'existing-order', total_amount: '1210.00' }]];
+            }
+            throw new Error(`Unexpected SQL in idempotent replay test: ${sql}`);
+        }
+    };
+    const originalGetConnection = pool.getConnection;
+    pool.getConnection = async () => connection;
+
+    try {
+        const result = await salesService.createOrder({
+            external_source: 'pos',
+            external_id: '0a252ca9-9af2-455d-89d7-87150716f8ae',
+            items: [{ product_id: 'prod-1', quantity: 1 }]
+        }, 'user-1');
+
+        assert.deepEqual(result, {
+            id: 'existing-order',
+            total_amount: 1210,
+            idempotent_replay: true
+        });
+        assert.equal(rolledBack, true);
+    } finally {
+        pool.getConnection = originalGetConnection;
+    }
+});
+
+test('createManualInvoice returns the invoice already linked to an order', async () => {
+    let committed = false;
+    const connection = {
+        async beginTransaction() {},
+        async commit() { committed = true; },
+        async rollback() {},
+        release() {},
+        async query(sql) {
+            const statement = String(sql);
+            if (statement.includes('SELECT id, invoice_id FROM orders')) {
+                return [[{ id: 'order-1', invoice_id: 'invoice-1' }]];
+            }
+            if (statement.includes('SELECT * FROM invoices WHERE id')) {
+                return [[{ id: 'invoice-1', order_id: 'order-1', total_amount: 1210 }]];
+            }
+            throw new Error(`Unexpected SQL in invoice replay test: ${statement}`);
+        }
+    };
+    const originalGetConnection = pool.getConnection;
+    pool.getConnection = async () => connection;
+
+    try {
+        const result = await salesService.createManualInvoice({ order_id: 'order-1', items: [] }, 'user-1');
+        assert.equal(result.id, 'invoice-1');
+        assert.equal(result.idempotent_replay, true);
+        assert.equal(committed, true);
+    } finally {
+        pool.getConnection = originalGetConnection;
     }
 });
 

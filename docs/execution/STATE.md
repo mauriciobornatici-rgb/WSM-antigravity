@@ -954,6 +954,13 @@ Head: `7f92656`
 ## Next After Current Task
 Tiendanube staging validation - publish backend through HTTPS, configure Tiendanube app callback/webhook URLs, load Client ID/Secret in ERP settings, run OAuth, map one product variant, then create one controlled Tiendanube order and verify local order import + stock sync.
 
+## Preproduction closure 2026-08-19
+- POS checkout and offline recovery are idempotent across orders, invoices and cash-shift payments.
+- Cash expected balance now represents physical cash only.
+- Inventory ABC/profitability analysis and parked carts are complete.
+- Local automated gates pass; database preflight still requires valid environment credentials.
+- Next operational gate: backup/restore rehearsal, `npm run preflight:integrity`, migrations through `032`, then controlled Tiendanube/POS staging transactions.
+
 ## Open Decisions (Need confirmation for upcoming blocks)
 1. Stock policy (implemented assumption):
    - Applied Option A: deduct at order creation.

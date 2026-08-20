@@ -42,6 +42,7 @@ export type CartPanelProps = {
     cart: CartItem[];
     onRemoveFromCart: (productId: string) => void;
     onUpdateQuantity: (productId: string, delta: number) => void;
+    onClearCart?: () => void;
     subtotal: number;
     taxLabel: string;
     taxAmount: number;

@@ -12,6 +12,7 @@ export const orderPaymentMethodSchema = z.enum([
 ]);
 
 export const createOrderSchema = z.object({
+  idempotency_key: uuidSchema.optional(),
   client_id: optionalUuidSchema,
   customer_name: z.string().nullable().optional(),
   counter_user_id: optionalUuidSchema,

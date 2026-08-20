@@ -221,6 +221,10 @@ export const manualInvoiceSchema = z.object({
   order_id: optionalUuidSchema,
   notes: z.string().nullable().optional(),
   payment_method: orderPaymentMethodSchema.optional(),
+  payments: z.array(z.object({
+    method: orderPaymentMethodSchema,
+    amount: z.coerce.number().positive(),
+  })).min(1).optional(),
   items: z.array(manualInvoiceItemSchema).min(1),
 }).refine(data => data.items.every(item => item.description || item.product_name || item.product_id), {
   message: "Debe ingresar descripción, product_name o product_id en cada ítem",

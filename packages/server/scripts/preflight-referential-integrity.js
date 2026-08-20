@@ -20,6 +20,7 @@ const relationships = [
     ['reception_items', 'product_id', 'products', 'id'],
     ['cash_shifts', 'cash_register_id', 'cash_registers', 'id'],
     ['shift_payments', 'shift_id', 'cash_shifts', 'id'],
+    ['shift_payments', 'order_id', 'orders', 'id'],
 ];
 
 async function countOrphans(childTable, childColumn, parentTable, parentColumn) {
@@ -65,6 +66,32 @@ async function main() {
     `);
     if (duplicateExternalOrderRows.length > 0) {
         const result = { check: 'duplicate_external_orders', rows: duplicateExternalOrderRows };
+        console.log(JSON.stringify(result));
+        failures.push(result);
+    }
+
+    const [duplicateInvoiceRows] = await pool.query(`
+        SELECT order_id, COUNT(*) AS duplicate_count
+        FROM invoices
+        WHERE order_id IS NOT NULL
+        GROUP BY order_id
+        HAVING COUNT(*) > 1
+    `);
+    if (duplicateInvoiceRows.length > 0) {
+        const result = { check: 'duplicate_invoices_per_order', rows: duplicateInvoiceRows };
+        console.log(JSON.stringify(result));
+        failures.push(result);
+    }
+
+    const [duplicateShiftPaymentRows] = await pool.query(`
+        SELECT shift_id, order_id, payment_method, type, COUNT(*) AS duplicate_count
+        FROM shift_payments
+        WHERE order_id IS NOT NULL
+        GROUP BY shift_id, order_id, payment_method, type
+        HAVING COUNT(*) > 1
+    `);
+    if (duplicateShiftPaymentRows.length > 0) {
+        const result = { check: 'duplicate_shift_payments_per_order', rows: duplicateShiftPaymentRows };
         console.log(JSON.stringify(result));
         failures.push(result);
     }

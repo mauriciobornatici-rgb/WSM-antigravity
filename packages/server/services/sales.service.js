@@ -968,6 +968,24 @@ class SalesService extends BaseService {
         try {
             await connection.beginTransaction();
 
+            if (invoiceData.order_id) {
+                const [orders] = await connection.query(
+                    'SELECT id, invoice_id FROM orders WHERE id = ? FOR UPDATE',
+                    [invoiceData.order_id]
+                );
+                if (orders.length === 0) throw new Error('Order not found');
+                if (orders[0].invoice_id) {
+                    const [existingInvoices] = await connection.query(
+                        'SELECT * FROM invoices WHERE id = ? LIMIT 1',
+                        [orders[0].invoice_id]
+                    );
+                    if (existingInvoices.length > 0) {
+                        await connection.commit();
+                        return { ...existingInvoices[0], idempotent_replay: true };
+                    }
+                }
+            }
+
             const items = invoiceData.items || [];
             if (items.length === 0) throw new Error('Invoice must contain items');
 

@@ -247,6 +247,7 @@ type ProductUpsertInput =
     };
 
 type OrderCreateInput = {
+    idempotency_key?: string;
     client_id?: string;
     customer_name?: string;
     counter_user_id?: string;
