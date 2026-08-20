@@ -28,7 +28,8 @@ const STATIC_COMMANDS: NavigationCommand[] = [
     { id: "nav-suppliers", title: "Ir a Proveedores", description: "Cuentas corrientes y pagos de compras", href: "/suppliers", category: "Navegación", icon: Truck, permission: PERMISSIONS.SUPPLIERS_MANAGE },
     { id: "nav-receptions", title: "Ir a Recepciones (WMS)", description: "Control de remitos e ingreso de mercadería", href: "/receptions", category: "Navegación", icon: ClipboardCheck, permission: PERMISSIONS.RECEPTIONS_MANAGE },
     { id: "nav-online-store", title: "Ir a Tienda online", description: "Catálogo, pedidos, envíos, clientes y análisis de Tiendanube", href: "/online-store", category: "Navegación", icon: Store, permission: PERMISSIONS.ONLINE_STORE_READ },
-    { id: "nav-settings", title: "Ir a Configuración", description: "Datos fiscales, ARCA y Tiendanube", href: "/settings", category: "Navegación", icon: Settings, permission: PERMISSIONS.SETTINGS_MANAGE },
+    { id: "nav-online-store-config", title: "Configurar Tiendanube", description: "Credenciales, OAuth, ubicación y webhooks de la tienda online", href: "/online-store?tab=connection", category: "Navegación", icon: Settings, permission: PERMISSIONS.INTEGRATIONS_MANAGE },
+    { id: "nav-settings", title: "Ir a Configuración", description: "Empresa, usuarios, sistema, ARCA y auditoría", href: "/settings", category: "Navegación", icon: Settings, permission: PERMISSIONS.SETTINGS_MANAGE },
 ];
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {

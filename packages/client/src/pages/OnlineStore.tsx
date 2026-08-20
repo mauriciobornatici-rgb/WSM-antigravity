@@ -1,6 +1,6 @@
-import { useDeferredValue, useMemo, useState } from "react"
+import { lazy, Suspense, useDeferredValue, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 import {
     AlertTriangle, BarChart3, Boxes, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
     CircleDollarSign, CloudDownload, ExternalLink, Loader2, PackageCheck, PackagePlus,
@@ -24,6 +24,8 @@ import type {
 } from "@/types/onlineStore"
 
 const PAGE_SIZE = 20
+const ONLINE_STORE_TABS = new Set(["overview", "catalog", "orders", "fulfillments", "customers", "sync", "analytics", "connection"])
+const TiendanubeConnectionTab = lazy(() => import("@/components/online-store/TiendanubeConnectionTab"))
 const EMPTY_VARIANT = { sku: "", barcode: "", size: "", color: "", sale_price: 0, purchase_price: 0, stock_initial: 0, image_url: "" }
 const DEFAULT_DRAFT: OnlineProductDraft = {
     name: "", description: "", brand: "", category: "", visibility: "hidden", publish: false,
@@ -223,10 +225,18 @@ function SyncTab({ data, connected, canManage, syncingOrders, onSyncOrders, onRe
 export default function OnlineStorePage() {
     const { user } = useAuth()
     const queryClient = useQueryClient()
+    const [searchParams, setSearchParams] = useSearchParams()
     const canManage = hasPermission(user?.role, PERMISSIONS.ONLINE_STORE_MANAGE)
     const canDispatch = hasPermission(user?.role, PERMISSIONS.ORDERS_DISPATCH)
-    const canConfigure = hasPermission(user?.role, PERMISSIONS.SETTINGS_MANAGE)
-    const [activeTab, setActiveTab] = useState("overview")
+    const canConfigure = hasPermission(user?.role, PERMISSIONS.INTEGRATIONS_MANAGE)
+    const requestedTab = searchParams.get("tab") || "overview"
+    const activeTab = ONLINE_STORE_TABS.has(requestedTab) && (requestedTab !== "connection" || canConfigure) ? requestedTab : "overview"
+    const setActiveTab = (tab: string) => {
+        const nextParams = new URLSearchParams(searchParams)
+        if (tab === "overview") nextParams.delete("tab")
+        else nextParams.set("tab", tab)
+        setSearchParams(nextParams, { replace: true })
+    }
     const [catalogSearch, setCatalogSearch] = useState("")
     const [ordersSearch, setOrdersSearch] = useState("")
     const [customersSearch, setCustomersSearch] = useState("")
@@ -278,10 +288,10 @@ export default function OnlineStorePage() {
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><div className="flex items-center gap-2"><Store className="h-7 w-7 text-blue-600" /><h1 className="text-3xl font-bold tracking-tight">Tienda online</h1></div><p className="mt-1 text-muted-foreground">Operación integral de Tiendanube: catálogo, ventas, clientes, envíos y rendimiento.</p></div><div className="flex flex-wrap gap-2"><Link to="/inventory"><Button variant="outline"><Boxes className="mr-2 h-4 w-4" />Abrir inventario WMS</Button></Link>{canConfigure && <Link to="/settings?tab=tiendanube"><Button variant="outline"><Settings className="mr-2 h-4 w-4" />Configurar conexión</Button></Link>}</div></div>
-            {connectionAttention && <div className="flex flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" /><div><p className="font-semibold">Tiendanube todavía no está conectada</p><p className="text-sm text-muted-foreground">Podés crear borradores y organizar variantes. Para importar, publicar y recibir pedidos, completá OAuth en Configuración.</p></div></div>{canConfigure && <Link to="/settings?tab=tiendanube"><Button size="sm">Conectar ahora</Button></Link>}</div>}
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><div className="flex items-center gap-2"><Store className="h-7 w-7 text-blue-600" /><h1 className="text-3xl font-bold tracking-tight">Tienda online</h1></div><p className="mt-1 text-muted-foreground">Operación integral de Tiendanube: catálogo, ventas, clientes, envíos y rendimiento.</p></div><div className="flex flex-wrap gap-2"><Link to="/inventory"><Button variant="outline"><Boxes className="mr-2 h-4 w-4" />Abrir inventario WMS</Button></Link>{canConfigure && <Button variant="outline" onClick={() => setActiveTab("connection")}><Settings className="mr-2 h-4 w-4" />Configurar conexión</Button>}</div></div>
+            {connectionAttention && <div className="flex flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" /><div><p className="font-semibold">Tiendanube todavía no está conectada</p><p className="text-sm text-muted-foreground">Podés crear borradores y organizar variantes. Para importar, publicar y recibir pedidos, completá OAuth en la pestaña Configuración de este módulo.</p></div></div>{canConfigure && <Button size="sm" onClick={() => setActiveTab("connection")}>Conectar ahora</Button>}</div>}
             {connected && <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm"><CheckCircle2 className="h-4 w-4 text-emerald-600" /><span className="font-medium">Tienda conectada</span><span className="text-muted-foreground">· API {statusQuery.data?.apiVersion || "2025-03"} · Store #{statusQuery.data?.storeId}</span></div>}
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5"><TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto p-1"><TabsTrigger value="overview">Resumen</TabsTrigger><TabsTrigger value="catalog">Catálogo {tabCounts.catalog ? `(${tabCounts.catalog})` : ""}</TabsTrigger><TabsTrigger value="orders">Pedidos {tabCounts.orders ? `(${tabCounts.orders})` : ""}</TabsTrigger><TabsTrigger value="fulfillments">Envíos {tabCounts.fulfillments ? `(${tabCounts.fulfillments})` : ""}</TabsTrigger><TabsTrigger value="customers">Clientes</TabsTrigger><TabsTrigger value="sync">Sincronización</TabsTrigger><TabsTrigger value="analytics">Análisis</TabsTrigger></TabsList>
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5"><TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto p-1"><TabsTrigger value="overview">Resumen</TabsTrigger><TabsTrigger value="catalog">Catálogo {tabCounts.catalog ? `(${tabCounts.catalog})` : ""}</TabsTrigger><TabsTrigger value="orders">Pedidos {tabCounts.orders ? `(${tabCounts.orders})` : ""}</TabsTrigger><TabsTrigger value="fulfillments">Envíos {tabCounts.fulfillments ? `(${tabCounts.fulfillments})` : ""}</TabsTrigger><TabsTrigger value="customers">Clientes</TabsTrigger><TabsTrigger value="sync">Sincronización</TabsTrigger><TabsTrigger value="analytics">Análisis</TabsTrigger>{canConfigure && <TabsTrigger value="connection"><Settings className="mr-2 h-4 w-4" />Configuración</TabsTrigger>}</TabsList>
                 <TabsContent value="overview"><OverviewTab overview={overviewQuery.data} /></TabsContent>
                 <TabsContent value="catalog"><CatalogTab rows={catalogQuery.data?.data || []} loading={catalogQuery.isLoading} connected={connected} canManage={canManage} page={catalogPage} totalPages={catalogTotalPages} search={catalogSearch} onSearch={(value) => { setCatalogSearch(value); setCatalogPage(1) }} onPage={setCatalogPage} onNew={() => setProductDialogOpen(true)} busyId={busyProductId} importing={importMutation.isPending} onPublish={(id) => { setBusyProductId(id); publishMutation.mutate(id) }} onArchive={(id) => { if (confirm("¿Dar de baja este producto? Si está publicado quedará oculto en Tiendanube y sus SKU locales pasarán a inactivos.")) archiveMutation.mutate(id) }} onImport={() => importMutation.mutate()} /></TabsContent>
                 <TabsContent value="orders"><OrdersTab rows={ordersQuery.data?.data || []} loading={ordersQuery.isLoading} search={ordersSearch} onSearch={(value) => { setOrdersSearch(value); setOrdersPage(1) }} page={ordersPage} totalPages={ordersTotalPages} onPage={setOrdersPage} /></TabsContent>
@@ -289,6 +299,7 @@ export default function OnlineStorePage() {
                 <TabsContent value="customers"><CustomersTab rows={customersQuery.data?.data || []} loading={customersQuery.isLoading} search={customersSearch} onSearch={(value) => { setCustomersSearch(value); setCustomersPage(1) }} page={customersPage} totalPages={customersTotalPages} onPage={setCustomersPage} /></TabsContent>
                 <TabsContent value="sync"><SyncTab data={syncQuery.data} connected={connected} canManage={canManage} syncingOrders={syncOrdersMutation.isPending} onSyncOrders={() => syncOrdersMutation.mutate()} onRetryAll={() => retryAllMutation.mutate()} /></TabsContent>
                 <TabsContent value="analytics"><AnalyticsTab data={analyticsQuery.data} /></TabsContent>
+                {canConfigure && <TabsContent value="connection"><Suspense fallback={<Card><CardContent className="flex min-h-48 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-blue-600" /><span className="sr-only">Cargando configuración de Tiendanube</span></CardContent></Card>}><TiendanubeConnectionTab /></Suspense></TabsContent>}
             </Tabs>
             <ProductDialog open={productDialogOpen} connected={connected} saving={createMutation.isPending} onClose={() => setProductDialogOpen(false)} onSave={(draft) => createMutation.mutate(draft)} />
             <FulfillmentDialog key={selectedFulfillment?.id || "closed"} fulfillment={selectedFulfillment} saving={fulfillmentMutation.isPending} onClose={() => setSelectedFulfillment(null)} onSave={(data) => { if (selectedFulfillment) fulfillmentMutation.mutate({ id: selectedFulfillment.id, data }) }} />

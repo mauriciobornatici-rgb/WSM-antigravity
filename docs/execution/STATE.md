@@ -8,11 +8,11 @@ Immediate priority: ejecutar el ensayo controlado de `docs/TIENDANUBE_OPERATIONS
 ## 2026-08-20 Centro operativo Tiendanube
 
 - Nuevo módulo superior `Tienda online`: resumen, catálogo paginado y multivariante, pedidos/compradores, múltiples envíos y tracking, clientes, sincronización y análisis.
-- Configuración reducida a credenciales, OAuth, Location ID y webhooks; eliminada la lista larga de productos que obligaba a hacer scroll.
+- Tiendanube eliminada de Configuración general; credenciales, OAuth, Location ID, webhooks, diagnóstico y desconexión quedaron en `Tienda online > Configuración` mediante endpoints dedicados.
 - API `2025-03`, limitador de dos solicitudes por segundo, retry 429, 22 webhooks, HMAC, idempotencia, ciclo de conexión y RBAC operativo separado de secretos.
 - Migraciones `033`-`036` aplicadas; `034` permite eventos repetidos del mismo recurso y `035`/`036` corrigen deriva del catálogo en bases históricas.
-- Prueba operativa: alta de familia con dos SKU y stock total 5, baja recuperable de un borrador por ID y todas las pestañas/estados desconectados sin errores de consola.
-- Validación final: servidor 113/113, cliente 41/41, typecheck, lint, build y preflight referencial (0 huérfanos) verdes.
+- Prueba operativa: alta de familia con dos SKU y stock total 5, baja recuperable de un borrador por ID y las ocho pestañas/estados desconectados sin errores de consola.
+- Validación final: servidor 113/113, cliente 42/42, typecheck, lint, build y preflight referencial (0 huérfanos) verdes.
 - Guía de conexión y ensayo real: `docs/TIENDANUBE_OPERATIONS.md`.
 
 ## 2026-08-19 Hardening 100/100
@@ -41,7 +41,7 @@ Resolved on 2026-08-16 (detalle completo en `CHANGELOG_EXECUTION.md`):
 
 Open decisions / pendientes humanos:
 - Rotar `DB_PASSWORD` de la BD remota desde el panel de Hostinger y separar credenciales dev/prod (el `.env` local aún apunta a la BD real).
-- Re-guardar credenciales de Tienda Nube/AFIP desde Settings para re-cifrarlas con la nueva `ENCRYPTION_KEY` (el descifrado legacy funciona mientras tanto).
+- Re-guardar credenciales de Tiendanube desde `Tienda online > Configuración` y las de ARCA desde Configuración para re-cifrarlas con la nueva `ENCRYPTION_KEY` (el descifrado legacy funciona mientras tanto).
 - Asientos contables aún editables/borrables físicamente: pendiente modelo de inmutabilidad con contrasientos.
 - `deliverOrder`/`pickOrderItem` sin TX (riesgo de estado a medias en picking/despacho).
 - Cobertura frontend: sin tests de componentes; E2E con un solo spec fuera de CI.
@@ -962,7 +962,7 @@ Head: `7f92656`
     - `npm -w @wsm/client run build`
 
 ## Next After Current Task
-Tiendanube staging validation - publish backend through HTTPS, configure Tiendanube app callback/webhook URLs, load Client ID/Secret in ERP settings, run OAuth, map one product variant, then create one controlled Tiendanube order and verify local order import + stock sync.
+Tiendanube staging validation - publish backend through HTTPS, configure Tiendanube app callback/webhook URLs, load Client ID/Secret in `Tienda online > Configuración`, run OAuth, publish one product variant, then create one controlled Tiendanube order and verify local order import + stock sync.
 
 ## Preproduction closure 2026-08-19
 - POS checkout and offline recovery are idempotent across orders, invoices and cash-shift payments.

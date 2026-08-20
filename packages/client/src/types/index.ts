@@ -258,3 +258,9 @@ export interface TiendaNubeIntegrationStatus {
         missingEvents?: string[]
     }
 }
+
+export interface TiendaNubeIntegrationConfig {
+    clientId: string
+    clientSecretConfigured: boolean
+    locationId: string
+}

@@ -19,6 +19,11 @@ const onlineRead = [authenticateToken, authorizePermission(PERMISSIONS.ONLINE_ST
 const onlineManage = [authenticateToken, authorizePermission(PERMISSIONS.ONLINE_STORE_MANAGE)];
 const uuidParams = z.object({ params: z.object({ id: uuidSchema }) });
 const fulfillmentParams = z.object({ params: z.object({ id: z.string().trim().min(10).max(100) }) });
+const tiendanubeConfigBody = z.object({
+    clientId: z.string().trim().max(255),
+    clientSecret: z.string().max(2000).optional(),
+    locationId: z.string().trim().max(255)
+});
 
 // Tienda Nube OAuth
 router.get('/tiendanube/authorize', authenticateToken, authorizePermission(PERMISSIONS.INTEGRATIONS_MANAGE), integrationController.authorizeTiendaNube);
@@ -32,6 +37,9 @@ router.post('/tiendanube/webhooks/orders/created', integrationController.webhook
 router.post('/tiendanube/sync-orders', authenticateToken, authorizePermission(PERMISSIONS.ONLINE_STORE_MANAGE), integrationController.syncRecentOrdersController);
 router.post('/tiendanube/auto-link', authenticateToken, authorizePermission(PERMISSIONS.ONLINE_STORE_MANAGE), integrationController.autoLinkCatalogController);
 router.get('/tiendanube/status', authenticateToken, authorizePermission(PERMISSIONS.ONLINE_STORE_READ), integrationController.getTiendaNubeStatusController);
+router.get('/tiendanube/config', authenticateToken, authorizePermission(PERMISSIONS.INTEGRATIONS_MANAGE), integrationController.getTiendaNubeConfigController);
+router.patch('/tiendanube/config', authenticateToken, authorizePermission(PERMISSIONS.INTEGRATIONS_MANAGE),
+    validateZod(z.object({ body: tiendanubeConfigBody })), integrationController.updateTiendaNubeConfigController);
 router.post('/tiendanube/webhook/ensure', authenticateToken, authorizePermission(PERMISSIONS.INTEGRATIONS_MANAGE), integrationController.ensureTiendaNubeWebhookController);
 router.post('/tiendanube/disconnect', authenticateToken, authorizePermission(PERMISSIONS.INTEGRATIONS_MANAGE), integrationController.disconnectTiendaNubeController);
 
@@ -40,7 +48,7 @@ router.get('/tiendanube/failed-syncs', authenticateToken, authorizePermission(PE
 router.post('/tiendanube/failed-syncs/retry-all', authenticateToken, authorizePermission(PERMISSIONS.ONLINE_STORE_MANAGE), integrationController.retryAllFailedSyncsController);
 router.post('/tiendanube/failed-syncs/:id/retry', authenticateToken, authorizePermission(PERMISSIONS.ONLINE_STORE_MANAGE), integrationController.retryFailedSyncController);
 
-// Dedicated Tiendanube operations hub. Credentials and OAuth remain in Settings.
+// Dedicated Tiendanube hub: daily operations and technical configuration.
 router.get('/tiendanube/operations/overview', ...onlineRead, integrationController.getOperationsOverviewController);
 router.get('/tiendanube/operations/catalog', ...onlineRead,
     validateZod(z.object({ query: onlineStoreCatalogQuerySchema })), integrationController.listCatalogController);

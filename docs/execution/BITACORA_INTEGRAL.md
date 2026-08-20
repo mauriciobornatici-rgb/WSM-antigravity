@@ -893,7 +893,7 @@ Configuracion necesaria en el panel de Tiendanube:
 - Redirect/callback URL:
   - `https://<backend-publico>/api/integrations/tiendanube/callback`
 - App/admin/preferences URL:
-  - `https://<frontend-publico>/settings?tab=tiendanube`
+  - `https://<frontend-publico>/online-store?tab=connection`
 - Webhook URL recomendado:
   - `https://<backend-publico>/api/integrations/tiendanube/webhooks`
 - Scopes minimos:

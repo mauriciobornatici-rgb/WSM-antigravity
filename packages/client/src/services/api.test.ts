@@ -119,3 +119,42 @@ describe("api.createOnlineProduct", () => {
         });
     });
 });
+
+describe("api Tiendanube technical configuration", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        vi.resetModules();
+        vi.stubEnv("VITE_API_URL", "http://localhost:3001");
+        localStorage.clear();
+    });
+
+    it("reads and updates credentials through the dedicated integration contract", async () => {
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: () => Promise.resolve({ clientId: "app-1", clientSecretConfigured: true, locationId: "loc-1" }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: () => Promise.resolve({ clientId: "app-2", clientSecretConfigured: true, locationId: "loc-2" }),
+            });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { api } = await import("./api");
+        await api.getTiendanubeConfig();
+        await api.updateTiendanubeConfig({ clientId: "app-2", clientSecret: "new-secret", locationId: "loc-2" });
+
+        expect(fetchMock).toHaveBeenNthCalledWith(1,
+            "http://localhost:3001/api/integrations/tiendanube/config",
+            expect.objectContaining({ headers: {} })
+        );
+        expect(fetchMock).toHaveBeenNthCalledWith(2,
+            "http://localhost:3001/api/integrations/tiendanube/config",
+            expect.objectContaining({ method: "PATCH" })
+        );
+        const updatePayload = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+        expect(updatePayload).toEqual({ clientId: "app-2", clientSecret: "new-secret", locationId: "loc-2" });
+    });
+});

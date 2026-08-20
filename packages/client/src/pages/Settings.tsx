@@ -1,17 +1,17 @@
 import { useState, useEffect, useCallback } from "react"
 import { api } from "@/services/api"
-import type { CompanySettings, SystemSettings, User, TiendaNubeIntegrationStatus } from "@/types"
+import type { CompanySettings, SystemSettings, User } from "@/types"
 import type { AuditLogEntry, PaginationMeta, UserCreateInput, UserFormValues, UserUpdateInput } from "@/types/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
-import { Building2, Users, Settings2, Loader2, History, ReceiptText, Store } from "lucide-react"
+import { Building2, Users, Settings2, Loader2, History, ReceiptText } from "lucide-react"
 import { UserForm } from "@/components/users/UserForm"
 import { toast } from "sonner"
 import { useAuth } from "@/context/AuthContext"
 import { showErrorToast } from "@/lib/errorHandling"
 import { DEFAULT_COMPANY_SETTINGS, normalizeCompanySettings } from "@/lib/companySettings"
 import { isApiError } from "@/services/httpClient"
-import { useSearchParams } from "react-router-dom"
+import { Navigate, useSearchParams } from "react-router-dom"
 
 // Extracted Tab Components
 import { CompanySettingsTab } from "@/components/settings/CompanySettingsTab"
@@ -19,7 +19,6 @@ import { BillingSettingsTab } from "@/components/settings/BillingSettingsTab"
 import { UsersManagementTab } from "@/components/settings/UsersManagementTab"
 import { AuditLogTab } from "@/components/settings/AuditLogTab"
 import { SystemSettingsTab } from "@/components/settings/SystemSettingsTab"
-import { TiendanubeSettingsTab } from "@/components/settings/TiendanubeSettingsTab"
 
 const buildSystemSettings = (settings: CompanySettings): SystemSettings => ({
     regional: {
@@ -35,6 +34,14 @@ const buildSystemSettings = (settings: CompanySettings): SystemSettings => ({
 const AUDIT_PAGE_SIZE = 20
 
 export default function SettingsPage() {
+    const [searchParams] = useSearchParams()
+    if (searchParams.get("tab") === "tiendanube") {
+        return <Navigate to="/online-store?tab=connection" replace />
+    }
+    return <SettingsContent />
+}
+
+function SettingsContent() {
     const [searchParams, setSearchParams] = useSearchParams()
     const { user: currentUser } = useAuth()
     const [company, setCompany] = useState<CompanySettings | null>(null)
@@ -48,11 +55,6 @@ export default function SettingsPage() {
     const [saving, setSaving] = useState(false)
     const [testingConnection, setTestingConnection] = useState(false)
     const [connectionLogs, setConnectionLogs] = useState<string[]>([])
-
-    // Tienda Nube State
-    const [tiendanubeStatus, setTiendanubeStatus] = useState<TiendaNubeIntegrationStatus | null>(null)
-    const [tiendanubeStatusLoading, setTiendanubeStatusLoading] = useState(false)
-    const [tiendanubeConnectionAction, setTiendanubeConnectionAction] = useState(false)
 
     // User Form State
     const [userFormOpen, setUserFormOpen] = useState(false)
@@ -119,21 +121,6 @@ export default function SettingsPage() {
             setAuditPage(totalPages)
         }
     }, [auditPage, auditPagination?.totalPages])
-
-    const loadTiendanubeStatus = useCallback(async () => {
-        setTiendanubeStatusLoading(true)
-        try {
-            setTiendanubeStatus(await api.getTiendanubeStatus())
-        } catch (error) {
-            showErrorToast("Error al verificar la integración con Tiendanube", error)
-        } finally {
-            setTiendanubeStatusLoading(false)
-        }
-    }, [])
-
-    useEffect(() => {
-        void loadTiendanubeStatus()
-    }, [loadTiendanubeStatus])
 
     const handleTestConnection = async () => {
         if (!company || !company.billing) {
@@ -228,34 +215,6 @@ export default function SettingsPage() {
         }
     }
 
-    const handleEnsureTiendaNubeWebhook = async () => {
-        setTiendanubeConnectionAction(true)
-        try {
-            const result = await api.ensureTiendanubeWebhook()
-            if (result.configured) toast.success(result.created ? "Webhook registrado" : "El webhook ya estaba registrado")
-            else toast.warning("Configure TIENDANUBE_WEBHOOK_URL con una URL HTTPS pública")
-            await loadTiendanubeStatus()
-        } catch (error) {
-            showErrorToast("No se pudo registrar el webhook", error)
-        } finally {
-            setTiendanubeConnectionAction(false)
-        }
-    }
-
-    const handleDisconnectTiendaNube = async () => {
-        if (!confirm("¿Desconectar Tiendanube y eliminar el webhook registrado?")) return
-        setTiendanubeConnectionAction(true)
-        try {
-            await api.disconnectTiendanube()
-            toast.success("Tiendanube fue desconectada")
-            await Promise.all([loadData(), loadTiendanubeStatus()])
-        } catch (error) {
-            showErrorToast("No se pudo desconectar Tiendanube", error)
-        } finally {
-            setTiendanubeConnectionAction(false)
-        }
-    }
-
     const handleUpdateUser = async (data: UserFormValues) => {
         if (!editingUser) return
         setUserLoading(true)
@@ -329,7 +288,7 @@ export default function SettingsPage() {
             </div>
 
             <Tabs
-                value={["company", "users", "system", "billing", "audit", "tiendanube"].includes(searchParams.get("tab") || "") ? searchParams.get("tab")! : "company"}
+                value={["company", "users", "system", "billing", "audit"].includes(searchParams.get("tab") || "") ? searchParams.get("tab")! : "company"}
                 onValueChange={(tab) => setSearchParams(tab === "company" ? {} : { tab }, { replace: true })}
                 className="space-y-4"
             >
@@ -341,7 +300,6 @@ export default function SettingsPage() {
                     {currentUser?.role === 'admin' && (
                         <TabsTrigger value="audit" className="flex shrink-0 gap-2"><History className="h-4 w-4" /> Auditoría</TabsTrigger>
                     )}
-                    <TabsTrigger value="tiendanube" className="flex shrink-0 gap-2"><Store className="h-4 w-4" /> Tienda Nube</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="company">
@@ -396,20 +354,6 @@ export default function SettingsPage() {
                     />
                 </TabsContent>
 
-                <TabsContent value="tiendanube">
-                    <TiendanubeSettingsTab
-                        company={company}
-                        setCompany={setCompany}
-                        onSaveCompany={handleSaveCompany}
-                        saving={saving}
-                        integrationStatus={tiendanubeStatus}
-                        integrationStatusLoading={tiendanubeStatusLoading}
-                        connectionActionLoading={tiendanubeConnectionAction}
-                        onRefreshIntegrationStatus={loadTiendanubeStatus}
-                        onEnsureWebhook={handleEnsureTiendaNubeWebhook}
-                        onDisconnect={handleDisconnectTiendaNube}
-                    />
-                </TabsContent>
             </Tabs>
 
             <UserForm

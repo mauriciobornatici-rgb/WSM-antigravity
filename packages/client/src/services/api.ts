@@ -556,6 +556,12 @@ export const api = {
     getTiendanubeStatus: () =>
         httpClient.get<import("@/types").TiendaNubeIntegrationStatus>("/api/integrations/tiendanube/status"),
 
+    getTiendanubeConfig: () =>
+        httpClient.get<import("@/types").TiendaNubeIntegrationConfig>("/api/integrations/tiendanube/config"),
+
+    updateTiendanubeConfig: (config: { clientId: string; clientSecret?: string; locationId: string }) =>
+        httpClient.patch<import("@/types").TiendaNubeIntegrationConfig>("/api/integrations/tiendanube/config", config),
+
     getOnlineStoreOverview: () =>
         httpClient.get<import("@/types/onlineStore").OnlineStoreOverview>("/api/integrations/tiendanube/operations/overview"),
 

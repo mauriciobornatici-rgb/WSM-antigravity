@@ -385,7 +385,7 @@
         <span class="toc-page">05</span>
       </li>
       <li class="toc-item">
-        <span class="toc-name">3. Configuración del Sistema e Integraciones (AFIP & Tienda Nube)</span>
+        <span class="toc-name">3. Configuración del Sistema e Integraciones</span>
         <span class="toc-dots"></span>
         <span class="toc-page">07</span>
       </li>
@@ -557,7 +557,7 @@
 
   <!-- SECTION 3 -->
   <div class="page-break"></div>
-  <h1>3. Configuración e Integraciones (AFIP & Tienda Nube)</h1>
+  <h1>3. Configuración del Sistema e Integraciones</h1>
   <p>Este módulo es exclusivo del perfil **Administrador** y permite conectar WSM ERP con los proveedores externos de facturación legal y comercio electrónico.</p>
 
   <h2>3.1 Configuración de Datos Físicos e Impositivos</h2>
@@ -586,25 +586,26 @@
     </ol>
   </div>
 
-  <h2>3.3 Vinculación Automática con Tienda Nube</h2>
-  <p>WSM ERP sincroniza de manera bidireccional el stock físico y las ventas de tu e-commerce Tienda Nube de forma 100% automatizada.</p>
+  <h2>3.3 Administración de Tienda online</h2>
+  <p>Toda la operación y configuración de Tiendanube se concentra en el módulo principal <strong>Tienda online</strong>. La Configuración general ya no contiene funciones del canal.</p>
 
   <div class="step-card">
-    <h4><span class="step-badge">Paso 1</span> Token de Acceso</h4>
-    <p>En **Configuración > Tienda Nube**, ingresa tu <code>Access Token</code> personal y tu <code>Store ID</code> de Tienda Nube corporativo.</p>
+    <h4><span class="step-badge">Paso 1</span> Credenciales y OAuth</h4>
+    <p>En <strong>Tienda online &gt; Configuración</strong>, ingresa el Client ID y Client Secret de la aplicación, guarda los cambios y selecciona <strong>Conectar por OAuth</strong>.</p>
   </div>
 
   <div class="step-card">
-    <h4><span class="step-badge">Paso 2</span> Activación de Webhooks</h4>
-    <p>Haz clic en el botón <strong>"Conectar Canal Digital"</strong>. El sistema se comunicará con Tienda Nube e instalará los oyentes automáticos (webhooks). A partir de ese momento, cada venta en tu e-commerce creará un pedido en el ERP en menos de 5 segundos.</p>
+    <h4><span class="step-badge">Paso 2</span> Ubicación y diagnóstico</h4>
+    <p>Indica el Location ID que controla el stock cuando la tienda utiliza varias ubicaciones. El estado técnico permite verificar token, versión API, ubicación y webhooks, registrarlos si faltan o desconectar el canal.</p>
   </div>
 
   <div class="step-card">
-    <h4><span class="step-badge">Paso 3</span> Gestor de Vinculación Masiva</h4>
-    <p>En la tabla inferior, mapearás los artículos del ERP con los de Tienda Nube:</p>
+    <h4><span class="step-badge">Paso 3</span> Operación del canal</h4>
+    <p>Utiliza las pestañas del mismo módulo para administrar el canal sin listas interminables:</p>
     <ul>
-      <li>Usa el switch <strong>"Sincronizar Stock"</strong> para indicarle al ERP si deseas que controle el stock de esa publicación digital de forma activa.</li>
-      <li>Carga el <strong>Product ID</strong> y el <strong>Variant ID</strong> que Tienda Nube otorga a cada publicación en su panel de administración.</li>
+      <li><strong>Catálogo:</strong> altas, variantes/SKU, publicación, importación, búsqueda y bajas.</li>
+      <li><strong>Pedidos, Envíos y Clientes:</strong> comprador, destino, preparación, tracking y seguimiento comercial.</li>
+      <li><strong>Sincronización y Análisis:</strong> procesos, errores recuperables, ventas y rendimiento.</li>
     </ul>
   </div>
 

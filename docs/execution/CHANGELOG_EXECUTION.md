@@ -5,7 +5,8 @@
 ### Centro operativo Tiendanube
 
 - Se creó `Tienda online` como módulo de primer nivel con catálogo servidor/paginado, altas y bajas multivariante, pedidos, compradores, domicilios, envíos múltiples, tracking, clientes, centro de sincronización y análisis.
-- Se dejó `Configuración > Tienda Nube` exclusivamente para credenciales, OAuth, ubicación y webhooks, evitando cargar o recorrer catálogos grandes en Settings.
+- Se eliminó Tiendanube de Configuración general y se trasladaron credenciales, OAuth, Location ID, webhooks, diagnóstico y desconexión a `Tienda online > Configuración`.
+- Se agregó un contrato backend específico para esa configuración técnica, evitando leer o reescribir la configuración completa de empresa/ARCA al actualizar la integración.
 - Backend ampliado con modelo operacional, endpoints validados, permisos `ONLINE_STORE_READ/MANAGE`, rate limiting de API, reintento 429, webhooks de productos/pedidos/clientes/fulfillments/app e idempotencia compatible con eventos repetidos.
 - Migraciones nuevas `033`-`036`; se preservaron checksums ejecutados y se alineó el esquema histórico de productos/movimientos detectado durante la prueba real.
 - Se corrigieron opcionales vacíos del alta, mensajes de validación por campo, accesibilidad de variantes/diálogos y autofill indebido de credenciales Tiendanube.
