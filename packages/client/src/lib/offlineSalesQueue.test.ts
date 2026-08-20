@@ -32,6 +32,39 @@ describe("offlineSalesQueue", () => {
         expect(queue[0]!.retry_count).toBe(0);
     });
 
+    it("upserts retries with the same idempotency key instead of duplicating sales", () => {
+        const sale = {
+            idempotency_key: "checkout-1",
+            customer_name: "Cliente",
+            payment_method: "cash",
+            payments: [{ method: "cash", amount: 100 }],
+            items: [{ product_id: "p1", quantity: 1, sale_price: 100 }],
+            emit_invoice: false,
+        };
+
+        enqueueOfflineSale(sale);
+        enqueueOfflineSale(sale);
+
+        expect(getOfflineQueue()).toHaveLength(1);
+        expect(getOfflineQueue()[0]!.idempotency_key).toBe("checkout-1");
+    });
+
+    it("fails explicitly when the contingency sale cannot be persisted", () => {
+        const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+            throw new DOMException("Quota exceeded", "QuotaExceededError");
+        });
+
+        expect(() => enqueueOfflineSale({
+            customer_name: "Cliente",
+            payment_method: "cash",
+            payments: [{ method: "cash", amount: 100 }],
+            items: [{ product_id: "p1", quantity: 1, sale_price: 100 }],
+            emit_invoice: false,
+        })).toThrow("No se pudo guardar la venta");
+
+        setItem.mockRestore();
+    });
+
     it("should remove individual sales from queue", () => {
         const item1 = enqueueOfflineSale({
             customer_name: "Cliente 1",

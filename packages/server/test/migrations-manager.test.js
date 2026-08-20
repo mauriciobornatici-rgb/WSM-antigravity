@@ -36,4 +36,42 @@ test('partial migration recovery only accepts matching duplicate DDL errors', ()
         ),
         false
     );
+    assert.equal(
+        migrationInternals.isRecoverableAlreadyAppliedDdl(
+            { code: 'ER_CANT_CREATE_TABLE', errno: 1005, sqlMessage: "errno: 121 Duplicate key on write or update" },
+            'ALTER TABLE x ADD CONSTRAINT fk_x FOREIGN KEY (id) REFERENCES y(id)'
+        ),
+        true
+    );
+    assert.equal(
+        migrationInternals.isRecoverableAlreadyAppliedDdl(
+            { code: 'ER_CANT_CREATE_TABLE', errno: 1005, sqlMessage: "errno: 150 Foreign key is incorrectly formed" },
+            'ALTER TABLE x ADD CONSTRAINT fk_x FOREIGN KEY (id) REFERENCES y(id)'
+        ),
+        false
+    );
+});
+
+test('historical checksum compatibility is narrowly scoped to the applied migration variant', () => {
+    assert.equal(
+        migrationInternals.isAcceptedHistoricalChecksum(
+            '028_add_core_referential_integrity.sql',
+            '702573c87363580f9d6e21199125c9c1b0570bfe099a69ca4bd4e0f56bc28d52'
+        ),
+        true
+    );
+    assert.equal(
+        migrationInternals.isAcceptedHistoricalChecksum(
+            '028_add_core_referential_integrity.sql',
+            'different-checksum'
+        ),
+        false
+    );
+    assert.equal(
+        migrationInternals.isAcceptedHistoricalChecksum(
+            '027_make_journal_entries_immutable.sql',
+            '702573c87363580f9d6e21199125c9c1b0570bfe099a69ca4bd4e0f56bc28d52'
+        ),
+        false
+    );
 });

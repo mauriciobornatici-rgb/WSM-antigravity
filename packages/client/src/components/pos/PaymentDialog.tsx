@@ -307,7 +307,7 @@ export function PaymentDialog({
                                 onChange={(event) => onEmitInvoiceChange(event.target.checked)}
                                 className="h-4 w-4 accent-primary rounded cursor-pointer"
                             />
-                            Emitir Comprobante Fiscal Electrónico (AFIP)
+                            Emitir comprobante comercial
                         </label>
                         {emitInvoice && (
                             <div className="flex items-center gap-2">

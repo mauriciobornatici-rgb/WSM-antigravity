@@ -4,6 +4,7 @@ import { ArrowLeft, History, Moon, PauseCircle, RefreshCw, Sun, Wifi, WifiOff } 
 import { toast } from "sonner";
 import { useTheme } from "@/hooks/useTheme";
 import { api } from "@/services/api";
+import { isApiError } from "@/services/httpClient";
 import type { Client, CompanySettings } from "@/types";
 import type { CashRegister, CashShiftSummary, Invoice } from "@/types/api";
 import { showErrorToast } from "@/lib/errorHandling";
@@ -167,7 +168,7 @@ export default function POSPage() {
         onToggleInvoice: () => {
             setEmitInvoice((prev) => {
                 const next = !prev;
-                toast.info(`Facturación fiscal AFIP: ${next ? "Activada" : "Desactivada"}`);
+                toast.info(`Emisión de comprobante: ${next ? "Activada" : "Desactivada"}`);
                 return next;
             });
         },
@@ -361,6 +362,35 @@ export default function POSPage() {
         const previousEmitInvoice = emitInvoice;
         const previousPaymentSplits = [...paymentSplits];
         const checkoutIdempotencyKey = crypto.randomUUID();
+        let orderCommitted = false;
+
+        const contingencySale = {
+            idempotency_key: checkoutIdempotencyKey,
+            customer_name: selectedClient?.name || "Consumidor final",
+            ...(previousClientId ? { client_id: previousClientId } : {}),
+            payment_method: primaryPaymentMethod,
+            payments: positiveSplits.map((payment) => ({ method: payment.method, amount: payment.amount })),
+            items: previousCart.map((item) => ({
+                product_id: item.id,
+                name: item.name,
+                quantity: item.quantity,
+                sale_price: Number(item.sale_price),
+                vat_rate: item.vat_rate != null ? Number(item.vat_rate) : 21,
+            })),
+            emit_invoice: previousEmitInvoice,
+            invoice_type: invoiceType,
+            shift_id: currentShift.id,
+        };
+
+        const restoreCheckout = () => {
+            setProducts(previousProducts);
+            setCart(previousCart);
+            setSelectedClientId(previousClientId);
+            setEmitInvoice(previousEmitInvoice);
+            setPaymentSplits(previousPaymentSplits);
+            setSuccessDialogOpen(false);
+            setPaymentDialogOpen(true);
+        };
 
         const soldByProduct = cart.reduce<Record<string, number>>((acc, item) => {
             acc[item.id] = (acc[item.id] || 0) + item.quantity;
@@ -382,25 +412,14 @@ export default function POSPage() {
 
         // Si estamos sin conexión directa a internet, encolamos inmediatamente en modo contingencia
         if (!navigator.onLine) {
-            enqueueOfflineSale({
-                idempotency_key: checkoutIdempotencyKey,
-                customer_name: selectedClient?.name || "Consumidor final",
-                ...(previousClientId ? { client_id: previousClientId } : {}),
-                payment_method: primaryPaymentMethod,
-                payments: positiveSplits.map((p) => ({ method: p.method, amount: p.amount })),
-                items: previousCart.map((i) => ({
-                    product_id: i.id,
-                    name: i.name,
-                    quantity: i.quantity,
-                    sale_price: Number(i.sale_price),
-                    vat_rate: i.vat_rate != null ? Number(i.vat_rate) : 21,
-                })),
-                emit_invoice: previousEmitInvoice,
-                invoice_type: invoiceType,
-                shift_id: currentShift.id,
-            });
-            refreshOfflineCount();
-            toast.warning("Sin red: Venta guardada en la cola offline de contingencia.");
+            try {
+                enqueueOfflineSale(contingencySale);
+                refreshOfflineCount();
+                toast.warning("Sin red: Venta guardada en la cola offline de contingencia.");
+            } catch (storageError) {
+                restoreCheckout();
+                showErrorToast("No se pudo resguardar la venta; el carrito fue restaurado.", storageError);
+            }
             return;
         }
 
@@ -422,31 +441,28 @@ export default function POSPage() {
             if (previousClientId) orderPayload.client_id = previousClientId;
 
             const order = await api.createOrder(orderPayload);
+            orderCommitted = true;
             setLastOrderId(order.id);
 
             if (previousEmitInvoice) {
-                try {
-                    const invoicePayload: Record<string, unknown> = {
-                        order_id: order.id,
-                        customer_name: selectedClient?.name || "Consumidor final",
-                        invoice_type: invoiceType,
-                        point_of_sale: 1,
-                        payment_method: primaryPaymentMethod,
-                        payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
-                        items: previousCart.map((item) => ({
-                            product_id: item.id,
-                            description: item.name,
-                            quantity: item.quantity,
-                            unit_price: item.sale_price,
-                            vat_rate: item.vat_rate != null ? Number(item.vat_rate) : 21.00,
-                        })),
-                    };
-                    if (previousClientId) invoicePayload.client_id = previousClientId;
-                    const invoice = await api.createInvoice(invoicePayload);
-                    setLastInvoice(invoice);
-                } catch (invoiceError) {
-                    showErrorToast("Venta guardada, pero falló la factura", invoiceError);
-                }
+                const invoicePayload: Record<string, unknown> = {
+                    order_id: order.id,
+                    customer_name: selectedClient?.name || "Consumidor final",
+                    invoice_type: invoiceType,
+                    point_of_sale: 1,
+                    payment_method: primaryPaymentMethod,
+                    payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
+                    items: previousCart.map((item) => ({
+                        product_id: item.id,
+                        description: item.name,
+                        quantity: item.quantity,
+                        unit_price: item.sale_price,
+                        vat_rate: item.vat_rate != null ? Number(item.vat_rate) : 21.00,
+                    })),
+                };
+                if (previousClientId) invoicePayload.client_id = previousClientId;
+                const invoice = await api.createInvoice(invoicePayload);
+                setLastInvoice(invoice);
             }
 
             for (const line of positiveSplits) {
@@ -460,38 +476,29 @@ export default function POSPage() {
 
             toast.success("Venta registrada con éxito");
         } catch (error) {
-            // Si el servidor falló por error de red o timeout, guardamos en cola offline
-            const isNetworkError = !navigator.onLine || (error instanceof Error && (error.message.includes("fetch") || error.message.includes("network") || error.message.includes("timeout")));
-            if (isNetworkError) {
-                enqueueOfflineSale({
-                    idempotency_key: checkoutIdempotencyKey,
-                    customer_name: selectedClient?.name || "Consumidor final",
-                    ...(previousClientId ? { client_id: previousClientId } : {}),
-                    payment_method: primaryPaymentMethod,
-                    payments: positiveSplits.map((p) => ({ method: p.method, amount: p.amount })),
-                    items: previousCart.map((i) => ({
-                        product_id: i.id,
-                        name: i.name,
-                        quantity: i.quantity,
-                        sale_price: Number(i.sale_price),
-                        vat_rate: i.vat_rate != null ? Number(i.vat_rate) : 21,
-                    })),
-                    emit_invoice: previousEmitInvoice,
-                    invoice_type: invoiceType,
-                    shift_id: currentShift.id,
-                });
-                refreshOfflineCount();
-                setSuccessDialogOpen(false);
-                toast.warning("Fallo de conexión: La venta quedó resguardada en cola offline.");
+            // Una respuesta de red puede perderse después del commit. Si alguna etapa ya
+            // fue confirmada, reintentamos todo con la misma clave idempotente.
+            const errorMessage = error instanceof Error ? error.message.toLowerCase() : "";
+            const isNetworkError = !navigator.onLine || ["fetch", "network", "timeout"].some((term) => errorMessage.includes(term));
+            const isUncertainServerFailure = isApiError(error) && error.status >= 500;
+            if (isNetworkError || isUncertainServerFailure || orderCommitted) {
+                try {
+                    enqueueOfflineSale(contingencySale);
+                    refreshOfflineCount();
+                    setSuccessDialogOpen(false);
+                    toast.warning("Checkout incompleto: quedó resguardado para reintento seguro.");
+                } catch (storageError) {
+                    if (!orderCommitted) restoreCheckout();
+                    showErrorToast(
+                        orderCommitted
+                            ? "La venta fue creada, pero no pudo guardarse el reintento. Revísala en el historial."
+                            : "No se pudo resguardar la venta; el carrito fue restaurado.",
+                        storageError,
+                    );
+                }
             } else {
                 // Rollback state to prior values on non-network validation error
-                setProducts(previousProducts);
-                setCart(previousCart);
-                setSelectedClientId(previousClientId);
-                setEmitInvoice(previousEmitInvoice);
-                setPaymentSplits(previousPaymentSplits);
-                setSuccessDialogOpen(false);
-                setPaymentDialogOpen(true);
+                restoreCheckout();
                 showErrorToast("Error al procesar la venta. El carrito ha sido restaurado.", error);
             }
         } finally {
@@ -582,7 +589,7 @@ export default function POSPage() {
                     <div className="hidden lg:flex items-center gap-2 text-muted-foreground bg-muted/30 px-2.5 py-1 rounded border text-[11px] font-mono">
                         <span><kbd className="bg-background px-1 py-0.5 rounded border">F2</kbd> Buscar</span>
                         <span><kbd className="bg-background px-1 py-0.5 rounded border">F4</kbd> Cobrar</span>
-                        <span><kbd className="bg-background px-1 py-0.5 rounded border">F8</kbd> AFIP</span>
+                        <span><kbd className="bg-background px-1 py-0.5 rounded border">F8</kbd> Comprobante</span>
                         <span><kbd className="bg-background px-1 py-0.5 rounded border">F9</kbd> Vaciar</span>
                         <span><kbd className="bg-background px-1 py-0.5 rounded border">Esc</kbd> Salir</span>
                     </div>

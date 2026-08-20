@@ -76,11 +76,13 @@ export function getOfflineQueue(): OfflineSalePayload[] {
     }
 }
 
-export function saveOfflineQueue(queue: OfflineSalePayload[]): void {
+export function saveOfflineQueue(queue: OfflineSalePayload[]): boolean {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, items: queue }));
+        return true;
     } catch (e) {
         console.error("Error saving offline sales queue", e);
+        return false;
     }
 }
 
@@ -94,8 +96,11 @@ export function enqueueOfflineSale(sale: OfflineSaleInput): OfflineSalePayload {
         timestamp: Date.now(),
         retry_count: 0,
     };
-    queue.push(entry);
-    saveOfflineQueue(queue);
+    const updatedQueue = queue.filter((queuedSale) => queuedSale.idempotency_key !== idempotencyKey);
+    updatedQueue.push(entry);
+    if (!saveOfflineQueue(updatedQueue)) {
+        throw new Error("No se pudo guardar la venta en el almacenamiento de contingencia");
+    }
     return entry;
 }
 
@@ -211,7 +216,9 @@ async function performOfflineSync(apiClient: POSApiClient): Promise<SyncResult> 
     }
 
     const newlyQueued = getOfflineQueue().filter((sale) => !initialIds.has(sale.id));
-    saveOfflineQueue([...remainingQueue, ...newlyQueued]);
+    if (!saveOfflineQueue([...remainingQueue, ...newlyQueued])) {
+        throw new Error("No se pudo actualizar el almacenamiento de contingencia");
+    }
     return { synced, failed, errors };
 }
 

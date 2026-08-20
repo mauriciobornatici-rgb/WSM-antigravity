@@ -1,7 +1,7 @@
 CREATE TRIGGER trg_journal_entries_no_update
 BEFORE UPDATE ON journal_entries
 FOR EACH ROW
-SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Journal entries are immutable; create a reversal instead';
+SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Journal entries are immutable, create a reversal instead';
 
 CREATE TRIGGER trg_journal_entries_no_delete
 BEFORE DELETE ON journal_entries

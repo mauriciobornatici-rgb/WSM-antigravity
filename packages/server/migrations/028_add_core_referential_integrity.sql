@@ -1,3 +1,34 @@
+-- Normalize orphaned values only for nullable relationships before adding constraints.
+UPDATE products child
+LEFT JOIN suppliers parent ON parent.id = child.supplier_id
+SET child.supplier_id = NULL
+WHERE child.supplier_id IS NOT NULL AND parent.id IS NULL;
+
+UPDATE inventory_movements child
+LEFT JOIN users parent ON parent.id = child.performed_by
+SET child.performed_by = NULL
+WHERE child.performed_by IS NOT NULL AND parent.id IS NULL;
+
+UPDATE orders child
+LEFT JOIN clients parent ON parent.id = child.client_id
+SET child.client_id = NULL
+WHERE child.client_id IS NOT NULL AND parent.id IS NULL;
+
+UPDATE invoices child
+LEFT JOIN orders parent ON parent.id = child.order_id
+SET child.order_id = NULL
+WHERE child.order_id IS NOT NULL AND parent.id IS NULL;
+
+UPDATE invoices child
+LEFT JOIN clients parent ON parent.id = child.client_id
+SET child.client_id = NULL
+WHERE child.client_id IS NOT NULL AND parent.id IS NULL;
+
+UPDATE invoice_items child
+LEFT JOIN products parent ON parent.id = child.product_id
+SET child.product_id = NULL
+WHERE child.product_id IS NOT NULL AND parent.id IS NULL;
+
 ALTER TABLE products
     ADD CONSTRAINT fk_products_supplier
     FOREIGN KEY (supplier_id) REFERENCES suppliers(id)

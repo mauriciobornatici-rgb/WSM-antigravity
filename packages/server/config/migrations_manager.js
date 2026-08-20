@@ -7,9 +7,19 @@ import pool from './db.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(__dirname, '../migrations');
 const MIGRATION_LOCK = 'wsm_schema_migrations';
+const ACCEPTED_HISTORICAL_CHECKSUMS = new Map([
+    [
+        '028_add_core_referential_integrity.sql',
+        new Set(['702573c87363580f9d6e21199125c9c1b0570bfe099a69ca4bd4e0f56bc28d52'])
+    ]
+]);
 
 function checksum(content) {
     return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+function isAcceptedHistoricalChecksum(file, recordedChecksum) {
+    return ACCEPTED_HISTORICAL_CHECKSUMS.get(file)?.has(recordedChecksum) === true;
 }
 
 function splitStatements(sql) {
@@ -29,6 +39,7 @@ function isRecoverableAlreadyAppliedDdl(error, statement) {
         (error?.code === 'ER_DUP_FIELDNAME' && normalized.includes('ADD COLUMN'))
         || (error?.code === 'ER_DUP_KEYNAME' && normalized.includes('ADD UNIQUE KEY'))
         || (error?.code === 'ER_FK_DUP_NAME' && normalized.includes('ADD CONSTRAINT'))
+        || (error?.code === 'ER_CANT_CREATE_TABLE' && /errno:\s*121\b/i.test(String(error?.sqlMessage || '')) && normalized.includes('ADD CONSTRAINT'))
         || (error?.code === 'ER_TRG_ALREADY_EXISTS' && normalized.startsWith('CREATE TRIGGER'))
     );
 }
@@ -37,7 +48,8 @@ export const migrationInternals = Object.freeze({
     checksum,
     splitStatements,
     isDdlStatement,
-    isRecoverableAlreadyAppliedDdl
+    isRecoverableAlreadyAppliedDdl,
+    isAcceptedHistoricalChecksum
 });
 
 export const runMigrations = async () => {
@@ -82,7 +94,11 @@ export const runMigrations = async () => {
 
             if (recordedChecksum !== undefined) {
                 if (recordedChecksum && recordedChecksum !== fileChecksum) {
-                    throw new Error(`Migration ${file} changed after execution; create a new migration instead`);
+                    if (!isAcceptedHistoricalChecksum(file, recordedChecksum)) {
+                        throw new Error(`Migration ${file} changed after execution; create a new migration instead`);
+                    }
+                    console.warn(`Migration ${file} matches an explicitly accepted historical checksum. Skipping.`);
+                    continue;
                 }
                 if (!recordedChecksum) {
                     await connection.query('UPDATE _migrations SET checksum = ? WHERE name = ?', [fileChecksum, file]);
