@@ -2,8 +2,20 @@
 
 Last reviewed: 2026-08-20
 Current continuity source: `docs/execution/BITACORA_INTEGRAL.md`
-Current score estimate: 100/100 en calidad de código y operación local; activación Tiendanube real pendiente de OAuth/HTTPS con una tienda de prueba.
-Immediate priority: ejecutar el ensayo controlado de `docs/TIENDANUBE_OPERATIONS.md` antes de producción.
+Current score estimate: 100/100 en calidad de código local; listo para preproducción, no habilitado aún para producción.
+Immediate priority: completar los gates externos de `docs/execution/PRODUCTION_READINESS_2026-08-20.md`; ARCA y Tiendanube quedan deliberadamente para el final.
+
+## 2026-08-20 Cierre de preproducción sin credenciales externas
+
+- La aprobación de recepciones exige en backend un control de calidad completo por producto; faltantes, cantidades inconsistentes y líneas duplicadas bloquean el stock.
+- El inspector se obtiene de la sesión autenticada y el alta de QC es transaccional e idempotente mientras la recepción está pendiente.
+- La acción simulada de envío de facturas por email quedó oculta hasta disponer de un proveedor real; no se muestra una operación ficticia al usuario.
+- Smokes corregidos para respetar `token_version` vigente y cerrar correctamente sus conexiones.
+- Validación final: servidor 118/118 y cobertura 61,64%/55,61%/68,17%; cliente 42/42, lint, typecheck y build verdes; RBAC 12/12, integridad HTTP 4/4 y preflight 20/20 relaciones sin huérfanos.
+- Ensayo QA de recepción aprobado: bloqueo sin QC (409), alta de QC, aprobación con actualización de stock y bloqueo de doble aprobación.
+- Altas/bajas lógicas QA aprobadas. El smoke de caja se omitió porque no había una caja abierta; debe ejecutarse con turno controlado en staging.
+- Playwright CLI local no está disponible por ausencia de `npx`; el pipeline CI instala Chromium y mantiene este gate como obligatorio.
+- Runbook de salida: `docs/execution/PRODUCTION_READINESS_2026-08-20.md`.
 
 ## 2026-08-20 Centro operativo Tiendanube
 
@@ -12,7 +24,7 @@ Immediate priority: ejecutar el ensayo controlado de `docs/TIENDANUBE_OPERATIONS
 - API `2025-03`, limitador de dos solicitudes por segundo, retry 429, 22 webhooks, HMAC, idempotencia, ciclo de conexión y RBAC operativo separado de secretos.
 - Migraciones `033`-`036` aplicadas; `034` permite eventos repetidos del mismo recurso y `035`/`036` corrigen deriva del catálogo en bases históricas.
 - Prueba operativa: alta de familia con dos SKU y stock total 5, baja recuperable de un borrador por ID y las ocho pestañas/estados desconectados sin errores de consola.
-- Validación final: servidor 113/113, cliente 42/42, typecheck, lint, build y preflight referencial (0 huérfanos) verdes.
+- Validación del módulo: servidor 113/113, cliente 42/42, typecheck, lint, build y preflight referencial (0 huérfanos) verdes; supersedida por el cierre 118/118 anterior.
 - Guía de conexión y ensayo real: `docs/TIENDANUBE_OPERATIONS.md`.
 
 ## 2026-08-19 Hardening 100/100

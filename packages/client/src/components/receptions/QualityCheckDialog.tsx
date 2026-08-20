@@ -64,6 +64,10 @@ export function QualityCheckDialog({
             validationError = `La suma de aprobadas y defectuosas para '${item.productName}' (${total}) debe ser igual a la cantidad recibida (${item.quantityReceived}).`;
             break;
         }
+        if (item.quantityFailed > 0 && !item.defectDescription.trim()) {
+            validationError = `Detalla el defecto de '${item.productName}' antes de aprobar la recepción.`;
+            break;
+        }
     }
 
     const handleUpdateQty = (index: number, field: "quantityPassed" | "quantityFailed", valStr: string) => {

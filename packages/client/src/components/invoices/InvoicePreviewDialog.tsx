@@ -11,7 +11,7 @@ type InvoicePreviewDialogProps = {
     companyTaxId: string
     companyAddress: string
     taxRateLabel: string
-    onSendEmail: (invoice: InvoiceView) => void
+    onSendEmail?: ((invoice: InvoiceView) => void) | undefined
     onClose: () => void
     onAuthorize?: (invoice: InvoiceView) => void | Promise<void>
     companySettings?: CompanySettings
@@ -43,7 +43,7 @@ export function InvoicePreviewDialog({
                         companyTaxId={companyTaxId}
                         companyAddress={companyAddress}
                         taxRateLabel={taxRateLabel}
-                        onSendEmail={onSendEmail}
+                        {...(onSendEmail ? { onSendEmail } : {})}
                         onClose={onClose}
                         onAuthorize={onAuthorize}
                         companySettings={companySettings}

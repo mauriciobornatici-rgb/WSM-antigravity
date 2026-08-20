@@ -256,6 +256,14 @@ test('processReceptionApproval successfully approves reception, updates stock, u
                     location_assigned: 'Depot-A'
                 }]];
             }
+            if (sql.includes('FROM quality_checks')) {
+                return [[{
+                    quantity_checked: 10,
+                    quantity_passed: 10,
+                    quantity_failed: 0,
+                    defect_description: null
+                }]];
+            }
             if (sql.includes('SELECT id FROM inventory')) {
                 return [[{ id: 'inv-row-1' }]];
             }
@@ -283,4 +291,33 @@ test('processReceptionApproval successfully approves reception, updates stock, u
     assert.ok(updates.some(c => c.sql.includes('UPDATE inventory SET quantity = quantity + ?')));
     assert.ok(updates.some(c => c.sql.includes('UPDATE purchase_order_items SET quantity_received = quantity_received + ?')));
     assert.ok(updates.some(c => c.sql.includes('UPDATE purchase_orders SET status = ?')));
+});
+
+test('processReceptionApproval rejects receptions without a complete quality check', async (t) => {
+    const originalGetConnection = pool.getConnection;
+    let rolledBack = false;
+    const mockConnection = {
+        beginTransaction: async () => {},
+        commit: async () => {},
+        rollback: async () => { rolledBack = true; },
+        release: () => {},
+        query: async (sql) => {
+            if (sql.includes('SELECT * FROM receptions')) {
+                return [[{ id: 'reception-1', status: 'pending_qc', supplier_id: 'supplier-1' }]];
+            }
+            if (sql.includes('SELECT * FROM reception_items')) {
+                return [[{ id: 'item-1', product_id: 'product-1', quantity_received: 4 }]];
+            }
+            if (sql.includes('FROM quality_checks')) return [[]];
+            return [[]];
+        }
+    };
+    pool.getConnection = async () => mockConnection;
+    t.after(() => { pool.getConnection = originalGetConnection; });
+
+    await assert.rejects(
+        () => inventoryService.processReceptionApproval('reception-1'),
+        (error) => error.errorCode === 'RECEPTION_QC_INCOMPLETE' && error.statusCode === 409
+    );
+    assert.equal(rolledBack, true);
 });

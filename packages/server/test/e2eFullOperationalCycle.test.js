@@ -127,8 +127,8 @@ test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Fact
                 location: "Góndola A-2"
             }]];
         }
-        if (sql.includes("SELECT * FROM quality_checks")) {
-            return [[]];
+        if (sql.includes("FROM quality_checks")) {
+            return [[{ quantity_checked: 20, quantity_passed: 20, quantity_failed: 0, defect_description: null }]];
         }
 
         // Orders queries

@@ -38,8 +38,8 @@ test("Circuito E2E Operativo Completo: Compra -> Stock -> Venta -> Cta Cte -> Co
         if (sql.includes("SELECT * FROM reception_items WHERE reception_id = ?")) {
             return [[{ id: "item-1", product_id: "prod-100", quantity_received: 10, unit_price: 50000 }]];
         }
-        if (sql.includes("SELECT * FROM quality_checks")) {
-            return [[]];
+        if (sql.includes("FROM quality_checks")) {
+            return [[{ quantity_checked: 10, quantity_passed: 10, quantity_failed: 0, defect_description: null }]];
         }
         if (sql.includes("SELECT * FROM orders WHERE id = ?")) {
             return [[{ id: "ord-100", client_id: "cli-100", total_amount: 240000, invoiced: 0, status: "completed" }]];

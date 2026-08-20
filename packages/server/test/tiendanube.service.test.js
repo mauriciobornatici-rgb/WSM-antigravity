@@ -745,3 +745,215 @@ test('remote order states map to the local fulfillment lifecycle', () => {
     assert.equal(service.mapLocalOrderStatus({ shipping_status: 'fulfilled' }), 'delivered');
     assert.equal(service.mapLocalOrderStatus({ status: 'open', shipping_status: 'unpacked' }), null);
 });
+
+test('operations hub returns filtered catalog, orders, customers, analytics and sync data', async () => {
+    const calls = [];
+    const family = { id: 'family-1', name: 'Camiseta', total_stock: '5' };
+    const variant = { id: 'variant-1', family_id: 'family-1', sku: 'CAM-M', stock: '5' };
+    const db = {
+        async query(sql, params = []) {
+            const statement = String(sql);
+            calls.push({ statement, params });
+            if (statement.includes('COUNT(*) AS families')) return [[{ families: 1, synced: 1, attention: 0, visible: 1 }]];
+            if (statement.includes('awaiting_fulfillment')) return [[{ orders: 2, paid: 1, awaiting_fulfillment: 1 }]];
+            if (statement.includes('failed_stock')) return [[{ failed_stock: 0, pending_events: 0 }]];
+            if (statement.includes('revenue_30d')) return [[{ revenue_30d: '1250.50' }]];
+            if (statement.includes('COUNT(*) AS total FROM tiendanube_catalog_families')) return [[{ total: 1 }]];
+            if (statement.includes('SELECT f.*') && statement.includes('FROM tiendanube_catalog_families f')) return [[family]];
+            if (statement.includes('SELECT v.id, v.family_id')) return [[variant]];
+            if (statement.includes('SELECT * FROM tiendanube_catalog_families')) return [[family]];
+            if (statement.includes('COUNT(*) AS total FROM orders o')) return [[{ total: 2 }]];
+            if (statement.includes('SELECT o.*')) return [[{ id: 'order-1', customer_name: 'Cliente' }]];
+            if (statement.includes('COUNT(*) AS total FROM tiendanube_customers')) return [[{ total: 1 }]];
+            if (statement.includes('SELECT c.*')) return [[{ external_id: 'customer-1', name: 'Cliente' }]];
+            if (statement.includes('COUNT(*) AS total FROM tiendanube_fulfillments')) return [[{ total: 1 }]];
+            if (statement.includes('SELECT f.*, o.customer_name')) return [[{ id: 'fulfillment-1', status: 'PACKED' }]];
+            if (statement.includes('SELECT DATE(o.created_at)')) return [[{ date: '2026-08-20', orders: '2', revenue: '250' }]];
+            if (statement.includes('SUM(oi.quantity) AS units')) return [[{ sku: 'CAM-M', units: '2', revenue: '250' }]];
+            if (statement.includes("AS state, COUNT(*) AS total")) return [[{ state: 'paid', total: '2' }]];
+            if (statement.includes('COUNT(d.order_id) AS orders')) return [[{ external_id: 'customer-1', orders: '2', revenue: '250' }]];
+            if (statement.includes('FROM tiendanube_sync_runs')) return [[{ id: 'run-1', status: 'completed' }]];
+            if (statement.includes('FROM tiendanube_webhook_events ORDER BY')) return [[{ id: 'event-1', status: 'processed' }]];
+            if (statement.includes('FROM failed_syncs f')) return [[{ id: 'failed-1', status: 'pending' }]];
+            throw new Error(`Unexpected SQL in operations hub test: ${statement}`);
+        }
+    };
+    const service = new TiendaNubeService({ db, http: {} });
+    service.getCredentials = async () => ({ storeId: 'store-1', accessToken: 'token' });
+
+    const overview = await service.getOperationsOverview();
+    const catalog = await service.listCatalog({ page: 2, limit: 10, q: 'cam', visibility: 'visible', sync_status: 'synced' });
+    const detail = await service.getCatalogFamily('family-1');
+    const orders = await service.listOperationsOrders({
+        page: 2,
+        limit: 10,
+        q: 'cliente',
+        payment_status: 'paid',
+        shipping_status: 'packed',
+        from: '2026-08-01',
+        to: '2026-08-20'
+    });
+    const customers = await service.listOperationsCustomers({ page: 1, limit: 10, q: 'cliente' });
+    const fulfillments = await service.listFulfillments({ page: 1, limit: 10, q: 'envio', shipping_status: 'PACKED' });
+    const analytics = await service.getOperationsAnalytics();
+    const sync = await service.getSyncCenter();
+
+    assert.equal(overview.connected, true);
+    assert.equal(overview.revenue30d, 1250.5);
+    assert.equal(catalog.total, 1);
+    assert.equal(catalog.rows[0].variants[0].stock, 5);
+    assert.equal(detail.total_stock, 5);
+    assert.equal(orders.total, 2);
+    assert.equal(customers.total, 1);
+    assert.equal(fulfillments.total, 1);
+    assert.deepEqual(analytics.daily, [{ date: '2026-08-20', orders: 2, revenue: 250 }]);
+    assert.equal(sync.failedStock[0].id, 'failed-1');
+    assert.ok(calls.some((call) => call.params.includes('%cam%')));
+    assert.ok(calls.some((call) => call.params.includes('packed')));
+});
+
+test('fulfillment operations synchronize, update tracking and isolate bulk failures', async () => {
+    const apiCalls = [];
+    const dbCalls = [];
+    const remoteFulfillment = {
+        id: 'fulfillment-1',
+        number: '1',
+        status: 'DISPATCHED',
+        assigned_location: { location_id: 'location-1' },
+        tracking_info: { code: 'TRACK-1' },
+        tracking_events: [],
+        created_at: '2026-08-20T12:00:00Z',
+        updated_at: '2026-08-20T12:05:00Z'
+    };
+    const db = {
+        async query(sql, params = []) {
+            const statement = String(sql);
+            dbCalls.push({ statement, params });
+            if (statement.includes("SELECT id FROM orders WHERE external_source")) return [[{ id: 'order-1' }]];
+            if (statement.includes('SELECT f.*, o.id AS local_order_id')) {
+                return [[{ id: 'fulfillment-1', local_order_id: 'order-1', external_order_id: 'external-1' }]];
+            }
+            if (statement.includes('SELECT id, order_id, external_order_id FROM tiendanube_fulfillments')) {
+                return [[{ id: 'fulfillment-1', order_id: 'order-1', external_order_id: 'external-1' }]];
+            }
+            if (statement.includes('INSERT INTO tiendanube_fulfillments')) return [{ affectedRows: 1 }];
+            if (statement.includes('UPDATE orders SET tracking_number')) return [{ affectedRows: 1 }];
+            throw new Error(`Unexpected SQL in fulfillment operations test: ${statement}`);
+        }
+    };
+    const service = new TiendaNubeService({ db, http: {} });
+    service.getCredentials = async () => ({ storeId: 'store-1', accessToken: 'token' });
+    service.apiRequest = async (method, creds, path, data) => {
+        apiCalls.push({ method, creds, path, data });
+        if (path.endsWith('/tracking-events')) return { data: { id: 'event-1' } };
+        return { data: path.includes('fulfillment-orders') && method === 'get' ? [remoteFulfillment] : remoteFulfillment };
+    };
+
+    assert.deepEqual(await service.syncFulfillmentsForExternalOrder(null), { synced: 0 });
+    assert.deepEqual(await service.syncFulfillmentsForExternalOrder('external-1'), { synced: 1 });
+    const updated = await service.updateFulfillment('fulfillment-1', {
+        status: 'DISPATCHED',
+        tracking_code: 'TRACK-1',
+        tracking_url: 'https://tracking.example/1',
+        notify_customer: true
+    });
+    const event = await service.createTrackingEvent('fulfillment-1', { status: 'IN_TRANSIT' });
+
+    assert.equal(updated.id, 'fulfillment-1');
+    assert.equal(event.id, 'event-1');
+    assert.ok(apiCalls.some((call) => call.method === 'patch' && call.data.tracking_info.code === 'TRACK-1'));
+    assert.ok(apiCalls.some((call) => call.path.endsWith('/tracking-events')));
+    assert.ok(dbCalls.filter((call) => call.statement.includes('INSERT INTO tiendanube_fulfillments')).length >= 3);
+
+    const bulkService = new TiendaNubeService({
+        db: {
+            async query() {
+                return [[{ external_id: 'ok' }, { external_id: 'bad' }]];
+            }
+        },
+        http: {}
+    });
+    bulkService.syncFulfillmentsForExternalOrder = async (externalId) => {
+        if (externalId === 'bad') throw new Error('remote unavailable');
+        return { synced: 2 };
+    };
+    const bulk = await bulkService.syncAllFulfillments();
+    assert.deepEqual(bulk, {
+        orders: 2,
+        synced: 2,
+        failures: [{ externalId: 'bad', message: 'remote unavailable' }]
+    });
+});
+
+test('catalog family creation persists every variant, initial stock and publication intent atomically', async () => {
+    const statements = [];
+    const lifecycle = [];
+    const connection = {
+        async beginTransaction() { lifecycle.push('begin'); },
+        async commit() { lifecycle.push('commit'); },
+        async rollback() { lifecycle.push('rollback'); },
+        release() { lifecycle.push('release'); },
+        async query(sql, params = []) {
+            const statement = String(sql);
+            statements.push({ statement, params });
+            if (statement.includes('SELECT sku FROM products')) return [[]];
+            return [{ affectedRows: 1 }];
+        }
+    };
+    const service = new TiendaNubeService({
+        db: { async getConnection() { return connection; } },
+        http: {}
+    });
+    const published = [];
+    service.publishCatalogFamily = async (familyId) => published.push(familyId);
+    service.getCatalogFamily = async (familyId) => ({ id: familyId, variants: 2 });
+
+    const created = await service.createCatalogFamily({
+        name: 'Camiseta QA',
+        description: 'Familia multivariante',
+        brand: 'WSM',
+        category: 'Indumentaria',
+        visibility: 'hidden',
+        publish: true,
+        variants: [
+            { sku: 'CAM-QA-S', size: 'S', color: 'Azul', purchase_price: 50, sale_price: 100, stock_initial: 3 },
+            { sku: 'CAM-QA-M', size: 'M', color: 'Azul', purchase_price: 55, sale_price: 110, stock_initial: 0 }
+        ]
+    });
+
+    assert.equal(created.variants, 2);
+    assert.deepEqual(lifecycle, ['begin', 'commit', 'release']);
+    assert.equal(statements.filter((call) => call.statement.includes('INSERT INTO products')).length, 2);
+    assert.equal(statements.filter((call) => call.statement.includes('INSERT INTO tiendanube_catalog_variants')).length, 2);
+    assert.equal(statements.filter((call) => call.statement.includes('INSERT INTO inventory (')).length, 1);
+    assert.equal(statements.filter((call) => call.statement.includes('INSERT INTO inventory_movements')).length, 1);
+    assert.deepEqual(published, [created.id]);
+
+    const duplicateLifecycle = [];
+    const duplicateService = new TiendaNubeService({
+        db: {
+            async getConnection() {
+                return {
+                    async beginTransaction() { duplicateLifecycle.push('begin'); },
+                    async commit() { duplicateLifecycle.push('commit'); },
+                    async rollback() { duplicateLifecycle.push('rollback'); },
+                    release() { duplicateLifecycle.push('release'); },
+                    async query(sql) {
+                        if (String(sql).includes('SELECT sku FROM products')) return [[{ sku: 'CAM-QA-S' }]];
+                        throw new Error('No inserts expected for duplicate SKU');
+                    }
+                };
+            }
+        },
+        http: {}
+    });
+    await assert.rejects(
+        () => duplicateService.createCatalogFamily({
+            name: 'Duplicada',
+            visibility: 'hidden',
+            variants: [{ sku: 'CAM-QA-S' }]
+        }),
+        (error) => error.statusCode === 409 && error.errorCode === 'DUPLICATE_SKU'
+    );
+    assert.deepEqual(duplicateLifecycle, ['begin', 'rollback', 'release']);
+});

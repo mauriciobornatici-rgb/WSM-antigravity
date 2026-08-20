@@ -287,6 +287,12 @@ export const approveReception = catchAsync(async (req, res) => {
         if (err.errorCode === 'RECEPTION_HAS_NO_ITEMS') {
             return res.status(400).json({ error: 'reception_without_items', message: 'La recepcion no contiene items' });
         }
+        if (err.errorCode === 'RECEPTION_QC_INCOMPLETE' || err.errorCode === 'RECEPTION_QC_INVALID') {
+            return res.status(409).json({ error: 'quality_check_incomplete', message: err.message });
+        }
+        if (err.errorCode === 'RECEPTION_DUPLICATE_PRODUCT_ITEMS') {
+            return res.status(409).json({ error: 'duplicate_reception_product', message: err.message });
+        }
         throw err;
     }
 
@@ -433,11 +439,9 @@ export const createSupplierPayment = catchAsync(async (req, res) => {
 });
 
 export const createQualityCheck = catchAsync(async (req, res) => {
-    const id = crypto.randomUUID();
     const {
         reception_id,
         product_id,
-        inspector_id,
         result,
         quantity_checked,
         quantity_passed,
@@ -446,48 +450,113 @@ export const createQualityCheck = catchAsync(async (req, res) => {
         action_taken,
         notes
     } = req.body;
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const [receptions] = await connection.query(
+            'SELECT id, status FROM receptions WHERE id = ? FOR UPDATE',
+            [reception_id]
+        );
+        if (receptions.length === 0) {
+            const error = new Error('Recepción no encontrada');
+            error.statusCode = 404;
+            throw error;
+        }
+        if (receptions[0].status !== 'pending_qc') {
+            const error = new Error('El control de calidad sólo puede modificarse mientras la recepción está pendiente');
+            error.statusCode = 409;
+            throw error;
+        }
 
-    await pool.query(`
-        INSERT INTO quality_checks (
-            id, reception_id, product_id, inspector_id, result,
-            quantity_checked, quantity_passed, quantity_failed, defect_description, action_taken, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-        id,
-        reception_id,
-        product_id,
-        inspector_id || null,
-        result,
-        quantity_checked || 0,
-        quantity_passed || 0,
-        quantity_failed || 0,
-        defect_description || null,
-        action_taken || 'approve',
-        notes || null
-    ]);
+        const [receptionItems] = await connection.query(
+            `SELECT id, quantity_received
+             FROM reception_items
+             WHERE reception_id = ? AND product_id = ?
+             FOR UPDATE`,
+            [reception_id, product_id]
+        );
+        if (receptionItems.length !== 1) {
+            const error = new Error(receptionItems.length === 0
+                ? 'El producto no pertenece a la recepción'
+                : 'El producto está repetido en la recepción; unifique las líneas antes de controlar');
+            error.statusCode = 409;
+            throw error;
+        }
+        const receivedQuantity = Number(receptionItems[0].quantity_received || 0);
+        if (Number(quantity_checked) !== receivedQuantity
+            || Number(quantity_passed) + Number(quantity_failed) !== receivedQuantity) {
+            const error = new Error('El control de calidad debe cubrir exactamente toda la cantidad recibida');
+            error.statusCode = 409;
+            throw error;
+        }
 
-    await auditService.log({
-        user_id: req.user?.id || inspector_id || null,
-        action: 'CREATE_QUALITY_CHECK',
-        entity_type: 'quality_check',
-        entity_id: id,
-        new_values: {
+        const [existingRows] = await connection.query(
+            `SELECT * FROM quality_checks
+             WHERE reception_id = ? AND product_id = ?
+             ORDER BY check_date DESC, id DESC
+             LIMIT 1 FOR UPDATE`,
+            [reception_id, product_id]
+        );
+        const id = existingRows[0]?.id || crypto.randomUUID();
+        const authenticatedInspectorId = req.user?.id || null;
+        const values = [
+            authenticatedInspectorId,
+            result,
+            quantity_checked,
+            quantity_passed,
+            quantity_failed,
+            defect_description || null,
+            action_taken || 'approve',
+            notes || null
+        ];
+        if (existingRows.length > 0) {
+            await connection.query(
+                `UPDATE quality_checks
+                 SET inspector_id = ?, result = ?, quantity_checked = ?, quantity_passed = ?,
+                     quantity_failed = ?, defect_description = ?, action_taken = ?, notes = ?, check_date = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [...values, id]
+            );
+        } else {
+            await connection.query(
+                `INSERT INTO quality_checks (
+                    id, reception_id, product_id, inspector_id, result,
+                    quantity_checked, quantity_passed, quantity_failed, defect_description, action_taken, notes
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [id, reception_id, product_id, ...values]
+            );
+        }
+
+        const safeValues = {
             id,
             reception_id,
             product_id,
-            inspector_id: inspector_id || null,
+            inspector_id: authenticatedInspectorId,
             result,
-            quantity_checked: quantity_checked || 0,
-            quantity_passed: quantity_passed || 0,
-            quantity_failed: quantity_failed || 0,
+            quantity_checked,
+            quantity_passed,
+            quantity_failed,
             defect_description: defect_description || null,
             action_taken: action_taken || 'approve',
             notes: notes || null
-        },
-        ip_address: getRequestIp(req)
-    });
-
-    res.json({ id, success: true });
+        };
+        await auditService.log({
+            user_id: authenticatedInspectorId,
+            action: existingRows.length > 0 ? 'UPDATE_QUALITY_CHECK' : 'CREATE_QUALITY_CHECK',
+            entity_type: 'quality_check',
+            entity_id: id,
+            old_values: existingRows[0] || null,
+            new_values: safeValues,
+            ip_address: getRequestIp(req)
+        }, connection);
+        await connection.commit();
+        res.json({ id, success: true });
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
 });
 
 export const exportIVACompras = catchAsync(async (req, res) => {

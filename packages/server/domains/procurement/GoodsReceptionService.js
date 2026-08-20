@@ -32,27 +32,41 @@ export class GoodsReceptionService {
                 throw err;
             }
 
+            const uniqueProducts = new Set(items.map((item) => item.product_id));
+            if (uniqueProducts.size !== items.length) {
+                const err = new Error('La recepción contiene el mismo producto en más de una línea; unifique las cantidades antes del control de calidad');
+                err.errorCode = 'RECEPTION_DUPLICATE_PRODUCT_ITEMS';
+                err.statusCode = 409;
+                throw err;
+            }
+
             for (const item of items) {
                 const location = item.location_assigned || 'General';
 
                 const [qcRows] = await connection.query(`
-                    SELECT quantity_passed, quantity_failed
+                    SELECT quantity_checked, quantity_passed, quantity_failed, defect_description
                     FROM quality_checks
                     WHERE reception_id = ? AND product_id = ?
+                    ORDER BY check_date DESC, id DESC
                     LIMIT 1
                 `, [receptionId, item.product_id]);
 
-                let passedQty = item.quantity_received;
-                let failedQty = 0;
-
-                if (qcRows.length > 0) {
-                    passedQty = Number(qcRows[0].quantity_passed ?? item.quantity_received);
-                    failedQty = Number(qcRows[0].quantity_failed ?? 0);
+                if (qcRows.length === 0) {
+                    const err = new Error(`Falta el control de calidad del producto ${item.product_id}`);
+                    err.errorCode = 'RECEPTION_QC_INCOMPLETE';
+                    err.statusCode = 409;
+                    throw err;
                 }
 
-                if (passedQty + failedQty !== item.quantity_received) {
-                    passedQty = item.quantity_received;
-                    failedQty = 0;
+                const receivedQty = Number(item.quantity_received || 0);
+                const checkedQty = Number(qcRows[0].quantity_checked || 0);
+                const passedQty = Number(qcRows[0].quantity_passed || 0);
+                const failedQty = Number(qcRows[0].quantity_failed || 0);
+                if (checkedQty !== receivedQty || passedQty + failedQty !== receivedQty) {
+                    const err = new Error(`El control de calidad del producto ${item.product_id} no cubre toda la cantidad recibida`);
+                    err.errorCode = 'RECEPTION_QC_INVALID';
+                    err.statusCode = 409;
+                    throw err;
                 }
 
                 const updateStock = async (loc, qty, isFailed = false) => {
@@ -116,6 +130,12 @@ export class GoodsReceptionService {
 
                 await updateStock(location, passedQty, false);
                 await updateStock('Cuarentena', failedQty, true);
+                await connection.query(
+                    `UPDATE reception_items
+                     SET quantity_approved = ?, quantity_rejected = ?, rejection_reason = ?
+                     WHERE id = ?`,
+                    [passedQty, failedQty, qcRows[0].defect_description || null, item.id]
+                );
 
                 if (item.po_item_id) {
                     await connection.query(

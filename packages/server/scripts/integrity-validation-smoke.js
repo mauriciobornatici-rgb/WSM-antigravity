@@ -1,8 +1,8 @@
 import path from 'path';
 import dotenv from 'dotenv';
-import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { closeSmokeAuth, tokensForRoles } from './smoke-auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,25 +18,6 @@ const runCashFlow = process.env.SMOKE_CASH_FLOW === '1';
 if (!jwtSecret) {
     console.error('SMOKE ERROR: JWT_SECRET is not configured.');
     process.exit(1);
-}
-
-const roleIds = {
-    admin: '00000000-0000-0000-0000-00000000000a',
-    manager: '00000000-0000-0000-0000-00000000000b',
-    cashier: '00000000-0000-0000-0000-00000000000c',
-    warehouse: '00000000-0000-0000-0000-00000000000d'
-};
-
-function tokenForRole(role) {
-    return jwt.sign(
-        {
-            id: roleIds[role],
-            email: `smoke+${role}@test.local`,
-            role
-        },
-        jwtSecret,
-        { expiresIn: '1h' }
-    );
 }
 
 async function request(method, endpoint, token, body) {
@@ -101,8 +82,7 @@ function reportSkip(name, reason) {
 async function ensureHealth() {
     const health = await fetch(`${baseUrl}/api/health`);
     if (health.status !== 200) {
-        console.error(`Health check failed: ${health.status}`);
-        process.exit(1);
+        throw new Error(`Health check failed: ${health.status}`);
     }
 }
 
@@ -272,8 +252,27 @@ async function runReceptionFlowChecks(adminToken) {
     }
 
     const receptionId = createReception.body.id;
+    const approveWithoutQc = await request('POST', `/api/receptions/${receptionId}/approve`, adminToken, {});
+    reportResult('reception approval without quality check is blocked', approveWithoutQc, 409);
+
+    const createQc = await request('POST', '/api/quality-checks', adminToken, {
+        reception_id: receptionId,
+        product_id: productId,
+        result: 'pass',
+        quantity_checked: 1,
+        quantity_passed: 1,
+        quantity_failed: 0,
+        action_taken: 'approve',
+        notes: 'smoke reception flow'
+    });
+    reportResult('create complete quality check for reception flow', createQc, 200);
+    if (!isExpectedStatus(createQc.status, 200)) {
+        reportSkip('reception flow approval checks', 'quality check could not be created');
+        return;
+    }
+
     const approveFirst = await request('POST', `/api/receptions/${receptionId}/approve`, adminToken, {});
-    reportResult('first reception approval succeeds', approveFirst, 200);
+    reportResult('reception approval succeeds after quality check', approveFirst, 200);
 
     const approveSecond = await request('POST', `/api/receptions/${receptionId}/approve`, adminToken, {});
     reportResult('second reception approval is blocked', approveSecond, 400);
@@ -359,8 +358,10 @@ async function runCashFlowChecks(cashierToken) {
 
 async function run() {
     await ensureHealth();
-    const adminToken = tokenForRole('admin');
-    const cashierToken = tokenForRole('cashier');
+    const { admin: adminToken, cashier: cashierToken } = await tokensForRoles(
+        ['admin', 'cashier'],
+        jwtSecret
+    );
 
     await runReadOnlyIntegrityChecks(adminToken);
 
@@ -383,14 +384,15 @@ async function run() {
     }
 
     if (failures > 0) {
-        console.error(`Integrity smoke failed with ${failures} failing checks.`);
-        process.exit(1);
+        throw new Error(`Integrity smoke failed with ${failures} failing checks.`);
     }
 
     console.log('Integrity smoke passed.');
 }
 
-run().catch((err) => {
-    console.error('Integrity smoke execution error:', err.message);
-    process.exit(1);
-});
+run()
+    .catch((err) => {
+        console.error('Integrity smoke execution error:', err.message);
+        process.exitCode = 1;
+    })
+    .finally(closeSmokeAuth);

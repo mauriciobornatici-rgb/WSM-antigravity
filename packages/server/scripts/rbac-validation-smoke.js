@@ -1,8 +1,7 @@
-import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-import jwt from 'jsonwebtoken';
 import { fileURLToPath } from 'url';
+import { closeSmokeAuth, tokensForRoles } from './smoke-auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,25 +14,6 @@ const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret) {
     console.error('SMOKE ERROR: JWT_SECRET is not configured.');
     process.exit(1);
-}
-
-const roleIds = {
-    admin: '00000000-0000-0000-0000-00000000000a',
-    manager: '00000000-0000-0000-0000-00000000000b',
-    cashier: '00000000-0000-0000-0000-00000000000c',
-    warehouse: '00000000-0000-0000-0000-00000000000d'
-};
-
-function tokenForRole(role) {
-    return jwt.sign(
-        {
-            id: roleIds[role],
-            email: `smoke+${role}@test.local`,
-            role
-        },
-        jwtSecret,
-        { expiresIn: '1h' }
-    );
 }
 
 async function request(method, endpoint, token, body) {
@@ -75,18 +55,19 @@ function summarizeBody(body) {
 async function ensureHealth() {
     const health = await fetch(`${baseUrl}/api/health`);
     if (health.status !== 200) {
-        console.error(`Health check failed: ${health.status}`);
-        process.exit(1);
+        throw new Error(`Health check failed: ${health.status}`);
     }
 }
 
 async function run() {
     await ensureHealth();
 
-    const admin = tokenForRole('admin');
-    const manager = tokenForRole('manager');
-    const cashier = tokenForRole('cashier');
-    const warehouse = tokenForRole('warehouse');
+    const {
+        admin,
+        manager,
+        cashier,
+        warehouse
+    } = await tokensForRoles(['admin', 'manager', 'cashier', 'warehouse'], jwtSecret);
 
     const tests = [
         {
@@ -203,14 +184,15 @@ async function run() {
     }
 
     if (failures > 0) {
-        console.error(`Smoke failed with ${failures} failing checks.`);
-        process.exit(1);
+        throw new Error(`Smoke failed with ${failures} failing checks.`);
     }
 
     console.log('Smoke passed: all RBAC/validation checks succeeded.');
 }
 
-run().catch((err) => {
-    console.error('Smoke execution error:', err.message);
-    process.exit(1);
-});
+run()
+    .catch((err) => {
+        console.error('Smoke execution error:', err.message);
+        process.exitCode = 1;
+    })
+    .finally(closeSmokeAuth);

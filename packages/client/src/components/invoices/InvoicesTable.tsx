@@ -11,7 +11,7 @@ type InvoicesTableProps = {
     loading: boolean
     onRefresh: () => void
     onPreview: (invoice: InvoiceView) => void
-    onSendEmail: (invoice: InvoiceView) => void
+    onSendEmail?: ((invoice: InvoiceView) => void) | undefined
     onPrint: (invoice: InvoiceView) => void
     onExportCSV: () => void
     onPrintThermal?: ((invoice: InvoiceView) => void) | undefined
@@ -89,9 +89,11 @@ export function InvoicesTable({
                                     <Button variant="ghost" size="sm" title="Ver detalles" onClick={() => onPreview(invoice)}>
                                         <Eye className="h-4 w-4" />
                                     </Button>
-                                    <Button variant="ghost" size="sm" title="Enviar por email" onClick={() => onSendEmail(invoice)}>
-                                        <Mail className="h-4 w-4 text-blue-500" />
-                                    </Button>
+                                    {onSendEmail ? (
+                                        <Button variant="ghost" size="sm" title="Enviar por email" onClick={() => onSendEmail(invoice)}>
+                                            <Mail className="h-4 w-4 text-blue-500" />
+                                        </Button>
+                                    ) : null}
                                     <Button variant="ghost" size="sm" title="Imprimir Factura A4" onClick={() => onPrint(invoice)}>
                                         <Printer className="h-4 w-4" />
                                     </Button>

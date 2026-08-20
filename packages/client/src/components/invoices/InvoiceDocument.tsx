@@ -267,14 +267,16 @@ export function InvoiceDocument({
 
             {!printMode && (
                 <div className="no-print flex justify-end gap-3 pt-6">
-                    <Button
-                        variant="outline"
-                        className="h-12 border-slate-300 text-slate-700 hover:bg-slate-100"
-                        onClick={() => onSendEmail?.(invoice)}
-                    >
-                        <Mail className="mr-2 h-4 w-4" />
-                        Enviar por email
-                    </Button>
+                    {onSendEmail ? (
+                        <Button
+                            variant="outline"
+                            className="h-12 border-slate-300 text-slate-700 hover:bg-slate-100"
+                            onClick={() => onSendEmail(invoice)}
+                        >
+                            <Mail className="mr-2 h-4 w-4" />
+                            Enviar por email
+                        </Button>
+                    ) : null}
                     <Button className="h-12 bg-slate-900 text-white hover:bg-slate-800" onClick={() => window.print()}>
                         <Printer className="mr-2 h-4 w-4" />
                         Imprimir comprobante

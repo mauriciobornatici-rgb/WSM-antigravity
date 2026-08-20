@@ -187,6 +187,33 @@ export const qualityCheckSchema = z.object({
   defect_description: z.string().nullable().optional(),
   action_taken: z.enum(['approve', 'reject', 'return_to_supplier', 'discount']).optional(),
   notes: z.string().nullable().optional(),
+}).superRefine((data, ctx) => {
+  if (data.quantity_checked !== data.quantity_passed + data.quantity_failed) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['quantity_checked'],
+      message: 'La cantidad controlada debe coincidir con la suma de aprobadas y defectuosas',
+    });
+  }
+
+  const expectedResult = data.quantity_failed === 0
+    ? 'pass'
+    : data.quantity_passed === 0 ? 'fail' : 'conditional';
+  if (data.result !== expectedResult) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['result'],
+      message: `El resultado debe ser '${expectedResult}' para las cantidades informadas`,
+    });
+  }
+
+  if (data.quantity_failed > 0 && !data.defect_description?.trim()) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['defect_description'],
+      message: 'Debe detallar el defecto cuando existen unidades defectuosas',
+    });
+  }
 });
 
 // 6. Invoices (Customer)

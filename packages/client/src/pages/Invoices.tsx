@@ -43,7 +43,6 @@ export default function InvoicesPage() {
         unit_price: 0,
         vat_rate: getTaxRatePercentage(DEFAULT_COMPANY_SETTINGS),
     })
-    const emailFeatureEnabled = import.meta.env.VITE_ENABLE_INVOICE_EMAIL === "true"
     const invoiceIdFilter = (searchParams.get("invoice_id") || "").trim()
     const visibleInvoices = useMemo(() => {
         if (!invoiceIdFilter) return invoices
@@ -113,20 +112,6 @@ export default function InvoicesPage() {
         } catch (error) {
             showErrorToast("Error al emitir factura", error)
         }
-    }
-
-    const handleSendEmail = (invoice: InvoiceView) => {
-        // TODO: Integrar con endpoint backend real de envío de comprobantes.
-        if (!emailFeatureEnabled) {
-            toast.info("Envío por email en modo simulación", {
-                description: `No hay integración activa. Destinatario estimado: ${invoice.client_snapshot?.email || "cliente sin email"}.`,
-            })
-            return
-        }
-
-        toast.warning("Integración de email pendiente", {
-            description: "Activaste la feature flag, pero aún falta implementar el endpoint de envío.",
-        })
     }
 
     const handleOpenPreview = async (invoice: InvoiceView) => {
@@ -279,7 +264,6 @@ export default function InvoicesPage() {
                 loading={loading}
                 onRefresh={loadData}
                 onPreview={handleOpenPreview}
-                onSendEmail={handleSendEmail}
                 onPrint={handlePrintInvoice}
                 onExportCSV={handleExportLibroIVA}
                 onPrintThermal={handlePrintThermal}
@@ -313,7 +297,6 @@ export default function InvoicesPage() {
                 companyTaxId={companyTaxId}
                 companyAddress={companyAddress}
                 taxRateLabel={taxRateLabel}
-                onSendEmail={handleSendEmail}
                 onClose={() => setIsPreviewOpen(false)}
                 onAuthorize={handleAuthorizeInvoice}
                 companySettings={companySettings}

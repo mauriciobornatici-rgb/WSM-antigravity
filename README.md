@@ -17,6 +17,7 @@ Monorepo con frontend React/Vite y backend Node/Express para gestión comercial,
 - `npm run build` build de frontend
 - `npm run validate` ejecuta contratos compartidos, tests, lint, tipado y build
 - `npm run preflight:integrity` valida huérfanos antes de aplicar claves foráneas (solo lectura)
+- `npm run preflight:staging` ejecuta el gate local completo contra un backend de staging ya iniciado
 
 ## Continuidad de trabajo (importante)
 
@@ -70,7 +71,7 @@ Crea cliente/proveedor temporales y valida soft-delete.
   - `$env:SMOKE_PRODUCT_ID='<uuid_product>'`
   - `npm run smoke:integrity`
 
-Valida creación de OC/recepción y bloqueo de doble aprobación.
+Valida creación de OC/recepción, bloqueo sin control de calidad, alta del control, aprobación y bloqueo del segundo intento.
 
 ### Flujo de caja (opcional)
 
