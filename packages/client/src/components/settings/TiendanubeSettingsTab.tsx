@@ -1,42 +1,16 @@
-import { Save, Loader2, RefreshCw, AlertCircle, Unplug, ShieldCheck } from "lucide-react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
+import { Link } from "react-router-dom"
+import { CheckCircle2, Loader2, RefreshCw, Save, ShieldCheck, Store, Unplug } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Button } from "@/components/ui/button"
-import { Switch } from "@/components/ui/switch"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import type { CompanySettings, Product, FailedSync, TiendaNubeIntegrationStatus } from "@/types"
+import type { CompanySettings, TiendaNubeIntegrationStatus } from "@/types"
 
 interface TiendanubeSettingsTabProps {
     company: CompanySettings
     setCompany: React.Dispatch<React.SetStateAction<CompanySettings | null>>
     onSaveCompany: () => Promise<void>
     saving: boolean
-    onSyncTN: () => Promise<void>
-    syncingTN: boolean
-    onAutoLinkTN: () => Promise<void>
-    autoLinkingTN: boolean
-    tiendanubeProducts: Product[]
-    tiendanubeLoading: boolean
-    tiendanubeSaving: boolean
-    onSaveTiendaNubeLinks: () => Promise<void>
-    tiendanubeModifications: Record<string, {
-        tiendanube_sync_enabled: boolean
-        tiendanube_product_id: string
-        tiendanube_variant_id: string
-    }>
-    setTiendanubeModifications: React.Dispatch<React.SetStateAction<Record<string, {
-        tiendanube_sync_enabled: boolean
-        tiendanube_product_id: string
-        tiendanube_variant_id: string
-    }>>>
-    apiBaseUrl: string
-    failedSyncs: FailedSync[]
-    failedSyncsLoading: boolean
-    processingSyncId: string | null
-    processingAllSyncs: boolean
-    onRetrySync: (id: string) => Promise<void>
-    onRetryAllSyncs: () => Promise<void>
     integrationStatus: TiendaNubeIntegrationStatus | null
     integrationStatusLoading: boolean
     connectionActionLoading: boolean
@@ -45,390 +19,71 @@ interface TiendanubeSettingsTabProps {
     onDisconnect: () => Promise<void>
 }
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001"
+
 export function TiendanubeSettingsTab({
     company,
     setCompany,
     onSaveCompany,
     saving,
-    onSyncTN,
-    syncingTN,
-    onAutoLinkTN,
-    autoLinkingTN,
-    tiendanubeProducts,
-    tiendanubeLoading,
-    tiendanubeSaving,
-    onSaveTiendaNubeLinks,
-    tiendanubeModifications,
-    setTiendanubeModifications,
-    apiBaseUrl,
-    failedSyncs,
-    failedSyncsLoading,
-    processingSyncId,
-    processingAllSyncs,
-    onRetrySync,
-    onRetryAllSyncs,
     integrationStatus,
     integrationStatusLoading,
     connectionActionLoading,
     onRefreshIntegrationStatus,
     onEnsureWebhook,
-    onDisconnect
+    onDisconnect,
 }: TiendanubeSettingsTabProps) {
+    const updateIntegration = (values: Partial<NonNullable<CompanySettings["integrations"]>>) => {
+        setCompany((current) => current ? ({
+            ...current,
+            integrations: { ...(current.integrations || {}), ...values },
+        }) : current)
+    }
+
     return (
         <div className="space-y-6">
             <Card>
                 <CardHeader>
-                    <CardTitle>Configuración de Tienda Nube</CardTitle>
-                    <CardDescription>Para conectar tu tienda de forma segura, ingresa las credenciales de tu Aplicación de Tienda Nube y presiona 'Conectar'.</CardDescription>
+                    <CardTitle>Conexión con Tiendanube</CardTitle>
+                    <CardDescription>Este apartado conserva sólo credenciales, OAuth, ubicación de stock y webhooks. La operación diaria se realiza en Tienda online.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                    {company.integrations?.tiendanube_access_token_configured && company.integrations?.tiendanube_store_id ? (
-                        <div className="p-4 bg-green-50 text-green-700 rounded-md border border-green-200 flex items-center">
-                            <div className="mr-3">
-                                <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                            </div>
-                            <div>
-                                <p className="font-semibold">¡Conectado exitosamente con Tienda Nube!</p>
-                                <p className="text-sm">Store ID: {company.integrations.tiendanube_store_id}</p>
-                            </div>
+                    {integrationStatus?.connected && (
+                        <div className="flex items-center gap-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-700 dark:text-emerald-300">
+                            <CheckCircle2 className="h-5 w-5" />
+                            <div><p className="font-semibold">Conexión activa</p><p className="text-sm">Store #{integrationStatus.storeId} · API {integrationStatus.apiVersion}</p></div>
                         </div>
-                    ) : null}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-2">
-                            <Label htmlFor="tn_client_id">Client ID (App ID)</Label>
-                            <Input
-                                id="tn_client_id"
-                                placeholder="Ingresa el Client ID"
-                                value={company.integrations?.tiendanube_client_id || ''}
-                                onChange={e => setCompany((current) => current ? ({
-                                    ...current,
-                                    integrations: {
-                                        ...(current.integrations || {}),
-                                        tiendanube_client_id: e.target.value
-                                    }
-                                }) : current)}
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="tn_client_secret">Client Secret</Label>
-                            <Input
-                                id="tn_client_secret"
-                                type="password"
-                                placeholder={company.integrations?.tiendanube_client_secret_configured ? "Secret configurado; ingrese uno nuevo para reemplazarlo" : "Ingresa tu Client Secret"}
-                                value={company.integrations?.tiendanube_client_secret || ''}
-                                onChange={e => setCompany((current) => current ? ({
-                                    ...current,
-                                    integrations: {
-                                        ...(current.integrations || {}),
-                                        tiendanube_client_secret: e.target.value
-                                    }
-                                }) : current)}
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="tn_location_id">Location ID de stock</Label>
-                            <Input
-                                id="tn_location_id"
-                                placeholder="Vacío sólo para tiendas con una ubicación"
-                                value={company.integrations?.tiendanube_location_id || ''}
-                                onChange={e => setCompany((current) => current ? ({
-                                    ...current,
-                                    integrations: {
-                                        ...(current.integrations || {}),
-                                        tiendanube_location_id: e.target.value
-                                    }
-                                }) : current)}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                                En tiendas con múltiples ubicaciones evita actualizar accidentalmente el primer depósito.
-                            </p>
-                        </div>
+                    )}
+                    <div className="grid gap-6 md:grid-cols-2">
+                        <div className="space-y-2"><Label htmlFor="tn_client_id">Client ID (App ID)</Label><Input id="tn_client_id" name="tiendanube-client-id" autoComplete="off" spellCheck={false} data-lpignore="true" value={company.integrations?.tiendanube_client_id || ""} onChange={(event) => updateIntegration({ tiendanube_client_id: event.target.value })} placeholder="Client ID de la aplicación" /></div>
+                        <div className="space-y-2"><Label htmlFor="tn_client_secret">Client Secret</Label><Input id="tn_client_secret" name="tiendanube-client-secret" type="password" autoComplete="new-password" spellCheck={false} data-lpignore="true" value={company.integrations?.tiendanube_client_secret || ""} onChange={(event) => updateIntegration({ tiendanube_client_secret: event.target.value })} placeholder={company.integrations?.tiendanube_client_secret_configured ? "Secret configurado; escribir para reemplazar" : "Client Secret"} /></div>
+                        <div className="space-y-2"><Label htmlFor="tn_location_id">Location ID de stock</Label><Input id="tn_location_id" name="tiendanube-location-id" autoComplete="off" spellCheck={false} data-lpignore="true" value={company.integrations?.tiendanube_location_id || ""} onChange={(event) => updateIntegration({ tiendanube_location_id: event.target.value })} placeholder="Obligatorio si hay varias ubicaciones" /><p className="text-xs text-muted-foreground">Evita enviar stock al depósito incorrecto en tiendas multiubicación.</p></div>
                     </div>
                 </CardContent>
-                <CardFooter className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:justify-between">
-                    <p className="text-sm text-muted-foreground flex-1">
-                        Asegúrate de guardar las credenciales antes de Conectar.
-                    </p>
-                    <Button variant="outline" onClick={onSaveCompany} disabled={saving}>
-                        {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Credenciales</>}
-                    </Button>
-                    {company.integrations?.tiendanube_access_token_configured && (
-                        <Button 
-                            variant="outline"
-                            onClick={onSyncTN}
-                            disabled={syncingTN}
-                            className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
-                        >
-                            {syncingTN ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Sincronizando...</> : <><RefreshCw className="mr-2 h-4 w-4" /> Sincronizar Órdenes (Respaldo)</>}
-                        </Button>
-                    )}
-                    <Button 
-                        onClick={() => {
-                            window.location.href = `${apiBaseUrl}/api/integrations/tiendanube/authorize`;
-                        }} 
-                        disabled={!company.integrations?.tiendanube_client_id || (!company.integrations?.tiendanube_client_secret && !company.integrations?.tiendanube_client_secret_configured)}
-                        className="bg-blue-600 hover:bg-blue-700 text-white"
-                    >
-                        Conectar con Tienda Nube
-                    </Button>
+                <CardFooter className="flex flex-wrap justify-end gap-2 border-t pt-4">
+                    <Button variant="outline" onClick={() => void onSaveCompany()} disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Guardar credenciales</Button>
+                    <Button onClick={() => { window.location.href = `${API_BASE_URL}/api/integrations/tiendanube/authorize` }} disabled={!company.integrations?.tiendanube_client_id || (!company.integrations?.tiendanube_client_secret && !company.integrations?.tiendanube_client_secret_configured)}>Conectar por OAuth</Button>
                 </CardFooter>
             </Card>
 
             <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5" aria-hidden="true" /> Estado técnico</CardTitle>
-                    <CardDescription>Verifica el token, la versión de API y el webhook de nuevas órdenes.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3" aria-live="polite">
-                    {integrationStatusLoading ? (
-                        <p className="flex items-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> Verificando integración...</p>
-                    ) : (
-                        <div className="grid gap-2 text-sm sm:grid-cols-4">
-                            <p><span className="font-medium">Conexión:</span> {integrationStatus?.connected ? 'Activa' : 'Desconectada'}</p>
-                            <p><span className="font-medium">API:</span> {integrationStatus?.apiVersion || '—'}</p>
-                            <p><span className="font-medium">Webhook:</span> {integrationStatus?.webhook.configured ? 'Registrado' : 'Pendiente'}</p>
-                            <p><span className="font-medium">Ubicación:</span> {integrationStatus?.stockLocation?.valid ? 'Validada' : 'Requiere configuración'}</p>
-                        </div>
-                    )}
+                <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5" />Estado técnico</CardTitle><CardDescription>Valida token, versión, ubicación y el conjunto de webhooks operativos.</CardDescription></CardHeader>
+                <CardContent aria-live="polite">
+                    {integrationStatusLoading ? <p className="flex items-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Verificando…</p> : <div className="grid gap-3 text-sm sm:grid-cols-4"><p><span className="font-medium">Conexión:</span> {integrationStatus?.connected ? "Activa" : "Desconectada"}</p><p><span className="font-medium">API:</span> {integrationStatus?.apiVersion || "—"}</p><p><span className="font-medium">Webhooks:</span> {integrationStatus?.webhook.configured ? "Completos" : "Pendientes"}</p><p><span className="font-medium">Ubicación:</span> {integrationStatus?.stockLocation?.valid ? "Validada" : "Requiere revisión"}</p></div>}
+                    {integrationStatus?.webhook.missingEvents?.length ? <p className="mt-3 text-xs text-amber-700">Faltan: {integrationStatus.webhook.missingEvents.join(", ")}</p> : null}
+                    {integrationStatus?.stockLocation?.message ? <p className="mt-2 text-xs text-amber-700">{integrationStatus.stockLocation.message}</p> : null}
                 </CardContent>
                 <CardFooter className="flex flex-wrap gap-2 border-t pt-4">
-                    <Button variant="outline" onClick={onRefreshIntegrationStatus} disabled={integrationStatusLoading || connectionActionLoading}>
-                        <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" /> Verificar
-                    </Button>
-                    {integrationStatus?.connected && !integrationStatus.webhook.configured ? (
-                        <Button variant="outline" onClick={onEnsureWebhook} disabled={connectionActionLoading}>
-                            Registrar webhook
-                        </Button>
-                    ) : null}
-                    {integrationStatus?.connected ? (
-                        <Button variant="destructive" onClick={onDisconnect} disabled={connectionActionLoading}>
-                            <Unplug className="mr-2 h-4 w-4" aria-hidden="true" /> Desconectar
-                        </Button>
-                    ) : null}
+                    <Button variant="outline" onClick={() => void onRefreshIntegrationStatus()} disabled={integrationStatusLoading || connectionActionLoading}><RefreshCw className="mr-2 h-4 w-4" />Verificar</Button>
+                    {integrationStatus?.connected && !integrationStatus.webhook.configured && <Button variant="outline" onClick={() => void onEnsureWebhook()} disabled={connectionActionLoading}>Registrar webhooks</Button>}
+                    {integrationStatus?.connected && <Button variant="destructive" onClick={() => void onDisconnect()} disabled={connectionActionLoading}><Unplug className="mr-2 h-4 w-4" />Desconectar</Button>}
                 </CardFooter>
             </Card>
 
-            <Card>
-                <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                        <CardTitle>Gestor de Vinculación (Catálogo)</CardTitle>
-                        <CardDescription>Administra qué productos locales se sincronizan y asocia sus IDs en Tienda Nube.</CardDescription>
-                    </div>
-                    <div className="flex gap-2 w-full sm:w-auto">
-                        {company.integrations?.tiendanube_access_token_configured && (
-                            <Button 
-                                variant="outline" 
-                                onClick={onAutoLinkTN} 
-                                disabled={autoLinkingTN || tiendanubeLoading || tiendanubeSaving}
-                                className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 font-medium"
-                            >
-                                {autoLinkingTN ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Vinculando...</> : <><RefreshCw className="mr-2 h-4 w-4" /> Auto-vincular por SKU</>}
-                            </Button>
-                        )}
-                        <Button onClick={onSaveTiendaNubeLinks} disabled={tiendanubeSaving || autoLinkingTN}>
-                            {tiendanubeSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Vinculación</>}
-                        </Button>
-                    </div>
-                </CardHeader>
-                <CardContent>
-                    <div className="overflow-x-auto rounded-md border">
-                        <Table className="min-w-[800px]">
-                            <TableHeader className="bg-muted/50">
-                                <TableRow>
-                                    <TableHead>Producto</TableHead>
-                                    <TableHead>Stock Actual</TableHead>
-                                    <TableHead className="text-center">Sincronizar</TableHead>
-                                    <TableHead>TN Product ID</TableHead>
-                                    <TableHead>TN Variant ID</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {tiendanubeLoading ? (
-                                    <TableRow>
-                                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                                            <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
-                                            Cargando productos...
-                                        </TableCell>
-                                    </TableRow>
-                                ) : tiendanubeProducts.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                                            No hay productos registrados en el sistema.
-                                        </TableCell>
-                                    </TableRow>
-                                ) : (
-                                    tiendanubeProducts.map((p) => {
-                                        const mods = tiendanubeModifications[p.id] || {
-                                            tiendanube_sync_enabled: Boolean(p.tiendanube_sync_enabled),
-                                            tiendanube_product_id: p.tiendanube_product_id || '',
-                                            tiendanube_variant_id: p.tiendanube_variant_id || ''
-                                        }
-                                        return (
-                                            <TableRow key={p.id}>
-                                                <TableCell>
-                                                    <div className="flex flex-col">
-                                                        <span className="font-medium">{p.name}</span>
-                                                        <span className="text-xs text-muted-foreground">SKU: {p.sku}</span>
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>{p.stock_current ?? 0}</TableCell>
-                                                <TableCell className="text-center">
-                                                    <div className="flex justify-center">
-                                                        <Switch
-                                                            checked={mods.tiendanube_sync_enabled}
-                                                            onChange={(e) => {
-                                                                setTiendanubeModifications({
-                                                                    ...tiendanubeModifications,
-                                                                    [p.id]: {
-                                                                        ...mods,
-                                                                        tiendanube_sync_enabled: (e.target as HTMLInputElement).checked
-                                                                    }
-                                                                })
-                                                            }}
-                                                        />
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Input
-                                                        placeholder="12345678"
-                                                        value={mods.tiendanube_product_id}
-                                                        onChange={(e) => {
-                                                            setTiendanubeModifications({
-                                                                ...tiendanubeModifications,
-                                                                [p.id]: {
-                                                                    ...mods,
-                                                                    tiendanube_product_id: e.target.value
-                                                                }
-                                                            })
-                                                        }}
-                                                        className="h-8 max-w-[150px]"
-                                                    />
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Input
-                                                        placeholder="Opcional"
-                                                        value={mods.tiendanube_variant_id}
-                                                        onChange={(e) => {
-                                                            setTiendanubeModifications({
-                                                                ...tiendanubeModifications,
-                                                                [p.id]: {
-                                                                    ...mods,
-                                                                    tiendanube_variant_id: e.target.value
-                                                                }
-                                                            })
-                                                        }}
-                                                        className="h-8 max-w-[150px]"
-                                                    />
-                                                </TableCell>
-                                            </TableRow>
-                                        )
-                                    })
-                                )}
-                            </TableBody>
-                        </Table>
-                    </div>
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                        <CardTitle className="text-red-500 flex items-center gap-2">
-                            <AlertCircle className="h-5 w-5" /> Cola de Sincronizaciones Fallidas
-                        </CardTitle>
-                        <CardDescription>
-                            Registro de productos que presentaron errores al actualizar el stock en Tienda Nube.
-                        </CardDescription>
-                    </div>
-                    {failedSyncs.length > 0 && (
-                        <Button
-                            variant="outline"
-                            onClick={onRetryAllSyncs}
-                            disabled={processingAllSyncs || failedSyncsLoading}
-                            className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
-                        >
-                            {processingAllSyncs ? (
-                                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Procesando...</>
-                            ) : (
-                                <><RefreshCw className="mr-2 h-4 w-4" /> Reintentar Todos</>
-                            )}
-                        </Button>
-                    )}
-                </CardHeader>
-                <CardContent>
-                    <div className="overflow-x-auto rounded-md border">
-                        <Table className="min-w-[800px]">
-                            <TableHeader className="bg-muted/50">
-                                <TableRow>
-                                    <TableHead>Producto</TableHead>
-                                    <TableHead>Stock Pendiente</TableHead>
-                                    <TableHead>Intentos</TableHead>
-                                    <TableHead>Último Error</TableHead>
-                                    <TableHead>Fecha</TableHead>
-                                    <TableHead className="text-right">Acción</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {failedSyncsLoading ? (
-                                    <TableRow>
-                                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                                            <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
-                                            Cargando cola de reintentos...
-                                        </TableCell>
-                                    </TableRow>
-                                ) : failedSyncs.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                                            No hay sincronizaciones fallidas registradas. ¡Todo sincronizado!
-                                        </TableCell>
-                                    </TableRow>
-                                ) : (
-                                    failedSyncs.map((sync) => (
-                                        <TableRow key={sync.id}>
-                                            <TableCell>
-                                                <div className="flex flex-col">
-                                                    <span className="font-medium">{sync.product_name}</span>
-                                                    <span className="text-xs text-muted-foreground">SKU: {sync.product_sku}</span>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="font-bold">{sync.stock}</TableCell>
-                                            <TableCell>
-                                                <span className={`px-2 py-1 text-xs rounded-full ${sync.attempts >= sync.max_attempts ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                                                    {sync.attempts} / {sync.max_attempts}
-                                                </span>
-                                            </TableCell>
-                                            <TableCell className="max-w-[250px] truncate" title={sync.last_error || ''}>
-                                                <span className="text-xs text-red-600 font-mono block truncate">
-                                                    {sync.last_error || 'Error desconocido'}
-                                                </span>
-                                            </TableCell>
-                                            <TableCell className="text-xs text-muted-foreground">
-                                                {sync.last_attempt_at ? new Date(sync.last_attempt_at).toLocaleString('es-AR') : new Date(sync.created_at).toLocaleString('es-AR')}
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    onClick={() => onRetrySync(sync.id)}
-                                                    disabled={processingSyncId === sync.id || processingAllSyncs}
-                                                    className="h-8 text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50"
-                                                >
-                                                    {processingSyncId === sync.id ? (
-                                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                                    ) : (
-                                                        <RefreshCw className="h-4 w-4" />
-                                                    )}
-                                                    <span className="ml-1">Reintentar</span>
-                                                </Button>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
-                                )}
-                            </TableBody>
-                        </Table>
-                    </div>
+            <Card className="border-blue-500/30 bg-blue-500/5">
+                <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex gap-3"><Store className="mt-1 h-5 w-5 text-blue-600" /><div><p className="font-semibold">La administración se trasladó a Tienda online</p><p className="text-sm text-muted-foreground">Catálogo paginado, altas y bajas, pedidos, destinatarios, tracking, clientes, errores y análisis.</p></div></div>
+                    <Link to="/online-store"><Button>Ir a Tienda online</Button></Link>
                 </CardContent>
             </Card>
         </div>

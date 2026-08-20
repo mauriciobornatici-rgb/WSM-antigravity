@@ -176,6 +176,12 @@ export const httpClient = {
             ...(data !== undefined ? { body: JSON.stringify(data) } : {}),
         }),
 
+    patch: <T = unknown>(endpoint: string, data?: unknown) =>
+        request<T>(endpoint, {
+            method: "PATCH",
+            ...(data !== undefined ? { body: JSON.stringify(data) } : {}),
+        }),
+
     del: <T = unknown>(endpoint: string) =>
         request<T>(endpoint, { method: "DELETE" }),
 };

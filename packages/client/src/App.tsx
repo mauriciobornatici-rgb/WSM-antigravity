@@ -23,6 +23,7 @@ const ClientsPage = lazy(() => import("@/pages/Clients"));
 const ClientDetailPage = lazy(() => import("@/pages/ClientDetail"));
 const ReturnsAndWarrantiesPage = lazy(() => import("@/pages/ReturnsAndWarranties"));
 const SettingsPage = lazy(() => import("@/pages/Settings"));
+const OnlineStorePage = lazy(() => import("@/pages/OnlineStore"));
 const SuppliersPage = lazy(() => import("@/pages/Suppliers"));
 const PurchaseOrdersPage = lazy(() => import("@/pages/PurchaseOrders"));
 const ReceptionsPage = lazy(() => import("@/pages/Receptions"));
@@ -157,6 +158,15 @@ function App() {
                     element={
                       <ProtectedRoute permission={PERMISSIONS.SETTINGS_MANAGE}>
                         <SettingsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+
+                  <Route
+                    path="/online-store"
+                    element={
+                      <ProtectedRoute permission={PERMISSIONS.ONLINE_STORE_READ}>
+                        <OnlineStorePage />
                       </ProtectedRoute>
                     }
                   />

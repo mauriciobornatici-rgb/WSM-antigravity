@@ -6,6 +6,7 @@ import tiendaNubeService from '../services/tiendanube.service.js';
 import salesService from '../services/sales.service.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { getEnvConfig } from '../config/env.js';
+import { applyPaginationHeaders } from '../utils/pagination.js';
 
 function settingsRedirect(params = {}) {
     const baseUrl = getEnvConfig().appBaseUrl;
@@ -64,7 +65,8 @@ export const callbackTiendaNube = catchAsync(async (req, res) => {
         }
 
         await pool.query(
-            'UPDATE company_settings SET tiendanube_access_token = ?, tiendanube_store_id = ? WHERE id = ?',
+            `UPDATE company_settings SET tiendanube_access_token = ?, tiendanube_store_id = ?,
+                tiendanube_connection_status = 'connected' WHERE id = ?`,
             [encrypt(access_token), user_id, rows[0].id]
         );
 
@@ -179,7 +181,8 @@ export const disconnectTiendaNubeController = catchAsync(async (req, res) => {
 
     await pool.query(
         `UPDATE company_settings
-         SET tiendanube_access_token = NULL, tiendanube_store_id = NULL
+         SET tiendanube_access_token = NULL, tiendanube_store_id = NULL,
+             tiendanube_connection_status = 'disconnected'
          WHERE id = 1`
     );
     await auditService.log({
@@ -233,4 +236,130 @@ export const autoLinkCatalogController = catchAsync(async (req, res) => {
         console.error('[TiendaNube Auto Link Error]', error);
         res.status(500).json({ error: error.message || 'Error vinculando catálogo automáticamente' });
     }
+});
+
+function sendPaginated(res, query, result) {
+    applyPaginationHeaders(res, {
+        enabled: true,
+        page: Number(query.page || 1),
+        limit: Number(query.limit || 25)
+    }, result.total);
+    res.json(result.rows);
+}
+
+export const getOperationsOverviewController = catchAsync(async (req, res) => {
+    res.json(await tiendaNubeService.getOperationsOverview());
+});
+
+export const listCatalogController = catchAsync(async (req, res) => {
+    sendPaginated(res, req.query, await tiendaNubeService.listCatalog(req.query));
+});
+
+export const createCatalogController = catchAsync(async (req, res) => {
+    const result = await tiendaNubeService.createCatalogFamily(req.body);
+    await auditService.log({
+        user_id: req.user?.id || null,
+        action: 'CREATE_TIENDANUBE_CATALOG_FAMILY',
+        entity_type: 'tiendanube_catalog_family',
+        entity_id: result.id,
+        new_values: { name: result.name, visibility: result.visibility, variant_count: result.variant_count }
+    });
+    res.status(201).json(result);
+});
+
+export const updateCatalogController = catchAsync(async (req, res) => {
+    const result = await tiendaNubeService.updateCatalogFamily(req.params.id, req.body);
+    if (!result) return res.status(404).json({ error: 'not_found', message: 'Producto de tienda no encontrado' });
+    await auditService.log({
+        user_id: req.user?.id || null,
+        action: 'UPDATE_TIENDANUBE_CATALOG_FAMILY',
+        entity_type: 'tiendanube_catalog_family',
+        entity_id: req.params.id,
+        new_values: req.body
+    });
+    res.json(result);
+});
+
+export const archiveCatalogController = catchAsync(async (req, res) => {
+    const archived = await tiendaNubeService.archiveCatalogFamily(req.params.id);
+    if (!archived) return res.status(404).json({ error: 'not_found', message: 'Producto de tienda no encontrado' });
+    await auditService.log({
+        user_id: req.user?.id || null,
+        action: 'ARCHIVE_TIENDANUBE_CATALOG_FAMILY',
+        entity_type: 'tiendanube_catalog_family',
+        entity_id: req.params.id
+    });
+    res.json({ success: true });
+});
+
+export const publishCatalogController = catchAsync(async (req, res) => {
+    const result = await tiendaNubeService.publishCatalogFamily(req.params.id);
+    await auditService.log({
+        user_id: req.user?.id || null,
+        action: 'PUBLISH_TIENDANUBE_CATALOG_FAMILY',
+        entity_type: 'tiendanube_catalog_family',
+        entity_id: req.params.id,
+        new_values: { remote_product_id: result.remoteProductId }
+    });
+    res.json({ success: true, ...result });
+});
+
+export const importCatalogController = catchAsync(async (req, res) => {
+    const result = await tiendaNubeService.importRemoteCatalog(req.body || {});
+    await auditService.log({
+        user_id: req.user?.id || null,
+        action: 'IMPORT_TIENDANUBE_CATALOG',
+        entity_type: 'tiendanube_sync_run',
+        entity_id: result.runId,
+        new_values: { processed: result.processed, succeeded: result.succeeded, failures: result.failures.length }
+    });
+    res.json({ success: true, ...result });
+});
+
+export const listOperationsOrdersController = catchAsync(async (req, res) => {
+    sendPaginated(res, req.query, await tiendaNubeService.listOperationsOrders(req.query));
+});
+
+export const listOperationsCustomersController = catchAsync(async (req, res) => {
+    sendPaginated(res, req.query, await tiendaNubeService.listOperationsCustomers(req.query));
+});
+
+export const listFulfillmentsController = catchAsync(async (req, res) => {
+    sendPaginated(res, req.query, await tiendaNubeService.listFulfillments(req.query));
+});
+
+export const syncFulfillmentsController = catchAsync(async (req, res) => {
+    res.json({ success: true, ...(await tiendaNubeService.syncAllFulfillments()) });
+});
+
+export const updateFulfillmentController = catchAsync(async (req, res) => {
+    const result = await tiendaNubeService.updateFulfillment(req.params.id, req.body);
+    await auditService.log({
+        user_id: req.user?.id || null,
+        action: 'UPDATE_TIENDANUBE_FULFILLMENT',
+        entity_type: 'tiendanube_fulfillment',
+        entity_id: req.params.id,
+        new_values: req.body
+    });
+    res.json(result);
+});
+
+export const createTrackingEventController = catchAsync(async (req, res) => {
+    const result = await tiendaNubeService.createTrackingEvent(req.params.id, req.body);
+    await auditService.log({
+        user_id: req.user?.id || null,
+        action: 'CREATE_TIENDANUBE_TRACKING_EVENT',
+        entity_type: 'tiendanube_fulfillment',
+        entity_id: req.params.id,
+        new_values: req.body
+    });
+    res.status(201).json(result);
+});
+
+export const getOperationsAnalyticsController = catchAsync(async (req, res) => {
+    res.json(await tiendaNubeService.getOperationsAnalytics());
+});
+
+export const getSyncCenterController = catchAsync(async (req, res) => {
+    res.json(await tiendaNubeService.getSyncCenter());
 });

@@ -1,5 +1,16 @@
 # Execution Changelog
 
+## 2026-08-20
+
+### Centro operativo Tiendanube
+
+- Se creó `Tienda online` como módulo de primer nivel con catálogo servidor/paginado, altas y bajas multivariante, pedidos, compradores, domicilios, envíos múltiples, tracking, clientes, centro de sincronización y análisis.
+- Se dejó `Configuración > Tienda Nube` exclusivamente para credenciales, OAuth, ubicación y webhooks, evitando cargar o recorrer catálogos grandes en Settings.
+- Backend ampliado con modelo operacional, endpoints validados, permisos `ONLINE_STORE_READ/MANAGE`, rate limiting de API, reintento 429, webhooks de productos/pedidos/clientes/fulfillments/app e idempotencia compatible con eventos repetidos.
+- Migraciones nuevas `033`-`036`; se preservaron checksums ejecutados y se alineó el esquema histórico de productos/movimientos detectado durante la prueba real.
+- Se corrigieron opcionales vacíos del alta, mensajes de validación por campo, accesibilidad de variantes/diálogos y autofill indebido de credenciales Tiendanube.
+- Evidencia y runbook: `docs/TIENDANUBE_OPERATIONS.md`.
+
 ## 2026-08-16
 
 ### Auditoría integral + remediación de hallazgos críticos/altos

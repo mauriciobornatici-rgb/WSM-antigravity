@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, LayoutDashboard, ShoppingCart, Package, Users, FileText, Landmark, Settings, Truck, ClipboardCheck, X, ArrowRight } from "lucide-react";
+import { Search, LayoutDashboard, ShoppingCart, Package, Users, FileText, Landmark, Settings, Truck, ClipboardCheck, X, ArrowRight, Store } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { api } from "@/services/api";
@@ -27,6 +27,7 @@ const STATIC_COMMANDS: NavigationCommand[] = [
     { id: "nav-cash", title: "Ir a Gestión de Caja", description: "Movimientos, aranceles y Cierre Z", href: "/cash-management", category: "Navegación", icon: Landmark, permission: PERMISSIONS.CASH_MANAGE },
     { id: "nav-suppliers", title: "Ir a Proveedores", description: "Cuentas corrientes y pagos de compras", href: "/suppliers", category: "Navegación", icon: Truck, permission: PERMISSIONS.SUPPLIERS_MANAGE },
     { id: "nav-receptions", title: "Ir a Recepciones (WMS)", description: "Control de remitos e ingreso de mercadería", href: "/receptions", category: "Navegación", icon: ClipboardCheck, permission: PERMISSIONS.RECEPTIONS_MANAGE },
+    { id: "nav-online-store", title: "Ir a Tienda online", description: "Catálogo, pedidos, envíos, clientes y análisis de Tiendanube", href: "/online-store", category: "Navegación", icon: Store, permission: PERMISSIONS.ONLINE_STORE_READ },
     { id: "nav-settings", title: "Ir a Configuración", description: "Datos fiscales, ARCA y Tiendanube", href: "/settings", category: "Navegación", icon: Settings, permission: PERMISSIONS.SETTINGS_MANAGE },
 ];
 

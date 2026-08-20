@@ -25,6 +25,8 @@ export const PERMISSIONS = {
   SETTINGS_MANAGE: 'settings.manage',
   USERS_MANAGE: 'users.manage',
   INTEGRATIONS_MANAGE: 'integrations.manage',
+  ONLINE_STORE_READ: 'online_store.read',
+  ONLINE_STORE_MANAGE: 'online_store.manage',
   TRACEABILITY_READ: 'traceability.read',
 } as const;
 
@@ -52,6 +54,8 @@ export const ROLE_PERMISSIONS: Readonly<Record<UserRole, readonly Permission[]>>
     PERMISSIONS.WARRANTIES_MANAGE,
     PERMISSIONS.COLLECTIONS_MANAGE,
     PERMISSIONS.TRACEABILITY_READ,
+    PERMISSIONS.ONLINE_STORE_READ,
+    PERMISSIONS.ONLINE_STORE_MANAGE,
   ],
   cashier: [
     PERMISSIONS.DASHBOARD_READ,
@@ -64,6 +68,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<UserRole, readonly Permission[]>>
     PERMISSIONS.CASH_MANAGE,
     PERMISSIONS.COLLECTIONS_MANAGE,
     PERMISSIONS.TRACEABILITY_READ,
+    PERMISSIONS.ONLINE_STORE_READ,
   ],
   warehouse: [
     PERMISSIONS.DASHBOARD_READ,
@@ -77,6 +82,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<UserRole, readonly Permission[]>>
     PERMISSIONS.SUPPLIER_RETURNS_MANAGE,
     PERMISSIONS.QUALITY_MANAGE,
     PERMISSIONS.TRACEABILITY_READ,
+    PERMISSIONS.ONLINE_STORE_READ,
   ],
 };
 

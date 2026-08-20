@@ -25,3 +25,13 @@ test('unknown roles never inherit permissions', () => {
     assert.equal(hasPermission('superadmin', PERMISSIONS.SETTINGS_MANAGE), false);
     assert.equal(hasPermission(undefined, PERMISSIONS.DASHBOARD_READ), false);
 });
+
+test('online store separates daily operations from credential administration', () => {
+    assert.equal(hasPermission('manager', PERMISSIONS.ONLINE_STORE_READ), true);
+    assert.equal(hasPermission('manager', PERMISSIONS.ONLINE_STORE_MANAGE), true);
+    assert.equal(hasPermission('manager', PERMISSIONS.INTEGRATIONS_MANAGE), false);
+    assert.equal(hasPermission('warehouse', PERMISSIONS.ONLINE_STORE_READ), true);
+    assert.equal(hasPermission('warehouse', PERMISSIONS.ONLINE_STORE_MANAGE), false);
+    assert.equal(hasPermission('cashier', PERMISSIONS.ONLINE_STORE_READ), true);
+    assert.equal(hasPermission('cashier', PERMISSIONS.ONLINE_STORE_MANAGE), false);
+});

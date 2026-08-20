@@ -49,7 +49,11 @@ app.use(helmet());
 
 // CORS â€” restrict to allowed origins (default: Vite dev server)
 const corsOrigins = env.corsOrigins;
-app.use(cors({ origin: corsOrigins, credentials: true }));
+app.use(cors({
+    origin: corsOrigins,
+    credentials: true,
+    exposedHeaders: ['X-Total-Count', 'X-Page', 'X-Limit', 'X-Total-Pages', 'X-Request-ID']
+}));
 
 const captureRawBody = (req, res, buffer) => {
     if (req.originalUrl?.startsWith('/api/integrations/tiendanube/webhooks')) {

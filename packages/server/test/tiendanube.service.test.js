@@ -124,6 +124,9 @@ test('processWebhookEvent fetches full order by id and imports it with external 
             if (statement.includes('UPDATE tiendanube_webhook_events')) {
                 return [{ affectedRows: 1 }];
             }
+            if (statement.includes('INSERT INTO tiendanube_order_details') || statement.includes('UPDATE orders SET')) {
+                return [{ affectedRows: 1 }];
+            }
 
             throw new Error(`Unexpected SQL in webhook processing test: ${statement}`);
         }
@@ -224,6 +227,9 @@ test('syncRecentOrders deduplicates against orders external refs', async () => {
             }
             if (statement.includes('SELECT id FROM products WHERE sku = ?')) {
                 return [[{ id: 'local-product-1' }]];
+            }
+            if (statement.includes('INSERT INTO tiendanube_order_details') || statement.includes('UPDATE orders SET')) {
+                return [{ affectedRows: 1 }];
             }
             throw new Error(`Unexpected SQL in syncRecentOrders test: ${statement}`);
         }
@@ -538,6 +544,7 @@ test('failed webhook delivery is reopened and processed on Tiendanube retry', as
             }
             if (statement.includes('SELECT id FROM orders WHERE external_source')) return [[{ id: 'order-1' }]];
             if (statement.includes('UPDATE tiendanube_webhook_events')) return [{ affectedRows: 1 }];
+            if (statement.includes('INSERT INTO tiendanube_order_details') || statement.includes('UPDATE orders SET')) return [{ affectedRows: 1 }];
             throw new Error(`Unexpected SQL in failed webhook retry test: ${statement}`);
         }
     };
@@ -638,7 +645,12 @@ test('ensureOrderWebhook creates the order webhook only when absent', async () =
     };
     const service = new TiendaNubeService({ db, http });
     const result = await service.ensureOrderWebhook('https://erp.example/api/integrations/tiendanube/webhooks');
-    assert.deepEqual(result, { configured: true, created: true, id: 77 });
+    assert.equal(result.configured, true);
+    assert.equal(result.created, true);
+    assert.equal(result.createdCount, 22);
+    assert.equal(result.expectedCount, 22);
+    assert.equal(result.id, 77);
+    assert.equal(httpCalls.length, 22);
     assert.deepEqual(httpCalls[0].payload, {
         event: 'order/created',
         url: 'https://erp.example/api/integrations/tiendanube/webhooks'
@@ -673,7 +685,15 @@ test('getIntegrationStatus validates webhook and configured stock location', asy
     const http = {
         async get(url, options) {
             assert.equal(options.timeout, 10000);
-            if (url.includes('/webhooks')) return { data: [{ id: 9, event: 'order/created', url: webhookUrl }] };
+            if (url.includes('/webhooks')) return { data: [
+                'order/created', 'order/paid', 'order/packed', 'order/fulfilled', 'order/cancelled',
+                'order/edited', 'order/pending', 'order/voided', 'order/unpacked',
+                'product/created', 'product/updated', 'product/deleted',
+                'customer/created', 'customer/updated', 'customer/deleted',
+                'fulfillment_order/status_updated', 'fulfillment_order/tracking_event_created',
+                'fulfillment_order/tracking_event_updated', 'fulfillment_order/label_status_updated',
+                'app/uninstalled', 'app/suspended', 'app/resumed'
+            ].map((event, index) => ({ id: index + 1, event, url: webhookUrl })) };
             if (url.includes('/locations')) return { data: [{ id: 'loc-1', active: true }] };
             throw new Error(`Unexpected URL in integration status test: ${url}`);
         }
@@ -683,4 +703,45 @@ test('getIntegrationStatus validates webhook and configured stock location', asy
     assert.equal(status.connected, true);
     assert.equal(status.webhook.configured, true);
     assert.deepEqual(status.stockLocation, { valid: true, locationId: 'loc-1' });
+});
+
+test('catalog payload models size and color as aligned Tiendanube variants', () => {
+    const service = new TiendaNubeService({ http: {} });
+    const payload = service.buildRemoteProductPayload({
+        name: 'Camiseta titular',
+        description: 'Edición 2026',
+        brand: 'WSM',
+        visibility: 'hidden'
+    }, [
+        { sku: 'CAM-S-ROJ', size: 'S', color: 'Rojo', sale_price: 100, purchase_price: 60, stock: 4 },
+        { sku: 'CAM-M-AZU', size: 'M', color: 'Azul', sale_price: 110, purchase_price: 65, stock: 2 }
+    ]);
+
+    assert.deepEqual(payload.attributes, [{ es: 'Talle' }, { es: 'Color' }]);
+    assert.deepEqual(payload.variants[0].values, [{ es: 'S' }, { es: 'Rojo' }]);
+    assert.deepEqual(payload.variants[1].values, [{ es: 'M' }, { es: 'Azul' }]);
+    assert.equal(payload.variants[0].stock_management, true);
+    assert.equal(payload.visibility, 'hidden');
+});
+
+test('fulfillment webhooks normalize the ULID as the event resource', () => {
+    const service = new TiendaNubeService({ http: {} });
+    assert.deepEqual(service.normalizeWebhookPayload({
+        store_id: 123,
+        event: 'fulfillment_order/status_updated',
+        order_id: 456,
+        fulfillment_id: '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+    }), {
+        storeId: '123',
+        event: 'fulfillment_order/status_updated',
+        resourceId: '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+    });
+});
+
+test('remote order states map to the local fulfillment lifecycle', () => {
+    const service = new TiendaNubeService({ http: {} });
+    assert.equal(service.mapLocalOrderStatus({ status: 'cancelled' }), 'cancelled');
+    assert.equal(service.mapLocalOrderStatus({ shipping_status: 'packed' }), 'packed');
+    assert.equal(service.mapLocalOrderStatus({ shipping_status: 'fulfilled' }), 'delivered');
+    assert.equal(service.mapLocalOrderStatus({ status: 'open', shipping_status: 'unpacked' }), null);
 });

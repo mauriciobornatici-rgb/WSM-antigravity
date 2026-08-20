@@ -556,6 +556,76 @@ export const api = {
     getTiendanubeStatus: () =>
         httpClient.get<import("@/types").TiendaNubeIntegrationStatus>("/api/integrations/tiendanube/status"),
 
+    getOnlineStoreOverview: () =>
+        httpClient.get<import("@/types/onlineStore").OnlineStoreOverview>("/api/integrations/tiendanube/operations/overview"),
+
+    getOnlineCatalog: (filters?: { page?: number; limit?: number; q?: string; visibility?: string; sync_status?: string }) =>
+        httpClient.getWithMeta<import("@/types/onlineStore").OnlineCatalogFamily[]>(
+            withQuery("/api/integrations/tiendanube/operations/catalog", filters)
+        ) as Promise<PaginatedResponse<import("@/types/onlineStore").OnlineCatalogFamily[]>>,
+
+    createOnlineProduct: (data: import("@/types/onlineStore").OnlineProductDraft) =>
+        httpClient.post<import("@/types/onlineStore").OnlineCatalogFamily>("/api/integrations/tiendanube/operations/catalog", {
+            ...data,
+            description: data.description?.trim() || null,
+            brand: data.brand?.trim() || null,
+            category: data.category?.trim() || null,
+            variants: data.variants.map((variant) => ({
+                ...variant,
+                sku: variant.sku.trim(),
+                barcode: variant.barcode?.trim() || null,
+                size: variant.size?.trim() || null,
+                color: variant.color?.trim() || null,
+                image_url: variant.image_url?.trim() || null,
+            })),
+        }),
+
+    updateOnlineProduct: (id: string, data: Partial<Pick<import("@/types/onlineStore").OnlineProductDraft, "name" | "description" | "brand" | "category" | "visibility">>) =>
+        httpClient.put<import("@/types/onlineStore").OnlineCatalogFamily>(`/api/integrations/tiendanube/operations/catalog/${id}`, data),
+
+    archiveOnlineProduct: (id: string) =>
+        httpClient.del<{ success: boolean }>(`/api/integrations/tiendanube/operations/catalog/${id}`),
+
+    publishOnlineProduct: (id: string) =>
+        httpClient.post<{ success: boolean; remoteProductId: string }>(`/api/integrations/tiendanube/operations/catalog/${id}/publish`),
+
+    importOnlineCatalog: (q?: string) =>
+        httpClient.post<{ success: boolean; processed: number; succeeded: number; failures: Array<{ id?: string; message: string }> }>(
+            "/api/integrations/tiendanube/operations/catalog/import", q ? { q } : {}
+        ),
+
+    getOnlineOrders: (filters?: { page?: number; limit?: number; q?: string; payment_status?: string; shipping_status?: string; from?: string; to?: string }) =>
+        httpClient.getWithMeta<import("@/types/onlineStore").OnlineOrder[]>(
+            withQuery("/api/integrations/tiendanube/operations/orders", filters)
+        ) as Promise<PaginatedResponse<import("@/types/onlineStore").OnlineOrder[]>>,
+
+    getOnlineCustomers: (filters?: { page?: number; limit?: number; q?: string }) =>
+        httpClient.getWithMeta<import("@/types/onlineStore").OnlineCustomer[]>(
+            withQuery("/api/integrations/tiendanube/operations/customers", filters)
+        ) as Promise<PaginatedResponse<import("@/types/onlineStore").OnlineCustomer[]>>,
+
+    getOnlineFulfillments: (filters?: { page?: number; limit?: number; q?: string; shipping_status?: string }) =>
+        httpClient.getWithMeta<import("@/types/onlineStore").OnlineFulfillment[]>(
+            withQuery("/api/integrations/tiendanube/operations/fulfillments", filters)
+        ) as Promise<PaginatedResponse<import("@/types/onlineStore").OnlineFulfillment[]>>,
+
+    syncOnlineFulfillments: () =>
+        httpClient.post<{ success: boolean; orders: number; synced: number; failures: Array<{ externalId: string; message: string }> }>(
+            "/api/integrations/tiendanube/operations/fulfillments/sync"
+        ),
+
+    updateOnlineFulfillment: (id: string, data: { status?: string; tracking_code?: string | null; tracking_url?: string | null; notify_customer?: boolean }) =>
+        httpClient.patch<import("@/types/onlineStore").OnlineFulfillment>(`/api/integrations/tiendanube/operations/fulfillments/${id}`, data),
+
+    createOnlineTrackingEvent: (id: string, data: { status: string; description: string; address?: string | null; happened_at?: string; estimated_delivery_at?: string | null }) =>
+        httpClient.post<Record<string, unknown>>(`/api/integrations/tiendanube/operations/fulfillments/${id}/tracking-events`, data),
+
+    getOnlineStoreAnalytics: () =>
+        httpClient.get<import("@/types/onlineStore").OnlineStoreAnalytics>("/api/integrations/tiendanube/operations/analytics"),
+
+    getOnlineSyncCenter: () =>
+        httpClient.get<import("@/types/onlineStore").OnlineSyncCenter>("/api/integrations/tiendanube/operations/sync-center"),
+
     ensureTiendanubeWebhook: () =>
         httpClient.post<{ success: boolean; configured: boolean; created?: boolean }>("/api/integrations/tiendanube/webhook/ensure"),
 

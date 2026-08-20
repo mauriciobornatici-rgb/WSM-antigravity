@@ -1,9 +1,19 @@
 # Execution State Snapshot
 
-Last reviewed: 2026-08-19
+Last reviewed: 2026-08-20
 Current continuity source: `docs/execution/BITACORA_INTEGRAL.md`
-Current score estimate: 100/100 en calidad de código; activación productiva pendiente de preflight y ensayo de migraciones.
-Immediate priority: ejecutar el runbook `HARDENING_100_2026-08-19.md` sobre una copia restaurada antes de producción.
+Current score estimate: 100/100 en calidad de código y operación local; activación Tiendanube real pendiente de OAuth/HTTPS con una tienda de prueba.
+Immediate priority: ejecutar el ensayo controlado de `docs/TIENDANUBE_OPERATIONS.md` antes de producción.
+
+## 2026-08-20 Centro operativo Tiendanube
+
+- Nuevo módulo superior `Tienda online`: resumen, catálogo paginado y multivariante, pedidos/compradores, múltiples envíos y tracking, clientes, sincronización y análisis.
+- Configuración reducida a credenciales, OAuth, Location ID y webhooks; eliminada la lista larga de productos que obligaba a hacer scroll.
+- API `2025-03`, limitador de dos solicitudes por segundo, retry 429, 22 webhooks, HMAC, idempotencia, ciclo de conexión y RBAC operativo separado de secretos.
+- Migraciones `033`-`036` aplicadas; `034` permite eventos repetidos del mismo recurso y `035`/`036` corrigen deriva del catálogo en bases históricas.
+- Prueba operativa: alta de familia con dos SKU y stock total 5, baja recuperable de un borrador por ID y todas las pestañas/estados desconectados sin errores de consola.
+- Validación final: servidor 113/113, cliente 41/41, typecheck, lint, build y preflight referencial (0 huérfanos) verdes.
+- Guía de conexión y ensayo real: `docs/TIENDANUBE_OPERATIONS.md`.
 
 ## 2026-08-19 Hardening 100/100
 

@@ -24,6 +24,7 @@ import {
     Sun,
     Moon,
     Search,
+    Store,
 } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
 import { CommandPalette } from "@/components/common/CommandPalette";
@@ -53,6 +54,7 @@ export default function AppLayout() {
                 { name: "Punto de Venta", href: "/pos", icon: ShoppingCart, permission: PERMISSIONS.ORDERS_SELL },
                 { name: "Pedidos", href: "/orders", icon: ClipboardList, permission: PERMISSIONS.ORDERS_READ },
                 { name: "Clientes", href: "/clients", icon: Users, permission: PERMISSIONS.CLIENTS_MANAGE },
+                { name: "Tienda online", href: "/online-store", icon: Store, permission: PERMISSIONS.ONLINE_STORE_READ },
             ]
         },
         {

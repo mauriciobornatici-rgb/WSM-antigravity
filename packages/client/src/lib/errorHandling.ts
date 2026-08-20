@@ -18,9 +18,23 @@ function readStringProp(source: unknown, key: string): string | null {
     return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+function readValidationDetail(source: unknown): string | null {
+    if (!isRecord(source) || !Array.isArray(source.details)) return null;
+    const first = source.details.find((detail) => isRecord(detail) && readStringProp(detail, "message"));
+    if (!isRecord(first)) return null;
+
+    const message = readStringProp(first, "message");
+    if (!message) return null;
+    const path = Array.isArray(first.path)
+        ? first.path.filter((segment) => segment !== "body").join(".")
+        : "";
+    return path ? `${path}: ${message}` : message;
+}
+
 export function getErrorMessage(error: unknown, fallback = "Ocurrió un error inesperado"): string {
     if (isApiError(error)) {
         const bodyMessage =
+            readValidationDetail(error.body) ??
             readStringProp(error.body, "message") ??
             readStringProp(error.body, "error");
         return bodyMessage ?? error.message ?? fallback;

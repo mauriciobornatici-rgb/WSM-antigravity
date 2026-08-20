@@ -244,6 +244,7 @@ export interface FailedSync {
 
 export interface TiendaNubeIntegrationStatus {
     connected: boolean
+    connectionStatus?: 'connected' | 'disconnected' | 'suspended' | 'resumed' | 'uninstalled'
     storeId?: string
     apiVersion?: string
     locationId?: string | null
@@ -252,5 +253,8 @@ export interface TiendaNubeIntegrationStatus {
         configured: boolean
         id?: string | number
         reason?: 'missing_public_url' | 'not_connected' | 'not_registered'
+        configuredCount?: number
+        expectedCount?: number
+        missingEvents?: string[]
     }
 }
