@@ -150,13 +150,17 @@ export interface CompanySettings {
         pos: number
         afip_crt: string
         afip_key: string
+        afip_credentials_configured?: boolean
         afip_env: 'homologacion' | 'produccion'
     }
     integrations?: {
         tiendanube_access_token?: string
+        tiendanube_access_token_configured?: boolean
         tiendanube_store_id?: string
+        tiendanube_location_id?: string
         tiendanube_client_id?: string
         tiendanube_client_secret?: string
+        tiendanube_client_secret_configured?: boolean
     }
 }
 
@@ -236,4 +240,17 @@ export interface FailedSync {
     updated_at: string
     product_name?: string
     product_sku?: string
+}
+
+export interface TiendaNubeIntegrationStatus {
+    connected: boolean
+    storeId?: string
+    apiVersion?: string
+    locationId?: string | null
+    stockLocation?: { valid: boolean; locationId?: string | null; message?: string }
+    webhook: {
+        configured: boolean
+        id?: string | number
+        reason?: 'missing_public_url' | 'not_connected' | 'not_registered'
+    }
 }

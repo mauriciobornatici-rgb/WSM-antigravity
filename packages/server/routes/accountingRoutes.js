@@ -1,9 +1,10 @@
 import express from 'express';
 import * as accountingController from '../controllers/accountingController.js';
-import { authorizeRoles } from '../middleware/authMiddleware.js';
+import { authorizePermission } from '../middleware/authMiddleware.js';
+import { PERMISSIONS } from '@wsm/common';
 
 const router = express.Router();
-const accountingRoles = authorizeRoles('admin', 'manager');
+const accountingRoles = authorizePermission(PERMISSIONS.ACCOUNTING_MANAGE);
 
 router.get('/chart-of-accounts', accountingRoles, accountingController.getChartOfAccounts);
 router.post('/chart-of-accounts', accountingRoles, accountingController.createAccount);
@@ -12,8 +13,6 @@ router.delete('/chart-of-accounts/:code', accountingRoles, accountingController.
 
 router.get('/journal-entries', accountingRoles, accountingController.getJournalEntries);
 router.post('/journal-entries', accountingRoles, accountingController.createManualEntry);
-router.put('/journal-entries/:id', accountingRoles, accountingController.updateJournalEntry);
-router.delete('/journal-entries/:id', accountingRoles, accountingController.deleteJournalEntry);
 router.post('/journal-entries/:id/reverse', accountingRoles, accountingController.reverseJournalEntry);
 
 router.get('/trial-balance', accountingRoles, accountingController.getTrialBalance);

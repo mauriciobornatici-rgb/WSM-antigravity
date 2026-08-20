@@ -78,6 +78,7 @@ test('_decreaseInventoryForOrder consumes inventory across locations and registe
 test('createOrder persists external source and id for imported marketplace orders', async () => {
     const connectionCalls = [];
     let orderInsertCall = null;
+    let orderItemInsertCall = null;
     const connection = {
         async beginTransaction() {},
         async commit() {},
@@ -101,6 +102,7 @@ test('createOrder persists external source and id for imported marketplace order
                 return [{ affectedRows: 1 }];
             }
             if (statement.includes('INSERT INTO order_items')) {
+                orderItemInsertCall = { sql: statement, params };
                 return [{ affectedRows: 1 }];
             }
 
@@ -121,7 +123,9 @@ test('createOrder persists external source and id for imported marketplace order
             shipping_method: 'delivery',
             external_source: 'tiendanube',
             external_id: '987654',
-            items: [{ product_id: 'prod-1', quantity: 1 }]
+            external_total_amount: 85,
+            payment_status: 'paid',
+            items: [{ product_id: 'prod-1', quantity: 1, unit_price: 90 }]
         }, null);
 
         assert.ok(orderInsertCall);
@@ -129,6 +133,9 @@ test('createOrder persists external source and id for imported marketplace order
         assert.match(orderInsertCall.sql, /external_id/);
         assert.ok(orderInsertCall.params.includes('tiendanube'));
         assert.ok(orderInsertCall.params.includes('987654'));
+        assert.equal(orderInsertCall.params[5], 85);
+        assert.equal(orderInsertCall.params[6], 'paid');
+        assert.equal(orderItemInsertCall.params[4], 90);
     } finally {
         pool.getConnection = originalGetConnection;
         auditService.log = originalAuditLog;

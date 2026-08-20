@@ -106,7 +106,6 @@ export class SupplierReturnService {
                 WHERE id = ?
             `, [totalAmount, supplierReturn.supplier_id]);
 
-            await connection.commit();
             await auditService.log({
                 user_id: userId || null,
                 action: 'APPROVE_SUPPLIER_RETURN',
@@ -115,7 +114,8 @@ export class SupplierReturnService {
                 old_values: { status: supplierReturn.status },
                 new_values: { status: 'approved', total_amount: totalAmount },
                 ip_address: ipAddress
-            });
+            }, connection);
+            await connection.commit();
             return { success: true, message: 'Devolución aprobada correctamente' };
         } catch (err) {
             await connection.rollback();

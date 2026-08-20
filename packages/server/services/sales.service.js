@@ -337,6 +337,14 @@ class SalesService extends BaseService {
                 [orderId]
             );
 
+            await auditService.log({
+                user_id: userId,
+                action: 'UPDATE_ORDER_STATUS',
+                entity_type: 'order',
+                entity_id: orderId,
+                old_values: { status: order.status },
+                new_values: { status: nextStatus }
+            }, connection);
             await connection.commit();
             return updated[0];
         } catch (err) {
@@ -458,7 +466,7 @@ class SalesService extends BaseService {
                 entity_type: 'order',
                 entity_id: orderId,
                 new_values: { status: nextStatus, ...data }
-            });
+            }, connection);
 
             await connection.commit();
             const [updated] = await connection.query('SELECT * FROM orders WHERE id = ?', [orderId]);
@@ -472,104 +480,136 @@ class SalesService extends BaseService {
     }
 
     async deliverOrder(orderId, data, userId) {
-        const [orders] = await pool.query('SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL', [orderId]);
-        if (orders.length === 0) throw new Error('Order not found');
-        this._assertOrderTransition(orders[0].status, 'delivered');
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [orders] = await connection.query(
+                'SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+                [orderId]
+            );
+            if (orders.length === 0) throw new Error('Order not found');
+            this._assertOrderTransition(orders[0].status, 'delivered');
 
-        await pool.query(`
-            UPDATE orders
-            SET status = 'delivered',
-                recipient_name = ?,
-                recipient_dni = ?,
-                delivery_notes = ?,
-                delivered_at = NOW()
-            WHERE id = ?
-        `, [data.recipient_name || null, data.recipient_dni || null, data.delivery_notes || null, orderId]);
+            await connection.query(`
+                UPDATE orders
+                SET status = 'delivered',
+                    recipient_name = ?,
+                    recipient_dni = ?,
+                    delivery_notes = ?,
+                    delivered_at = NOW()
+                WHERE id = ?
+            `, [data.recipient_name || null, data.recipient_dni || null, data.delivery_notes || null, orderId]);
 
-        await auditService.log({
-            user_id: userId,
-            action: 'DELIVER_ORDER',
-            entity_type: 'order',
-            entity_id: orderId,
-            new_values: data
-        });
+            await auditService.log({
+                user_id: userId,
+                action: 'DELIVER_ORDER',
+                entity_type: 'order',
+                entity_id: orderId,
+                old_values: { status: orders[0].status },
+                new_values: { status: 'delivered', ...data }
+            }, connection);
 
-        const [updated] = await pool.query('SELECT * FROM orders WHERE id = ?', [orderId]);
-        return updated[0];
+            const [updated] = await connection.query('SELECT * FROM orders WHERE id = ?', [orderId]);
+            await connection.commit();
+            return updated[0];
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
     }
 
     async pickOrderItem(itemId, pickedQuantity, userId) {
-        const [items] = await pool.query('SELECT * FROM order_items WHERE id = ?', [itemId]);
-        if (items.length === 0) throw new Error('Order item not found');
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [items] = await connection.query('SELECT * FROM order_items WHERE id = ? FOR UPDATE', [itemId]);
+            if (items.length === 0) throw new Error('Order item not found');
 
-        const item = items[0];
-        const safeQty = Math.max(0, Math.min(Number(pickedQuantity || 0), Number(item.quantity)));
-        await pool.query('UPDATE order_items SET picked_quantity = ? WHERE id = ?', [safeQty, itemId]);
+            const item = items[0];
+            const safeQty = Math.max(0, Math.min(Number(pickedQuantity || 0), Number(item.quantity)));
+            await connection.query('UPDATE order_items SET picked_quantity = ? WHERE id = ?', [safeQty, itemId]);
 
-        await auditService.log({
-            user_id: userId,
-            action: 'PICK_ORDER_ITEM',
-            entity_type: 'order_item',
-            entity_id: itemId,
-            new_values: { picked_quantity: safeQty }
-        });
-
-        // WMS Audit trail session event logging
-        const [sessions] = await pool.query(
-            'SELECT id FROM picking_sessions WHERE order_id = ? AND status = "in_progress" LIMIT 1',
-            [item.order_id]
-        );
-        if (sessions.length > 0) {
-            const sessionId = sessions[0].id;
-            const eventId = crypto.randomUUID();
-            await pool.query(
-                `INSERT INTO picking_session_events (id, session_id, product_id, action_type, location_code, quantity)
-                 VALUES (?, ?, ?, 'quantity_confirmed', ?, ?)`,
-                [eventId, sessionId, item.product_id, item.location || 'General', safeQty]
+            const [sessions] = await connection.query(
+                'SELECT id FROM picking_sessions WHERE order_id = ? AND status = "in_progress" LIMIT 1 FOR UPDATE',
+                [item.order_id]
             );
-        }
+            if (sessions.length > 0) {
+                await connection.query(
+                    `INSERT INTO picking_session_events (id, session_id, product_id, action_type, location_code, quantity)
+                     VALUES (?, ?, ?, 'quantity_confirmed', ?, ?)`,
+                    [crypto.randomUUID(), sessions[0].id, item.product_id, item.location || 'General', safeQty]
+                );
+            }
 
-        const [updatedRows] = await pool.query('SELECT * FROM order_items WHERE id = ?', [itemId]);
-        return updatedRows[0];
+            await auditService.log({
+                user_id: userId,
+                action: 'PICK_ORDER_ITEM',
+                entity_type: 'order_item',
+                entity_id: itemId,
+                old_values: { picked_quantity: Number(item.picked_quantity || 0) },
+                new_values: { picked_quantity: safeQty }
+            }, connection);
+
+            const [updatedRows] = await connection.query('SELECT * FROM order_items WHERE id = ?', [itemId]);
+            await connection.commit();
+            return updatedRows[0];
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
     }
 
     async recordPickingEvent(orderId, eventData, userId) {
-        const [sessions] = await pool.query(
-            'SELECT id FROM picking_sessions WHERE order_id = ? AND status = "in_progress" LIMIT 1',
-            [orderId]
-        );
-        let sessionId;
-        if (sessions.length === 0) {
-            sessionId = crypto.randomUUID();
-            const [countRows] = await pool.query(
-                'SELECT COALESCE(SUM(quantity), 0) AS total_items FROM order_items WHERE order_id = ?',
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [sessions] = await connection.query(
+                'SELECT id FROM picking_sessions WHERE order_id = ? AND status = "in_progress" LIMIT 1 FOR UPDATE',
                 [orderId]
             );
-            const totalItems = countRows[0]?.total_items || 0;
-            await pool.query(
-                `INSERT INTO picking_sessions (id, order_id, picker_id, status, total_items_requested, total_items_picked, started_at)
-                 VALUES (?, ?, ?, 'in_progress', ?, 0, CURRENT_TIMESTAMP)`,
-                [sessionId, orderId, userId || 'unknown_picker', totalItems]
-            );
-        } else {
-            sessionId = sessions[0].id;
-        }
+            let sessionId;
+            if (sessions.length === 0) {
+                sessionId = crypto.randomUUID();
+                const [countRows] = await connection.query(
+                    'SELECT COALESCE(SUM(quantity), 0) AS total_items FROM order_items WHERE order_id = ?',
+                    [orderId]
+                );
+                const totalItems = countRows[0]?.total_items || 0;
+                await connection.query(
+                    `INSERT INTO picking_sessions (id, order_id, picker_id, status, total_items_requested, total_items_picked, started_at)
+                     VALUES (?, ?, ?, 'in_progress', ?, 0, CURRENT_TIMESTAMP)`,
+                    [sessionId, orderId, userId || 'unknown_picker', totalItems]
+                );
+            } else {
+                sessionId = sessions[0].id;
+            }
 
-        const eventId = crypto.randomUUID();
-        await pool.query(
-            `INSERT INTO picking_session_events (id, session_id, product_id, action_type, location_code, barcode_scanned, quantity)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [
-                eventId,
-                sessionId,
-                eventData.product_id,
-                eventData.action_type,
-                eventData.location_code || null,
-                eventData.barcode_scanned || null,
-                eventData.quantity || 0
-            ]
-        );
-        return { success: true, event_id: eventId, session_id: sessionId };
+            const eventId = crypto.randomUUID();
+            await connection.query(
+                `INSERT INTO picking_session_events (id, session_id, product_id, action_type, location_code, barcode_scanned, quantity)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    eventId,
+                    sessionId,
+                    eventData.product_id,
+                    eventData.action_type,
+                    eventData.location_code || null,
+                    eventData.barcode_scanned || null,
+                    eventData.quantity || 0
+                ]
+            );
+            await connection.commit();
+            return { success: true, event_id: eventId, session_id: sessionId };
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
     }
 
     async getOrderSummary(orderId) {

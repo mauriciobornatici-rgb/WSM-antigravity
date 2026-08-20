@@ -27,8 +27,10 @@ class AuditService {
 
             await executor.query(sql, params);
         } catch (err) {
-            // We never fail a request because of a logging error, but we log it to console
             console.error('Audit Log Error:', err);
+            // With an open transaction, auditability is a business invariant:
+            // a failed audit insert must roll back the whole operation.
+            if (executor !== pool) throw err;
         }
     }
 

@@ -9,6 +9,7 @@ import AppLayout from "@/layout/AppLayout"
 import ErrorBoundary from "@/components/common/ErrorBoundary"
 import { Loader } from "@/components/common/Loader"
 import { showErrorToast } from "@/lib/errorHandling"
+import { PERMISSIONS } from "@wsm/common"
 
 // Lazy Load Pages
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
@@ -72,7 +73,7 @@ function App() {
                 <Route
                   path="/pos"
                   element={
-                    <ProtectedRoute allowedRoles={['admin', 'cashier']}>
+                    <ProtectedRoute permission={PERMISSIONS.ORDERS_SELL}>
                       <POSPage />
                     </ProtectedRoute>
                   }
@@ -86,7 +87,7 @@ function App() {
                   <Route
                     path="/inventory"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager', 'warehouse']}>
+                      <ProtectedRoute permission={PERMISSIONS.INVENTORY_MANAGE}>
                         <InventoryPage />
                       </ProtectedRoute>
                     }
@@ -95,7 +96,7 @@ function App() {
                   <Route
                     path="/picking/:id"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager', 'warehouse']}>
+                      <ProtectedRoute permission={PERMISSIONS.ORDERS_PICK}>
                         <PickingPage />
                       </ProtectedRoute>
                     }
@@ -105,7 +106,7 @@ function App() {
                   <Route
                     path="/orders"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager', 'cashier', 'warehouse']}>
+                      <ProtectedRoute permission={PERMISSIONS.ORDERS_READ}>
                         <OrdersPage />
                       </ProtectedRoute>
                     }
@@ -115,7 +116,7 @@ function App() {
                   <Route
                     path="/clients"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager', 'cashier']}>
+                      <ProtectedRoute permission={PERMISSIONS.CLIENTS_MANAGE}>
                         <ClientsPage />
                       </ProtectedRoute>
                     }
@@ -124,7 +125,7 @@ function App() {
                   <Route
                     path="/clients/:id"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager', 'cashier']}>
+                      <ProtectedRoute permission={PERMISSIONS.CLIENTS_MANAGE}>
                         <ClientDetailPage />
                       </ProtectedRoute>
                     }
@@ -134,7 +135,7 @@ function App() {
                   <Route
                     path="/returns-warranties"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager', 'cashier']}>
+                      <ProtectedRoute permission={PERMISSIONS.WARRANTIES_MANAGE}>
                         <ReturnsAndWarrantiesPage />
                       </ProtectedRoute>
                     }
@@ -144,7 +145,7 @@ function App() {
                   <Route
                     path="/accounting"
                     element={
-                      <ProtectedRoute allowedRoles={['admin']}>
+                      <ProtectedRoute permission={PERMISSIONS.ACCOUNTING_MANAGE}>
                         <AccountingPage />
                       </ProtectedRoute>
                     }
@@ -154,7 +155,7 @@ function App() {
                   <Route
                     path="/settings"
                     element={
-                      <ProtectedRoute allowedRoles={['admin']}>
+                      <ProtectedRoute permission={PERMISSIONS.SETTINGS_MANAGE}>
                         <SettingsPage />
                       </ProtectedRoute>
                     }
@@ -164,7 +165,7 @@ function App() {
                   <Route
                     path="/suppliers"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager']}>
+                      <ProtectedRoute permission={PERMISSIONS.SUPPLIERS_MANAGE}>
                         <SuppliersPage />
                       </ProtectedRoute>
                     }
@@ -173,7 +174,7 @@ function App() {
                   <Route
                     path="/purchase-orders"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager']}>
+                      <ProtectedRoute permission={PERMISSIONS.PROCUREMENT_MANAGE}>
                         <PurchaseOrdersPage />
                       </ProtectedRoute>
                     }
@@ -181,7 +182,7 @@ function App() {
                   <Route
                     path="/receptions"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager', 'warehouse']}>
+                      <ProtectedRoute permission={PERMISSIONS.RECEPTIONS_MANAGE}>
                         <ReceptionsPage />
                       </ProtectedRoute>
                     }
@@ -189,7 +190,7 @@ function App() {
                   <Route
                     path="/invoices"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager', 'cashier']}>
+                      <ProtectedRoute permission={PERMISSIONS.INVOICES_MANAGE}>
                         <InvoicesPage />
                       </ProtectedRoute>
                     }
@@ -197,7 +198,7 @@ function App() {
                   <Route
                     path="/cash-management"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'cashier']}>
+                      <ProtectedRoute permission={PERMISSIONS.CASH_MANAGE}>
                         <CashManagementPage />
                       </ProtectedRoute>
                     }
@@ -205,7 +206,7 @@ function App() {
                   <Route
                     path="/collections"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager', 'cashier']}>
+                      <ProtectedRoute permission={PERMISSIONS.COLLECTIONS_MANAGE}>
                         <CollectionsPage />
                       </ProtectedRoute>
                     }
@@ -213,7 +214,7 @@ function App() {
                   <Route
                     path="/supplier-payments"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager']}>
+                      <ProtectedRoute permission={PERMISSIONS.SUPPLIER_PAYMENTS_MANAGE}>
                         <SupplierPaymentsPage />
                       </ProtectedRoute>
                     }
@@ -221,7 +222,7 @@ function App() {
                   <Route
                     path="/current-accounts"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'manager', 'cashier']}>
+                      <ProtectedRoute permission={PERMISSIONS.COLLECTIONS_MANAGE}>
                         <CurrentAccountsPage />
                       </ProtectedRoute>
                     }
@@ -239,7 +240,7 @@ function App() {
                 <Route
                   path="/presentation"
                   element={
-                    <ProtectedRoute allowedRoles={['admin']}>
+                    <ProtectedRoute permission={PERMISSIONS.SETTINGS_MANAGE}>
                       <PresentationPage />
                     </ProtectedRoute>
                   }

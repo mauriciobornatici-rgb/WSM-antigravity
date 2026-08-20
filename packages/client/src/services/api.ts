@@ -538,7 +538,7 @@ export const api = {
         httpClient.put<{ success: boolean }>("/api/settings/company", settings),
 
     syncTiendanubeOrders: () =>
-        httpClient.post<{ success: boolean; syncedCount: number }>("/api/integrations/tiendanube/sync-orders"),
+        httpClient.post<{ success: boolean; syncedCount: number; skippedCount: number; failures: Array<{ externalId: string; message: string }>; pages: number }>("/api/integrations/tiendanube/sync-orders"),
 
     autoLinkTiendanubeCatalog: () =>
         httpClient.post<{ success: boolean; totalVariantsFound: number; linkedCount: number }>("/api/integrations/tiendanube/auto-link"),
@@ -552,6 +552,15 @@ export const api = {
     retryAllFailedSyncs: () =>
         httpClient.post<{ success: boolean; message: string }>("/api/integrations/tiendanube/failed-syncs/retry-all"),
 
+    getTiendanubeStatus: () =>
+        httpClient.get<import("@/types").TiendaNubeIntegrationStatus>("/api/integrations/tiendanube/status"),
+
+    ensureTiendanubeWebhook: () =>
+        httpClient.post<{ success: boolean; configured: boolean; created?: boolean }>("/api/integrations/tiendanube/webhook/ensure"),
+
+    disconnectTiendanube: () =>
+        httpClient.post<{ success: boolean; removed: number }>("/api/integrations/tiendanube/disconnect"),
+
     testAfipConnection: (billing: NonNullable<CompanySettings["billing"]>) =>
         httpClient.post<{ success: boolean; logs: string[]; nextVoucherNumber: number }>("/api/settings/afip/test-connection", billing),
 
@@ -563,6 +572,12 @@ export const api = {
     // ==================== USERS & AUTH ====================
     login: (credentials: LoginCredentials) =>
         httpClient.post<LoginResponse>("/api/login", credentials),
+
+    getSession: () =>
+        httpClient.get<LoginResponse>("/api/session"),
+
+    logout: () =>
+        httpClient.post<void>("/api/logout"),
 
     getUsers: () =>
         httpClient.get<User[]>("/api/users"),
@@ -767,14 +782,8 @@ export const api = {
     createManualJournalEntry: (data: ManualJournalEntryInput) =>
         httpClient.post<GenericRecord>("/api/accounting/journal-entries", data),
 
-    updateJournalEntry: (id: string, data: GenericRecord) =>
-        httpClient.put<GenericRecord>(`/api/accounting/journal-entries/${id}`, data),
-
     reverseJournalEntry: (id: string) =>
         httpClient.post<GenericRecord>(`/api/accounting/journal-entries/${id}/reverse`),
-
-    deleteJournalEntry: (id: string) =>
-        httpClient.del<GenericRecord>(`/api/accounting/journal-entries/${id}`),
 
     // ==================== WMS TRANSFER ====================
     transferStock: (data: { product_id: string; from_location: string; to_location: string; quantity: number }) =>

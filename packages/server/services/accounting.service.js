@@ -38,7 +38,7 @@ class AccountingService {
     }
 
     async createJournalEntry(connection, entryData) {
-        const { date, description, reference_type, reference_id, lines } = entryData;
+        const { date, description, reference_type, reference_id, reversal_of_entry_id, lines } = entryData;
 
         if (!description || String(description).trim().length === 0) {
             throw new Error('La descripción del asiento contable es obligatoria.');
@@ -78,14 +78,15 @@ class AccountingService {
         const entryDate = date ? new Date(date) : new Date();
 
         await connection.query(`
-            INSERT INTO journal_entries (id, date, description, reference_type, reference_id)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO journal_entries (id, date, description, reference_type, reference_id, reversal_of_entry_id)
+            VALUES (?, ?, ?, ?, ?, ?)
         `, [
             entryId,
             entryDate,
             description.trim(),
             reference_type || null,
-            reference_id || null
+            reference_id || null,
+            reversal_of_entry_id || null
         ]);
 
         for (const line of lines) {
@@ -110,7 +111,11 @@ class AccountingService {
 
     async getJournalEntries(filters = {}, connection = pool) {
         let query = `
-            SELECT je.*
+            SELECT je.*,
+                   EXISTS(
+                       SELECT 1 FROM journal_entries reversal
+                       WHERE reversal.reversal_of_entry_id = je.id
+                   ) AS is_reversed
             FROM journal_entries je
             WHERE 1=1
         `;
@@ -353,7 +358,7 @@ class AccountingService {
                 entity_type: 'journal_entry',
                 entity_id: entryId,
                 new_values: payload
-            });
+            }, connection);
 
             await connection.commit();
             return { success: true, id: entryId };
@@ -412,38 +417,34 @@ class AccountingService {
         return { success: true };
     }
 
-    async deleteJournalEntry(id, userId) {
-        // Absolute power
-        const connection = await pool.getConnection();
-        try {
-            await connection.beginTransaction();
-            await connection.query('DELETE FROM journal_entries WHERE id = ?', [id]);
-            
-            await auditService.log({
-                user_id: userId,
-                action: 'DELETE_JOURNAL_ENTRY',
-                entity_type: 'journal_entry',
-                entity_id: id,
-                new_values: null
-            });
-            await connection.commit();
-            return { success: true };
-        } catch (err) {
-            await connection.rollback();
-            throw err;
-        } finally {
-            connection.release();
-        }
-    }
-
     async reverseJournalEntry(id, userId) {
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
             
-            const [entries] = await connection.query('SELECT * FROM journal_entries WHERE id = ?', [id]);
-            if (entries.length === 0) throw new Error('Asiento no encontrado');
+            const [entries] = await connection.query('SELECT * FROM journal_entries WHERE id = ? FOR UPDATE', [id]);
+            if (entries.length === 0) {
+                const error = new Error('Asiento no encontrado');
+                error.statusCode = 404;
+                throw error;
+            }
             const originalEntry = entries[0];
+
+            if (originalEntry.reversal_of_entry_id || originalEntry.reference_type === 'reversal') {
+                const error = new Error('Un contra-asiento no puede revertirse nuevamente');
+                error.statusCode = 409;
+                throw error;
+            }
+
+            const [existingReversals] = await connection.query(
+                'SELECT id FROM journal_entries WHERE reversal_of_entry_id = ? LIMIT 1',
+                [id]
+            );
+            if (existingReversals.length > 0) {
+                const error = new Error('El asiento ya fue revertido');
+                error.statusCode = 409;
+                throw error;
+            }
 
             const [lines] = await connection.query('SELECT * FROM journal_entry_lines WHERE journal_entry_id = ?', [id]);
             
@@ -460,6 +461,7 @@ class AccountingService {
                 description: `Anulación de Asiento #${originalEntry.entry_number}: ${originalEntry.description}`,
                 reference_type: 'reversal',
                 reference_id: id,
+                reversal_of_entry_id: id,
                 lines: reversedLines
             });
 
@@ -469,68 +471,10 @@ class AccountingService {
                 entity_type: 'journal_entry',
                 entity_id: reverseId,
                 new_values: { original_id: id }
-            });
+            }, connection);
 
             await connection.commit();
             return { success: true, id: reverseId };
-        } catch (err) {
-            await connection.rollback();
-            throw err;
-        } finally {
-            connection.release();
-        }
-    }
-
-    async updateJournalEntry(id, payload, userId) {
-        const connection = await pool.getConnection();
-        try {
-            await connection.beginTransaction();
-
-            const { date, description, lines } = payload;
-            
-            let totalDebit = 0, totalCredit = 0;
-            for (const line of lines) {
-                const deb = this._round(line.debit || 0);
-                const cred = this._round(line.credit || 0);
-                if (deb < 0 || cred < 0) throw new Error('Los montos no pueden ser negativos.');
-                if (deb > 0 && cred > 0) throw new Error('Una línea no puede tener débito y crédito simultáneos.');
-                if (deb === 0 && cred === 0) throw new Error('Cada partida debe tener un importe mayor a cero.');
-                totalDebit = this._round(totalDebit + deb);
-                totalCredit = this._round(totalCredit + cred);
-            }
-            if (Math.abs(totalDebit - totalCredit) > 0.0101) {
-                throw new Error(`Error de partida doble.`);
-            }
-
-            await connection.query('UPDATE journal_entries SET date = ?, description = ? WHERE id = ?', [date, description, id]);
-            await connection.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [id]);
-
-            for (const line of lines) {
-                const deb = this._round(line.debit || 0);
-                const cred = this._round(line.credit || 0);
-                await connection.query(`
-                    INSERT INTO journal_entry_lines (id, journal_entry_id, account_code, debit, credit, notes)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                `, [
-                    crypto.randomUUID(),
-                    id,
-                    line.account_code,
-                    deb,
-                    cred,
-                    line.notes || null
-                ]);
-            }
-
-            await auditService.log({
-                user_id: userId,
-                action: 'UPDATE_JOURNAL_ENTRY',
-                entity_type: 'journal_entry',
-                entity_id: id,
-                new_values: payload
-            });
-
-            await connection.commit();
-            return { success: true };
         } catch (err) {
             await connection.rollback();
             throw err;

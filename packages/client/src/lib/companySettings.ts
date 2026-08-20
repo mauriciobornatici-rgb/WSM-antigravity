@@ -10,7 +10,7 @@ export const DEFAULT_COMPANY_SETTINGS: CompanySettings = {
     address: { street: "", number: "", city: "", state: "", zip: "" },
     socials: { instagram: "", facebook: "", linkedin: "" },
     operation: { tax_rate: DEFAULT_TAX_RATE, default_currency: DEFAULT_CURRENCY },
-    billing: { iibb: "", start_date: "", iva_condition: "Responsable Inscripto", pos: 1, afip_crt: "", afip_key: "", afip_env: "homologacion" },
+    billing: { iibb: "", start_date: "", iva_condition: "Responsable Inscripto", pos: 1, afip_crt: "", afip_key: "", afip_credentials_configured: false, afip_env: "homologacion" },
 };
 
 function toSafeText(value: unknown): string {
@@ -66,7 +66,17 @@ export function normalizeCompanySettings(input?: Partial<CompanySettings> | null
             pos: typeof input?.billing?.pos === 'number' ? input.billing.pos : 1,
             afip_crt: toSafeText(input?.billing?.afip_crt),
             afip_key: toSafeText(input?.billing?.afip_key),
+            afip_credentials_configured: Boolean(input?.billing?.afip_credentials_configured),
             afip_env: (input?.billing?.afip_env === 'produccion' ? 'produccion' : 'homologacion') as 'homologacion' | 'produccion',
+        },
+        integrations: {
+            tiendanube_access_token: "",
+            tiendanube_access_token_configured: Boolean(input?.integrations?.tiendanube_access_token_configured),
+            tiendanube_store_id: toSafeText(input?.integrations?.tiendanube_store_id),
+            tiendanube_location_id: toSafeText(input?.integrations?.tiendanube_location_id),
+            tiendanube_client_id: toSafeText(input?.integrations?.tiendanube_client_id),
+            tiendanube_client_secret: "",
+            tiendanube_client_secret_configured: Boolean(input?.integrations?.tiendanube_client_secret_configured),
         },
     };
 }

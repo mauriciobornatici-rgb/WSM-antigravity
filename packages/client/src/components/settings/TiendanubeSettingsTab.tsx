@@ -1,11 +1,11 @@
-import { Save, Loader2, RefreshCw, AlertCircle } from "lucide-react"
+import { Save, Loader2, RefreshCw, AlertCircle, Unplug, ShieldCheck } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import type { CompanySettings, Product, FailedSync } from "@/types"
+import type { CompanySettings, Product, FailedSync, TiendaNubeIntegrationStatus } from "@/types"
 
 interface TiendanubeSettingsTabProps {
     company: CompanySettings
@@ -37,6 +37,12 @@ interface TiendanubeSettingsTabProps {
     processingAllSyncs: boolean
     onRetrySync: (id: string) => Promise<void>
     onRetryAllSyncs: () => Promise<void>
+    integrationStatus: TiendaNubeIntegrationStatus | null
+    integrationStatusLoading: boolean
+    connectionActionLoading: boolean
+    onRefreshIntegrationStatus: () => Promise<void>
+    onEnsureWebhook: () => Promise<void>
+    onDisconnect: () => Promise<void>
 }
 
 export function TiendanubeSettingsTab({
@@ -60,7 +66,13 @@ export function TiendanubeSettingsTab({
     processingSyncId,
     processingAllSyncs,
     onRetrySync,
-    onRetryAllSyncs
+    onRetryAllSyncs,
+    integrationStatus,
+    integrationStatusLoading,
+    connectionActionLoading,
+    onRefreshIntegrationStatus,
+    onEnsureWebhook,
+    onDisconnect
 }: TiendanubeSettingsTabProps) {
     return (
         <div className="space-y-6">
@@ -70,10 +82,10 @@ export function TiendanubeSettingsTab({
                     <CardDescription>Para conectar tu tienda de forma segura, ingresa las credenciales de tu Aplicación de Tienda Nube y presiona 'Conectar'.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                    {company.integrations?.tiendanube_access_token && company.integrations?.tiendanube_store_id ? (
+                    {company.integrations?.tiendanube_access_token_configured && company.integrations?.tiendanube_store_id ? (
                         <div className="p-4 bg-green-50 text-green-700 rounded-md border border-green-200 flex items-center">
                             <div className="mr-3">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                 </svg>
                             </div>
@@ -90,13 +102,13 @@ export function TiendanubeSettingsTab({
                                 id="tn_client_id"
                                 placeholder="Ingresa el Client ID"
                                 value={company.integrations?.tiendanube_client_id || ''}
-                                onChange={e => setCompany({
-                                    ...company,
+                                onChange={e => setCompany((current) => current ? ({
+                                    ...current,
                                     integrations: {
-                                        ...(company.integrations || {}),
+                                        ...(current.integrations || {}),
                                         tiendanube_client_id: e.target.value
                                     }
-                                })}
+                                }) : current)}
                             />
                         </div>
                         <div className="space-y-2">
@@ -104,27 +116,45 @@ export function TiendanubeSettingsTab({
                             <Input
                                 id="tn_client_secret"
                                 type="password"
-                                placeholder="Ingresa tu Client Secret"
+                                placeholder={company.integrations?.tiendanube_client_secret_configured ? "Secret configurado; ingrese uno nuevo para reemplazarlo" : "Ingresa tu Client Secret"}
                                 value={company.integrations?.tiendanube_client_secret || ''}
-                                onChange={e => setCompany({
-                                    ...company,
+                                onChange={e => setCompany((current) => current ? ({
+                                    ...current,
                                     integrations: {
-                                        ...(company.integrations || {}),
+                                        ...(current.integrations || {}),
                                         tiendanube_client_secret: e.target.value
                                     }
-                                })}
+                                }) : current)}
                             />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="tn_location_id">Location ID de stock</Label>
+                            <Input
+                                id="tn_location_id"
+                                placeholder="Vacío sólo para tiendas con una ubicación"
+                                value={company.integrations?.tiendanube_location_id || ''}
+                                onChange={e => setCompany((current) => current ? ({
+                                    ...current,
+                                    integrations: {
+                                        ...(current.integrations || {}),
+                                        tiendanube_location_id: e.target.value
+                                    }
+                                }) : current)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                En tiendas con múltiples ubicaciones evita actualizar accidentalmente el primer depósito.
+                            </p>
                         </div>
                     </div>
                 </CardContent>
-                <CardFooter className="flex justify-between gap-4 border-t pt-4">
+                <CardFooter className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:justify-between">
                     <p className="text-sm text-muted-foreground flex-1">
                         Asegúrate de guardar las credenciales antes de Conectar.
                     </p>
                     <Button variant="outline" onClick={onSaveCompany} disabled={saving}>
                         {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Credenciales</>}
                     </Button>
-                    {company.integrations?.tiendanube_access_token && (
+                    {company.integrations?.tiendanube_access_token_configured && (
                         <Button 
                             variant="outline"
                             onClick={onSyncTN}
@@ -138,11 +168,45 @@ export function TiendanubeSettingsTab({
                         onClick={() => {
                             window.location.href = `${apiBaseUrl}/api/integrations/tiendanube/authorize`;
                         }} 
-                        disabled={!company.integrations?.tiendanube_client_id || !company.integrations?.tiendanube_client_secret}
+                        disabled={!company.integrations?.tiendanube_client_id || (!company.integrations?.tiendanube_client_secret && !company.integrations?.tiendanube_client_secret_configured)}
                         className="bg-blue-600 hover:bg-blue-700 text-white"
                     >
                         Conectar con Tienda Nube
                     </Button>
+                </CardFooter>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5" aria-hidden="true" /> Estado técnico</CardTitle>
+                    <CardDescription>Verifica el token, la versión de API y el webhook de nuevas órdenes.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3" aria-live="polite">
+                    {integrationStatusLoading ? (
+                        <p className="flex items-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> Verificando integración...</p>
+                    ) : (
+                        <div className="grid gap-2 text-sm sm:grid-cols-4">
+                            <p><span className="font-medium">Conexión:</span> {integrationStatus?.connected ? 'Activa' : 'Desconectada'}</p>
+                            <p><span className="font-medium">API:</span> {integrationStatus?.apiVersion || '—'}</p>
+                            <p><span className="font-medium">Webhook:</span> {integrationStatus?.webhook.configured ? 'Registrado' : 'Pendiente'}</p>
+                            <p><span className="font-medium">Ubicación:</span> {integrationStatus?.stockLocation?.valid ? 'Validada' : 'Requiere configuración'}</p>
+                        </div>
+                    )}
+                </CardContent>
+                <CardFooter className="flex flex-wrap gap-2 border-t pt-4">
+                    <Button variant="outline" onClick={onRefreshIntegrationStatus} disabled={integrationStatusLoading || connectionActionLoading}>
+                        <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" /> Verificar
+                    </Button>
+                    {integrationStatus?.connected && !integrationStatus.webhook.configured ? (
+                        <Button variant="outline" onClick={onEnsureWebhook} disabled={connectionActionLoading}>
+                            Registrar webhook
+                        </Button>
+                    ) : null}
+                    {integrationStatus?.connected ? (
+                        <Button variant="destructive" onClick={onDisconnect} disabled={connectionActionLoading}>
+                            <Unplug className="mr-2 h-4 w-4" aria-hidden="true" /> Desconectar
+                        </Button>
+                    ) : null}
                 </CardFooter>
             </Card>
 
@@ -153,7 +217,7 @@ export function TiendanubeSettingsTab({
                         <CardDescription>Administra qué productos locales se sincronizan y asocia sus IDs en Tienda Nube.</CardDescription>
                     </div>
                     <div className="flex gap-2 w-full sm:w-auto">
-                        {company.integrations?.tiendanube_access_token && (
+                        {company.integrations?.tiendanube_access_token_configured && (
                             <Button 
                                 variant="outline" 
                                 onClick={onAutoLinkTN} 

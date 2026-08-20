@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { api } from "@/services/api"
-import type { CompanySettings, SystemSettings, User, Product, FailedSync } from "@/types"
+import type { CompanySettings, SystemSettings, User, Product, FailedSync, TiendaNubeIntegrationStatus } from "@/types"
 import type { AuditLogEntry, PaginationMeta, UserCreateInput, UserFormValues, UserUpdateInput } from "@/types/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,7 @@ import { toast } from "sonner"
 import { useAuth } from "@/context/AuthContext"
 import { showErrorToast } from "@/lib/errorHandling"
 import { DEFAULT_COMPANY_SETTINGS, normalizeCompanySettings } from "@/lib/companySettings"
+import { isApiError } from "@/services/httpClient"
 
 // Extracted Tab Components
 import { CompanySettingsTab } from "@/components/settings/CompanySettingsTab"
@@ -58,6 +59,9 @@ export default function SettingsPage() {
     }>>({})
     const [syncingTN, setSyncingTN] = useState(false)
     const [autoLinkingTN, setAutoLinkingTN] = useState(false)
+    const [tiendanubeStatus, setTiendanubeStatus] = useState<TiendaNubeIntegrationStatus | null>(null)
+    const [tiendanubeStatusLoading, setTiendanubeStatusLoading] = useState(false)
+    const [tiendanubeConnectionAction, setTiendanubeConnectionAction] = useState(false)
 
     // Failed Syncs State
     const [failedSyncs, setFailedSyncs] = useState<FailedSync[]>([])
@@ -147,6 +151,21 @@ export default function SettingsPage() {
         void loadTiendanubeProducts()
     }, [loadTiendanubeProducts])
 
+    const loadTiendanubeStatus = useCallback(async () => {
+        setTiendanubeStatusLoading(true)
+        try {
+            setTiendanubeStatus(await api.getTiendanubeStatus())
+        } catch (error) {
+            showErrorToast("Error al verificar la integración con Tiendanube", error)
+        } finally {
+            setTiendanubeStatusLoading(false)
+        }
+    }, [])
+
+    useEffect(() => {
+        void loadTiendanubeStatus()
+    }, [loadTiendanubeStatus])
+
     const handleSaveTiendaNubeLinks = async () => {
         const modifiedProducts = Object.entries(tiendanubeModifications).map(([id, mods]) => ({
             id,
@@ -180,20 +199,12 @@ export default function SettingsPage() {
         }
 
         setTestingConnection(true)
-        setConnectionLogs(["[SYS] Inicializando módulo de comunicación...", "[SYS] Cargando parámetros temporales de la pantalla..."])
+        setConnectionLogs(["[SYS] Inicializando verificación...", "[SYS] Usando las credenciales guardadas de forma segura en el servidor..."])
 
         try {
             const result = await api.testAfipConnection(company.billing!)
             
-            const currentLogs: string[] = []
-            for (let i = 0; i < result.logs.length; i++) {
-                await new Promise(resolve => setTimeout(resolve, 300))
-                const logLine = result.logs[i]
-                if (logLine) {
-                    currentLogs.push(logLine)
-                    setConnectionLogs([...currentLogs])
-                }
-            }
+            setConnectionLogs(result.logs)
 
             if (result.success) {
                 toast.success("¡Prueba de conexión con AFIP Exitosa!")
@@ -201,8 +212,16 @@ export default function SettingsPage() {
                 toast.error("La prueba de conexión con AFIP falló.")
             }
         } catch (error) {
-            setConnectionLogs(prev => [...prev, `[CRITICAL ERROR] Error de red o comunicación: ${String(error)}`])
-            toast.error("Error al testear la conexión.")
+            const body = isApiError(error) && error.body && typeof error.body === "object"
+                ? error.body as { logs?: unknown; message?: unknown }
+                : null
+            const serverLogs = Array.isArray(body?.logs)
+                ? body.logs.filter((line): line is string => typeof line === "string")
+                : []
+            setConnectionLogs(serverLogs.length > 0
+                ? serverLogs
+                : ["[ERROR] No fue posible completar la verificación con ARCA."])
+            toast.error(typeof body?.message === "string" ? body.message : "Error al verificar la conexión.")
         } finally {
             setTestingConnection(false)
         }
@@ -270,11 +289,43 @@ export default function SettingsPage() {
         setSyncingTN(true)
         try {
             const res = await api.syncTiendanubeOrders()
-            toast.success(`Sincronización manual completada. Se importaron ${res.syncedCount} pedidos faltantes.`)
+            if (res.failures.length > 0) {
+                toast.warning(`Se importaron ${res.syncedCount} pedidos; ${res.failures.length} quedaron pendientes por datos inválidos o SKU sin vincular.`)
+            } else {
+                toast.success(`Sincronización completada. Se importaron ${res.syncedCount} pedidos y se omitieron ${res.skippedCount} ya existentes.`)
+            }
         } catch (error) {
             showErrorToast("Error al sincronizar con Tienda Nube", error)
         } finally {
             setSyncingTN(false)
+        }
+    }
+
+    const handleEnsureTiendaNubeWebhook = async () => {
+        setTiendanubeConnectionAction(true)
+        try {
+            const result = await api.ensureTiendanubeWebhook()
+            if (result.configured) toast.success(result.created ? "Webhook registrado" : "El webhook ya estaba registrado")
+            else toast.warning("Configure TIENDANUBE_WEBHOOK_URL con una URL HTTPS pública")
+            await loadTiendanubeStatus()
+        } catch (error) {
+            showErrorToast("No se pudo registrar el webhook", error)
+        } finally {
+            setTiendanubeConnectionAction(false)
+        }
+    }
+
+    const handleDisconnectTiendaNube = async () => {
+        if (!confirm("¿Desconectar Tiendanube y eliminar el webhook registrado?")) return
+        setTiendanubeConnectionAction(true)
+        try {
+            await api.disconnectTiendanube()
+            toast.success("Tiendanube fue desconectada")
+            await Promise.all([loadData(), loadTiendanubeStatus()])
+        } catch (error) {
+            showErrorToast("No se pudo desconectar Tiendanube", error)
+        } finally {
+            setTiendanubeConnectionAction(false)
         }
     }
 
@@ -492,6 +543,12 @@ export default function SettingsPage() {
                         processingAllSyncs={processingAllSyncs}
                         onRetrySync={handleRetrySync}
                         onRetryAllSyncs={handleRetryAllSyncs}
+                        integrationStatus={tiendanubeStatus}
+                        integrationStatusLoading={tiendanubeStatusLoading}
+                        connectionActionLoading={tiendanubeConnectionAction}
+                        onRefreshIntegrationStatus={loadTiendanubeStatus}
+                        onEnsureWebhook={handleEnsureTiendaNubeWebhook}
+                        onDisconnect={handleDisconnectTiendaNube}
                     />
                 </TabsContent>
             </Tabs>

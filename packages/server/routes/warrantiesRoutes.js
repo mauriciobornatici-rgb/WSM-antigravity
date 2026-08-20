@@ -1,11 +1,12 @@
 import express from 'express';
 import * as controller from '../controllers/warrantiesController.js';
 import { validate, schemas } from '../middleware/validationMiddleware.js';
-import { authorizeRoles } from '../middleware/authMiddleware.js';
+import { authorizePermission } from '../middleware/authMiddleware.js';
+import { PERMISSIONS } from '@wsm/common';
 
 const router = express.Router();
-const warrantyRoles = authorizeRoles('admin', 'manager', 'cashier');
-const creditNoteWriteRoles = authorizeRoles('admin', 'manager');
+const warrantyRoles = authorizePermission(PERMISSIONS.WARRANTIES_MANAGE);
+const creditNoteWriteRoles = authorizePermission(PERMISSIONS.INVOICES_MANAGE);
 
 // Warranties
 router.get('/warranties', warrantyRoles, validate(schemas.warrantiesFilters), controller.getWarranties);

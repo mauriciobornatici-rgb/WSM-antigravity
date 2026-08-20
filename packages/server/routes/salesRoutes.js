@@ -1,33 +1,37 @@
 import express from 'express';
 import * as salesController from '../controllers/salesController.js';
 import { validate, schemas, validateZod, zodSchemas } from '../middleware/validationMiddleware.js';
-import { authorizeRoles } from '../middleware/authMiddleware.js';
+import { authorizePermission } from '../middleware/authMiddleware.js';
+import { PERMISSIONS } from '@wsm/common';
 
 const router = express.Router();
-const orderRoles = authorizeRoles('admin', 'manager', 'cashier', 'warehouse');
-const invoicingRoles = authorizeRoles('admin', 'manager', 'cashier');
+const canReadOrders = authorizePermission(PERMISSIONS.ORDERS_READ);
+const canSell = authorizePermission(PERMISSIONS.ORDERS_SELL);
+const canPick = authorizePermission(PERMISSIONS.ORDERS_PICK);
+const canDispatch = authorizePermission(PERMISSIONS.ORDERS_DISPATCH);
+const canInvoice = authorizePermission(PERMISSIONS.INVOICES_MANAGE);
 
 // Orders
-router.get('/orders', orderRoles, validateZod(zodSchemas.orderFilters), salesController.getOrders);
-router.post('/orders', orderRoles, validateZod(zodSchemas.order), salesController.createOrder);
-router.put('/orders/:id/status', orderRoles, validate(schemas.orderStatus), salesController.updateOrderStatus);
-router.put('/orders/:id/dispatch', orderRoles, validate(schemas.orderDispatch), salesController.dispatchOrder);
-router.put('/orders/:id/deliver', orderRoles, validate(schemas.orderDeliver), salesController.deliverOrder);
-router.post('/orders/:id/invoice', invoicingRoles, validate(schemas.orderInvoice), salesController.createInvoice);
-router.get('/orders/:id/summary', orderRoles, validate(schemas.idParam), salesController.getOrderSummary);
-router.post('/orders/:id/picking-event', orderRoles, salesController.recordPickingEvent);
+router.get('/orders', canReadOrders, validateZod(zodSchemas.orderFilters), salesController.getOrders);
+router.post('/orders', canSell, validateZod(zodSchemas.order), salesController.createOrder);
+router.put('/orders/:id/status', canSell, validate(schemas.orderStatus), salesController.updateOrderStatus);
+router.put('/orders/:id/dispatch', canDispatch, validate(schemas.orderDispatch), salesController.dispatchOrder);
+router.put('/orders/:id/deliver', canDispatch, validate(schemas.orderDeliver), salesController.deliverOrder);
+router.post('/orders/:id/invoice', canInvoice, validate(schemas.orderInvoice), salesController.createInvoice);
+router.get('/orders/:id/summary', canReadOrders, validate(schemas.idParam), salesController.getOrderSummary);
+router.post('/orders/:id/picking-event', canPick, salesController.recordPickingEvent);
 
 // Order items
-router.put('/order-items/:id/pick', orderRoles, validate(schemas.orderItemPick), salesController.pickOrderItem);
+router.put('/order-items/:id/pick', canPick, validate(schemas.orderItemPick), salesController.pickOrderItem);
 
 // Invoices
-router.get('/invoices', invoicingRoles, validate(schemas.invoiceFilters), salesController.getInvoices);
-router.post('/invoices', invoicingRoles, validate(schemas.manualInvoice), salesController.createManualInvoice);
-router.post('/invoices/:id/authorize', invoicingRoles, validate(schemas.idParam), salesController.authorizeInvoice);
-router.post('/invoices/:id/payments', invoicingRoles, validateZod(zodSchemas.invoicePayment), salesController.registerInvoicePayments);
-router.get('/invoice-items', invoicingRoles, validate(schemas.invoiceItemsQuery), salesController.getInvoiceItems);
+router.get('/invoices', canInvoice, validate(schemas.invoiceFilters), salesController.getInvoices);
+router.post('/invoices', canInvoice, validate(schemas.manualInvoice), salesController.createManualInvoice);
+router.post('/invoices/:id/authorize', canInvoice, validate(schemas.idParam), salesController.authorizeInvoice);
+router.post('/invoices/:id/payments', canInvoice, validateZod(zodSchemas.invoicePayment), salesController.registerInvoicePayments);
+router.get('/invoice-items', canInvoice, validate(schemas.invoiceItemsQuery), salesController.getInvoiceItems);
 
 // Tax data
-router.get('/tax-conditions', invoicingRoles, salesController.getTaxConditions);
+router.get('/tax-conditions', canInvoice, salesController.getTaxConditions);
 
 export default router;

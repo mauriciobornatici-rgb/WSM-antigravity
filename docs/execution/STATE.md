@@ -1,9 +1,20 @@
 # Execution State Snapshot
 
-Last reviewed: 2026-08-16
+Last reviewed: 2026-08-19
 Current continuity source: `docs/execution/BITACORA_INTEGRAL.md`
-Current score estimate: 93/100
-Immediate priority: Descomposición de controladores procurement, refactorización de Custom Hooks de UI y migración de páginas restantes a TanStack Query.
+Current score estimate: 100/100 en calidad de código; activación productiva pendiente de preflight y ensayo de migraciones.
+Immediate priority: ejecutar el runbook `HARDENING_100_2026-08-19.md` sobre una copia restaurada antes de producción.
+
+## 2026-08-19 Hardening 100/100
+
+- JWT movido de `localStorage` a cookie HttpOnly/SameSite/secure.
+- Matriz única de capacidades RBAC compartida entre backend y frontend.
+- Contabilidad y auditoría inmutables con contra-asientos y triggers.
+- Auditoría transaccional en operaciones críticas.
+- Migraciones serializadas, con checksum y recuperación por sentencia; integridad referencial del núcleo.
+- Secretos ARCA/Tiendanube redactados permanentemente y prueba ARCA real.
+- CI ampliado con typecheck, E2E y auditoría; 95 tests servidor + 20 cliente verdes, lint y build verdes.
+- Runbook y evidencia: `docs/execution/HARDENING_100_2026-08-19.md`.
 
 ## 2026-08-16 Execution Snapshot (Auditoría integral + remediación)
 

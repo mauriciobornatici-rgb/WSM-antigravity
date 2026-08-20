@@ -5,6 +5,17 @@ import auditService from '../services/audit.service.js';
 import tiendaNubeService from '../services/tiendanube.service.js';
 import salesService from '../services/sales.service.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
+import { getEnvConfig } from '../config/env.js';
+
+function settingsRedirect(params = {}) {
+    const baseUrl = getEnvConfig().appBaseUrl;
+    const url = new URL('/settings', baseUrl);
+    url.searchParams.set('tab', 'tiendanube');
+    for (const [key, value] of Object.entries(params)) {
+        if (value != null) url.searchParams.set(key, String(value));
+    }
+    return url.toString();
+}
 
 export const authorizeTiendaNube = catchAsync(async (req, res) => {
     const [rows] = await pool.query('SELECT tiendanube_client_id FROM company_settings LIMIT 1');
@@ -30,7 +41,7 @@ export const callbackTiendaNube = catchAsync(async (req, res) => {
 
     const oauthState = tiendaNubeService.verifyOAuthState(state);
 
-    const [rows] = await pool.query('SELECT tiendanube_client_id, tiendanube_client_secret FROM company_settings LIMIT 1');
+    const [rows] = await pool.query('SELECT id, tiendanube_client_id, tiendanube_client_secret FROM company_settings LIMIT 1');
     const settings = rows[0] || {};
     const clientId = settings.tiendanube_client_id;
     const clientSecret = decrypt(settings.tiendanube_client_secret);
@@ -45,9 +56,12 @@ export const callbackTiendaNube = catchAsync(async (req, res) => {
             client_secret: clientSecret,
             grant_type: 'authorization_code',
             code
-        });
+        }, { timeout: 10000 });
 
         const { access_token, user_id } = response.data;
+        if (!access_token || !user_id) {
+            throw new Error('Tiendanube OAuth response did not include access_token and user_id');
+        }
 
         await pool.query(
             'UPDATE company_settings SET tiendanube_access_token = ?, tiendanube_store_id = ? WHERE id = ?',
@@ -62,7 +76,19 @@ export const callbackTiendaNube = catchAsync(async (req, res) => {
             new_values: { tiendanube_store_id: user_id }
         });
 
-        res.redirect('/settings?tab=tiendanube&success=1');
+        let webhookStatus = 'not_configured';
+        const webhookUrl = getEnvConfig().tiendanubeWebhookUrl;
+        if (webhookUrl) {
+            try {
+                const webhook = await tiendaNubeService.ensureOrderWebhook(webhookUrl);
+                webhookStatus = webhook.configured ? 'configured' : 'not_configured';
+            } catch (webhookError) {
+                webhookStatus = 'error';
+                console.error('[TiendaNube OAuth] Token saved but webhook registration failed:', webhookError.message);
+            }
+        }
+
+        res.redirect(settingsRedirect({ success: 1, webhook: webhookStatus }));
     } catch (error) {
         console.error('Error in OAuth callback:', error.response?.data || error.message);
         res.status(500).send('Error al autorizar con Tienda Nube.');
@@ -92,12 +118,16 @@ export const webhookTiendaNube = catchAsync(async (req, res) => {
 
     console.log(`[TiendaNube Webhook] Received ${payload.event} for store ${payload.store_id}`);
 
-    // Process before answering: on failure we return 5xx so Tienda Nube
-    // re-delivers the event (the webhook_events table keeps it idempotent).
     try {
-        const result = await tiendaNubeService.processWebhookEvent(payload, salesService);
-        console.log(`[TiendaNube Webhook] Processed ${payload.event} ${payload.id}: ${result.status}`);
-        return res.status(200).send('OK');
+        const eventRecord = await tiendaNubeService.recordWebhookEvent(payload);
+        if (!eventRecord.duplicate) {
+            setImmediate(() => {
+                tiendaNubeService.processRecordedWebhookEvent(eventRecord, payload, salesService)
+                    .then((result) => console.log(`[TiendaNube Webhook] Processed ${payload.event} ${payload.id}: ${result.status}`))
+                    .catch((error) => console.error('[TiendaNube Webhook] Deferred processing failed:', error));
+            });
+        }
+        return res.status(eventRecord.duplicate ? 200 : 202).send('OK');
     } catch (err) {
         console.error('[TiendaNube Webhook] Error processing webhook:', err);
         return res.status(500).json({ error: 'webhook_processing_failed' });
@@ -108,12 +138,58 @@ export const webhookOrdersCreated = webhookTiendaNube;
 
 export const syncRecentOrdersController = catchAsync(async (req, res) => {
     try {
-        const syncedCount = await tiendaNubeService.syncRecentOrders(salesService);
-        res.json({ success: true, syncedCount });
+        const result = await tiendaNubeService.syncRecentOrders(salesService);
+        res.json({ success: true, ...result });
     } catch (error) {
         console.error('[TiendaNube Sync Error]', error);
         res.status(500).json({ error: error.message || 'Error sincronizando ordenes' });
     }
+});
+
+export const getTiendaNubeStatusController = catchAsync(async (req, res) => {
+    const status = await tiendaNubeService.getIntegrationStatus(getEnvConfig().tiendanubeWebhookUrl);
+    res.json(status);
+});
+
+export const ensureTiendaNubeWebhookController = catchAsync(async (req, res) => {
+    const result = await tiendaNubeService.ensureOrderWebhook(getEnvConfig().tiendanubeWebhookUrl);
+    await auditService.log({
+        user_id: req.user?.id || null,
+        action: 'ENSURE_TIENDANUBE_WEBHOOK',
+        entity_type: 'company_settings',
+        entity_id: '1',
+        new_values: result
+    });
+    res.json({ success: true, ...result });
+});
+
+export const disconnectTiendaNubeController = catchAsync(async (req, res) => {
+    if (process.env.TIENDANUBE_ACCESS_TOKEN || process.env.TIENDANUBE_STORE_ID) {
+        return res.status(409).json({
+            error: 'tiendanube_environment_credentials',
+            message: 'La integración usa credenciales de entorno. Elimínelas antes de desconectar desde la aplicación.'
+        });
+    }
+    let webhookResult = { removed: 0 };
+    try {
+        webhookResult = await tiendaNubeService.removeOrderWebhook(getEnvConfig().tiendanubeWebhookUrl);
+    } catch (error) {
+        console.error('[TiendaNube Disconnect] Could not remove remote webhook:', error.message);
+    }
+
+    await pool.query(
+        `UPDATE company_settings
+         SET tiendanube_access_token = NULL, tiendanube_store_id = NULL
+         WHERE id = 1`
+    );
+    await auditService.log({
+        user_id: req.user?.id || null,
+        action: 'DISCONNECT_TIENDANUBE',
+        entity_type: 'company_settings',
+        entity_id: '1',
+        new_values: webhookResult
+    });
+    res.json({ success: true, ...webhookResult });
 });
 
 export const getFailedSyncsController = catchAsync(async (req, res) => {

@@ -1,9 +1,10 @@
 import express from 'express';
 import * as traceabilityController from '../controllers/traceabilityController.js';
-import { authorizeRoles } from '../middleware/authMiddleware.js';
+import { authorizePermission } from '../middleware/authMiddleware.js';
+import { PERMISSIONS } from '@wsm/common';
 
 const router = express.Router();
-const traceabilityReadRoles = authorizeRoles('admin', 'manager', 'warehouse', 'cashier');
+const traceabilityReadRoles = authorizePermission(PERMISSIONS.TRACEABILITY_READ);
 
 router.get('/traceability/timeline', traceabilityReadRoles, traceabilityController.getTimeline);
 

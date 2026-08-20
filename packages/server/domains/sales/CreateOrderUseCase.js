@@ -77,9 +77,23 @@ export class CreateOrderUseCase {
             }
 
             const computedTotal = orderData.items.reduce(
-                (sum, item) => sum + Number(item.quantity) * priceByProduct.get(item.product_id),
+                (sum, item) => {
+                    const requestedPrice = Number(item.unit_price);
+                    const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
+                        ? requestedPrice
+                        : priceByProduct.get(item.product_id);
+                    return sum + Number(item.quantity) * unitPrice;
+                },
                 0
             );
+            const externalTotal = Number(orderData.external_total_amount);
+            const resolvedTotal = orderData.external_source && Number.isFinite(externalTotal) && externalTotal >= 0
+                ? externalTotal
+                : computedTotal;
+            const allowedPaymentStatuses = new Set(['pending', 'paid', 'refunded', 'voided']);
+            const resolvedPaymentStatus = orderData.external_source && allowedPaymentStatuses.has(orderData.payment_status)
+                ? orderData.payment_status
+                : 'pending';
 
             let counterName = String(orderData.counter_name || '').trim();
             if (!counterName && userId) {
@@ -98,14 +112,15 @@ export class CreateOrderUseCase {
                     shipping_method, shipping_address, estimated_delivery,
                     recipient_name, recipient_dni, delivery_notes, notes,
                     external_source, external_id
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     orderId,
                     orderData.client_id || null,
                     userId || orderData.counter_user_id || null,
                     orderData.customer_name || null,
                     resolvedCounterName,
-                    computedTotal,
+                    resolvedTotal,
+                    resolvedPaymentStatus,
                     orderData.payment_method || 'cash',
                     orderData.shipping_method || null,
                     orderData.shipping_address || null,
@@ -128,14 +143,17 @@ export class CreateOrderUseCase {
                 });
 
                 const itemId = crypto.randomUUID();
-                const unitPrice = priceByProduct.get(item.product_id);
+                const requestedPrice = Number(item.unit_price);
+                const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
+                    ? requestedPrice
+                    : priceByProduct.get(item.product_id);
                 await connection.query(
                     'INSERT INTO order_items (id, order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?, ?)',
                     [itemId, orderId, item.product_id, item.quantity, unitPrice]
                 );
             }
 
-            let finalTotal = computedTotal;
+            let finalTotal = resolvedTotal;
             let pointsRedeemed = Number(orderData.points_redeemed || 0);
             let pointsEarned = 0;
 
@@ -147,7 +165,7 @@ export class CreateOrderUseCase {
                         pointsRedeemed = currentPoints;
                     }
                     const discountAmount = pointsRedeemed * 10; // 1 punto = $10 descuento
-                    finalTotal = Math.max(0, computedTotal - discountAmount);
+                    finalTotal = Math.max(0, resolvedTotal - discountAmount);
                 }
 
                 pointsEarned = Math.floor(finalTotal / 1000); // 1 punto por cada $1.000 consumidos

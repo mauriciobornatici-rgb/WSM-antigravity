@@ -40,6 +40,10 @@ describe("httpClient.get", () => {
         const result = await httpClient.get("/products")
 
         expect(fetch).toHaveBeenCalledOnce()
+        expect(fetch).toHaveBeenCalledWith(
+            "http://localhost:3001/products",
+            expect.objectContaining({ credentials: "include" })
+        )
         expect(result).toEqual(mockData)
     })
 

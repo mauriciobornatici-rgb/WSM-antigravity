@@ -1,11 +1,13 @@
 import crypto from 'crypto';
 import pool from '../../config/db.js';
 import accountingService from '../../services/accounting.service.js';
+import auditService from '../../services/audit.service.js';
 
 export class GoodsReceptionService {
     async processReceptionApproval(receptionId, options = {}) {
         const approvedBy = options.approvedBy || null;
         const actorUserId = options.actorUserId || null;
+        const ipAddress = options.ipAddress || null;
         const connection = await pool.getConnection();
         await connection.beginTransaction();
 
@@ -171,6 +173,15 @@ export class GoodsReceptionService {
                 [approvedBy, receptionId]
             );
 
+            await auditService.log({
+                user_id: actorUserId,
+                action: 'APPROVE_RECEPTION',
+                entity_type: 'reception',
+                entity_id: receptionId,
+                old_values: { status: reception.status },
+                new_values: { status: 'approved', approved_by: approvedBy },
+                ip_address: ipAddress
+            }, connection);
             await connection.commit();
             return { success: true };
         } catch (error) {

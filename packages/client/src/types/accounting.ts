@@ -25,6 +25,8 @@ export interface JournalEntry {
     description: string
     reference_type: string
     reference_id: string
+    reversal_of_entry_id?: string | null
+    is_reversed?: boolean | number
     lines: JournalEntryLine[]
 }
 

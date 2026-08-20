@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
 import { CommandPalette } from "@/components/common/CommandPalette";
+import { hasPermission, PERMISSIONS, type Permission } from "@wsm/common";
 
 export default function AppLayout() {
     const { user, logout } = useAuth();
@@ -44,42 +45,42 @@ export default function AppLayout() {
         warehouse: "Depósito",
     };
 
-    const navSections = [
+    const navSections: Array<{ title: string; items: Array<{ name: string; href: string; icon: typeof LayoutDashboard; permission?: Permission }> }> = [
         {
             title: "Operación Comercial",
             items: [
                 { name: "Inicio", href: "/", icon: LayoutDashboard },
-                { name: "Punto de Venta", href: "/pos", icon: ShoppingCart, roles: ["admin", "cashier"] },
-                { name: "Pedidos", href: "/orders", icon: ClipboardList, roles: ["admin", "manager", "cashier", "warehouse"] },
-                { name: "Clientes", href: "/clients", icon: Users, roles: ["admin", "manager", "cashier"] },
+                { name: "Punto de Venta", href: "/pos", icon: ShoppingCart, permission: PERMISSIONS.ORDERS_SELL },
+                { name: "Pedidos", href: "/orders", icon: ClipboardList, permission: PERMISSIONS.ORDERS_READ },
+                { name: "Clientes", href: "/clients", icon: Users, permission: PERMISSIONS.CLIENTS_MANAGE },
             ]
         },
         {
             title: "Depósito y Logística",
             items: [
-                { name: "Inventario (WMS)", href: "/inventory", icon: Package, roles: ["admin", "manager", "warehouse"] },
-                { name: "Órdenes de compra", href: "/purchase-orders", icon: FileSpreadsheet, roles: ["admin", "manager"] },
-                { name: "Recepciones", href: "/receptions", icon: ClipboardCheck, roles: ["admin", "manager", "warehouse"] },
-                { name: "Proveedores", href: "/suppliers", icon: Truck, roles: ["admin", "manager"] },
-                { name: "Reclamos y garantías", href: "/returns-warranties", icon: BadgeAlert, roles: ["admin", "manager", "cashier"] },
+                { name: "Inventario (WMS)", href: "/inventory", icon: Package, permission: PERMISSIONS.INVENTORY_MANAGE },
+                { name: "Órdenes de compra", href: "/purchase-orders", icon: FileSpreadsheet, permission: PERMISSIONS.PROCUREMENT_MANAGE },
+                { name: "Recepciones", href: "/receptions", icon: ClipboardCheck, permission: PERMISSIONS.RECEPTIONS_MANAGE },
+                { name: "Proveedores", href: "/suppliers", icon: Truck, permission: PERMISSIONS.SUPPLIERS_MANAGE },
+                { name: "Reclamos y garantías", href: "/returns-warranties", icon: BadgeAlert, permission: PERMISSIONS.WARRANTIES_MANAGE },
             ]
         },
         {
             title: "Administración y Finanzas",
             items: [
-                { name: "Facturación", href: "/invoices", icon: Printer, roles: ["admin", "manager", "cashier"] },
-                { name: "Gestión de caja", href: "/cash-management", icon: Landmark, roles: ["admin", "cashier"] },
-                { name: "Cobranzas", href: "/collections", icon: FileText, roles: ["admin", "manager", "cashier"] },
-                { name: "Pagos Proveedores", href: "/supplier-payments", icon: CreditCard, roles: ["admin", "manager"] },
-                { name: "Cuentas Corrientes", href: "/current-accounts", icon: Wallet, roles: ["admin", "manager", "cashier"] },
-                { name: "Contabilidad", href: "/accounting", icon: FileText, roles: ["admin"] },
-                { name: "Configuración", href: "/settings", icon: Settings, roles: ["admin"] },
+                { name: "Facturación", href: "/invoices", icon: Printer, permission: PERMISSIONS.INVOICES_MANAGE },
+                { name: "Gestión de caja", href: "/cash-management", icon: Landmark, permission: PERMISSIONS.CASH_MANAGE },
+                { name: "Cobranzas", href: "/collections", icon: FileText, permission: PERMISSIONS.COLLECTIONS_MANAGE },
+                { name: "Pagos Proveedores", href: "/supplier-payments", icon: CreditCard, permission: PERMISSIONS.SUPPLIER_PAYMENTS_MANAGE },
+                { name: "Cuentas Corrientes", href: "/current-accounts", icon: Wallet, permission: PERMISSIONS.COLLECTIONS_MANAGE },
+                { name: "Contabilidad", href: "/accounting", icon: FileText, permission: PERMISSIONS.ACCOUNTING_MANAGE },
+                { name: "Configuración", href: "/settings", icon: Settings, permission: PERMISSIONS.SETTINGS_MANAGE },
             ]
         }
     ];
 
     const allNavItems = navSections.flatMap((sec) => sec.items);
-    const filteredNavItems = allNavItems.filter((item) => !item.roles || (user && item.roles.includes(user.role)));
+    const filteredNavItems = allNavItems.filter((item) => !item.permission || hasPermission(user?.role, item.permission));
     const isRouteActive = (href: string) => (
         href === "/" ? location.pathname === "/" : location.pathname === href || location.pathname.startsWith(`${href}/`)
     );
@@ -89,7 +90,7 @@ export default function AppLayout() {
     const filteredSections = navSections
         .map((sec) => ({
             ...sec,
-            items: sec.items.filter((item) => !item.roles || (user && item.roles.includes(user.role)))
+            items: sec.items.filter((item) => !item.permission || hasPermission(user?.role, item.permission))
         }))
         .filter((sec) => sec.items.length > 0);
 
@@ -106,6 +107,8 @@ export default function AppLayout() {
                     <Button
                         variant="ghost"
                         size="icon"
+                        aria-label={collapsed ? "Expandir menú lateral" : "Contraer menú lateral"}
+                        aria-expanded={!collapsed}
                         onClick={() => setCollapsed(!collapsed)}
                         className={cn("ml-auto hover:bg-slate-800 text-slate-300 hover:text-white", collapsed && "mx-auto")}
                     >
@@ -172,6 +175,7 @@ export default function AppLayout() {
                         <Button
                             variant="ghost"
                             size="icon"
+                            aria-label="Abrir buscador y paleta de comandos"
                             onClick={() => setCommandPaletteOpen(true)}
                             className="sm:hidden text-muted-foreground hover:text-foreground"
                         >
@@ -180,6 +184,7 @@ export default function AppLayout() {
                         <Button
                             variant="ghost"
                             size="icon"
+                            aria-label={theme === "dark" ? "Activar tema claro" : "Activar tema oscuro"}
                             onClick={toggleTheme}
                             title={theme === "dark" ? "Cambiar a Modo Día" : "Cambiar a Modo Noche"}
                             className="text-slate-400 hover:text-foreground hover:bg-slate-800/40 rounded-lg"
@@ -195,7 +200,7 @@ export default function AppLayout() {
                         <div className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-lg shadow-blue-500/20">
                             {(user?.name || "U").charAt(0)}
                         </div>
-                        <Button variant="ghost" size="sm" onClick={logout} className="text-slate-400 hover:text-foreground hover:bg-slate-800/40">
+                        <Button variant="ghost" size="sm" onClick={() => void logout()} className="text-slate-400 hover:text-foreground hover:bg-slate-800/40">
                             Salir
                         </Button>
                     </div>

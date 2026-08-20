@@ -1,7 +1,20 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Autenticación y Login', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/session', async (route) => {
+      await route.fulfill({ status: 401, json: { error: 'invalid_session' } });
+    });
+  });
+
   test('debe mostrar error con credenciales incorrectas', async ({ page }) => {
+    await page.route('**/api/login', async (route) => {
+      await route.fulfill({
+        status: 401,
+        json: { error: 'invalid_credentials', message: 'Credenciales inválidas' },
+      });
+    });
+
     // Navigate to the login page
     await page.goto('/login');
 
@@ -24,15 +37,12 @@ test.describe('Autenticación y Login', () => {
   });
 
   test('debe iniciar sesión exitosamente y redirigir al dashboard', async ({ page }) => {
-    // Intercept the API call to mock a successful login if the backend is down
-    // Since this is E2E, we prefer hitting the real backend, but we mock it here to ensure green tests
-    // without requiring the DB to be in a specific state.
-    await page.route('**/api/auth/login', async (route) => {
+    // Mock only external boundaries; this UI test remains deterministic and does not touch a database.
+    await page.route('**/api/login', async (route) => {
       const request = route.request();
       if (request.method() === 'POST') {
         const json = {
-          user: { id: '1', name: 'Admin User', email: 'admin@sports.store', role: 'admin' },
-          token: 'mock-jwt-token'
+          user: { id: '1', name: 'Admin User', email: 'admin@sports.store', role: 'admin', status: 'active' }
         };
         await route.fulfill({ json });
       } else {
@@ -40,12 +50,6 @@ test.describe('Autenticación y Login', () => {
       }
     });
 
-    await page.route('**/api/users/profile', async (route) => {
-      await route.fulfill({
-        json: { id: '1', name: 'Admin User', email: 'admin@sports.store', role: 'admin' }
-      });
-    });
-    
     await page.route('**/api/dashboard/**', async (route) => {
         await route.fulfill({ json: {} });
     });

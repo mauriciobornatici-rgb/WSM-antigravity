@@ -17,7 +17,6 @@ export interface LoginCredentials {
 
 export interface LoginResponse {
     user: User;
-    token: string;
 }
 
 export type QueryPrimitive = string | number | boolean | null | undefined;
@@ -411,4 +410,3 @@ export type PendingSupplierInvoiceResponse = {
     pending_amount: number;
     payment_status: "pending" | "partial" | "paid";
 };
-

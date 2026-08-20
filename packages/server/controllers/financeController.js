@@ -144,7 +144,6 @@ export const openShift = catchAsync(async (req, res) => {
             [shiftId, id]
         );
 
-        await connection.commit();
         await auditService.log({
             user_id: req.user?.id || opened_by || null,
             action: 'OPEN_SHIFT',
@@ -157,7 +156,8 @@ export const openShift = catchAsync(async (req, res) => {
                 status: 'open'
             },
             ip_address: getRequestIp(req)
-        });
+        }, connection);
+        await connection.commit();
         res.json({ id: shiftId, success: true });
     } catch (err) {
         await connection.rollback();
@@ -209,7 +209,6 @@ export const closeShift = catchAsync(async (req, res) => {
             [shift.cash_register_id]
         );
 
-        await connection.commit();
         await auditService.log({
             user_id: req.user?.id || closed_by || null,
             action: 'CLOSE_SHIFT',
@@ -229,7 +228,8 @@ export const closeShift = catchAsync(async (req, res) => {
                 notes: notes || null
             },
             ip_address: getRequestIp(req)
-        });
+        }, connection);
+        await connection.commit();
         res.json({
             success: true,
             expected_balance: expectedBalance,
@@ -273,7 +273,6 @@ export const addShiftPayment = catchAsync(async (req, res) => {
             [summary.expected_balance, id]
         );
 
-        await connection.commit();
         await auditService.log({
             user_id: req.user?.id || null,
             action: 'ADD_SHIFT_PAYMENT',
@@ -288,7 +287,8 @@ export const addShiftPayment = catchAsync(async (req, res) => {
                 expected_balance: summary.expected_balance
             },
             ip_address: getRequestIp(req)
-        });
+        }, connection);
+        await connection.commit();
         res.json({ id: paymentId, expected_balance: summary.expected_balance });
     } catch (err) {
         await connection.rollback();
@@ -343,8 +343,6 @@ export const createCashTransaction = catchAsync(async (req, res) => {
             [summary.expected_balance, shiftId]
         );
 
-        await connection.commit();
-
         await auditService.log({
             user_id: req.user?.id || null,
             action: 'CREATE_CASH_TRANSACTION',
@@ -360,7 +358,8 @@ export const createCashTransaction = catchAsync(async (req, res) => {
                 expected_balance: summary.expected_balance
             },
             ip_address: getRequestIp(req)
-        });
+        }, connection);
+        await connection.commit();
 
         res.json({ id: paymentId, success: true, expected_balance: summary.expected_balance });
     } catch (err) {

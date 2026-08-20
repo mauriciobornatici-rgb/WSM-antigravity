@@ -1,0 +1,86 @@
+export const USER_ROLES = ['admin', 'manager', 'cashier', 'warehouse'] as const;
+export type UserRole = (typeof USER_ROLES)[number];
+
+export const PERMISSIONS = {
+  DASHBOARD_READ: 'dashboard.read',
+  PRODUCTS_READ: 'products.read',
+  INVENTORY_MANAGE: 'inventory.manage',
+  ORDERS_READ: 'orders.read',
+  ORDERS_SELL: 'orders.sell',
+  ORDERS_PICK: 'orders.pick',
+  ORDERS_DISPATCH: 'orders.dispatch',
+  INVOICES_MANAGE: 'invoices.manage',
+  CLIENTS_MANAGE: 'clients.manage',
+  SUPPLIERS_MANAGE: 'suppliers.manage',
+  PROCUREMENT_READ: 'procurement.read',
+  PROCUREMENT_MANAGE: 'procurement.manage',
+  RECEPTIONS_MANAGE: 'receptions.manage',
+  SUPPLIER_RETURNS_MANAGE: 'supplier_returns.manage',
+  SUPPLIER_PAYMENTS_MANAGE: 'supplier_payments.manage',
+  QUALITY_MANAGE: 'quality.manage',
+  WARRANTIES_MANAGE: 'warranties.manage',
+  CASH_MANAGE: 'cash.manage',
+  COLLECTIONS_MANAGE: 'collections.manage',
+  ACCOUNTING_MANAGE: 'accounting.manage',
+  SETTINGS_MANAGE: 'settings.manage',
+  USERS_MANAGE: 'users.manage',
+  INTEGRATIONS_MANAGE: 'integrations.manage',
+  TRACEABILITY_READ: 'traceability.read',
+} as const;
+
+export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
+
+export const ROLE_PERMISSIONS: Readonly<Record<UserRole, readonly Permission[]>> = {
+  admin: Object.values(PERMISSIONS),
+  manager: [
+    PERMISSIONS.DASHBOARD_READ,
+    PERMISSIONS.PRODUCTS_READ,
+    PERMISSIONS.INVENTORY_MANAGE,
+    PERMISSIONS.ORDERS_READ,
+    PERMISSIONS.ORDERS_SELL,
+    PERMISSIONS.ORDERS_PICK,
+    PERMISSIONS.ORDERS_DISPATCH,
+    PERMISSIONS.INVOICES_MANAGE,
+    PERMISSIONS.CLIENTS_MANAGE,
+    PERMISSIONS.SUPPLIERS_MANAGE,
+    PERMISSIONS.PROCUREMENT_READ,
+    PERMISSIONS.PROCUREMENT_MANAGE,
+    PERMISSIONS.RECEPTIONS_MANAGE,
+    PERMISSIONS.SUPPLIER_RETURNS_MANAGE,
+    PERMISSIONS.SUPPLIER_PAYMENTS_MANAGE,
+    PERMISSIONS.QUALITY_MANAGE,
+    PERMISSIONS.WARRANTIES_MANAGE,
+    PERMISSIONS.COLLECTIONS_MANAGE,
+    PERMISSIONS.TRACEABILITY_READ,
+  ],
+  cashier: [
+    PERMISSIONS.DASHBOARD_READ,
+    PERMISSIONS.PRODUCTS_READ,
+    PERMISSIONS.ORDERS_READ,
+    PERMISSIONS.ORDERS_SELL,
+    PERMISSIONS.INVOICES_MANAGE,
+    PERMISSIONS.CLIENTS_MANAGE,
+    PERMISSIONS.WARRANTIES_MANAGE,
+    PERMISSIONS.CASH_MANAGE,
+    PERMISSIONS.COLLECTIONS_MANAGE,
+    PERMISSIONS.TRACEABILITY_READ,
+  ],
+  warehouse: [
+    PERMISSIONS.DASHBOARD_READ,
+    PERMISSIONS.PRODUCTS_READ,
+    PERMISSIONS.INVENTORY_MANAGE,
+    PERMISSIONS.ORDERS_READ,
+    PERMISSIONS.ORDERS_PICK,
+    PERMISSIONS.ORDERS_DISPATCH,
+    PERMISSIONS.PROCUREMENT_READ,
+    PERMISSIONS.RECEPTIONS_MANAGE,
+    PERMISSIONS.SUPPLIER_RETURNS_MANAGE,
+    PERMISSIONS.QUALITY_MANAGE,
+    PERMISSIONS.TRACEABILITY_READ,
+  ],
+};
+
+export function hasPermission(role: string | null | undefined, permission: Permission): boolean {
+  if (!role || !USER_ROLES.includes(role as UserRole)) return false;
+  return ROLE_PERMISSIONS[role as UserRole].includes(permission);
+}

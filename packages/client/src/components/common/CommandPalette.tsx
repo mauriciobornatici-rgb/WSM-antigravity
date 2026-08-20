@@ -5,6 +5,8 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { api } from "@/services/api";
 import type { Product } from "@/types";
+import { useAuth } from "@/context/AuthContext";
+import { hasPermission, PERMISSIONS, type Permission } from "@wsm/common";
 
 interface NavigationCommand {
     id: string;
@@ -13,22 +15,24 @@ interface NavigationCommand {
     href: string;
     category: "Navegación" | "Acción Rápida";
     icon: typeof LayoutDashboard;
+    permission: Permission;
 }
 
 const STATIC_COMMANDS: NavigationCommand[] = [
-    { id: "nav-pos", title: "Ir al Punto de Venta (POS)", description: "Abrir terminal de cobranzas y caja", href: "/pos", category: "Acción Rápida", icon: ShoppingCart },
-    { id: "nav-dash", title: "Ir a Inicio / Dashboard", description: "Métricas y resumen general de operaciones", href: "/", category: "Navegación", icon: LayoutDashboard },
-    { id: "nav-inv", title: "Ir a Inventario (WMS)", description: "Gestión de catálogo, stock y ubicaciones", href: "/inventory", category: "Navegación", icon: Package },
-    { id: "nav-clients", title: "Ir a Clientes", description: "Base de datos comercial de clientes", href: "/clients", category: "Navegación", icon: Users },
-    { id: "nav-invoices", title: "Ir a Facturación", description: "Emisión de comprobantes A/B y tickets", href: "/invoices", category: "Navegación", icon: FileText },
-    { id: "nav-cash", title: "Ir a Gestión de Caja", description: "Movimientos, aranceles y Cierre Z", href: "/cash-management", category: "Navegación", icon: Landmark },
-    { id: "nav-suppliers", title: "Ir a Proveedores", description: "Cuentas corrientes y pagos de compras", href: "/suppliers", category: "Navegación", icon: Truck },
-    { id: "nav-receptions", title: "Ir a Recepciones (WMS)", description: "Control de remitos e ingreso de mercadería", href: "/receptions", category: "Navegación", icon: ClipboardCheck },
-    { id: "nav-settings", title: "Ir a Configuración", description: "Datos fiscales, ARCA y Tiendanube", href: "/settings", category: "Navegación", icon: Settings },
+    { id: "nav-pos", title: "Ir al Punto de Venta (POS)", description: "Abrir terminal de cobranzas y caja", href: "/pos", category: "Acción Rápida", icon: ShoppingCart, permission: PERMISSIONS.ORDERS_SELL },
+    { id: "nav-dash", title: "Ir a Inicio / Dashboard", description: "Métricas y resumen general de operaciones", href: "/", category: "Navegación", icon: LayoutDashboard, permission: PERMISSIONS.DASHBOARD_READ },
+    { id: "nav-inv", title: "Ir a Inventario (WMS)", description: "Gestión de catálogo, stock y ubicaciones", href: "/inventory", category: "Navegación", icon: Package, permission: PERMISSIONS.INVENTORY_MANAGE },
+    { id: "nav-clients", title: "Ir a Clientes", description: "Base de datos comercial de clientes", href: "/clients", category: "Navegación", icon: Users, permission: PERMISSIONS.CLIENTS_MANAGE },
+    { id: "nav-invoices", title: "Ir a Facturación", description: "Emisión de comprobantes A/B y tickets", href: "/invoices", category: "Navegación", icon: FileText, permission: PERMISSIONS.INVOICES_MANAGE },
+    { id: "nav-cash", title: "Ir a Gestión de Caja", description: "Movimientos, aranceles y Cierre Z", href: "/cash-management", category: "Navegación", icon: Landmark, permission: PERMISSIONS.CASH_MANAGE },
+    { id: "nav-suppliers", title: "Ir a Proveedores", description: "Cuentas corrientes y pagos de compras", href: "/suppliers", category: "Navegación", icon: Truck, permission: PERMISSIONS.SUPPLIERS_MANAGE },
+    { id: "nav-receptions", title: "Ir a Recepciones (WMS)", description: "Control de remitos e ingreso de mercadería", href: "/receptions", category: "Navegación", icon: ClipboardCheck, permission: PERMISSIONS.RECEPTIONS_MANAGE },
+    { id: "nav-settings", title: "Ir a Configuración", description: "Datos fiscales, ARCA y Tiendanube", href: "/settings", category: "Navegación", icon: Settings, permission: PERMISSIONS.SETTINGS_MANAGE },
 ];
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
     const navigate = useNavigate();
+    const { user } = useAuth();
     const [query, setQuery] = useState("");
     const [products, setProducts] = useState<Product[]>([]);
     const [loadingProducts, setLoadingProducts] = useState(false);
@@ -69,10 +73,11 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
     }, [query]);
 
     const filteredNavCommands = useMemo(() => {
-        if (!query.trim()) return STATIC_COMMANDS;
+        const allowedCommands = STATIC_COMMANDS.filter((command) => hasPermission(user?.role, command.permission));
+        if (!query.trim()) return allowedCommands;
         const q = query.toLowerCase();
-        return STATIC_COMMANDS.filter(c => c.title.toLowerCase().includes(q) || c.description.toLowerCase().includes(q));
-    }, [query]);
+        return allowedCommands.filter(c => c.title.toLowerCase().includes(q) || c.description.toLowerCase().includes(q));
+    }, [query, user?.role]);
 
     const totalItemsCount = filteredNavCommands.length + products.length;
 
@@ -117,7 +122,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                         autoFocus
                     />
                     {query && (
-                        <button onClick={() => setQuery("")} className="p-1 rounded-md hover:bg-muted text-muted-foreground">
+                        <button type="button" aria-label="Limpiar búsqueda" onClick={() => setQuery("")} className="p-1 rounded-md hover:bg-muted text-muted-foreground">
                             <X className="h-4 w-4" />
                         </button>
                     )}
@@ -135,10 +140,11 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                                     const Icon = cmd.icon;
                                     const isSelected = selectedIndex === idx;
                                     return (
-                                        <div
+                                        <button
+                                            type="button"
                                             key={cmd.id}
                                             onClick={() => handleSelectCommand(cmd.href)}
-                                            className={`flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-all text-sm ${
+                                            className={`flex w-full items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-all text-left text-sm ${
                                                 isSelected ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted text-foreground"
                                             }`}
                                         >
@@ -150,7 +156,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                                                 </div>
                                             </div>
                                             <ArrowRight className={`h-4 w-4 ${isSelected ? "opacity-100" : "opacity-0"}`} />
-                                        </div>
+                                        </button>
                                     );
                                 })}
                             </div>
@@ -172,10 +178,11 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                                     const globalIdx = filteredNavCommands.length + idx;
                                     const isSelected = selectedIndex === globalIdx;
                                     return (
-                                        <div
+                                        <button
+                                            type="button"
                                             key={prod.id}
                                             onClick={() => handleSelectCommand("/inventory")}
-                                            className={`flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-all text-sm ${
+                                            className={`flex w-full items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-all text-left text-sm ${
                                                 isSelected ? "bg-primary text-primary-foreground" : "hover:bg-muted text-foreground"
                                             }`}
                                         >
@@ -191,7 +198,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                                             <div className="font-bold text-sm">
                                                 ${Number(prod.sale_price || 0).toLocaleString()}
                                             </div>
-                                        </div>
+                                        </button>
                                     );
                                 })}
                             </div>

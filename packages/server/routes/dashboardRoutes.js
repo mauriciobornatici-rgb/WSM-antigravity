@@ -1,10 +1,11 @@
 import express from 'express';
 import * as dashboardController from '../controllers/dashboardController.js';
-import { authenticateToken } from '../middleware/authMiddleware.js';
+import { authorizePermission } from '../middleware/authMiddleware.js';
+import { PERMISSIONS } from '@wsm/common';
 
 const router = express.Router();
 
-router.get('/dashboard/stats', authenticateToken, dashboardController.getDashboardStats);
-router.get('/dashboard/size-color-analytics', authenticateToken, dashboardController.getSizeColorAnalytics);
+router.get('/dashboard/stats', authorizePermission(PERMISSIONS.DASHBOARD_READ), dashboardController.getDashboardStats);
+router.get('/dashboard/size-color-analytics', authorizePermission(PERMISSIONS.DASHBOARD_READ), dashboardController.getSizeColorAnalytics);
 
 export default router;

@@ -32,3 +32,4 @@ dist-ssr
 *.corrupt.bak
 packages/server/uploads/
 playwright-report/
+test-results/

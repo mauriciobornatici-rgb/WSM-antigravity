@@ -240,7 +240,6 @@ export const createReception = catchAsync(async (req, res) => {
             );
         }
 
-        await connection.commit();
         await auditService.log({
             user_id: req.user?.id || null,
             action: 'CREATE_RECEPTION',
@@ -256,7 +255,8 @@ export const createReception = catchAsync(async (req, res) => {
                 items
             },
             ip_address: getRequestIp(req)
-        });
+        }, connection);
+        await connection.commit();
         res.json({ id, reception_number: receptionNumber });
     } catch (err) {
         await connection.rollback();
@@ -274,7 +274,8 @@ export const approveReception = catchAsync(async (req, res) => {
     try {
         await inventoryService.processReceptionApproval(id, {
             approvedBy: approverId,
-            actorUserId: req.user?.id || approverId || null
+            actorUserId: req.user?.id || approverId || null,
+            ipAddress: getRequestIp(req)
         });
     } catch (err) {
         if (err.errorCode === 'RECEPTION_NOT_FOUND') {
@@ -288,15 +289,6 @@ export const approveReception = catchAsync(async (req, res) => {
         }
         throw err;
     }
-
-    await auditService.log({
-        user_id: req.user?.id || approverId || null,
-        action: 'APPROVE_RECEPTION',
-        entity_type: 'reception',
-        entity_id: id,
-        new_values: { status: 'approved', approved_by: approverId },
-        ip_address: getRequestIp(req)
-    });
 
     res.json({ success: true, message: 'Recepcion aprobada y stock actualizado' });
 });
@@ -380,7 +372,6 @@ export const createReturn = catchAsync(async (req, res) => {
             ]);
         }
 
-        await connection.commit();
         await auditService.log({
             user_id: req.user?.id || null,
             action: 'CREATE_SUPPLIER_RETURN',
@@ -394,7 +385,8 @@ export const createReturn = catchAsync(async (req, res) => {
                 items: items || []
             },
             ip_address: getRequestIp(req)
-        });
+        }, connection);
+        await connection.commit();
         res.json({ id, return_number: returnNumber });
     } catch (err) {
         await connection.rollback();

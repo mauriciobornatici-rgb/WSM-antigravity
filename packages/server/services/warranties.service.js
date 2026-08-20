@@ -263,7 +263,7 @@ class ReturnsService extends BaseService {
         }
     }
 
-    async approveReturn(returnId, actorUserId) {
+    async approveReturn(returnId, actorUserId, ipAddress = null) {
         const conn = await pool.getConnection();
         try {
             await conn.beginTransaction();
@@ -387,8 +387,7 @@ class ReturnsService extends BaseService {
                 [totalAmount, returnId]
             );
 
-            await conn.commit();
-            return {
+            const result = {
                 success: true,
                 return_id: returnId,
                 credit_note_id: creditNoteId,
@@ -397,6 +396,17 @@ class ReturnsService extends BaseService {
                 restocked_quantity: restockedTotal,
                 discarded_quantity: discardedTotal
             };
+            await auditService.log({
+                user_id: actorUserId,
+                action: 'APPROVE_CLIENT_RETURN',
+                entity_type: 'client_return',
+                entity_id: returnId,
+                old_values: { status: returnRow.status },
+                new_values: result,
+                ip_address: ipAddress
+            }, conn);
+            await conn.commit();
+            return result;
         } catch (error) {
             await conn.rollback();
             throw error;

@@ -132,3 +132,65 @@ test('getChartOfAccounts mapping correctly format output properties', async (t) 
     assert.equal(result[1].active, false);
     assert.equal(result[1].balance, 300);
 });
+
+test('reverseJournalEntry rejects missing entries with 404 and rolls back', async (t) => {
+    const connection = mockPool(t, async (sql) => {
+        if (sql.includes('SELECT * FROM journal_entries')) return [[]];
+        return [{ affectedRows: 1 }];
+    });
+    let rolledBack = false;
+    connection.rollback = async () => { rolledBack = true; };
+
+    await assert.rejects(
+        () => accountingService.reverseJournalEntry('missing-entry', 'admin-1'),
+        (error) => error.statusCode === 404 && /no encontrado/i.test(error.message)
+    );
+    assert.equal(rolledBack, true);
+});
+
+test('reverseJournalEntry permits a single immutable counter-entry and audits in the transaction', async (t) => {
+    const calls = [];
+    const connection = mockPool(t, async (sql, params) => {
+        calls.push({ sql, params });
+        if (sql.includes('SELECT * FROM journal_entries')) {
+            return [[{ id: 'entry-1', entry_number: 7, description: 'Venta', reference_type: 'manual', reversal_of_entry_id: null }]];
+        }
+        if (sql.includes('WHERE reversal_of_entry_id = ?')) return [[]];
+        if (sql.includes('FROM journal_entry_lines')) {
+            return [[
+                { account_code: '1.1.01.01', debit: 121, credit: 0 },
+                { account_code: '4.1.01.01', debit: 0, credit: 121 },
+            ]];
+        }
+        return [{ affectedRows: 1 }];
+    });
+    let committed = false;
+    connection.commit = async () => { committed = true; };
+
+    const result = await accountingService.reverseJournalEntry('entry-1', 'admin-1');
+
+    assert.equal(result.success, true);
+    assert.equal(committed, true);
+    const headerInsert = calls.find((call) => call.sql.includes('INSERT INTO journal_entries'));
+    assert.equal(headerInsert.params[4], 'entry-1');
+    assert.equal(headerInsert.params[5], 'entry-1');
+    assert.ok(calls.some((call) => call.sql.includes('INSERT INTO audit_logs')));
+});
+
+test('reverseJournalEntry rejects an already reversed entry with 409', async (t) => {
+    const connection = mockPool(t, async (sql) => {
+        if (sql.includes('SELECT * FROM journal_entries')) {
+            return [[{ id: 'entry-1', entry_number: 7, description: 'Venta', reference_type: 'manual' }]];
+        }
+        if (sql.includes('WHERE reversal_of_entry_id = ?')) return [[{ id: 'reversal-1' }]];
+        return [{ affectedRows: 1 }];
+    });
+    let rolledBack = false;
+    connection.rollback = async () => { rolledBack = true; };
+
+    await assert.rejects(
+        () => accountingService.reverseJournalEntry('entry-1', 'admin-1'),
+        (error) => error.statusCode === 409 && /ya fue revertido/i.test(error.message)
+    );
+    assert.equal(rolledBack, true);
+});

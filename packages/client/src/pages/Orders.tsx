@@ -30,6 +30,7 @@ import { ManifestDialog } from "@/components/orders/ManifestDialog"
 // Helpers and Types
 import { orderHasShortage, renderStatusBadge } from "@/components/orders/helpers"
 import type { OrderFilter } from "@/types/orders"
+import { hasPermission, PERMISSIONS } from "@wsm/common"
 
 const EMPTY_ORDERS: Order[] = []
 const ORDERS_PAGE_SIZE = 20
@@ -38,6 +39,10 @@ export default function OrdersPage() {
     const navigate = useNavigate()
     const queryClient = useQueryClient()
     const { user } = useAuth()
+    const canSell = hasPermission(user?.role, PERMISSIONS.ORDERS_SELL)
+    const canPick = hasPermission(user?.role, PERMISSIONS.ORDERS_PICK)
+    const canDispatch = hasPermission(user?.role, PERMISSIONS.ORDERS_DISPATCH)
+    const canInvoice = hasPermission(user?.role, PERMISSIONS.INVOICES_MANAGE)
 
     const [search, setSearch] = useState("")
     const [filter, setFilter] = useState<OrderFilter>("all")
@@ -81,11 +86,13 @@ export default function OrdersPage() {
     const productsQuery = useQuery({
         queryKey: queryKeys.products.all,
         queryFn: () => api.getProducts(),
+        enabled: canSell,
     })
 
     const clientsQuery = useQuery({
         queryKey: queryKeys.clients.all,
         queryFn: () => api.getClients(),
+        enabled: canSell,
     })
 
     const updateOrderStatusMutation = useMutation({
@@ -103,8 +110,8 @@ export default function OrdersPage() {
     const currentOrdersPage = Number(ordersPagination?.page ?? ordersPage)
     const products = productsQuery.data ?? []
     const clients = clientsQuery.data ?? []
-    const loading = ordersQuery.isLoading || productsQuery.isLoading || clientsQuery.isLoading
-    const hasLoadError = ordersQuery.isError || productsQuery.isError || clientsQuery.isError
+    const loading = ordersQuery.isLoading || (canSell && (productsQuery.isLoading || clientsQuery.isLoading))
+    const hasLoadError = ordersQuery.isError || (canSell && (productsQuery.isError || clientsQuery.isError))
 
     const filteredOrders = useMemo(() => {
         const query = search.trim().toLowerCase()
@@ -212,10 +219,12 @@ export default function OrdersPage() {
                     <h2 className="text-3xl font-bold tracking-tight">Pedidos de venta</h2>
                     <p className="text-muted-foreground">Gestión de ciclo comercial desde alta hasta entrega.</p>
                 </div>
-                <Button className="w-full gap-2 sm:w-auto" onClick={() => setCreateOpen(true)}>
-                    <Plus className="h-4 w-4" />
-                    Nuevo pedido
-                </Button>
+                {canSell ? (
+                    <Button className="w-full gap-2 sm:w-auto" onClick={() => setCreateOpen(true)}>
+                        <Plus className="h-4 w-4" />
+                        Nuevo pedido
+                    </Button>
+                ) : null}
             </div>
 
             <Card>
@@ -259,8 +268,7 @@ export default function OrdersPage() {
                                 onClick={() => {
                                     void Promise.all([
                                         ordersQuery.refetch(),
-                                        productsQuery.refetch(),
-                                        clientsQuery.refetch(),
+                                        ...(canSell ? [productsQuery.refetch(), clientsQuery.refetch()] : []),
                                     ])
                                 }}
                             >
@@ -310,10 +318,11 @@ export default function OrdersPage() {
                                     filteredOrders.map((order) => (
                                         <TableRow key={order.id}>
                                             <TableCell className="w-10">
-                                                {order.shipping_method === "delivery" &&
+                                                {canDispatch && order.shipping_method === "delivery" &&
                                                 (order.status === "packed" || order.status === "dispatched") ? (
                                                     <input
                                                         type="checkbox"
+                                                        aria-label={`Seleccionar pedido ${order.id} para hoja de ruta`}
                                                         className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
                                                         checked={selectedOrderIds.includes(order.id)}
                                                         onChange={() => toggleOrderSelection(order.id)}
@@ -346,7 +355,7 @@ export default function OrdersPage() {
                                                 {formatMoney(order.total_amount)}
                                             </TableCell>
                                             <TableCell>
-                                                {order.invoice_id ? (
+                                                {canInvoice && order.invoice_id ? (
                                                     <Button
                                                         size="sm"
                                                         variant="outline"
@@ -365,9 +374,9 @@ export default function OrdersPage() {
                                                         <Eye className="mr-1 h-4 w-4" />
                                                         Detalle
                                                     </Button>
-                                                    {order.status === "pending" ||
+                                                    {canPick && (order.status === "pending" ||
                                                     order.status === "picking" ||
-                                                    (order.status === "packed" && orderHasShortage(order)) ? (
+                                                    (order.status === "packed" && orderHasShortage(order))) ? (
                                                         <Button
                                                             size="sm"
                                                             variant="outline"
@@ -377,19 +386,19 @@ export default function OrdersPage() {
                                                             {order.status === "packed" ? "Ver faltante" : "Picking"}
                                                         </Button>
                                                     ) : null}
-                                                    {order.status === "packed" ? (
+                                                    {canDispatch && order.status === "packed" ? (
                                                         <Button size="sm" variant="outline" onClick={() => openDispatch(order)}>
                                                             <Truck className="mr-1 h-4 w-4" />
                                                             Despachar
                                                         </Button>
                                                     ) : null}
-                                                    {order.status === "dispatched" ? (
+                                                    {canDispatch && order.status === "dispatched" ? (
                                                         <Button size="sm" variant="outline" onClick={() => openDeliver(order)}>
                                                             <Package className="mr-1 h-4 w-4" />
                                                             Entregar
                                                         </Button>
                                                     ) : null}
-                                                    {(order.status === "packed" ||
+                                                    {canInvoice && (order.status === "packed" ||
                                                         order.status === "dispatched" ||
                                                         order.status === "delivered" ||
                                                         order.status === "completed") &&
@@ -399,9 +408,9 @@ export default function OrdersPage() {
                                                             Facturar
                                                         </Button>
                                                     ) : null}
-                                                    {order.status === "pending" ||
+                                                    {canSell && (order.status === "pending" ||
                                                     order.status === "picking" ||
-                                                    order.status === "packed" ? (
+                                                    order.status === "packed") ? (
                                                         <Button
                                                             size="sm"
                                                             variant="destructive"

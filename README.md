@@ -6,7 +6,7 @@ Monorepo con frontend React/Vite y backend Node/Express para gestión comercial,
 
 - Node.js 20+
 - MySQL 8+
-- Variables de entorno en `.env` (usar `.env.example` como base)
+- Variables de entorno en `.env.development`, `.env.staging` o `.env.production` (usar `.env.example` como base)
 
 ## Comandos principales
 
@@ -15,6 +15,8 @@ Monorepo con frontend React/Vite y backend Node/Express para gestión comercial,
 - `npm run server` inicia backend (`@wsm/server`)
 - `npm run dev:all` inicia frontend + backend
 - `npm run build` build de frontend
+- `npm run validate` ejecuta contratos compartidos, tests, lint, tipado y build
+- `npm run preflight:integrity` valida huérfanos antes de aplicar claves foráneas (solo lectura)
 
 ## Continuidad de trabajo (importante)
 
@@ -31,9 +33,10 @@ Separadas por paquete para evitar mezclar frontend y backend:
 
 - `packages/client/.env` o `packages/client/.env.development`
   - `VITE_API_URL`
-- `.env` en la raiz (backend `@wsm/server`)
+- `.env.<NODE_ENV>` en la raíz (backend `@wsm/server`)
   - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
   - `PORT`, `JWT_SECRET`, `NODE_ENV`, `CORS_ORIGINS`, `TRUST_PROXY`
+  - `ENV_FILE` permite seleccionar explícitamente otro archivo relativo a la raíz
 
 Referencia:
 

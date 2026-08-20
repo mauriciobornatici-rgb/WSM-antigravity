@@ -13,7 +13,8 @@ test('syncStock uses Tiendanube 2025-03 stock endpoint with bearer auth', async 
             if (statement.includes('FROM company_settings')) {
                 return [[{
                     tiendanube_access_token: 'access-token',
-                    tiendanube_store_id: 'store-123'
+                    tiendanube_store_id: 'store-123',
+                    tiendanube_location_id: 'location-1'
                 }]];
             }
 
@@ -54,7 +55,8 @@ test('syncStock uses Tiendanube 2025-03 stock endpoint with bearer auth', async 
     assert.deepEqual(httpCalls[0].payload, {
         action: 'replace',
         value: 7,
-        id: 654321
+        id: 654321,
+        location_id: 'location-1'
     });
     assert.deepEqual(httpCalls[0].options.headers, {
         Authorization: 'Bearer access-token',
@@ -176,6 +178,9 @@ test('processWebhookEvent skips duplicate webhook events before fetching order',
                 error.code = 'ER_DUP_ENTRY';
                 throw error;
             }
+            if (statement.includes('SELECT id, status')) {
+                return [[{ id: 'existing-event', status: 'processed' }]];
+            }
             throw new Error(`Unexpected SQL in duplicate webhook test: ${statement}`);
         }
     };
@@ -243,9 +248,10 @@ test('syncRecentOrders deduplicates against orders external refs', async () => {
     };
     const service = new TiendaNubeService({ db, http });
 
-    const syncedCount = await service.syncRecentOrders(salesService);
+    const result = await service.syncRecentOrders(salesService);
 
-    assert.equal(syncedCount, 1);
+    assert.equal(result.syncedCount, 1);
+    assert.equal(result.failures.length, 0);
     assert.equal(createdOrders[0].external_source, 'tiendanube');
     assert.equal(createdOrders[0].external_id, '555');
 });
@@ -303,7 +309,8 @@ test('syncStock records failure in failed_syncs on HTTP error', async () => {
             if (statement.includes('FROM company_settings')) {
                 return [[{
                     tiendanube_access_token: 'access-token',
-                    tiendanube_store_id: 'store-123'
+                    tiendanube_store_id: 'store-123',
+                    tiendanube_location_id: 'location-1'
                 }]];
             }
 
@@ -352,7 +359,8 @@ test('processFailedSyncs retries pending entries and updates status to completed
             if (statement.includes('FROM company_settings')) {
                 return [[{
                     tiendanube_access_token: 'access-token',
-                    tiendanube_store_id: 'store-123'
+                    tiendanube_store_id: 'store-123',
+                    tiendanube_location_id: 'location-1'
                 }]];
             }
 
@@ -389,14 +397,14 @@ test('processFailedSyncs retries pending entries and updates status to completed
     assert.deepEqual(httpCalls[0].payload, {
         action: 'replace',
         value: 15,
-        id: 654321
+        id: 654321,
+        location_id: 'location-1'
     });
 
     // Verify row was marked as completed
     const completedUpdate = dbQueries.find(q => q.sql.includes("status = 'completed'"));
     assert.ok(completedUpdate);
-    assert.equal(completedUpdate.params[0], 2); // next attempt number (attempts + 1)
-    assert.equal(completedUpdate.params[1], 'sync-uuid-1'); // id
+    assert.equal(completedUpdate.params[0], 'sync-uuid-1');
 });
 
 test('retrySync retries manual sync and throws on error', async () => {
@@ -409,7 +417,8 @@ test('retrySync retries manual sync and throws on error', async () => {
             if (statement.includes('FROM company_settings')) {
                 return [[{
                     tiendanube_access_token: 'access-token',
-                    tiendanube_store_id: 'store-123'
+                    tiendanube_store_id: 'store-123',
+                    tiendanube_location_id: 'location-1'
                 }]];
             }
 
@@ -448,11 +457,10 @@ test('retrySync retries manual sync and throws on error', async () => {
     );
 
     // Verify row was updated with new attempt and pending status (since attempts < 5)
-    const updateCall = dbQueries.find(q => q.sql.includes('status = ?, attempts = ?, last_error = ?'));
+    const updateCall = dbQueries.find(q => q.sql.includes('status = ?, last_error = ?'));
     assert.ok(updateCall);
     assert.equal(updateCall.params[0], 'pending');
-    assert.equal(updateCall.params[1], 3); // next attempt
-    assert.match(updateCall.params[2], /API Error 401/);
+    assert.match(updateCall.params[1], /API Error 401/);
 });
 
 test('autoLinkCatalog fetches catalog and updates local products with Tiendanube IDs', async () => {
@@ -511,3 +519,168 @@ test('autoLinkCatalog fetches catalog and updates local products with Tiendanube
     assert.deepEqual(updateCall.params, ['999999', '888888', 'ZAP-TN-01']);
 });
 
+test('failed webhook delivery is reopened and processed on Tiendanube retry', async () => {
+    const dbCalls = [];
+    const db = {
+        async query(sql, params) {
+            const statement = String(sql);
+            dbCalls.push({ sql: statement, params });
+            if (statement.includes('INSERT INTO tiendanube_webhook_events')) {
+                const error = new Error('duplicate');
+                error.code = 'ER_DUP_ENTRY';
+                throw error;
+            }
+            if (statement.includes('SELECT id, status')) return [[{ id: 'event-1', status: 'failed', attempts: 1, max_attempts: 16 }]];
+            if (statement.includes("SET status = 'received'")) return [{ affectedRows: 1 }];
+            if (statement.includes("SET status = 'processing'")) return [{ affectedRows: 1 }];
+            if (statement.includes('FROM company_settings')) {
+                return [[{ tiendanube_access_token: 'token', tiendanube_store_id: 'store-123' }]];
+            }
+            if (statement.includes('SELECT id FROM orders WHERE external_source')) return [[{ id: 'order-1' }]];
+            if (statement.includes('UPDATE tiendanube_webhook_events')) return [{ affectedRows: 1 }];
+            throw new Error(`Unexpected SQL in failed webhook retry test: ${statement}`);
+        }
+    };
+    const http = { async get() { return { data: { id: 55, products: [] } }; } };
+    const service = new TiendaNubeService({ db, http });
+    const result = await service.processWebhookEvent(
+        { store_id: 'store-123', event: 'order/created', id: 55 },
+        { async createOrder() { throw new Error('existing order must not be recreated'); } }
+    );
+    assert.equal(result.status, 'processed');
+    assert.ok(dbCalls.some((call) => call.sql.includes("SET status = 'received'")));
+});
+
+test('syncStock targets the configured Tiendanube location', async () => {
+    let sentPayload;
+    const db = {
+        async query(sql) {
+            const statement = String(sql);
+            if (statement.includes('FROM company_settings')) {
+                return [[{
+                    tiendanube_access_token: 'token',
+                    tiendanube_store_id: 'store-123',
+                    tiendanube_location_id: 'location-1'
+                }]];
+            }
+            if (statement.includes('FROM products')) {
+                return [[{
+                    tiendanube_sync_enabled: 1,
+                    tiendanube_product_id: 'product-1',
+                    tiendanube_variant_id: 'variant-1'
+                }]];
+            }
+            throw new Error(`Unexpected SQL in location test: ${statement}`);
+        }
+    };
+    const http = { async post(url, payload) { sentPayload = payload; return { data: {} }; } };
+    const service = new TiendaNubeService({ db, http });
+    await service.syncStock('local-1', 8);
+    assert.equal(sentPayload.location_id, 'location-1');
+});
+
+test('nextPageUrl rejects pagination links outside Tiendanube API origin', () => {
+    const service = new TiendaNubeService();
+    assert.throws(
+        () => service.nextPageUrl('<https://evil.example/orders?page=2>; rel="next"'),
+        /Invalid Tiendanube pagination origin/
+    );
+});
+
+test('resolveStockLocation blocks implicit stock updates for multi-location stores', async () => {
+    const service = new TiendaNubeService({
+        http: {
+            async get() {
+                return { data: [{ id: 'loc-a', active: true }, { id: 'loc-b', active: true }] };
+            }
+        }
+    });
+    await assert.rejects(
+        () => service.resolveStockLocation({
+            storeId: 'store-1',
+            accessToken: 'token',
+            userAgent: 'WSM Test',
+            locationId: null
+        }),
+        /múltiples ubicaciones/
+    );
+});
+
+test('resolveStockLocation automatically uses the only active location', async () => {
+    const service = new TiendaNubeService({
+        http: { async get() { return { data: [{ id: 'only-location', active: true }] }; } }
+    });
+    const locationId = await service.resolveStockLocation({
+        storeId: 'store-1',
+        accessToken: 'token',
+        userAgent: 'WSM Test',
+        locationId: null
+    });
+    assert.equal(locationId, 'only-location');
+});
+
+test('ensureOrderWebhook creates the order webhook only when absent', async () => {
+    const httpCalls = [];
+    const db = {
+        async query(sql) {
+            if (String(sql).includes('FROM company_settings')) {
+                return [[{ tiendanube_access_token: 'token', tiendanube_store_id: 'store-1' }]];
+            }
+            throw new Error(`Unexpected SQL in webhook registration test: ${sql}`);
+        }
+    };
+    const http = {
+        async get() { return { data: [] }; },
+        async post(url, payload) {
+            httpCalls.push({ url, payload });
+            return { data: { id: 77 } };
+        }
+    };
+    const service = new TiendaNubeService({ db, http });
+    const result = await service.ensureOrderWebhook('https://erp.example/api/integrations/tiendanube/webhooks');
+    assert.deepEqual(result, { configured: true, created: true, id: 77 });
+    assert.deepEqual(httpCalls[0].payload, {
+        event: 'order/created',
+        url: 'https://erp.example/api/integrations/tiendanube/webhooks'
+    });
+});
+
+test('getIntegrationStatus reports disconnected without calling Tiendanube', async () => {
+    const service = new TiendaNubeService({
+        db: { async query() { return [[]]; } },
+        http: { async get() { throw new Error('HTTP must not be called'); } }
+    });
+    assert.deepEqual(await service.getIntegrationStatus('https://erp.example/webhook'), {
+        connected: false,
+        webhook: { configured: false }
+    });
+});
+
+test('getIntegrationStatus validates webhook and configured stock location', async () => {
+    const webhookUrl = 'https://erp.example/webhook';
+    const db = {
+        async query(sql) {
+            if (String(sql).includes('FROM company_settings')) {
+                return [[{
+                    tiendanube_access_token: 'token',
+                    tiendanube_store_id: 'store-1',
+                    tiendanube_location_id: 'loc-1'
+                }]];
+            }
+            throw new Error(`Unexpected SQL in integration status test: ${sql}`);
+        }
+    };
+    const http = {
+        async get(url, options) {
+            assert.equal(options.timeout, 10000);
+            if (url.includes('/webhooks')) return { data: [{ id: 9, event: 'order/created', url: webhookUrl }] };
+            if (url.includes('/locations')) return { data: [{ id: 'loc-1', active: true }] };
+            throw new Error(`Unexpected URL in integration status test: ${url}`);
+        }
+    };
+    const service = new TiendaNubeService({ db, http });
+    const status = await service.getIntegrationStatus(webhookUrl);
+    assert.equal(status.connected, true);
+    assert.equal(status.webhook.configured, true);
+    assert.deepEqual(status.stockLocation, { valid: true, locationId: 'loc-1' });
+});

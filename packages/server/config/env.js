@@ -1,3 +1,5 @@
+import './loadEnv.js';
+
 const ALLOWED_NODE_ENVS = new Set(['development', 'staging', 'production']);
 
 function parseBooleanEnv(name, defaultValue = false) {
@@ -58,6 +60,15 @@ function isLocalhostOrigin(origin) {
     }
 }
 
+function isValidHttpUrl(value, { requireHttps = false } = {}) {
+    try {
+        const url = new URL(value);
+        return requireHttps ? url.protocol === 'https:' : ['http:', 'https:'].includes(url.protocol);
+    } catch {
+        return false;
+    }
+}
+
 let cachedConfig = null;
 
 export function getEnvConfig() {
@@ -95,7 +106,9 @@ export function getEnvConfig() {
             isDevelopment ? 1200 : isStaging ? 2000 : 500
         ),
         loginRateLimitWindowMs: parsePositiveIntEnv('LOGIN_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
-        loginRateLimitMax: parsePositiveIntEnv('LOGIN_RATE_LIMIT_MAX', 8)
+        loginRateLimitMax: parsePositiveIntEnv('LOGIN_RATE_LIMIT_MAX', 8),
+        appBaseUrl: String(process.env.APP_BASE_URL || (isDevelopment ? 'http://localhost:5173' : '')).trim(),
+        tiendanubeWebhookUrl: String(process.env.TIENDANUBE_WEBHOOK_URL || '').trim()
     };
 
     const errors = [];
@@ -115,10 +128,19 @@ export function getEnvConfig() {
     if (!config.jwtExpiresIn) {
         errors.push('JWT_EXPIRES_IN is required');
     }
+    if (config.appBaseUrl && !isValidHttpUrl(config.appBaseUrl, { requireHttps: config.isNonDevelopment })) {
+        errors.push('APP_BASE_URL must be a valid HTTP URL (HTTPS in staging/production)');
+    }
+    if (config.tiendanubeWebhookUrl && !isValidHttpUrl(config.tiendanubeWebhookUrl, { requireHttps: config.isNonDevelopment })) {
+        errors.push('TIENDANUBE_WEBHOOK_URL must be a valid HTTP URL (HTTPS in staging/production)');
+    }
 
     if (config.isNonDevelopment) {
         if (config.corsOrigins.length === 0) {
             errors.push('CORS_ORIGINS cannot be empty in staging/production');
+        }
+        if (!config.appBaseUrl) {
+            errors.push('APP_BASE_URL is required in staging/production');
         }
 
         if (!config.allowInsecureNonDev) {

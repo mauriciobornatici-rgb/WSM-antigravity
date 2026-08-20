@@ -1,12 +1,13 @@
 import express from 'express';
 import * as financeController from '../controllers/financeController.js';
 import { validate, schemas } from '../middleware/validationMiddleware.js';
-import { authorizeRoles } from '../middleware/authMiddleware.js';
+import { authorizePermission } from '../middleware/authMiddleware.js';
+import { PERMISSIONS } from '@wsm/common';
 
 const router = express.Router();
-const accountingRoles = authorizeRoles('admin');
-const cashRoles = authorizeRoles('admin', 'cashier');
-const collectionsRoles = authorizeRoles('admin', 'manager', 'cashier');
+const accountingRoles = authorizePermission(PERMISSIONS.ACCOUNTING_MANAGE);
+const cashRoles = authorizePermission(PERMISSIONS.CASH_MANAGE);
+const collectionsRoles = authorizePermission(PERMISSIONS.COLLECTIONS_MANAGE);
 
 // Transactions
 router.get('/transactions', accountingRoles, validate(schemas.transactionsFilters), financeController.getTransactions);

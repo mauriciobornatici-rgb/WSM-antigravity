@@ -32,8 +32,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build shared contracts
+        run: npm -w @wsm/common run build
+
       - name: Server tests
-        run: npm -w @wsm/server run test
+        run: npm -w @wsm/server run test:coverage
 
       - name: Client lint
         run: npm -w @wsm/client run lint
@@ -41,6 +44,17 @@ jobs:
       - name: Client tests
         run: npm -w @wsm/client run test
 
+      - name: Client typecheck
+        run: npm -w @wsm/client run typecheck
+
       - name: Client build
         run: npm -w @wsm/client run build
 
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Client end-to-end tests
+        run: npm -w @wsm/client run test:e2e
+
+      - name: Dependency security audit
+        run: npm audit --workspaces --audit-level=high

@@ -29,13 +29,13 @@ export function BillingSettingsTab({
     const billing = company.billing || DEFAULT_COMPANY_SETTINGS.billing!
 
     const updateBillingField = (key: keyof typeof billing, value: string | number) => {
-        setCompany({
-            ...company,
+        setCompany((current) => current ? {
+            ...current,
             billing: {
-                ...billing,
+                ...(current.billing || DEFAULT_COMPANY_SETTINGS.billing!),
                 [key]: value
             }
-        })
+        } : current)
     }
 
     return (
@@ -126,11 +126,13 @@ export function BillingSettingsTab({
                                     id="afip_crt"
                                     rows={6}
                                     className="w-full font-mono text-[11px] p-3 border rounded-md bg-muted/30 focus:outline-none focus:ring-2 focus:ring-ring"
-                                    placeholder="-----BEGIN CERTIFICATE-----\nMIIEuzCCA6OgAwIBAgIDAgEwMA0GCSqGSIb3DQEBCwUAMIGMMQswCQYDVQQGEwJBU...\n-----END CERTIFICATE-----"
+                                    placeholder={billing.afip_credentials_configured ? "Certificado configurado. Pegue uno nuevo solo para reemplazarlo." : "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"}
                                     value={billing.afip_crt || ''}
                                     onChange={e => updateBillingField('afip_crt', e.target.value)}
                                 />
-                                <p className="text-xs text-muted-foreground">Certificado X.509 emitido por la Autoridad Certificante de AFIP.</p>
+                                <p className="text-xs text-muted-foreground">
+                                    {billing.afip_credentials_configured ? "Hay credenciales almacenadas de forma segura; no se muestran nuevamente." : "Certificado X.509 emitido por la Autoridad Certificante de AFIP."}
+                                </p>
                             </div>
 
                             <div className="space-y-2">
@@ -139,11 +141,11 @@ export function BillingSettingsTab({
                                     id="afip_key"
                                     rows={6}
                                     className="w-full font-mono text-[11px] p-3 border rounded-md bg-muted/30 focus:outline-none focus:ring-2 focus:ring-ring"
-                                    placeholder="-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC6sJpYyD5XWnF3...\n-----END PRIVATE KEY-----"
+                                    placeholder={billing.afip_credentials_configured ? "Clave configurada. Pegue una nueva solo para reemplazarla." : "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
                                     value={billing.afip_key || ''}
                                     onChange={e => updateBillingField('afip_key', e.target.value)}
                                 />
-                                <p className="text-xs text-muted-foreground">Clave privada correspondiente al certificado generado.</p>
+                                <p className="text-xs text-muted-foreground">La clave privada es write-only y nunca vuelve al navegador.</p>
                             </div>
                         </div>
                     </div>
@@ -152,7 +154,7 @@ export function BillingSettingsTab({
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                                 <h4 className="font-semibold flex items-center gap-2"><Terminal className="h-4 w-4 text-blue-500" /> Banco de Pruebas de Comunicación</h4>
-                                <p className="text-xs text-muted-foreground">Simula la autenticación en el WSAA y la consulta de estado en el WSFE.</p>
+                                <p className="text-xs text-muted-foreground">Verifica las credenciales almacenadas consultando realmente el último comprobante en ARCA.</p>
                             </div>
                             <Button 
                                 type="button" 
@@ -187,7 +189,7 @@ export function BillingSettingsTab({
                         )}
                     </div>
                 </CardContent>
-                <CardFooter className="flex justify-end gap-4 border-t pt-4">
+                <CardFooter className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:justify-end">
                     <Button onClick={onSave} disabled={saving}>
                         {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Cambios</>}
                     </Button>

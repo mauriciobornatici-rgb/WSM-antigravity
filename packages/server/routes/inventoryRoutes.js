@@ -1,12 +1,13 @@
 import express from 'express';
 import * as inventoryController from '../controllers/inventoryController.js';
 import { validate, schemas, validateZod, zodSchemas } from '../middleware/validationMiddleware.js';
-import { authorizeRoles } from '../middleware/authMiddleware.js';
+import { authorizePermission } from '../middleware/authMiddleware.js';
+import { PERMISSIONS } from '@wsm/common';
 
 const router = express.Router();
-const inventoryReadRoles = authorizeRoles('admin', 'manager', 'warehouse', 'cashier');
-const inventoryWriteRoles = authorizeRoles('admin', 'manager', 'warehouse');
-const advancedInventoryRoles = authorizeRoles('admin', 'manager', 'warehouse');
+const inventoryReadRoles = authorizePermission(PERMISSIONS.PRODUCTS_READ);
+const inventoryWriteRoles = authorizePermission(PERMISSIONS.INVENTORY_MANAGE);
+const advancedInventoryRoles = authorizePermission(PERMISSIONS.INVENTORY_MANAGE);
 
 // Products
 router.get('/products', inventoryReadRoles, validateZod(zodSchemas.productFilters), inventoryController.getProducts);

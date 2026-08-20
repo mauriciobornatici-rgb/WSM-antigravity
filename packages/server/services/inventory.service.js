@@ -467,7 +467,7 @@ class InventoryService extends BaseService {
                     quantity: qty,
                     movement_id: movementId
                 }
-            });
+            }, connection);
 
             await connection.commit();
             return { success: true, movementId };

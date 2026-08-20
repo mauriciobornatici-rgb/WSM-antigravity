@@ -345,6 +345,7 @@ export const companySettingsUpdateSchema = z.object({
   integrations: z.object({
     tiendanube_access_token: z.string().nullable().optional(),
     tiendanube_store_id: z.string().nullable().optional(),
+    tiendanube_location_id: z.string().max(100).nullable().optional(),
     tiendanube_client_id: z.string().nullable().optional(),
     tiendanube_client_secret: z.string().nullable().optional(),
   }).optional(),

@@ -130,8 +130,6 @@ export const createSupplierInvoice = catchAsync(async (req, res) => {
             ]
         });
 
-        await connection.commit();
-
         await auditService.log({
             user_id: creatorId,
             action: 'CREATE_SUPPLIER_INVOICE',
@@ -151,7 +149,8 @@ export const createSupplierInvoice = catchAsync(async (req, res) => {
                 total_amount: total
             },
             ip_address: getRequestIp(req)
-        });
+        }, connection);
+        await connection.commit();
 
         res.status(201).json({ id, success: true, total_amount: total });
     } catch (err) {
@@ -213,4 +212,3 @@ export const registerBulkSupplierPayments = catchAsync(async (req, res) => {
     const result = await financeService.registerBulkSupplierPayments(req.body, userId);
     res.json(result);
 });
-
