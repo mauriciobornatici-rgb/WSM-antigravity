@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, Plus, TrendingDown, Sparkles, MapPin, Move, Download, Tag } from "lucide-react";
+import { Activity, Plus, TrendingDown, Sparkles, MapPin, Move, Download, Tag, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { convertToCSV, downloadCSV } from "@/lib/exportUtils";
@@ -20,8 +20,10 @@ import { PrintableBarcodeLabelsDialog } from "@/components/receptions/PrintableB
 import { InventorySummaryCards } from "@/components/inventory/InventorySummaryCards";
 import { InventoryLocationsTab } from "@/components/inventory/InventoryLocationsTab";
 import { InventoryReplenishmentTab } from "@/components/inventory/InventoryReplenishmentTab";
+import { InventoryABCTab } from "@/components/inventory/InventoryABCTab";
 import { InventoryTransferDialog } from "@/components/inventory/InventoryTransferDialog";
 import { InventoryProcureDialog } from "@/components/inventory/InventoryProcureDialog";
+import { analyzeInventoryABC } from "@/lib/inventoryAnalytics";
 
 export default function InventoryPage() {
     const PRODUCTS_PAGE_SIZE = 20;
@@ -281,24 +283,53 @@ export default function InventoryPage() {
                                 toast.error("No hay productos para exportar");
                                 return;
                             }
-                            const csvData = filteredProducts.map(p => ({
+                            const abcMap = analyzeInventoryABC(filteredProducts.map(p => ({
                                 id: p.id,
                                 name: p.name,
-                                sku: p.sku || "",
-                                barcode: p.barcode || "",
-                                category: p.category || "",
-                                price: p.sale_price || 0,
-                                cost: p.purchase_price || 0,
-                                stock: p.stock_current ?? p.stock_available ?? 0,
-                                min_stock: p.stock_min || 0,
-                                location: p.location || ""
-                            }));
+                                cost_price: Number(p.purchase_price || 0),
+                                sale_price: Number(p.sale_price || 0),
+                                stock_current: Number(p.stock_current ?? p.stock_available ?? 0),
+                            }))).items.reduce<Record<string, { abcClass: string; grossMarginPercent: number; markupPercent: number }>>((acc, item) => {
+                                acc[item.id] = {
+                                    abcClass: item.abcClass,
+                                    grossMarginPercent: item.grossMarginPercent,
+                                    markupPercent: item.markupPercent,
+                                };
+                                return acc;
+                            }, {});
+
+                            const csvData = filteredProducts.map(p => {
+                                const metrics = abcMap[p.id] || { abcClass: "C", grossMarginPercent: 0, markupPercent: 0 };
+                                const cost = Number(p.purchase_price || 0);
+                                const price = Number(p.sale_price || 0);
+                                const marginAmount = price - cost;
+                                return {
+                                    id: p.id,
+                                    name: p.name,
+                                    sku: p.sku || "",
+                                    barcode: p.barcode || "",
+                                    category: p.category || "",
+                                    price,
+                                    cost,
+                                    margin_amount: marginAmount,
+                                    margin_percent: `${metrics.grossMarginPercent}%`,
+                                    markup_percent: `${metrics.markupPercent}%`,
+                                    abc_class: `Clase ${metrics.abcClass}`,
+                                    stock: p.stock_current ?? p.stock_available ?? 0,
+                                    min_stock: p.stock_min || 0,
+                                    location: p.location || ""
+                                };
+                            });
                             const headers = [
                                 { key: "sku" as const, label: "SKU" },
                                 { key: "name" as const, label: "Producto" },
                                 { key: "category" as const, label: "Categoría" },
+                                { key: "abc_class" as const, label: "Clase ABC" },
                                 { key: "price" as const, label: "Precio Venta" },
                                 { key: "cost" as const, label: "Costo Compra" },
+                                { key: "margin_amount" as const, label: "Margen Bruto $" },
+                                { key: "margin_percent" as const, label: "Margen %" },
+                                { key: "markup_percent" as const, label: "Markup %" },
                                 { key: "stock" as const, label: "Stock Actual" },
                                 { key: "min_stock" as const, label: "Stock Mínimo" },
                                 { key: "location" as const, label: "Ubicación" }
@@ -374,6 +405,10 @@ export default function InventoryPage() {
                         <Sparkles className="h-4 w-4 text-primary" />
                         Catálogo General
                     </TabsTrigger>
+                    <TabsTrigger value="abc" className="gap-2 shrink-0">
+                        <BarChart3 className="h-4 w-4 text-emerald-500" />
+                        Rentabilidad & ABC (Pareto)
+                    </TabsTrigger>
                     <TabsTrigger value="locations" className="gap-2 shrink-0">
                         <MapPin className="h-4 w-4 text-indigo-500" />
                         Góndolas & Almacén
@@ -435,6 +470,11 @@ export default function InventoryPage() {
                             />
                         </CardContent>
                     </Card>
+                </TabsContent>
+
+                {/* ABC & Profitability Tab */}
+                <TabsContent value="abc" className="space-y-4">
+                    <InventoryABCTab products={products} />
                 </TabsContent>
 
                 {/* WMS Locations Tab */}
