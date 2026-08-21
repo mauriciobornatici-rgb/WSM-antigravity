@@ -244,8 +244,17 @@ export default function POSPage() {
                 product.name.toLowerCase().includes(query)
                 || product.sku.toLowerCase().includes(query)
                 || (product.barcode ?? "").toLowerCase().includes(query)
+                || (product.brand ?? "").toLowerCase().includes(query)
+                || (product.size ?? "").toLowerCase().includes(query)
+                || (product.color ?? "").toLowerCase().includes(query)
+                || (product.location ?? "").toLowerCase().includes(query)
             );
-        });
+        }).sort((first, second) => (
+            first.name.localeCompare(second.name, "es", { sensitivity: "base" })
+            || (first.size ?? "").localeCompare(second.size ?? "", "es", { numeric: true, sensitivity: "base" })
+            || (first.color ?? "").localeCompare(second.color ?? "", "es", { sensitivity: "base" })
+            || first.sku.localeCompare(second.sku, "es", { numeric: true, sensitivity: "base" })
+        ));
     }, [products, search, categoryFilter]);
 
     const selectedClient = useMemo(

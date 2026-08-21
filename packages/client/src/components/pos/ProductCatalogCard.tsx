@@ -1,4 +1,4 @@
-import { Camera, Search, ShoppingCart } from "lucide-react";
+import { Camera, ChevronLeft, ChevronRight, Grid3X3, List, Plus, Search, ShoppingCart } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import type { POSProduct } from "@/components/pos/types";
 import { Badge } from "@/components/ui/badge";
@@ -6,6 +6,23 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+
+type CatalogView = "grid" | "list";
+
+const CATALOG_VIEW_STORAGE_KEY = "wsm-pos-catalog-view:v1";
+const CATALOG_PAGE_SIZE: Record<CatalogView, number> = {
+    grid: 60,
+    list: 100,
+};
+
+function getInitialCatalogView(): CatalogView {
+    try {
+        return window.localStorage.getItem(CATALOG_VIEW_STORAGE_KEY) === "list" ? "list" : "grid";
+    } catch {
+        return "grid";
+    }
+}
 
 type ProductCatalogCardProps = {
     loading: boolean;
@@ -40,6 +57,8 @@ export function ProductCatalogCard({
     const [scanDialogOpen, setScanDialogOpen] = useState(false);
     const [scanStatus, setScanStatus] = useState("Esperando lectura...");
     const [manualScanValue, setManualScanValue] = useState("");
+    const [catalogView, setCatalogView] = useState<CatalogView>(getInitialCatalogView);
+    const [catalogPage, setCatalogPage] = useState(1);
 
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -52,6 +71,30 @@ export function ProductCatalogCard({
         [categories],
     );
     const totalItemsLabel = `${filteredProducts.length} producto${filteredProducts.length === 1 ? "" : "s"}`;
+    const pageSize = CATALOG_PAGE_SIZE[catalogView];
+    const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
+    const currentPage = Math.min(catalogPage, totalPages);
+    const firstVisibleIndex = (currentPage - 1) * pageSize;
+    const visibleProducts = filteredProducts.slice(firstVisibleIndex, firstVisibleIndex + pageSize);
+    const visibleRangeLabel = filteredProducts.length === 0
+        ? "Sin resultados"
+        : `Mostrando ${firstVisibleIndex + 1}-${Math.min(firstVisibleIndex + pageSize, filteredProducts.length)} de ${filteredProducts.length}`;
+
+    function changeCatalogView(view: CatalogView) {
+        setCatalogView(view);
+        setCatalogPage(1);
+        try {
+            window.localStorage.setItem(CATALOG_VIEW_STORAGE_KEY, view);
+        } catch {
+            // The preference is optional when browser storage is unavailable.
+        }
+    }
+
+    function productVariantLabel(product: POSProduct) {
+        return [product.size ? `Talle ${product.size}` : "", product.color || ""]
+            .filter(Boolean)
+            .join(" · ") || "Sin variante";
+    }
 
     function stopScannerResources() {
         if (rafRef.current != null) {
@@ -182,8 +225,11 @@ export function ProductCatalogCard({
                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                             <Input
                                 value={search}
-                                onChange={(event) => onSearchChange(event.target.value)}
-                                placeholder="Buscar por nombre, SKU o codigo"
+                                onChange={(event) => {
+                                    setCatalogPage(1);
+                                    onSearchChange(event.target.value);
+                                }}
+                                placeholder="Buscar por nombre, SKU, codigo, marca, talle o color"
                                 className="pl-8"
                                 onKeyDown={(event) => {
                                     if (event.key !== "Enter") return;
@@ -216,7 +262,10 @@ export function ProductCatalogCard({
                             size="sm"
                             className="shrink-0"
                             variant={categoryFilter === "all" ? "default" : "outline"}
-                            onClick={() => onCategoryFilterChange("all")}
+                            onClick={() => {
+                                setCatalogPage(1);
+                                onCategoryFilterChange("all");
+                            }}
                         >
                             Todas
                         </Button>
@@ -227,11 +276,42 @@ export function ProductCatalogCard({
                                 size="sm"
                                 className="shrink-0"
                                 variant={categoryFilter === category ? "default" : "outline"}
-                                onClick={() => onCategoryFilterChange(category)}
+                                onClick={() => {
+                                    setCatalogPage(1);
+                                    onCategoryFilterChange(category);
+                                }}
                             >
                                 {category}
                             </Button>
                         ))}
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-blue-900/20 pt-3">
+                        <p className="text-xs text-muted-foreground">{visibleRangeLabel}</p>
+                        <div className="inline-flex rounded-md border bg-background/70 p-0.5" role="group" aria-label="Vista del catalogo">
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant={catalogView === "grid" ? "secondary" : "ghost"}
+                                className="h-8 gap-1.5 px-2.5"
+                                aria-pressed={catalogView === "grid"}
+                                onClick={() => changeCatalogView("grid")}
+                            >
+                                <Grid3X3 className="h-3.5 w-3.5" />
+                                Tarjetas
+                            </Button>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant={catalogView === "list" ? "secondary" : "ghost"}
+                                className="h-8 gap-1.5 px-2.5"
+                                aria-pressed={catalogView === "list"}
+                                onClick={() => changeCatalogView("list")}
+                            >
+                                <List className="h-3.5 w-3.5" />
+                                Lista
+                            </Button>
+                        </div>
                     </div>
                 </CardHeader>
 
@@ -243,9 +323,9 @@ export function ProductCatalogCard({
                             <p className="text-sm font-medium">No encontramos productos para ese filtro.</p>
                             <p className="mt-1 text-xs text-muted-foreground">Proba con otra categoria o cambia el termino de busqueda.</p>
                         </div>
-                    ) : (
+                    ) : catalogView === "grid" ? (
                         <div className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                            {filteredProducts.map((product) => (
+                            {visibleProducts.map((product) => (
                                 <button
                                     key={product.id}
                                     onClick={() => onAddToCart(product)}
@@ -288,7 +368,97 @@ export function ProductCatalogCard({
                                 </button>
                             ))}
                         </div>
+                    ) : (
+                        <div className="max-h-[62vh] overflow-auto rounded-md border border-blue-900/30">
+                            <Table className="min-w-[900px]">
+                                <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+                                    <TableRow>
+                                        <TableHead>Producto</TableHead>
+                                        <TableHead>Variante</TableHead>
+                                        <TableHead>SKU / Codigo</TableHead>
+                                        <TableHead>Ubicacion</TableHead>
+                                        <TableHead className="text-right">Stock</TableHead>
+                                        <TableHead className="text-right">Precio</TableHead>
+                                        <TableHead className="w-24 text-right">Accion</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {visibleProducts.map((product) => (
+                                        <TableRow key={product.id} className={product.stock <= 0 ? "opacity-60" : ""}>
+                                            <TableCell>
+                                                <div className="flex min-w-52 items-center gap-2.5">
+                                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/20">
+                                                        {product.image_url ? (
+                                                            <img src={product.image_url} alt="" className="h-full w-full object-contain" />
+                                                        ) : (
+                                                            <span className="text-[9px] text-muted-foreground">Sin imagen</span>
+                                                        )}
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <div className="truncate text-sm font-semibold" title={product.name}>{product.name}</div>
+                                                        <div className="truncate text-xs text-muted-foreground">{product.brand || product.category}</div>
+                                                    </div>
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="text-xs font-medium">{productVariantLabel(product)}</TableCell>
+                                            <TableCell>
+                                                <div className="font-mono text-xs">{product.sku}</div>
+                                                <div className="font-mono text-[11px] text-muted-foreground">{product.barcode || "Sin codigo"}</div>
+                                            </TableCell>
+                                            <TableCell className="text-xs">{product.location || "Sin ubicacion"}</TableCell>
+                                            <TableCell className="text-right">
+                                                <Badge variant={stockBadgeVariant(product.stock)}>{product.stock}</Badge>
+                                            </TableCell>
+                                            <TableCell className="text-right font-semibold">
+                                                ${Number(product.sale_price).toLocaleString("es-AR")}
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    className="h-8 gap-1.5"
+                                                    disabled={product.stock <= 0}
+                                                    aria-label={`Agregar ${product.name} al carrito`}
+                                                    onClick={() => onAddToCart(product)}
+                                                >
+                                                    <Plus className="h-3.5 w-3.5" />
+                                                    Agregar
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
                     )}
+
+                    {!loading && filteredProducts.length > pageSize ? (
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+                            <p className="text-xs text-muted-foreground">Pagina {currentPage} de {totalPages}</p>
+                            <div className="flex gap-2">
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={currentPage <= 1}
+                                    onClick={() => setCatalogPage((page) => Math.max(1, page - 1))}
+                                >
+                                    <ChevronLeft className="mr-1 h-4 w-4" />
+                                    Anterior
+                                </Button>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={currentPage >= totalPages}
+                                    onClick={() => setCatalogPage((page) => Math.min(totalPages, page + 1))}
+                                >
+                                    Siguiente
+                                    <ChevronRight className="ml-1 h-4 w-4" />
+                                </Button>
+                            </div>
+                        </div>
+                    ) : null}
                 </CardContent>
             </Card>
 
