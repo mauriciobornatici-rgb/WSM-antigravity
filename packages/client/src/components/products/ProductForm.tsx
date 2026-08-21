@@ -513,7 +513,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 name="location"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Ubicacion de almacen</FormLabel>
+                                        <FormLabel>Ubicacion de referencia</FormLabel>
                                         <FormControl>
                                             <div className="space-y-2">
                                                 <Input
@@ -541,7 +541,11 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                             </div>
                                         </FormControl>
                                         <p className="text-xs text-muted-foreground">
-                                            {locationReaderMode ? "Modo lector de ubicacion activo." : "Tambien puede cargarla manualmente."}
+                                            {locationReaderMode
+                                                ? "Modo lector de ubicacion activo."
+                                                : isEditMode
+                                                  ? "Este dato identifica la ubicacion preferida; usa Reubicar para mover existencias fisicas."
+                                                  : "Tambien puede cargarla manualmente."}
                                         </p>
                                         <FormMessage />
                                     </FormItem>

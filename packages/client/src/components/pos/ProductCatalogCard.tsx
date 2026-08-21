@@ -235,7 +235,7 @@ export function ProductCatalogCard({
                     </div>
                 </CardHeader>
 
-                <CardContent className="p-4 sm:p-5">
+                <CardContent className="p-3 sm:p-4">
                     {loading ? (
                         <div className="py-8 text-center text-muted-foreground">Cargando productos...</div>
                     ) : filteredProducts.length === 0 ? (
@@ -244,7 +244,7 @@ export function ProductCatalogCard({
                             <p className="mt-1 text-xs text-muted-foreground">Proba con otra categoria o cambia el termino de busqueda.</p>
                         </div>
                     ) : (
-                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+                        <div className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
                             {filteredProducts.map((product) => (
                                 <button
                                     key={product.id}
@@ -254,12 +254,12 @@ export function ProductCatalogCard({
                                         product.stock <= 0 ? "cursor-not-allowed opacity-60 hover:border-blue-900/30 hover:bg-card/80" : ""
                                     }`}
                                 >
-                                    <div className="aspect-video overflow-hidden rounded-t-xl bg-muted/20">
+                                    <div className="h-28 overflow-hidden rounded-t-xl bg-muted/20 sm:h-32 xl:h-36">
                                         {product.image_url ? (
                                             <img
                                                 src={product.image_url}
                                                 alt={product.name}
-                                                className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.03]"
+                                                className="h-full w-full object-contain transition duration-200 group-hover:scale-[1.03]"
                                             />
                                         ) : (
                                             <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
@@ -267,15 +267,17 @@ export function ProductCatalogCard({
                                             </div>
                                         )}
                                     </div>
-                                    <div className="flex flex-1 flex-col space-y-2 p-3">
-                                        <div className="font-semibold leading-tight">{product.name}</div>
-                                        <div className="text-xs text-muted-foreground">
+                                    <div className="flex flex-1 flex-col space-y-1.5 p-2.5">
+                                        <div className="line-clamp-2 text-sm font-semibold leading-tight">{product.name}</div>
+                                        <div className="truncate text-[11px] text-muted-foreground" title={[product.sku, product.barcode].filter(Boolean).join(" | ")}>
                                             {product.sku}
                                             {product.barcode ? ` | ${product.barcode}` : ""}
                                         </div>
-                                        <div className="text-xs text-muted-foreground">{product.location || "Sin ubicacion"}</div>
+                                        <div className="truncate text-[11px] text-muted-foreground" title={product.location || "Sin ubicacion"}>
+                                            {product.location || "Sin ubicacion"}
+                                        </div>
                                         <div className="mt-auto flex items-center justify-between gap-2 pt-1">
-                                            <span className="text-base font-bold">
+                                            <span className="text-sm font-bold sm:text-base">
                                                 ${Number(product.sale_price).toLocaleString("es-AR")}
                                             </span>
                                             <Badge variant={stockBadgeVariant(product.stock)}>

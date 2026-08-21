@@ -240,6 +240,25 @@ export default function InventoryPage() {
         }
     }
 
+    function startProductTransfer(product: ProductWithStock) {
+        const sourceLocations = inventoryItems.filter(
+            (item) => item.product_id === product.id && item.quantity - (item.reserved_quantity || 0) > 0,
+        );
+
+        if (sourceLocations.length === 0) {
+            toast.error("Este producto no tiene stock disponible para reubicar.");
+            return;
+        }
+
+        const preferredSource = sourceLocations.find((item) => item.location === product.location) ?? sourceLocations[0];
+        if (!preferredSource) return;
+        setSelectedTransferProduct(product.id);
+        setTransferFromLocation(preferredSource.location);
+        setTransferToLocation("");
+        setTransferQty(1);
+        setTransferDialogOpen(true);
+    }
+
     async function handleSaveProduct(formData: ProductFormSubmitData) {
         try {
             if (editingProduct) {
@@ -386,7 +405,9 @@ export default function InventoryPage() {
                             <DialogHeader>
                                 <DialogTitle>{editingProduct ? "Editar producto" : "Agregar producto"}</DialogTitle>
                                 <DialogDescription>
-                                    {editingProduct ? "Actualiza la información del producto seleccionado." : "Completa los datos para registrar un producto nuevo."}
+                                    {editingProduct
+                                        ? "Actualiza datos, atributos, precios, imagen y ubicación de referencia. Para mover stock físico usa Reubicar."
+                                        : "Completa los datos para registrar un producto nuevo."}
                                 </DialogDescription>
                             </DialogHeader>
                             <ProductForm
@@ -461,6 +482,7 @@ export default function InventoryPage() {
                                     setEditingProduct(product);
                                     setDialogOpen(true);
                                 }}
+                                onRelocate={startProductTransfer}
                                 onDelete={(product) => setDeletingProduct(product)}
                             />
                             <PaginationControls
