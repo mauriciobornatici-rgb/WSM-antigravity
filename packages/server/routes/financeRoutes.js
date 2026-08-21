@@ -26,5 +26,8 @@ router.post('/cash-shifts/:id/payments', cashRoles, validate(schemas.shiftPaymen
 // Collections
 router.get('/collections/pending-invoices', collectionsRoles, financeController.getPendingInvoices);
 router.post('/collections', collectionsRoles, financeController.registerBulkPayments);
+router.get('/checks', collectionsRoles, financeController.getCustomerChecks);
+router.get('/checks/:id', collectionsRoles, validate(schemas.idParam), financeController.getCustomerCheck);
+router.put('/checks/:id/status', collectionsRoles, validate(schemas.idParam), financeController.updateCustomerCheckStatus);
 
 export default router;

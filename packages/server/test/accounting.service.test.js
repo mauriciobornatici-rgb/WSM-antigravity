@@ -133,6 +133,38 @@ test('getChartOfAccounts mapping correctly format output properties', async (t) 
     assert.equal(result[1].balance, 300);
 });
 
+test('getJournalEntries resolves related movements using the legacy credit-note timestamp', async (t) => {
+    const queryCalls = [];
+    mockPool(t, async (sql, params) => {
+        queryCalls.push({ sql, params });
+        if (sql.includes('FROM journal_entries je')) {
+            return [[{
+                id: 'entry-1', entry_number: 1, date: '2026-08-21', description: 'Nota de crédito',
+                reference_type: 'client_return', reference_id: 'return-1', created_at: '2026-08-21'
+            }]];
+        }
+        if (sql.includes('FROM journal_entry_lines')) {
+            return [[{
+                id: 'line-1', journal_entry_id: 'entry-1', account_code: '4.1.01.01',
+                account_name: 'Ventas', account_type: 'revenue', debit: 100, credit: 0
+            }]];
+        }
+        if (sql.includes('FROM credit_notes')) {
+            return [[{
+                id: 'credit-1', number: 'NC-1', amount: 100, status: 'issued',
+                notes: 'Devolución', reference_id: 'return-1', date: '2026-08-21'
+            }]];
+        }
+        return [[]];
+    });
+
+    const result = await accountingService.getJournalEntries();
+
+    assert.equal(result[0].related_movements[0].kind, 'credit_note');
+    assert.match(result[0].related_movements[0].description, /NC-1/);
+    assert.ok(queryCalls.some((call) => call.sql.includes('created_at AS date') && call.sql.includes('FROM credit_notes')));
+});
+
 test('reverseJournalEntry rejects missing entries with 404 and rolls back', async (t) => {
     const connection = mockPool(t, async (sql) => {
         if (sql.includes('SELECT * FROM journal_entries')) return [[]];

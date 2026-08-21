@@ -51,9 +51,9 @@ export function ZReportDialog({
                 </DialogHeader>
 
                 {/* Printable Document Container */}
-                <div id="printable-ticket" className="space-y-4 py-4 text-foreground font-sans text-sm">
+                <div id="printable-z-report" className="space-y-4 bg-white py-4 text-black font-sans text-sm print:p-6">
                     {/* Header Info */}
-                    <div className="grid grid-cols-2 gap-3 p-3 bg-muted/40 rounded-lg border border-border text-xs">
+                    <div className="grid grid-cols-2 gap-3 p-3 bg-white rounded-lg border border-slate-300 text-xs text-black">
                         <div className="flex items-center gap-2">
                             <Calendar className="h-4 w-4 text-muted-foreground" />
                             <span><strong>Fecha/Hora:</strong> {dateStr}</span>
@@ -69,7 +69,7 @@ export function ZReportDialog({
                     </div>
 
                     {/* Sales Summary Breakdown */}
-                    <div className="space-y-2 border border-border rounded-lg p-4 bg-card">
+                    <div className="space-y-2 border border-slate-300 rounded-lg p-4 bg-white text-black">
                         <h4 className="font-bold text-xs uppercase tracking-wider text-muted-foreground border-b border-border pb-1.5">
                             Movimientos del Turno
                         </h4>
@@ -98,7 +98,7 @@ export function ZReportDialog({
                     </div>
 
                     {/* Audit Arqueo Breakdown */}
-                    <div className="space-y-2 border border-border rounded-lg p-4 bg-card">
+                    <div className="space-y-2 border border-slate-300 rounded-lg p-4 bg-white text-black">
                         <h4 className="font-bold text-xs uppercase tracking-wider text-muted-foreground border-b border-border pb-1.5">
                             Arqueo de Efectivo Físico
                         </h4>

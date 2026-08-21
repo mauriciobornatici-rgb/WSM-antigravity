@@ -121,9 +121,9 @@ export default function CurrentAccountsPage() {
                 id: String(tx.id),
                 date: String(tx.date || new Date().toISOString()),
                 type: "payment" as const,
-                typeLabel: "Cobranza / Pago",
+                typeLabel: `Cobranza · ${tx.payment_method || "sin medio informado"}`,
                 reference: tx.reference_id ? `REC-${tx.reference_id.substring(0, 8)}` : `TX-${String(tx.id).substring(0, 8)}`,
-                description: tx.description || "Pago recibido en cuenta corriente",
+                description: `${tx.description || "Pago recibido en cuenta corriente"}${tx.payment_method ? ` · Medio: ${tx.payment_method}` : ""}`,
                 debit: 0,
                 credit: Number(tx.amount || 0),
                 balanceAfter: 0

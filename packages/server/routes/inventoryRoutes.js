@@ -20,6 +20,9 @@ router.get('/products/:id/movements', inventoryReadRoles, validate(schemas.idPar
 
 // Inventory summary
 router.get('/inventory', inventoryReadRoles, inventoryController.getInventory);
+router.get('/inventory/locations', inventoryReadRoles, inventoryController.getWarehouseLocations);
+router.post('/inventory/locations', inventoryWriteRoles, inventoryController.createWarehouseLocation);
+router.put('/inventory/locations/:id', inventoryWriteRoles, validate(schemas.idParam), inventoryController.updateWarehouseLocation);
 router.post('/inventory/transfer', inventoryWriteRoles, inventoryController.transferStock);
 
 // Movements (legacy + explicit alias)

@@ -60,7 +60,7 @@ export function PrintableThermalTicket({
 
             {/* Document Title */}
             <div className="text-center py-2 border-b border-dashed border-slate-400">
-                <h3 className="text-xs font-bold uppercase">{isTicket ? "TICKET NO FISCAL" : `FACTURA DE COMPRA ${invoice.invoice_type}`}</h3>
+                <h3 className="text-xs font-bold uppercase">{isTicket ? "TICKET NO FISCAL" : `FACTURA ${invoice.invoice_type}`}</h3>
                 <p className="text-[10px]">Comprobante Nº {formatInvoiceNumber(invoice)}</p>
                 <p className="text-[10px]">Fecha: {invoice.issue_date ? new Date(invoice.issue_date).toLocaleString("es-AR") : "-"}</p>
             </div>
@@ -94,7 +94,7 @@ export function PrintableThermalTicket({
                         ))
                     ) : (
                         <div className="flex justify-between text-[10px]">
-                            <span>Venta Comercial</span>
+                            <span>Comprobante sin ítems asociados</span>
                             <span>${Number(invoice.total_amount).toFixed(2)}</span>
                         </div>
                     )}

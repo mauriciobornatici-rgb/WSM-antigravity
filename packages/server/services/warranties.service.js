@@ -4,6 +4,7 @@ import pool from '../config/db.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
 import auditService from './audit.service.js';
 import afipService from './afip.service.js';
+import accountingService from './accounting.service.js';
 
 class WarrantiesService extends BaseService {
     constructor() {
@@ -380,6 +381,17 @@ class ReturnsService extends BaseService {
                         [totalAmount, returnRow.client_id]
                     );
                 }
+
+                await accountingService.createJournalEntry(conn, {
+                    date: new Date(),
+                    description: `Nota de crédito ${creditNoteNumber} - Devolución de cliente`,
+                    reference_type: 'client_return',
+                    reference_id: returnId,
+                    lines: [
+                        { account_code: '4.1.01.01', debit: totalAmount, credit: 0, notes: 'Reversión de venta por devolución' },
+                        { account_code: '1.1.03.01', debit: 0, credit: totalAmount, notes: 'Crédito a favor del cliente' }
+                    ]
+                });
             }
 
             await conn.query(

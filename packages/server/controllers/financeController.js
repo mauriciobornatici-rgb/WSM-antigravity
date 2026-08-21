@@ -420,3 +420,19 @@ export const registerBulkPayments = catchAsync(async (req, res) => {
     const result = await financeService.registerBulkInvoicePayments(req.body, userId);
     res.json(result);
 });
+
+export const getCustomerChecks = catchAsync(async (req, res) => {
+    const rows = await financeService.getCustomerChecks(req.query || {});
+    res.json(rows);
+});
+
+export const getCustomerCheck = catchAsync(async (req, res) => {
+    const row = await financeService.getCustomerCheck(req.params.id);
+    if (!row) return res.status(404).json({ error: 'not_found', message: 'Cheque no encontrado' });
+    res.json(row);
+});
+
+export const updateCustomerCheckStatus = catchAsync(async (req, res) => {
+    const row = await financeService.updateCustomerCheckStatus(req.params.id, req.body, req.user?.id || null);
+    res.json(row);
+});

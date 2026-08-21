@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Receipt, Users } from "lucide-react";
+import { Plus, Trash2, Receipt, Users, Landmark, History } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -10,14 +10,22 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/lib/errorHandling";
-import type { PendingInvoiceResponse, BulkPaymentAllocation, InvoicePaymentLineInput, BulkPaymentInput } from "@/types/api";
+import type { PendingInvoiceResponse, BulkPaymentAllocation, InvoicePaymentLineInput, BulkPaymentInput, CustomerCheck } from "@/types/api";
 
 type PaymentLine = {
     id: string;
     method: InvoicePaymentLineInput["method"];
     amount: string;
+    check: {
+        issuer_name: string;
+        bank_name: string;
+        check_number: string;
+        issue_date: string;
+        due_date: string;
+    };
 };
 
 const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentLine["method"]; label: string }> = [
@@ -28,13 +36,24 @@ const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentLine["method"]; label: strin
     { value: "qr", label: "QR" },
     { value: "credit_account", label: "Cuenta corriente" },
     { value: "card", label: "Tarjeta" },
+    { value: "check", label: "Cheque" },
 ];
+
+const CHECK_STATUS_LABELS: Record<CustomerCheck["status"], string> = {
+    received: "Recibido",
+    deposited: "Depositado",
+    cleared: "Cobrado",
+    endorsed: "Entregado / endosado",
+    rejected: "Rechazado",
+    cancelled: "Anulado",
+};
 
 function createPaymentLine(defaultAmount = ""): PaymentLine {
     return {
         id: crypto.randomUUID(),
         method: "cash",
         amount: defaultAmount,
+        check: { issuer_name: "", bank_name: "", check_number: "", issue_date: "", due_date: "" },
     };
 }
 
@@ -54,6 +73,10 @@ export default function CollectionsPage() {
     const { data: pendingInvoices = [], isLoading } = useQuery<PendingInvoiceResponse[]>({
         queryKey: ["collections", "pending-invoices"],
         queryFn: () => api.getPendingInvoices(),
+    });
+    const { data: customerChecks = [] } = useQuery<CustomerCheck[]>({
+        queryKey: ["collections", "checks"],
+        queryFn: () => api.getCustomerChecks(),
     });
 
     // 2. Derive unique clients from pending invoices
@@ -76,6 +99,16 @@ export default function CollectionsPage() {
     const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
     const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([createPaymentLine()]);
     const [paymentNotes, setPaymentNotes] = useState("");
+    const [selectedCheckId, setSelectedCheckId] = useState<string | null>(null);
+    const [checkStatus, setCheckStatus] = useState<CustomerCheck["status"]>("received");
+    const [checkDeliveredTo, setCheckDeliveredTo] = useState("");
+    const [checkNotes, setCheckNotes] = useState("");
+
+    const { data: selectedCheck, isFetching: isLoadingCheck } = useQuery<CustomerCheck>({
+        queryKey: ["collections", "checks", selectedCheckId],
+        queryFn: () => api.getCustomerCheck(selectedCheckId!),
+        enabled: Boolean(selectedCheckId),
+    });
 
     // 4. Client's invoices
     const clientInvoices = useMemo(() => {
@@ -155,7 +188,16 @@ export default function CollectionsPage() {
             
             // Distribute payments top to bottom
             const allocations: BulkPaymentAllocation[] = [];
-            const remainingPayments = paymentLines.map(p => ({ method: p.method, amount: Number(p.amount || 0) }));
+            const remainingPayments = paymentLines.map(p => ({
+                method: p.method,
+                amount: Number(p.amount || 0),
+                ...(p.method === "check" ? {
+                    check: {
+                        ...p.check,
+                        instrument_amount: Number(p.amount || 0),
+                    }
+                } : {})
+            }));
             
             const selectedInvoiceObjects = clientInvoices.filter(inv => selectedInvoiceIds.has(inv.id));
             
@@ -171,7 +213,11 @@ export default function CollectionsPage() {
                     pay.amount -= take;
                     pending -= take;
                     
-                    invPayments.push({ method: pay.method, amount: Number(take.toFixed(2)) });
+                    invPayments.push({
+                        method: pay.method,
+                        amount: Number(take.toFixed(2)),
+                        ...(pay.check ? { check: pay.check } : {})
+                    });
                 }
                 
                 if (invPayments.length > 0) {
@@ -196,6 +242,7 @@ export default function CollectionsPage() {
                 description: `Se aplicaron ${formatMoney(data.total_paid)} a cuenta corriente.`
             });
             queryClient.invalidateQueries({ queryKey: ["collections", "pending-invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["collections", "checks"] });
             setSelectedInvoiceIds(new Set());
             setPaymentLines([createPaymentLine()]);
             setPaymentNotes("");
@@ -208,7 +255,7 @@ export default function CollectionsPage() {
     const isSubmitDisabled = 
         !selectedClientId || 
         selectedInvoiceIds.size === 0 || 
-        paymentLines.some(line => Number(line.amount || 0) <= 0) || 
+        paymentLines.some(line => Number(line.amount || 0) <= 0 || (line.method === "check" && (!line.check.issuer_name || !line.check.bank_name || !line.check.check_number || !line.check.due_date))) ||
         totalToRegister <= 0 || 
         totalToRegister - totalSelected > 0.01 || 
         isRegistering;
@@ -357,7 +404,8 @@ export default function CollectionsPage() {
                         <CardContent className="space-y-4">
                             <div className="space-y-3">
                                 {paymentLines.map((line) => (
-                                    <div key={line.id} className="grid gap-2 grid-cols-[1fr_auto]">
+                                    <div key={line.id} className="space-y-2 rounded-md border p-2">
+                                      <div className="grid gap-2 grid-cols-[1fr_auto]">
                                         <Select
                                             value={line.method}
                                             onValueChange={(value) => updatePaymentLine(line.id, { method: value as PaymentLine["method"] })}
@@ -396,6 +444,19 @@ export default function CollectionsPage() {
                                                 <Trash2 className="h-4 w-4" />
                                             </Button>
                                         </div>
+                                      </div>
+                                      {line.method === "check" ? (
+                                        <div className="grid gap-2 sm:grid-cols-2">
+                                            <Input value={line.check.issuer_name} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, issuer_name: event.target.value } })} placeholder="Librador / titular" />
+                                            <Input value={line.check.bank_name} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, bank_name: event.target.value } })} placeholder="Banco" />
+                                            <Input value={line.check.check_number} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, check_number: event.target.value } })} placeholder="Número de cheque" />
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <Input type="date" title="Fecha de emisión" value={line.check.issue_date} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, issue_date: event.target.value } })} />
+                                                <Input type="date" required title="Fecha de cobro" value={line.check.due_date} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, due_date: event.target.value } })} />
+                                            </div>
+                                            <p className="text-[11px] text-muted-foreground sm:col-span-2">Fechas: emisión y cobro/vencimiento. El cheque ingresará automáticamente a cartera.</p>
+                                        </div>
+                                      ) : null}
                                     </div>
                                 ))}
                                 <Button
@@ -452,6 +513,130 @@ export default function CollectionsPage() {
                     </Card>
                 </div>
             </div>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-lg"><Landmark className="h-5 w-5" /> Cartera de cheques</CardTitle>
+                    <CardDescription>Seguimiento desde la recepción hasta el depósito, endoso, acreditación o rechazo.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="overflow-x-auto">
+                        <Table className="min-w-[900px]">
+                            <TableHeader><TableRow>
+                                <TableHead>Cheque</TableHead><TableHead>Librador / cliente</TableHead><TableHead>Vencimiento</TableHead><TableHead className="text-right">Importe</TableHead><TableHead>Estado</TableHead><TableHead>Acción</TableHead>
+                            </TableRow></TableHeader>
+                            <TableBody>
+                                {customerChecks.length === 0 ? <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">Todavía no hay cheques en cartera.</TableCell></TableRow> : customerChecks.map((check) => (
+                                    <TableRow key={check.id}>
+                                        <TableCell><p className="font-medium">{check.bank_name}</p><p className="font-mono text-xs text-muted-foreground">Nº {check.check_number}</p></TableCell>
+                                        <TableCell><p>{check.issuer_name}</p><p className="text-xs text-muted-foreground">{check.client_name || "Sin cliente vinculado"}</p></TableCell>
+                                        <TableCell>{new Date(`${String(check.due_date).slice(0, 10)}T12:00:00`).toLocaleDateString("es-AR")}</TableCell>
+                                        <TableCell className="text-right font-mono font-semibold">{formatMoney(check.amount)}</TableCell>
+                                        <TableCell>{CHECK_STATUS_LABELS[check.status]}</TableCell>
+                                        <TableCell>
+                                            <Button type="button" variant="outline" size="sm" onClick={() => {
+                                                setSelectedCheckId(check.id);
+                                                setCheckStatus(check.status);
+                                                setCheckDeliveredTo(check.delivered_to || "");
+                                                setCheckNotes("");
+                                            }}>
+                                                <History className="mr-1 h-4 w-4" /> Ver seguimiento
+                                            </Button>
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </CardContent>
+            </Card>
+
+            <Dialog open={Boolean(selectedCheckId)} onOpenChange={(open) => { if (!open) setSelectedCheckId(null); }}>
+                <DialogContent className="max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle>Seguimiento del cheque</DialogTitle>
+                        <DialogDescription>
+                            {selectedCheck ? `${selectedCheck.bank_name} · Nº ${selectedCheck.check_number} · ${formatMoney(selectedCheck.amount)}` : "Cargando instrumento..."}
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {isLoadingCheck && !selectedCheck ? (
+                        <p className="py-8 text-center text-sm text-muted-foreground">Cargando trazabilidad...</p>
+                    ) : selectedCheck ? (
+                        <div className="space-y-5">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="space-y-2">
+                                    <Label>Nuevo estado</Label>
+                                    <Select value={checkStatus} onValueChange={(value) => setCheckStatus(value as CustomerCheck["status"])}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            {Object.entries(CHECK_STATUS_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="check-delivered-to">Entregado a</Label>
+                                    <Input id="check-delivered-to" value={checkDeliveredTo} onChange={(event) => setCheckDeliveredTo(event.target.value)} placeholder="Persona, proveedor o banco" />
+                                </div>
+                                <div className="space-y-2 sm:col-span-2">
+                                    <Label htmlFor="check-status-notes">Nota del movimiento</Label>
+                                    <Textarea id="check-status-notes" value={checkNotes} onChange={(event) => setCheckNotes(event.target.value)} placeholder="Constancia, número de depósito, motivo de rechazo, etc." />
+                                </div>
+                            </div>
+
+                            <div>
+                                <h3 className="mb-2 text-sm font-semibold">Aplicación del cheque</h3>
+                                {selectedCheck.allocations?.length ? (
+                                    <div className="space-y-2">
+                                        {selectedCheck.allocations.map((allocation) => (
+                                            <div key={allocation.id} className="flex justify-between rounded-md border p-2 text-sm">
+                                                <span>Factura {allocation.invoice_type || ""} {allocation.point_of_sale != null ? String(allocation.point_of_sale).padStart(4, "0") : ""}-{allocation.invoice_number != null ? String(allocation.invoice_number).padStart(8, "0") : ""}</span>
+                                                <span className="font-mono font-medium">{formatMoney(allocation.amount)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : <p className="text-sm text-muted-foreground">Sin facturas vinculadas.</p>}
+                            </div>
+
+                            <div>
+                                <h3 className="mb-2 text-sm font-semibold">Historial</h3>
+                                <div className="max-h-48 space-y-2 overflow-y-auto">
+                                    {selectedCheck.events?.map((event) => (
+                                        <div key={event.id} className="rounded-md border-l-2 border-primary bg-muted/40 px-3 py-2 text-sm">
+                                            <div className="flex justify-between gap-3">
+                                                <span className="font-medium">{CHECK_STATUS_LABELS[event.status]}</span>
+                                                <span className="text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString("es-AR")}</span>
+                                            </div>
+                                            {event.notes ? <p className="mt-1 text-muted-foreground">{event.notes}</p> : null}
+                                            {event.performed_by_name ? <p className="mt-1 text-xs text-muted-foreground">Por {event.performed_by_name}</p> : null}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    ) : null}
+
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setSelectedCheckId(null)}>Cerrar</Button>
+                        <Button type="button" disabled={!selectedCheck || (checkStatus === "endorsed" && !checkDeliveredTo.trim())} onClick={async () => {
+                            if (!selectedCheckId) return;
+                            try {
+                                const updated = await api.updateCustomerCheckStatus(selectedCheckId, {
+                                    status: checkStatus,
+                                    notes: checkNotes.trim(),
+                                    delivered_to: checkDeliveredTo.trim(),
+                                });
+                                toast.success("Seguimiento del cheque actualizado");
+                                queryClient.setQueryData(["collections", "checks", selectedCheckId], updated);
+                                await queryClient.invalidateQueries({ queryKey: ["collections", "checks"] });
+                                setCheckNotes("");
+                            } catch (error) {
+                                showErrorToast("No se pudo actualizar el cheque", error);
+                            }
+                        }}>Guardar movimiento</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

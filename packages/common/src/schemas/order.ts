@@ -9,7 +9,25 @@ export const orderPaymentMethodSchema = z.enum([
   'debit_card',
   'credit_card',
   'qr',
+  'check',
 ]);
+
+export const orderPaymentLineSchema = z.object({
+  method: orderPaymentMethodSchema,
+  amount: z.coerce.number().positive(),
+  check: z.object({
+    issuer_name: z.string().min(1).max(255),
+    bank_name: z.string().min(1).max(255),
+    check_number: z.string().min(1).max(100),
+    issue_date: z.string().nullable().optional(),
+    due_date: z.string().min(1),
+    instrument_amount: z.coerce.number().positive().optional(),
+  }).optional(),
+}).superRefine((payment, ctx) => {
+  if (payment.method === 'check' && !payment.check) {
+    ctx.addIssue({ code: 'custom', message: 'Los datos del cheque son obligatorios', path: ['check'] });
+  }
+});
 
 export const createOrderSchema = z.object({
   idempotency_key: uuidSchema.optional(),
@@ -19,9 +37,10 @@ export const createOrderSchema = z.object({
   counter_name: z.string().nullable().optional(),
   total_amount: z.coerce.number().min(0).optional(),
   payment_method: orderPaymentMethodSchema.optional(),
+  payments: z.array(orderPaymentLineSchema).min(1).optional(),
   shipping_method: z.enum(['pickup', 'delivery']).optional(),
   shipping_address: z.string().nullable().optional(),
-  estimated_delivery: isoDateSchema.nullable().optional(),
+  estimated_delivery: z.union([isoDateSchema, z.iso.date()]).nullable().optional(),
   recipient_name: z.string().nullable().optional(),
   recipient_dni: z.string().nullable().optional(),
   delivery_notes: z.string().nullable().optional(),
@@ -51,11 +70,6 @@ export const orderFiltersSchema = z.object({
 }).merge(paginationQuerySchema);
 
 export const invoicePaymentSchema = z.object({
-  payments: z.array(
-    z.object({
-      method: orderPaymentMethodSchema,
-      amount: z.coerce.number().positive(),
-    })
-  ).min(1),
+  payments: z.array(orderPaymentLineSchema).min(1),
   notes: z.string().nullable().optional(),
 });

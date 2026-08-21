@@ -132,16 +132,24 @@ export default function InvoicesPage() {
         }
     }
 
+    const prepareAndPrint = async (invoice: InvoiceView, layout: "a4" | "thermal") => {
+        try {
+            const items = invoice.items?.length ? invoice.items : await api.getInvoiceItems(invoice.id)
+            setSelectedInvoice({ ...invoice, items: items as InvoiceItem[] })
+            setActivePrintLayout(layout)
+            await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+            window.print()
+        } catch (error) {
+            showErrorToast("No se pudo preparar el comprobante para imprimir", error)
+        }
+    }
+
     const handlePrintInvoice = (invoice: InvoiceView) => {
-        setActivePrintLayout("a4")
-        setSelectedInvoice(invoice)
-        setTimeout(() => window.print(), 200)
+        void prepareAndPrint(invoice, "a4")
     }
 
     const handlePrintThermal = (invoice: InvoiceView) => {
-        setActivePrintLayout("thermal")
-        setSelectedInvoice(invoice)
-        setTimeout(() => window.print(), 200)
+        void prepareAndPrint(invoice, "thermal")
     }
 
     const handleExportLibroIVA = () => {

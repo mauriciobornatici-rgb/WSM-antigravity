@@ -161,8 +161,8 @@ export function InvoiceDocument({
                             ))
                         ) : (
                             <tr className="border-b border-slate-200">
-                                <td className="border-r border-slate-200 p-2 text-left">Venta comercial</td>
-                                <td className="border-r border-slate-200 p-2 text-center">1</td>
+                                <td className="border-r border-slate-200 p-2 text-left">Comprobante sin ítems asociados</td>
+                                <td className="border-r border-slate-200 p-2 text-center">-</td>
                                 <td className="border-r border-slate-200 p-2 text-right">
                                     ${Number(invoice.net_amount || invoice.subtotal || 0).toLocaleString("es-AR")}
                                 </td>

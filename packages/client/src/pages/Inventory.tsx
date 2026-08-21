@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { api } from "@/services/api";
 import { convertToCSV, downloadCSV } from "@/lib/exportUtils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { Supplier, InventoryItem } from "@/types";
+import type { Supplier, InventoryItem, WarehouseLocation } from "@/types";
 import type { PaginationMeta } from "@/types/api";
 import { getErrorMessage, showErrorToast } from "@/lib/errorHandling";
 import { fetchInventorySnapshot, invalidateInventorySnapshotCache, type ProductWithStock } from "@/lib/inventorySnapshot";
@@ -30,6 +30,7 @@ export default function InventoryPage() {
     const [products, setProducts] = useState<ProductWithStock[]>([]);
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+    const [warehouseLocations, setWarehouseLocations] = useState<WarehouseLocation[]>([]);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [productsPage, setProductsPage] = useState(1);
@@ -58,19 +59,21 @@ export default function InventoryPage() {
         try {
             setLoading(true);
             setLoadError(null);
-            const [snapshot, suppliersList, rawInventory] = await Promise.all([
+            const [snapshot, suppliersList, rawInventory, locations] = await Promise.all([
                 fetchInventorySnapshot({
                     force,
                     page: productsPage,
                     limit: PRODUCTS_PAGE_SIZE,
                 }),
                 api.getSuppliers(),
-                api.getInventory()
+                api.getInventory(),
+                api.getWarehouseLocations()
             ]);
             setProducts(snapshot.rows);
             setProductsPagination(snapshot.pagination ?? null);
             setSuppliers(suppliersList);
             setInventoryItems(rawInventory);
+            setWarehouseLocations(locations);
         } catch (error) {
             setLoadError(getErrorMessage(error, "No se pudo cargar el inventario."));
         } finally {
@@ -106,8 +109,8 @@ export default function InventoryPage() {
             const loc = item.location || "Sin Ubicación";
             const matchesQuery = !query || 
                 loc.toLowerCase().includes(query) ||
-                (item.product?.sku && item.product.sku.toLowerCase().includes(query)) ||
-                (item.product?.name && item.product.name.toLowerCase().includes(query));
+                ((item.sku || item.product?.sku) && String(item.sku || item.product?.sku).toLowerCase().includes(query)) ||
+                ((item.product_name || item.product?.name) && String(item.product_name || item.product?.name).toLowerCase().includes(query));
 
             if (matchesQuery) {
                 if (!map[loc]) map[loc] = [];
@@ -483,6 +486,8 @@ export default function InventoryPage() {
                         groupedInventory={groupedInventory}
                         locationSearch={locationSearch}
                         onLocationSearchChange={setLocationSearch}
+                        warehouseLocations={warehouseLocations}
+                        onLocationsChanged={() => void loadData(true)}
                         onStartTransfer={(productId, location) => {
                             setSelectedTransferProduct(productId);
                             setTransferFromLocation(location);
@@ -516,6 +521,7 @@ export default function InventoryPage() {
                 onOpenChange={setTransferDialogOpen}
                 products={products}
                 inventoryItems={inventoryItems}
+                warehouseLocations={warehouseLocations}
                 selectedProductId={selectedTransferProduct}
                 onSelectProduct={setSelectedTransferProduct}
                 fromLocation={transferFromLocation}

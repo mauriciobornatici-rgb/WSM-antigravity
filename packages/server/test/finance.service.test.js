@@ -144,3 +144,114 @@ test('registerInvoicePayments successfully registers payments, updates invoice/o
     // Clients update
     assert.ok(updates.some((c) => c.sql.includes('UPDATE clients') && c.sql.includes('current_account_balance')));
 });
+
+test('getCustomerChecks normalizes portfolio amounts and allocation counters', async (t) => {
+    mockPool(t, async (sql) => {
+        if (sql.includes('FROM customer_checks cc')) {
+            return [[{
+                id: 'check-1',
+                amount: '1250.50',
+                allocated_amount: '750.25',
+                invoice_count: '2',
+                status: 'received'
+            }]];
+        }
+        return [[]];
+    });
+
+    const result = await financeService.getCustomerChecks({ status: 'received' });
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0].amount, 1250.5);
+    assert.equal(result[0].allocated_amount, 750.25);
+    assert.equal(result[0].invoice_count, 2);
+});
+
+test('getCustomerCheck returns its event and invoice-allocation trace', async (t) => {
+    mockPool(t, async (sql) => {
+        if (sql.includes('FROM customer_check_events')) {
+            return [[{ id: 'event-1', status: 'received' }]];
+        }
+        if (sql.includes('FROM customer_check_allocations')) {
+            return [[{ id: 'allocation-1', invoice_id: 'invoice-1', amount: 500 }]];
+        }
+        if (sql.includes('FROM customer_checks cc')) {
+            return [[{ id: 'check-1', amount: 500, status: 'received' }]];
+        }
+        return [[]];
+    });
+
+    const result = await financeService.getCustomerCheck('check-1');
+
+    assert.equal(result.id, 'check-1');
+    assert.equal(result.events[0].id, 'event-1');
+    assert.equal(result.allocations[0].invoice_id, 'invoice-1');
+});
+
+test('updateCustomerCheckStatus requires a recipient when a cheque is endorsed', async (t) => {
+    mockPool(t, async (sql) => {
+        if (sql.includes('SELECT * FROM customer_checks')) {
+            return [[{ id: 'check-1', status: 'received', delivered_to: null }]];
+        }
+        return [[]];
+    });
+
+    await assert.rejects(
+        () => financeService.updateCustomerCheckStatus('check-1', { status: 'endorsed' }, 'user-1'),
+        (error) => {
+            assert.equal(error.statusCode, 400);
+            assert.equal(error.errorCode, 'CHECK_DELIVERY_RECIPIENT_REQUIRED');
+            return true;
+        }
+    );
+});
+
+test('updateCustomerCheckStatus records clearance once and returns the complete trace', async (t) => {
+    const queryCalls = [];
+    mockPool(t, async (sql, params) => {
+        queryCalls.push({ sql, params });
+        if (sql.includes('SELECT * FROM customer_checks')) {
+            return [[{
+                id: 'check-1',
+                status: 'deposited',
+                cleared_at: null,
+                delivered_to: null,
+                notes: null,
+                amount: 500,
+                check_number: '123',
+                bank_name: 'Banco QA'
+            }]];
+        }
+        if (sql.includes('FROM customer_check_events')) {
+            return [[{ id: 'event-1', status: 'cleared', notes: 'Acreditado' }]];
+        }
+        if (sql.includes('FROM customer_check_allocations')) {
+            return [[{ id: 'allocation-1', invoice_id: 'invoice-1', amount: 500 }]];
+        }
+        if (sql.includes('FROM customer_checks cc')) {
+            return [[{ id: 'check-1', amount: 500, status: 'cleared' }]];
+        }
+        return [[]];
+    });
+
+    const originalLog = auditService.log;
+    const originalCreateJournalEntry = accountingService.createJournalEntry;
+    let journalEntryCount = 0;
+    auditService.log = async () => {};
+    accountingService.createJournalEntry = async () => { journalEntryCount += 1; };
+    t.after(() => {
+        auditService.log = originalLog;
+        accountingService.createJournalEntry = originalCreateJournalEntry;
+    });
+
+    const result = await financeService.updateCustomerCheckStatus(
+        'check-1',
+        { status: 'cleared', notes: 'Acreditado' },
+        'user-1'
+    );
+
+    assert.equal(result.status, 'cleared');
+    assert.equal(journalEntryCount, 1);
+    assert.ok(queryCalls.some((call) => call.sql.includes('cleared_at = NOW()')));
+    assert.ok(queryCalls.some((call) => call.sql.includes('INSERT INTO customer_check_events')));
+});

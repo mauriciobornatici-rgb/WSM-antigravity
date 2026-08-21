@@ -7,7 +7,7 @@ const TABLE_COLUMNS = {
     products: [
         'id', 'sku', 'barcode', 'name', 'description', 'category', 'image_url', 'location',
         'purchase_price', 'cost_price', 'sale_price',
-        'brand', 'unit_measure', 'stock_current', 'stock_min', 'supplier_id', 'status',
+        'brand', 'size', 'color', 'unit_measure', 'stock_current', 'stock_min', 'supplier_id', 'status',
         'created_at', 'updated_at', 'deleted_at'
     ],
     orders: [

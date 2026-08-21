@@ -33,13 +33,19 @@ const PAYMENT_METHODS = [
 
 const CONSUMIDOR_FINAL_VALUE = "__consumidor_final__"
 
+type CreatePaymentLine = { id: string; method: string; amount: string }
+
+function newPaymentLine(method = "cash", amount = ""): CreatePaymentLine {
+    return { id: crypto.randomUUID(), method, amount }
+}
+
 export function CreateOrderDialog({ open, onOpenChange, clients, products, currentUser }: CreateOrderDialogProps) {
     const queryClient = useQueryClient()
 
     // Form states
     const [createClientId, setCreateClientId] = useState("")
     const [createCounterName, setCreateCounterName] = useState("")
-    const [createPaymentMethod, setCreatePaymentMethod] = useState("cash")
+    const [createPaymentLines, setCreatePaymentLines] = useState<CreatePaymentLine[]>([newPaymentLine()])
     const [createShippingMethod, setCreateShippingMethod] = useState<ShippingMethod>("pickup")
     const [createEstimatedDelivery, setCreateEstimatedDelivery] = useState("")
     const [createShippingAddress, setCreateShippingAddress] = useState("")
@@ -109,7 +115,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
     function resetCreateForm() {
         setCreateClientId("")
         setCreateCounterName(currentUser?.name || "")
-        setCreatePaymentMethod("cash")
+        setCreatePaymentLines([newPaymentLine()])
         setCreateShippingMethod("pickup")
         setCreateEstimatedDelivery("")
         setCreateShippingAddress("")
@@ -146,6 +152,10 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
 
     function removeCreateItem(productId: string) {
         setCreateItems((current) => current.filter((item) => item.product_id !== productId))
+    }
+
+    function updatePaymentLine(id: string, patch: Partial<CreatePaymentLine>) {
+        setCreatePaymentLines((current) => current.map((line) => line.id === id ? { ...line, ...patch } : line))
     }
 
     async function createQuickClient() {
@@ -190,7 +200,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
             toast.error("Agrega al menos un producto al pedido")
             return
         }
-        if (createPaymentMethod === "credit_account" && !createClientId) {
+        if (createPaymentLines.some((line) => line.method === "credit_account") && !createClientId) {
             toast.error("Cuenta corriente requiere cliente")
             return
         }
@@ -220,11 +230,18 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
             return
         }
 
+        const paymentsTotal = createPaymentLines.reduce((sum, line) => sum + Number(line.amount || 0), 0)
+        if (createPaymentLines.some((line) => Number(line.amount || 0) <= 0) || Math.abs(paymentsTotal - createOrderTotal) > 0.01) {
+            toast.error(`Los medios de pago deben sumar el total del pedido ($${createOrderTotal.toLocaleString("es-AR")})`)
+            return
+        }
+
         try {
             const payload: Parameters<typeof api.createOrder>[0] = {
                 customer_name: selectedCreateClient?.name || "Consumidor final",
                 counter_name: createCounterName || currentUser?.name || "",
-                payment_method: createPaymentMethod,
+                payment_method: createPaymentLines[0]?.method || "cash",
+                payments: createPaymentLines.map((line) => ({ method: line.method, amount: Number(line.amount) })),
                 shipping_method: createShippingMethod,
                 estimated_delivery: createEstimatedDelivery,
                 shipping_address: createShippingMethod === "delivery" ? createShippingAddress : "",
@@ -406,20 +423,37 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                         </div>
 
                         <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
-                            <div className="space-y-2">
-                                <Label>Metodo de pago</Label>
-                                <Select value={createPaymentMethod} onValueChange={setCreatePaymentMethod}>
-                                    <SelectTrigger>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {PAYMENT_METHODS.map((method) => (
-                                            <SelectItem key={method.value} value={method.value}>
-                                                {method.label}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                            <div className="space-y-2 sm:col-span-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <Label>Medios de pago</Label>
+                                    <Button type="button" variant="outline" size="sm" onClick={() => setCreatePaymentLines((current) => [...current, newPaymentLine("transfer")])}>
+                                        <Plus className="mr-1 h-3.5 w-3.5" /> Agregar medio
+                                    </Button>
+                                </div>
+                                <div className="space-y-2">
+                                    {createPaymentLines.map((line) => (
+                                        <div key={line.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px_auto]">
+                                            <Select value={line.method} onValueChange={(method) => updatePaymentLine(line.id, { method })}>
+                                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                                <SelectContent>
+                                                    {PAYMENT_METHODS.map((method) => (
+                                                        <SelectItem key={method.value} value={method.value}>{method.label}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                            <Input type="number" min="0.01" step="0.01" value={line.amount} onChange={(event) => updatePaymentLine(line.id, { amount: event.target.value })} placeholder="Importe" />
+                                            <Button type="button" variant="ghost" size="icon" disabled={createPaymentLines.length === 1} onClick={() => setCreatePaymentLines((current) => current.filter((item) => item.id !== line.id))}>
+                                                <Trash2 className="h-4 w-4 text-red-500" />
+                                            </Button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                    <span>Total asignado: ${createPaymentLines.reduce((sum, line) => sum + Number(line.amount || 0), 0).toLocaleString("es-AR")}</span>
+                                    <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setCreatePaymentLines([newPaymentLine(createPaymentLines[0]?.method || "cash", String(createOrderTotal))])}>
+                                        Asignar total a un medio
+                                    </Button>
+                                </div>
                             </div>
                             <div className="space-y-2">
                                 <Label>Metodo logistico</Label>

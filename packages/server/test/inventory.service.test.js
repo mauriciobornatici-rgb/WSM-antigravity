@@ -267,6 +267,9 @@ test('processReceptionApproval successfully approves reception, updates stock, u
             if (sql.includes('SELECT id FROM inventory')) {
                 return [[{ id: 'inv-row-1' }]];
             }
+            if (sql.includes('SELECT quantity_ordered, quantity_received FROM purchase_order_items WHERE id')) {
+                return [[{ quantity_ordered: 20, quantity_received: 10 }]];
+            }
             if (sql.includes('quantity_ordered') && sql.includes('purchase_order_items')) {
                 return [[{ ordered_qty: 20, received_qty: 20 }]];
             }

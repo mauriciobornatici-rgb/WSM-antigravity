@@ -52,7 +52,13 @@ export class PurchaseOrderService {
 
         const orderIds = orders.map((o) => o.id);
         const [allItems] = await pool.query(`
-            SELECT poi.*, p.name AS product_name, p.sku
+            SELECT poi.*, p.name AS product_name, p.sku,
+                   COALESCE((
+                       SELECT SUM(ri.quantity_received)
+                       FROM reception_items ri
+                       JOIN receptions r ON r.id = ri.reception_id
+                       WHERE ri.po_item_id = poi.id AND r.status = 'pending_qc'
+                   ), 0) AS quantity_pending_qc
             FROM purchase_order_items poi
             LEFT JOIN products p ON poi.product_id = p.id
             WHERE poi.purchase_order_id IN (?)

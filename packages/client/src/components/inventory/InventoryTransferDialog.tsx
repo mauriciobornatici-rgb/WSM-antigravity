@@ -4,13 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ProductWithStock } from "@/lib/inventorySnapshot";
-import type { InventoryItem } from "@/types";
+import type { InventoryItem, WarehouseLocation } from "@/types";
 
 interface InventoryTransferDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     products: ProductWithStock[];
     inventoryItems: InventoryItem[];
+    warehouseLocations: WarehouseLocation[];
     selectedProductId: string;
     onSelectProduct: (productId: string) => void;
     fromLocation: string;
@@ -28,6 +29,7 @@ export function InventoryTransferDialog({
     onOpenChange,
     products,
     inventoryItems,
+    warehouseLocations,
     selectedProductId,
     onSelectProduct,
     fromLocation,
@@ -43,7 +45,10 @@ export function InventoryTransferDialog({
         (item) => item.product_id === selectedProductId && item.quantity > 0
     );
 
-    const activeLocations = Array.from(new Set(inventoryItems.map((i) => i.location).filter(Boolean)));
+    const activeLocations = Array.from(new Set([
+        ...warehouseLocations.filter((location) => location.active).map((location) => location.code),
+        ...inventoryItems.map((item) => item.location).filter(Boolean),
+    ]));
 
     const selectedSourceLoc = transferSourceLocations.find((loc) => loc.location === fromLocation);
     const maxTransferQty = selectedSourceLoc
@@ -113,17 +118,17 @@ export function InventoryTransferDialog({
                             {/* Target Location Selector */}
                             <div className="flex flex-col gap-1.5">
                                 <label className="text-[10px] uppercase font-bold text-muted-foreground">Ubicación Destino</label>
-                                <Input
-                                    placeholder="Escribe la ubicación destino (Ej: Góndola B-3)..."
-                                    value={toLocation}
-                                    onChange={(e) => onToLocationChange(e.target.value)}
-                                    list="active-wms-locations"
-                                />
-                                <datalist id="active-wms-locations">
-                                    {activeLocations.map((loc) => (
-                                        <option key={loc} value={loc} />
-                                    ))}
-                                </datalist>
+                                <Select value={toLocation} onValueChange={onToLocationChange}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Selecciona una ubicación creada..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {activeLocations.filter((loc) => loc !== fromLocation).map((loc) => (
+                                            <SelectItem key={loc} value={loc}>{loc}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">Las ubicaciones se crean y editan en la pestaña Góndolas &amp; Almacén.</p>
                             </div>
 
                             {/* Transfer Quantity */}

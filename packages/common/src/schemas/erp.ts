@@ -471,7 +471,10 @@ export const clientReturnCreateSchema = z.object({
     z.object({
       product_id: uuidSchema,
       quantity: z.coerce.number().int().min(1),
-      condition_status: z.enum(['sellable', 'damaged', 'used', 'open_box', 'other']).optional(),
+      condition_status: z.enum([
+        'sellable', 'damaged', 'used', 'open_box', 'other',
+        'loss', 'supplier_rma', 'rejected'
+      ]).optional(),
       unit_price: z.coerce.number().min(0).optional(),
     })
   ).min(1).optional(),

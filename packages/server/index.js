@@ -72,7 +72,11 @@ app.use((req, res, next) => {
 });
 
 app.use(hpp()); // Prevent HTTP Parameter Pollution
-app.use('/uploads', express.static(path.resolve(__dirname, 'uploads')));
+app.use('/uploads', express.static(path.resolve(__dirname, 'uploads'), {
+    setHeaders: (res) => {
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    }
+}));
 
 // Rate Limiting
 const limiter = rateLimit({

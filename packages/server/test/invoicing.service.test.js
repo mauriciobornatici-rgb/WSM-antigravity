@@ -72,6 +72,15 @@ test('createInvoice successfully creates invoice from order', async (t) => {
         if (sql.includes('SELECT name, tax_id, address FROM clients')) {
             return [[{ name: 'Juan Perez', tax_id: '20-30405060-7', address: 'Av. Siempre Viva 742' }]];
         }
+        if (sql.includes('SELECT * FROM invoices WHERE id = ? FOR UPDATE')) {
+            return [[{
+                id: params[0], invoice_type: 'B', point_of_sale: 1, invoice_number: 6,
+                issue_date: '2026-01-01', total_amount: 242, vat_amount: 42
+            }]];
+        }
+        if (sql.includes('FROM journal_entries je')) {
+            return [[{ id: 'existing-entry' }]];
+        }
         return [[]];
     });
 

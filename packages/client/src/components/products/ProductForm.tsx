@@ -38,6 +38,9 @@ export type ProductFormSubmitData = {
     barcode?: string | null;
     name: string;
     category: string;
+    brand?: string | null;
+    size?: string | null;
+    color?: string | null;
     location?: string;
     purchase_price: number;
     sale_price: number;
@@ -86,6 +89,9 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             barcode: initialData?.barcode ?? "",
             name: initialData?.name ?? "",
             category: initialData?.category ?? "",
+            brand: initialData?.brand ?? "",
+            size: initialData?.size ?? "",
+            color: initialData?.color ?? "",
             location: initialData?.location ?? "",
             purchase_price: String(initialData?.purchase_price ?? 0),
             sale_price: String(initialData?.sale_price ?? 0),
@@ -104,6 +110,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     const [barcodeReaderMode, setBarcodeReaderMode] = useState(false);
     const [locationReaderMode, setLocationReaderMode] = useState(false);
     const [isUploadingImage, setIsUploadingImage] = useState(false);
+    const [imagePreviewError, setImagePreviewError] = useState<string | null>(null);
 
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -268,6 +275,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             form.clearErrors("image_url");
             const dataUrl = await readFileAsDataUrl(file);
             const response = await api.uploadProductImage(dataUrl);
+            setImagePreviewError(null);
             form.setValue("image_url", response.image_url, { shouldDirty: true, shouldValidate: true });
             toast.success("Imagen cargada correctamente");
         } catch (error) {
@@ -290,6 +298,9 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             barcode: values.barcode?.trim() ? values.barcode.trim() : null,
             name: values.name.trim(),
             category: (values.category ?? "").trim(),
+            brand: values.brand?.trim() || null,
+            size: values.size?.trim() || null,
+            color: values.color?.trim() || null,
             purchase_price: Number(values.purchase_price),
             sale_price: Number(values.sale_price),
             image_url: values.image_url?.trim() || "",
@@ -339,6 +350,31 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     </FormItem>
                                 )}
                             />
+                        </div>
+
+                        <div className="mt-3 grid gap-3 md:grid-cols-3">
+                            {([
+                                ["brand", "Marca", "Ej: Adidas"],
+                                ["size", "Talle", "Ej: M, 42"],
+                                ["color", "Color", "Ej: Azul"],
+                            ] as const).map(([name, label, placeholder]) => (
+                                <FormField<ProductFormSchema>
+                                    key={name}
+                                    control={form.control}
+                                    name={name}
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>
+                                                {label} <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
+                                            </FormLabel>
+                                            <FormControl>
+                                                <Input placeholder={placeholder} {...field} value={field.value ?? ""} />
+                                            </FormControl>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+                            ))}
                         </div>
 
                         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
@@ -450,7 +486,8 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                             src={imageValue}
                                             alt="Preview del producto"
                                             className="h-full w-full rounded-md object-contain p-2"
-                                            onError={() => form.setValue("image_url", "", { shouldDirty: true, shouldValidate: true })}
+                                            onLoad={() => setImagePreviewError(null)}
+                                            onError={() => setImagePreviewError("La imagen se subió, pero el navegador no pudo mostrarla. Reintente o revise la URL.")}
                                         />
                                     ) : (
                                         <div className="text-center text-sm text-muted-foreground">
@@ -459,6 +496,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                         </div>
                                     )}
                                 </div>
+                                {imagePreviewError ? <p className="mt-2 text-xs text-destructive">{imagePreviewError}</p> : null}
                             </div>
                         </div>
                     </div>

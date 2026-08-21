@@ -409,10 +409,21 @@ class SalesService extends BaseService {
             LEFT JOIN products p ON oi.product_id = p.id
             WHERE oi.order_id IN (?)
         `, [orderIds]);
+        const [paymentRows] = await pool.query(`
+            SELECT id, order_id, payment_method AS method, amount
+            FROM order_payments
+            WHERE order_id IN (?)
+            ORDER BY created_at ASC
+        `, [orderIds]);
 
         const rows = orders.map((o) => ({
             ...o,
-            items: items.filter((i) => i.order_id === o.id)
+            items: items.filter((i) => i.order_id === o.id),
+            payments: paymentRows.filter((payment) => payment.order_id === o.id).map((payment) => ({
+                id: payment.id,
+                method: payment.method,
+                amount: Number(payment.amount || 0)
+            }))
         }));
 
         if (options.includeTotal) {
@@ -616,7 +627,16 @@ class SalesService extends BaseService {
         const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [orderId]);
         if (orders.length === 0) throw new Error('Order not found');
 
-        const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [orderId]);
+        const [items] = await pool.query(`
+            SELECT oi.*, p.name AS product_name, p.sku, p.location, p.barcode
+            FROM order_items oi
+            LEFT JOIN products p ON p.id = oi.product_id
+            WHERE oi.order_id = ?
+        `, [orderId]);
+        const [payments] = await pool.query(
+            'SELECT id, payment_method AS method, amount FROM order_payments WHERE order_id = ? ORDER BY created_at ASC',
+            [orderId]
+        );
         const totalItems = items.reduce((sum, i) => sum + Number(i.quantity || 0), 0);
         const totalPicked = items.reduce((sum, i) => sum + Number(i.picked_quantity || 0), 0);
 
@@ -630,7 +650,7 @@ class SalesService extends BaseService {
         );
 
         return {
-            order: orders[0],
+            order: { ...orders[0], payments: payments.map((payment) => ({ ...payment, amount: Number(payment.amount || 0) })) },
             items,
             summary: {
                 total_items: totalItems,
@@ -723,7 +743,7 @@ class SalesService extends BaseService {
                 );
             }
 
-            return { method, amount };
+            return { method, amount, ...(payment?.check ? { check: payment.check } : {}) };
         });
     }
 
@@ -750,7 +770,7 @@ class SalesService extends BaseService {
                 );
             }
 
-            return { method, amount };
+            return { method, amount, ...(payment?.check ? { check: payment.check } : {}) };
         });
 
         const paidAmount = this._roundMoney(
@@ -837,10 +857,24 @@ class SalesService extends BaseService {
             const invoiceId = crypto.randomUUID();
 
             const client = await this._resolveClientSnapshot(connection, order.client_id, order.customer_name);
-            const hasExplicitPayments = Array.isArray(invoiceData.payments) && invoiceData.payments.length > 0;
+            const [plannedPaymentRows] = await connection.query(
+                'SELECT payment_method AS method, amount, check_payload FROM order_payments WHERE order_id = ? ORDER BY created_at ASC',
+                [orderId]
+            );
+            const plannedPayments = plannedPaymentRows
+                .filter((payment) => payment.method !== 'credit_account')
+                .map((payment) => ({
+                    method: payment.method,
+                    amount: Number(payment.amount || 0),
+                    ...(payment.check_payload ? { check: typeof payment.check_payload === 'string' ? JSON.parse(payment.check_payload) : payment.check_payload } : {})
+                }));
+            const paymentSource = Array.isArray(invoiceData.payments) && invoiceData.payments.length > 0
+                ? invoiceData.payments
+                : plannedPayments;
+            const hasExplicitPayments = paymentSource.length > 0;
             const paymentData = hasExplicitPayments
                 ? this._normalizePayments(
-                    invoiceData.payments,
+                    paymentSource,
                     totalAmount,
                     order.payment_method || 'cash'
                 )
@@ -904,11 +938,14 @@ class SalesService extends BaseService {
                 ]);
             }
 
+            await accountingService.postInvoiceAccountingEntries(connection, invoiceId);
+
             await financeService._registerInvoicePayments(connection, {
                 invoiceId,
                 clientId: client.client_id,
                 invoiceLabel,
-                payments: paymentData.payments
+                payments: paymentData.payments,
+                userId
             });
 
             if (client.client_id) {
@@ -1091,11 +1128,14 @@ class SalesService extends BaseService {
                 ]);
             }
 
+            await accountingService.postInvoiceAccountingEntries(connection, invoiceId);
+
             await financeService._registerInvoicePayments(connection, {
                 invoiceId,
                 clientId: client.client_id,
                 invoiceLabel,
-                payments: paymentData.payments
+                payments: paymentData.payments,
+                userId
             });
 
             if (client.client_id) {
@@ -1203,6 +1243,22 @@ class SalesService extends BaseService {
             'SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id ASC',
             [invoiceId]
         );
+        if (rows.length === 0) {
+            const [fallbackRows] = await pool.query(`
+                SELECT oi.id, ? AS invoice_id, oi.product_id,
+                       COALESCE(p.name, 'Producto') AS description,
+                       COALESCE(p.name, 'Producto') AS product_name,
+                       p.sku, oi.quantity, oi.unit_price,
+                       COALESCE(p.vat_rate, 21) AS vat_rate,
+                       ROUND(oi.quantity * oi.unit_price, 2) AS total_line
+                FROM invoices i
+                JOIN order_items oi ON oi.order_id = i.order_id
+                LEFT JOIN products p ON p.id = oi.product_id
+                WHERE i.id = ?
+                ORDER BY oi.id ASC
+            `, [invoiceId, invoiceId]);
+            return fallbackRows;
+        }
         return rows;
     }
 

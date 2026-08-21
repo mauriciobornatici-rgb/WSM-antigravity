@@ -45,64 +45,7 @@ export class InvoiceAuthorizationUseCase {
             const [updatedInvoiceRows] = await connection.query('SELECT * FROM invoices WHERE id = ?', [invoiceId]);
             const invoice = updatedInvoiceRows[0];
 
-            const debitAccount = ['cash', 'card', 'debit_card', 'credit_card', 'qr'].includes(String(invoice.payment_method).toLowerCase())
-                ? '1.1.01.01'
-                : '1.1.03.01';
-
-            const invoiceLabel = `${invoice.invoice_type}-${String(invoice.point_of_sale).padStart(4, '0')}-${String(invoice.invoice_number).padStart(8, '0')}`;
-            const saleAmount = Math.round((Number(invoice.total_amount) - Number(invoice.vat_amount)) * 100) / 100;
-
-            const saleLines = [
-                { account_code: debitAccount, debit: Number(invoice.total_amount), credit: 0, notes: `Venta Factura ${invoiceLabel}` },
-                { account_code: '4.1.01.01', debit: 0, credit: saleAmount, notes: 'Ingreso por Ventas' }
-            ];
-
-            if (Number(invoice.vat_amount) > 0) {
-                saleLines.push({ account_code: '2.1.02.02', debit: 0, credit: Number(invoice.vat_amount), notes: 'IVA Débito Fiscal 21%' });
-            }
-
-            let sumDeb = saleLines.reduce((s, l) => s + l.debit, 0);
-            let sumCred = saleLines.reduce((s, l) => s + l.credit, 0);
-            const diff = sumDeb - sumCred;
-            if (Math.abs(diff) > 0 && Math.abs(diff) < 0.05) {
-                saleLines[1].credit = Math.round((saleLines[1].credit + diff) * 100) / 100;
-            }
-
-            await accountingService.createJournalEntry(connection, {
-                date: invoice.issue_date,
-                description: `Asiento de Venta - Factura ${invoiceLabel}`,
-                reference_type: 'invoice',
-                reference_id: invoice.id,
-                lines: saleLines
-            });
-
-            const [itemCosts] = await connection.query(`
-                SELECT ii.quantity, p.purchase_price, p.cost_price
-                FROM invoice_items ii
-                JOIN products p ON ii.product_id = p.id
-                WHERE ii.invoice_id = ?
-            `, [invoiceId]);
-
-            let totalCmv = 0;
-            for (const item of itemCosts) {
-                const cost = Number(item.purchase_price || item.cost_price || 0);
-                const qty = Number(item.quantity || 0);
-                totalCmv += cost * qty;
-            }
-            totalCmv = Math.round(totalCmv * 100) / 100;
-
-            if (totalCmv > 0) {
-                await accountingService.createJournalEntry(connection, {
-                    date: invoice.issue_date,
-                    description: `Costo de Mercadería Vendida - Factura ${invoiceLabel}`,
-                    reference_type: 'invoice',
-                    reference_id: invoice.id,
-                    lines: [
-                        { account_code: '5.1.01.01', debit: totalCmv, credit: 0, notes: 'Costo de Ventas (CMV)' },
-                        { account_code: '1.1.04.01', debit: 0, credit: totalCmv, notes: 'Salida de Inventario' }
-                    ]
-                });
-            }
+            await accountingService.postInvoiceAccountingEntries(connection, invoiceId);
 
             await auditService.log({
                 user_id: userId,

@@ -112,6 +112,25 @@ export class CreateOrderUseCase {
             const resolvedPaymentStatus = orderData.external_source && allowedPaymentStatuses.has(orderData.payment_status)
                 ? orderData.payment_status
                 : 'pending';
+            const normalizedPayments = Array.isArray(orderData.payments)
+                ? orderData.payments.map((payment) => ({
+                    method: String(payment.method || '').trim().toLowerCase(),
+                    amount: Math.round(Number(payment.amount || 0) * 100) / 100,
+                    check: payment.check || null
+                }))
+                : [];
+            if (normalizedPayments.length > 0) {
+                const allocatedTotal = Math.round(normalizedPayments.reduce((sum, payment) => sum + payment.amount, 0) * 100) / 100;
+                if (normalizedPayments.some((payment) => !payment.method || payment.amount <= 0) || Math.abs(allocatedTotal - resolvedTotal) > 0.01) {
+                    const err = new Error(`Los medios de pago deben sumar el total del pedido (${resolvedTotal})`);
+                    err.statusCode = 400;
+                    err.errorCode = 'INVALID_ORDER_PAYMENT_ALLOCATION';
+                    throw err;
+                }
+            }
+            const resolvedPaymentMethod = normalizedPayments.length > 1
+                ? 'multiple'
+                : normalizedPayments[0]?.method || orderData.payment_method || 'cash';
 
             let counterName = String(orderData.counter_name || '').trim();
             if (!counterName && userId) {
@@ -139,7 +158,7 @@ export class CreateOrderUseCase {
                     resolvedCounterName,
                     resolvedTotal,
                     resolvedPaymentStatus,
-                    orderData.payment_method || 'cash',
+                    resolvedPaymentMethod,
                     orderData.shipping_method || null,
                     orderData.shipping_address || null,
                     orderData.estimated_delivery || null,
@@ -168,6 +187,20 @@ export class CreateOrderUseCase {
                 await connection.query(
                     'INSERT INTO order_items (id, order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?, ?)',
                     [itemId, orderId, item.product_id, item.quantity, unitPrice]
+                );
+            }
+
+            for (const payment of normalizedPayments) {
+                await connection.query(
+                    `INSERT INTO order_payments (id, order_id, payment_method, amount, check_payload)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [
+                        crypto.randomUUID(),
+                        orderId,
+                        payment.method,
+                        payment.amount,
+                        payment.check ? JSON.stringify(payment.check) : null
+                    ]
                 );
             }
 

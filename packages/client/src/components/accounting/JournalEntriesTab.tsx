@@ -90,6 +90,23 @@ export function JournalEntriesTab({
                                         </TableBody>
                                     </Table>
                                 </div>
+                                <details className="border-t border-border bg-muted/10 px-4 py-3">
+                                    <summary className="cursor-pointer text-xs font-semibold text-primary">
+                                        Ver origen y movimientos relacionados ({entry.related_movements?.length ?? 0})
+                                    </summary>
+                                    <div className="mt-3 space-y-2 text-xs">
+                                        <p className="font-mono text-muted-foreground">{entry.reference_type || "manual"} · {entry.reference_id || "sin referencia"}</p>
+                                        {entry.related_movements?.length ? entry.related_movements.map((movement) => (
+                                            <div key={`${movement.kind}-${movement.id}`} className="flex flex-col gap-1 rounded border bg-card p-2 sm:flex-row sm:items-center sm:justify-between">
+                                                <span><strong className="capitalize">{movement.kind}</strong> · {movement.description || movement.type}</span>
+                                                <span className="font-mono text-muted-foreground">
+                                                    {movement.amount != null ? formatMoney(movement.amount) : `${movement.quantity ?? 0} u.`}
+                                                    {movement.payment_method ? ` · ${movement.payment_method}` : ""}
+                                                </span>
+                                            </div>
+                                        )) : <p className="text-muted-foreground">El asiento conserva su referencia de origen, pero no hay movimientos auxiliares adicionales.</p>}
+                                    </div>
+                                </details>
                             </div>
                         ))
                     )}

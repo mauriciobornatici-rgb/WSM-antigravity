@@ -138,6 +138,17 @@ export class GoodsReceptionService {
                 );
 
                 if (item.po_item_id) {
+                    const [poItems] = await connection.query(
+                        'SELECT quantity_ordered, quantity_received FROM purchase_order_items WHERE id = ? FOR UPDATE',
+                        [item.po_item_id]
+                    );
+                    const pendingBalance = Number(poItems[0]?.quantity_ordered || 0) - Number(poItems[0]?.quantity_received || 0);
+                    if (poItems.length === 0 || Number(item.quantity_received || 0) > pendingBalance) {
+                        const err = new Error('La recepción excede el saldo pendiente de la orden y no puede aprobarse');
+                        err.errorCode = 'RECEPTION_EXCEEDS_PENDING_QUANTITY';
+                        err.statusCode = 409;
+                        throw err;
+                    }
                     await connection.query(
                         'UPDATE purchase_order_items SET quantity_received = quantity_received + ? WHERE id = ?',
                         [item.quantity_received, item.po_item_id]

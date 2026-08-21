@@ -105,7 +105,13 @@ export const getPurchaseOrder = catchAsync(async (req, res) => {
 
     const order = orders[0];
     const [items] = await pool.query(`
-        SELECT poi.*, p.name AS product_name, p.sku
+        SELECT poi.*, p.name AS product_name, p.sku,
+               COALESCE((
+                   SELECT SUM(ri.quantity_received)
+                   FROM reception_items ri
+                   JOIN receptions r ON r.id = ri.reception_id
+                   WHERE ri.po_item_id = poi.id AND r.status = 'pending_qc'
+               ), 0) AS quantity_pending_qc
         FROM purchase_order_items poi
         LEFT JOIN products p ON poi.product_id = p.id
         WHERE poi.purchase_order_id = ?
@@ -201,6 +207,70 @@ export const createReception = catchAsync(async (req, res) => {
     try {
         await connection.beginTransaction();
 
+        if (purchase_order_id) {
+            const [orders] = await connection.query(
+                'SELECT id, supplier_id, status FROM purchase_orders WHERE id = ? FOR UPDATE',
+                [purchase_order_id]
+            );
+            if (orders.length === 0) {
+                const error = new Error('Orden de compra no encontrada');
+                error.statusCode = 404;
+                error.errorCode = 'PURCHASE_ORDER_NOT_FOUND';
+                throw error;
+            }
+            if (!['sent', 'partial'].includes(String(orders[0].status))) {
+                const error = new Error('La orden de compra ya no admite nuevas recepciones');
+                error.statusCode = 409;
+                error.errorCode = 'PURCHASE_ORDER_NOT_RECEIVABLE';
+                throw error;
+            }
+
+            const [poItems] = await connection.query(
+                'SELECT id, product_id, quantity_ordered, quantity_received FROM purchase_order_items WHERE purchase_order_id = ? FOR UPDATE',
+                [purchase_order_id]
+            );
+            const poItemById = new Map(poItems.map((item) => [item.id, item]));
+            const [pendingRows] = await connection.query(`
+                SELECT ri.po_item_id, COALESCE(SUM(ri.quantity_received), 0) AS pending_quantity
+                FROM reception_items ri
+                JOIN receptions r ON r.id = ri.reception_id
+                WHERE r.purchase_order_id = ? AND r.status = 'pending_qc'
+                GROUP BY ri.po_item_id
+            `, [purchase_order_id]);
+            const pendingByItem = new Map(pendingRows.map((row) => [row.po_item_id, Number(row.pending_quantity || 0)]));
+            const submittedItemIds = new Set();
+
+            for (const item of items) {
+                if (!item.po_item_id || submittedItemIds.has(item.po_item_id)) {
+                    const error = new Error('La recepción contiene ítems repetidos o sin vínculo a la orden');
+                    error.statusCode = 400;
+                    error.errorCode = 'INVALID_RECEPTION_ITEMS';
+                    throw error;
+                }
+                submittedItemIds.add(item.po_item_id);
+                const poItem = poItemById.get(item.po_item_id);
+                if (!poItem || poItem.product_id !== item.product_id) {
+                    const error = new Error('Uno de los productos no pertenece a la orden de compra');
+                    error.statusCode = 400;
+                    error.errorCode = 'RECEPTION_ITEM_NOT_IN_ORDER';
+                    throw error;
+                }
+                const receiving = Number(item.quantity_received || 0);
+                const available = Math.max(
+                    0,
+                    Number(poItem.quantity_ordered || 0)
+                    - Number(poItem.quantity_received || 0)
+                    - Number(pendingByItem.get(item.po_item_id) || 0)
+                );
+                if (!Number.isInteger(receiving) || receiving <= 0 || receiving > available) {
+                    const error = new Error(`La cantidad a recibir supera el saldo pendiente de la orden (${available})`);
+                    error.statusCode = 409;
+                    error.errorCode = 'RECEPTION_EXCEEDS_PENDING_QUANTITY';
+                    throw error;
+                }
+            }
+        }
+
         let effectiveSupplierId = supplier_id;
         if (!effectiveSupplierId && purchase_order_id) {
             const [po] = await connection.query('SELECT supplier_id FROM purchase_orders WHERE id = ?', [purchase_order_id]);
@@ -208,6 +278,21 @@ export const createReception = catchAsync(async (req, res) => {
         }
         if (!effectiveSupplierId) {
             throw new Error('supplier_id es obligatorio');
+        }
+
+        if (remito_number) {
+            const [duplicates] = await connection.query(
+                `SELECT id FROM receptions
+                 WHERE supplier_id = ? AND remito_number = ?
+                 LIMIT 1 FOR UPDATE`,
+                [effectiveSupplierId, remito_number]
+            );
+            if (duplicates.length > 0) {
+                const error = new Error('Este remito ya fue registrado para el proveedor');
+                error.statusCode = 409;
+                error.errorCode = 'DUPLICATE_REMITO';
+                throw error;
+            }
         }
 
         const receptionNumber = await nextReceptionNumber(connection);

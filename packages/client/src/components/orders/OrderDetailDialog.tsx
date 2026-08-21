@@ -155,6 +155,20 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                     </div>
                                 </div>
 
+                                {detailOrder.payments?.length ? (
+                                    <div className="rounded-lg border p-3">
+                                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Distribución de pago prevista</h4>
+                                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                            {detailOrder.payments.map((payment) => (
+                                                <div key={payment.id} className="flex items-center justify-between rounded border bg-muted/20 px-3 py-2 text-sm">
+                                                    <span className="capitalize">{payment.method.replaceAll("_", " ")}</span>
+                                                    <strong>{formatMoney(payment.amount)}</strong>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : null}
+
                                 <div className="space-y-2">
                                     <h4 className="font-semibold text-sm text-foreground">Artículos del Pedido</h4>
                                     <div className="rounded-md border border-border overflow-x-auto bg-card">
@@ -278,7 +292,7 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                         <Button
                                             type="button"
                                             variant="outline"
-                                            onClick={() => onTriggerPrint(detailOrder, "remito")}
+                                            onClick={() => onTriggerPrint({ ...detailOrder, items: detailItems }, "remito")}
                                         >
                                             <FileText className="mr-2 h-4 w-4" />
                                             Imprimir Remito (A4)
@@ -286,7 +300,7 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                         <Button
                                             type="button"
                                             variant="outline"
-                                            onClick={() => onTriggerPrint(detailOrder, "label")}
+                                            onClick={() => onTriggerPrint({ ...detailOrder, items: detailItems }, "label")}
                                         >
                                             <Truck className="mr-2 h-4 w-4" />
                                             Imprimir Etiqueta (10x15)

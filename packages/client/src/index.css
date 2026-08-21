@@ -152,8 +152,25 @@
       color: black !important;
       padding: 10mm !important;
   }
+
+  html, body, #root {
+      background: white !important;
+      color: black !important;
+  }
+
+  [id^="printable-"] {
+      background: white !important;
+      color: black !important;
+      color-scheme: light !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+  }
+
+  [id^="printable-"] * {
+      color-scheme: light !important;
+  }
   
-  #printable-ticket, #printable-invoice, #printable-client-document, #printable-order, #printable-label, #printable-manifest {
+  #printable-ticket, #printable-invoice, #printable-client-document, #printable-order, #printable-label, #printable-manifest, #printable-z-report {
       display: block !important;
       width: 100% !important;
       margin: 0 !important;
@@ -161,6 +178,6 @@
   }
 }
 
-#printable-ticket, #printable-invoice, #printable-client-document, #printable-order, #printable-label, #printable-manifest {
+#printable-ticket, #printable-invoice, #printable-client-document, #printable-order, #printable-label, #printable-manifest, #printable-z-report {
     display: none;
 }

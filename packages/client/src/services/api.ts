@@ -7,6 +7,7 @@ import type {
     Client,
     CompanySettings,
     InventoryItem,
+    WarehouseLocation,
     Order,
     OrderItem,
     Product,
@@ -59,7 +60,8 @@ import type {
     PendingInvoiceResponse,
     BulkSupplierPaymentInput,
     BulkSupplierPaymentResponse,
-    PendingSupplierInvoiceResponse
+    PendingSupplierInvoiceResponse,
+    CustomerCheck
 } from "@/types/api";
 import { httpClient, isApiError } from "./httpClient";
 
@@ -253,6 +255,7 @@ type OrderCreateInput = {
     counter_user_id?: string;
     counter_name?: string;
     payment_method?: string;
+    payments?: Array<{ method: string; amount: number }>;
     shipping_method?: "pickup" | "delivery";
     shipping_address?: string;
     estimated_delivery?: string;
@@ -399,6 +402,12 @@ export const api = {
     // ==================== INVENTORY ====================
     getInventory: () =>
         httpClient.get<InventoryItem[]>("/api/inventory"),
+    getWarehouseLocations: () =>
+        httpClient.get<WarehouseLocation[]>("/api/inventory/locations"),
+    createWarehouseLocation: (data: { code: string; name: string; description?: string }) =>
+        httpClient.post<WarehouseLocation>("/api/inventory/locations", data),
+    updateWarehouseLocation: (id: string, data: { code?: string; name?: string; description?: string | null; active?: boolean }) =>
+        httpClient.put<WarehouseLocation>(`/api/inventory/locations/${id}`, data),
 
     // ==================== ORDERS ====================
     getOrders: (filters?: { client_id?: string; status?: string; page?: number; limit?: number; offset?: number }) =>
@@ -796,6 +805,12 @@ export const api = {
 
     registerBulkInvoicePayments: (data: BulkPaymentInput) =>
         httpClient.post<BulkPaymentResponse>("/api/collections", data),
+    getCustomerChecks: (filters?: { status?: string }) =>
+        httpClient.get<CustomerCheck[]>(withQuery("/api/checks", filters)),
+    getCustomerCheck: (id: string) =>
+        httpClient.get<CustomerCheck>(`/api/checks/${id}`),
+    updateCustomerCheckStatus: (id: string, data: { status: CustomerCheck["status"]; notes?: string; delivered_to?: string }) =>
+        httpClient.put<CustomerCheck>(`/api/checks/${id}/status`, data),
 
     // ==================== SUPPLIER PAYMENTS (PAGOS PROVEEDORES) ====================
     getPendingSupplierInvoices: (filters?: { supplier_id?: string }) =>

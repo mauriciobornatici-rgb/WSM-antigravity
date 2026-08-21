@@ -11,8 +11,9 @@ function calculateOrderProgress(order: PendingReceptionOrder): number {
     const items = order.items ?? [];
     const totalOrdered = items.reduce((sum, item) => sum + Number(item.quantity_ordered ?? item.quantity ?? 0), 0);
     const totalReceived = items.reduce((sum, item) => sum + Number(item.quantity_received ?? item.received_quantity ?? 0), 0);
+    const totalPendingQc = items.reduce((sum, item) => sum + Number(item.quantity_pending_qc ?? 0), 0);
     if (totalOrdered <= 0) return 0;
-    return Math.round((totalReceived / totalOrdered) * 100);
+    return Math.min(100, Math.round(((totalReceived + totalPendingQc) / totalOrdered) * 100));
 }
 
 type PendingOrdersSectionProps = {
@@ -44,6 +45,14 @@ export function PendingOrdersSection({ pendingOrders, onStartReception }: Pendin
                         <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950/40">
                             {pendingOrders.map((order) => {
                                 const progress = calculateOrderProgress(order);
+                                const pendingQc = (order.items ?? []).reduce((sum, item) => sum + Number(item.quantity_pending_qc ?? 0), 0);
+                                const remainingToReceive = (order.items ?? []).reduce((sum, item) => {
+                                    const ordered = Number(item.quantity_ordered ?? item.quantity ?? 0);
+                                    const received = Number(item.quantity_received ?? item.received_quantity ?? 0);
+                                    const inQualityControl = Number(item.quantity_pending_qc ?? 0);
+                                    return sum + Math.max(0, ordered - received - inQualityControl);
+                                }, 0);
+                                const canStartReception = remainingToReceive > 0;
                                 return (
                                     <tr key={order.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-900/20">
                                         <td className={tableCellStrongClass}>{order.po_number ?? order.id}</td>
@@ -56,13 +65,15 @@ export function PendingOrdersSection({ pendingOrders, onStartReception }: Pendin
                                                 <Progress value={progress} className="h-2" />
                                                 <span className="text-xs font-medium">{progress}%</span>
                                             </div>
+                                            {pendingQc > 0 ? <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">{pendingQc} u. en control de calidad</p> : null}
                                         </td>
                                         <td className="px-6 py-4 text-right">
                                             <button
                                                 onClick={() => onStartReception(order)}
-                                                className="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white transition hover:bg-green-700"
+                                                disabled={!canStartReception}
+                                                className="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-slate-400 dark:disabled:bg-slate-700"
                                             >
-                                                Comenzar recepcion
+                                                {canStartReception ? "Comenzar recepción" : (pendingQc > 0 ? "En control de calidad" : "Recepción completa")}
                                             </button>
                                         </td>
                                     </tr>

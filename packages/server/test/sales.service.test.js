@@ -260,6 +260,15 @@ test('createManualInvoice computes granular Mixed-VAT and rounds line-by-line co
             if (statement.includes('UPDATE clients')) {
                 return [{ affectedRows: 1 }];
             }
+            if (statement.includes('SELECT * FROM invoices WHERE id = ? FOR UPDATE')) {
+                return [[{
+                    id: params[0], invoice_type: 'A', point_of_sale: 1, invoice_number: 11,
+                    issue_date: '2026-01-01', total_amount: 331.50, vat_amount: 50.50
+                }]];
+            }
+            if (statement.includes('FROM journal_entries je')) {
+                return [[{ id: 'existing-entry' }]];
+            }
             throw new Error(`Unexpected SQL inside test: ${statement}`);
         }
     };
@@ -389,6 +398,9 @@ test('authorizeInvoice stores CAE expiration date in audit payload without rolli
             }
             if (statement.includes('SELECT ii.quantity, p.purchase_price, p.cost_price')) {
                 return [[]];
+            }
+            if (statement.includes('FROM journal_entries je')) {
+                return [[{ id: 'existing-entry' }]];
             }
             if (statement.includes('INSERT INTO audit_logs')) {
                 return [{ affectedRows: 1 }];

@@ -6,6 +6,7 @@ import inventoryService from '../services/inventory.service.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
+import pool from '../config/db.js';
 import { applyPaginationHeaders, getPagination } from '../utils/pagination.js';
 import { normalizeProductImageUrl, parseProductImageDataUrl } from '../utils/imagePolicy.js';
 
@@ -38,6 +39,107 @@ export const getProducts = catchAsync(async (req, res) => {
 export const getInventory = catchAsync(async (req, res) => {
     const rows = await inventoryService.getInventoryWithDetails();
     res.json(rows);
+});
+
+export const getWarehouseLocations = catchAsync(async (req, res) => {
+    const [rows] = await pool.query(`
+        SELECT wl.*,
+               COUNT(DISTINCT i.product_id) AS sku_count,
+               COALESCE(SUM(i.quantity), 0) AS total_quantity
+        FROM warehouse_locations wl
+        LEFT JOIN inventory i ON i.location = wl.code
+        GROUP BY wl.id
+        ORDER BY wl.active DESC, wl.name ASC
+    `);
+    res.json(rows.map((row) => ({
+        ...row,
+        active: Boolean(row.active),
+        sku_count: Number(row.sku_count || 0),
+        total_quantity: Number(row.total_quantity || 0)
+    })));
+});
+
+export const createWarehouseLocation = catchAsync(async (req, res) => {
+    const code = String(req.body?.code || '').trim();
+    const name = String(req.body?.name || code).trim();
+    const description = String(req.body?.description || '').trim() || null;
+    if (!code || !name) {
+        return res.status(400).json({ error: 'invalid_location', message: 'Código y nombre son obligatorios' });
+    }
+    const id = crypto.randomUUID();
+    try {
+        await pool.query(
+            `INSERT INTO warehouse_locations (id, code, name, description, active, created_by)
+             VALUES (?, ?, ?, ?, TRUE, ?)`,
+            [id, code, name, description, req.user?.id || null]
+        );
+    } catch (error) {
+        if (error?.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ error: 'duplicate_location', message: 'Ya existe una ubicación con ese código' });
+        }
+        throw error;
+    }
+    await auditService.log({
+        user_id: req.user?.id || null,
+        action: 'CREATE_WAREHOUSE_LOCATION',
+        entity_type: 'warehouse_location',
+        entity_id: id,
+        new_values: { code, name, description },
+        ip_address: getRequestIp(req)
+    });
+    const [rows] = await pool.query('SELECT * FROM warehouse_locations WHERE id = ?', [id]);
+    res.status(201).json(rows[0]);
+});
+
+export const updateWarehouseLocation = catchAsync(async (req, res) => {
+    const { id } = req.params;
+    const [existingRows] = await pool.query('SELECT * FROM warehouse_locations WHERE id = ?', [id]);
+    if (existingRows.length === 0) {
+        return res.status(404).json({ error: 'not_found', message: 'Ubicación no encontrada' });
+    }
+    const existing = existingRows[0];
+    const code = String(req.body?.code ?? existing.code).trim();
+    const name = String(req.body?.name ?? existing.name).trim();
+    const description = req.body?.description == null ? existing.description : String(req.body.description).trim() || null;
+    const active = req.body?.active == null ? Boolean(existing.active) : Boolean(req.body.active);
+    if (!code || !name) {
+        return res.status(400).json({ error: 'invalid_location', message: 'Código y nombre son obligatorios' });
+    }
+    if (code !== existing.code) {
+        const [[usage]] = await pool.query(`
+            SELECT
+              (SELECT COUNT(*) FROM inventory WHERE location = ?) +
+              (SELECT COUNT(*) FROM products WHERE location = ?) AS usage_count
+        `, [existing.code, existing.code]);
+        if (Number(usage?.usage_count || 0) > 0) {
+            return res.status(409).json({
+                error: 'location_in_use',
+                message: 'El código no puede cambiar mientras tenga productos. Traslade el stock primero; el nombre y la descripción sí pueden editarse.'
+            });
+        }
+    }
+    try {
+        await pool.query(
+            'UPDATE warehouse_locations SET code = ?, name = ?, description = ?, active = ? WHERE id = ?',
+            [code, name, description, active, id]
+        );
+    } catch (error) {
+        if (error?.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ error: 'duplicate_location', message: 'Ya existe una ubicación con ese código' });
+        }
+        throw error;
+    }
+    await auditService.log({
+        user_id: req.user?.id || null,
+        action: 'UPDATE_WAREHOUSE_LOCATION',
+        entity_type: 'warehouse_location',
+        entity_id: id,
+        old_values: existing,
+        new_values: { code, name, description, active },
+        ip_address: getRequestIp(req)
+    });
+    const [rows] = await pool.query('SELECT * FROM warehouse_locations WHERE id = ?', [id]);
+    res.json(rows[0]);
 });
 
 export const createProduct = catchAsync(async (req, res) => {

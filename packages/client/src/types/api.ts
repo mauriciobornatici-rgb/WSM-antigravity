@@ -239,8 +239,16 @@ export type InvoiceItem = {
 export type InvoiceCreateInput = Record<string, unknown>;
 
 export type InvoicePaymentLineInput = {
-    method: "cash" | "transfer" | "credit_account" | "card" | "debit_card" | "credit_card" | "qr";
+    method: "cash" | "transfer" | "credit_account" | "card" | "debit_card" | "credit_card" | "qr" | "check";
     amount: number;
+    check?: {
+        issuer_name: string;
+        bank_name: string;
+        check_number: string;
+        issue_date?: string;
+        due_date: string;
+        instrument_amount?: number;
+    };
 };
 
 export type InvoicePaymentRegisterInput = {
@@ -362,6 +370,42 @@ export type BulkPaymentResponse = {
         invoiceId: string;
         paid_now: number;
         payment_status: "pending" | "partial" | "paid";
+    }>;
+};
+
+export type CustomerCheck = {
+    id: string;
+    client_id?: string | null;
+    client_name?: string | null;
+    issuer_name: string;
+    bank_name: string;
+    check_number: string;
+    amount: number;
+    issue_date?: string | null;
+    due_date: string;
+    status: 'received' | 'deposited' | 'cleared' | 'endorsed' | 'rejected' | 'cancelled';
+    received_at: string;
+    deposited_at?: string | null;
+    cleared_at?: string | null;
+    delivered_to?: string | null;
+    notes?: string | null;
+    allocated_amount?: number;
+    invoice_count?: number;
+    events?: Array<{
+        id: string;
+        status: CustomerCheck["status"];
+        notes?: string | null;
+        performed_by_name?: string | null;
+        created_at: string;
+    }>;
+    allocations?: Array<{
+        id: string;
+        invoice_id?: string | null;
+        invoice_type?: string | null;
+        point_of_sale?: number | null;
+        invoice_number?: number | string | null;
+        amount: number;
+        created_at: string;
     }>;
 };
 

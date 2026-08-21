@@ -5,6 +5,7 @@ export interface Product {
     name: string
     description: string
     category: string
+    brand?: string | null
     size?: string | null
     color?: string | null
     image_url?: string | null
@@ -31,6 +32,9 @@ export interface InventoryItem {
     min_stock_level: number
     updated_at: string
     product?: Product
+    product_name?: string | null
+    sku?: string | null
+    category?: string | null
 }
 
 export interface Client {
@@ -87,6 +91,7 @@ export interface Order {
     created_at: string
     invoice_id?: string
     items: OrderItem[]
+    payments?: Array<{ id: string; method: string; amount: number }>
 
     // Shipping fields
     shipping_method?: 'pickup' | 'delivery'
@@ -208,6 +213,7 @@ export interface PurchaseOrderItem {
     unit_cost: number
     received_quantity?: number
     quantity_received?: number
+    quantity_pending_qc?: number
 }
 
 export interface PurchaseOrder {
@@ -240,6 +246,16 @@ export interface FailedSync {
     updated_at: string
     product_name?: string
     product_sku?: string
+}
+
+export interface WarehouseLocation {
+    id: string
+    code: string
+    name: string
+    description?: string | null
+    active: boolean
+    sku_count?: number
+    total_quantity?: number
 }
 
 export interface TiendaNubeIntegrationStatus {

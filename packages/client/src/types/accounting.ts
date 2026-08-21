@@ -28,6 +28,18 @@ export interface JournalEntry {
     reversal_of_entry_id?: string | null
     is_reversed?: boolean | number
     lines: JournalEntryLine[]
+    related_movements?: Array<{
+        id: string
+        kind: "transaction" | "inventory" | "credit_note"
+        type: string
+        date: string
+        amount?: number
+        quantity?: number
+        description?: string
+        payment_method?: string | null
+        from_location?: string | null
+        to_location?: string | null
+    }>
 }
 
 export interface TrialBalanceItem {
