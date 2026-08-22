@@ -264,14 +264,14 @@ test('completeSession closes only fully counted audits', async (t) => {
     await assert.rejects(() => stockAuditService.completeSession('missing'), (error) => error.errorCode === 'STOCK_AUDIT_NOT_FOUND');
 });
 
-test('cancelSession records cancellation and rejects invalid states', async (t) => {
+test('cancelSession records active/submitted cancellations and rejects final states', async (t) => {
     const auditCalls = stubAudit(t);
     let mode = 'active';
     mockPool(t, async (sql) => {
         const statement = String(sql);
         if (statement.startsWith('SELECT * FROM stock_audit_sessions')) {
             if (mode === 'missing') return [[]];
-            return [[detailSession({ status: mode === 'active' ? 'in_progress' : 'completed' })]];
+            return [[detailSession({ status: mode === 'active' ? 'in_progress' : mode === 'completed' ? 'completed' : 'adjusted' })]];
         }
         if (statement.includes('FROM stock_audit_sessions session')) return [[detailSession({ status: 'cancelled' })]];
         if (statement.includes('FROM stock_audit_items item')) return [[detailItem()]];
@@ -279,8 +279,12 @@ test('cancelSession records cancellation and rejects invalid states', async (t) 
     });
     assert.equal((await stockAuditService.cancelSession('audit-1', 'user-1')).status, 'cancelled');
     assert.equal(auditCalls[0][0].action, 'CANCEL_STOCK_AUDIT');
+    assert.equal(auditCalls[0][0].old_values.status, 'in_progress');
+    mode = 'completed';
+    assert.equal((await stockAuditService.cancelSession('audit-1', 'user-1')).status, 'cancelled');
+    assert.equal(auditCalls[1][0].old_values.status, 'completed');
     mode = 'closed';
-    await assert.rejects(() => stockAuditService.cancelSession('audit-1'), (error) => error.statusCode === 409);
+    await assert.rejects(() => stockAuditService.cancelSession('audit-1'), (error) => error.errorCode === 'STOCK_AUDIT_NOT_CANCELLABLE');
     mode = 'missing';
     await assert.rejects(() => stockAuditService.cancelSession('audit-1'), (error) => error.statusCode === 404);
 });

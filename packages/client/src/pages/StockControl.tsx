@@ -420,7 +420,7 @@ export default function StockControlPage() {
                                     <div className="rounded-xl border p-4"><p className="text-xs text-muted-foreground">SKU exactos</p><p className="mt-1 text-2xl font-bold">{audit.exact_items ?? 0}/{audit.counted_items}</p></div>
                                     <div className="rounded-xl border p-4"><p className="text-xs text-muted-foreground">Diferencia absoluta</p><p className="mt-1 text-2xl font-bold">{audit.variance_units ?? 0} u.</p></div>
                                     {audit.status === "completed" ? (
-                                        <div className="sm:col-span-3">
+                                        <div className="space-y-2 sm:col-span-3">
                                             {canAdjust ? (
                                                 <Button className="w-full" onClick={() => {
                                                     if (window.confirm("¿Aplicar todas las diferencias al stock? Esta acción generará movimientos trazables.")) {
@@ -432,6 +432,13 @@ export default function StockControlPage() {
                                             ) : (
                                                 <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">El conteo espera aprobación de administración o gerencia.</p>
                                             )}
+                                            <Button variant="outline" className="w-full text-destructive hover:text-destructive" onClick={() => {
+                                                if (window.confirm("¿Descartar esta auditoría sin modificar existencias? Quedará registrada como cancelada.")) {
+                                                    actionMutation.mutate({ action: "cancel", id: audit.id })
+                                                }
+                                            }} disabled={actionMutation.isPending}>
+                                                <XCircle className="mr-2 h-4 w-4" />Descartar sin ajustar
+                                            </Button>
                                         </div>
                                     ) : null}
                                 </CardContent>

@@ -12,8 +12,9 @@ Immediate priority: completar los gates externos de `docs/execution/PRODUCTION_R
 - Alcance por Pareto ABC de valor inmovilizado: clase A (80%, cadencia semanal sugerida), B (hasta 95%, mensual) y C (resto, trimestral), además de alcance total.
 - Sesiones persistentes con snapshot, productos pendientes, productos físicos no previstos, reconteos trazados como eventos, historial acotado y métricas de fidelidad globales y por clase.
 - Separación de funciones: depósito puede contar; sólo administración/gerencia puede aprobar ajustes. El ajuste se bloquea ante stock posterior o reservas incompatibles y genera movimientos trazables por SKU.
+- Una auditoría en curso o pendiente de aprobación puede descartarse sin tocar existencias; conserva el evento y queda excluida de las métricas válidas.
 - `Picking` quedó como acceso directo del menú móvil y su escáner admite cámara, lector Bluetooth/USB e ingreso manual.
-- Migración `042_create_stock_audits.sql` aplicada en la base de prueba. Ensayo real completado sobre `General` sin aplicar diferencias, por lo que no se alteró el stock.
+- Migración `042_create_stock_audits.sql` aplicada en la base de prueba. Ensayo real completado sobre `General`, luego descartado sin aplicar diferencias; no se alteró el stock ni las métricas válidas.
 - Verificación móvil a 319 px: sin desbordamiento, overlay ni errores capturados; encabezado global compactado para operación en teléfono.
 - Validación final: servidor 375/375, cobertura 99,43% líneas / 90,67% ramas / 98,23% funciones; cliente 47/47, typecheck, lint y build verdes; RBAC 12/12 y preflight 36 relaciones sin huérfanos.
 - Cámara móvil: el navegador exige origen HTTPS. En la red local HTTP permanecen disponibles lector externo e ingreso manual; el despliegue HTTPS habilita la cámara.

@@ -421,8 +421,8 @@ class StockAuditService {
             );
             const session = sessionRows[0];
             if (!session) throw businessError('La auditoría de stock no existe.', 404, 'STOCK_AUDIT_NOT_FOUND');
-            if (session.status !== ACTIVE_STATUS) {
-                throw businessError('Sólo se puede cancelar una auditoría en curso.', 409, 'STOCK_AUDIT_NOT_ACTIVE');
+            if (![ACTIVE_STATUS, 'completed'].includes(session.status)) {
+                throw businessError('Sólo se puede descartar una auditoría en curso o pendiente de ajuste.', 409, 'STOCK_AUDIT_NOT_CANCELLABLE');
             }
             await connection.query(
                 "UPDATE stock_audit_sessions SET status = 'cancelled', cancelled_at = NOW() WHERE id = ?",
@@ -433,6 +433,7 @@ class StockAuditService {
                 action: 'CANCEL_STOCK_AUDIT',
                 entity_type: 'stock_audit',
                 entity_id: id,
+                old_values: { status: session.status },
                 new_values: { status: 'cancelled' },
             }, connection);
             await connection.commit();
