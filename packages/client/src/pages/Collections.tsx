@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/lib/errorHandling";
 import type { PendingInvoiceResponse, BulkPaymentAllocation, InvoicePaymentLineInput, BulkPaymentInput, CustomerCheck } from "@/types/api";
+import type { Client } from "@/types";
 
 type PaymentLine = {
     id: string;
@@ -70,29 +71,34 @@ export default function CollectionsPage() {
     const queryClient = useQueryClient();
     
     // 1. Fetch pending invoices
-    const { data: pendingInvoices = [], isLoading } = useQuery<PendingInvoiceResponse[]>({
+    const { data: pendingInvoices = [], isLoading: isLoadingInvoices, isError: pendingInvoicesError } = useQuery<PendingInvoiceResponse[]>({
         queryKey: ["collections", "pending-invoices"],
         queryFn: () => api.getPendingInvoices(),
+    });
+    const { data: clients = [], isLoading: isLoadingClients, isError: clientsError } = useQuery<Client[]>({
+        queryKey: ["collections", "clients"],
+        queryFn: () => api.getClients(),
     });
     const { data: customerChecks = [] } = useQuery<CustomerCheck[]>({
         queryKey: ["collections", "checks"],
         queryFn: () => api.getCustomerChecks(),
     });
 
-    // 2. Derive unique clients from pending invoices
-    const clientsWithDebt = useMemo(() => {
-        const map = new Map<string, { id: string; name: string; debt: number }>();
+    // 2. Keep every registered client visible and enrich it with collectible invoiced debt.
+    const clientsForCollection = useMemo(() => {
+        const debtByClient = new Map<string, number>();
         for (const inv of pendingInvoices) {
             const clientId = inv.client_id;
             if (!clientId) continue;
-            if (!map.has(clientId)) {
-                map.set(clientId, { id: clientId, name: inv.client_name || "Desconocido", debt: 0 });
-            }
-            const client = map.get(clientId)!;
-            client.debt += Number(inv.pending_amount || 0);
+            debtByClient.set(clientId, (debtByClient.get(clientId) || 0) + Number(inv.pending_amount || 0));
         }
-        return Array.from(map.values()).sort((a, b) => b.debt - a.debt); // Sort by highest debt
-    }, [pendingInvoices]);
+        return clients
+            .map((client) => ({ id: client.id, name: client.name, debt: debtByClient.get(client.id) || 0 }))
+            .sort((a, b) => b.debt - a.debt || a.name.localeCompare(b.name, "es-AR"));
+    }, [clients, pendingInvoices]);
+
+    const isLoading = isLoadingInvoices || isLoadingClients;
+    const hasLoadError = pendingInvoicesError || clientsError;
 
     // 3. State
     const [selectedClientId, setSelectedClientId] = useState<string>("");
@@ -277,7 +283,7 @@ export default function CollectionsPage() {
                     <Card>
                         <CardHeader>
                             <CardTitle className="text-lg">1. Seleccionar Cliente</CardTitle>
-                            <CardDescription>Clientes con saldo deudor pendiente.</CardDescription>
+                            <CardDescription>Clientes registrados, priorizando quienes tienen facturas con saldo pendiente.</CardDescription>
                         </CardHeader>
                         <CardContent>
                             <Select value={selectedClientId} onValueChange={(val) => {
@@ -290,19 +296,24 @@ export default function CollectionsPage() {
                                     <SelectValue placeholder={isLoading ? "Cargando..." : "Selecciona un cliente"} />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {clientsWithDebt.map((client) => (
+                                    {clientsForCollection.map((client) => (
                                         <SelectItem key={client.id} value={client.id}>
                                             <div className="flex items-center justify-between w-full pr-4">
                                                 <span>{client.name}</span>
-                                                <span className="text-muted-foreground tabular-nums ml-4">{formatMoney(client.debt)}</span>
+                                                <span className="text-muted-foreground tabular-nums ml-4">
+                                                    {client.debt > 0 ? formatMoney(client.debt) : "Sin facturas pendientes"}
+                                                </span>
                                             </div>
                                         </SelectItem>
                                     ))}
-                                    {clientsWithDebt.length === 0 && !isLoading && (
-                                        <SelectItem value="empty" disabled>No hay clientes con deuda</SelectItem>
+                                    {clientsForCollection.length === 0 && !isLoading && (
+                                        <SelectItem value="empty" disabled>No hay clientes registrados</SelectItem>
                                     )}
                                 </SelectContent>
                             </Select>
+                            {hasLoadError ? (
+                                <p className="mt-2 text-sm text-destructive">No se pudieron cargar clientes o facturas. Reintenta en unos segundos.</p>
+                            ) : null}
                         </CardContent>
                     </Card>
 
@@ -340,7 +351,7 @@ export default function CollectionsPage() {
                                             {clientInvoices.length === 0 ? (
                                                 <TableRow>
                                                     <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                                                        No se encontraron facturas pendientes para este cliente.
+                                                        No hay facturas pendientes vinculadas a este cliente. Si la deuda proviene de un pedido en cuenta corriente, primero debe emitirse su factura.
                                                     </TableCell>
                                                 </TableRow>
                                             ) : (
