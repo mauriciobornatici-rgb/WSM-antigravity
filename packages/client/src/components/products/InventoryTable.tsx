@@ -62,6 +62,14 @@ export function InventoryTable({ loading, products, onEdit, onRelocate, onDelete
                                         )}
                                         <div>
                                             <div className="font-medium">{product.name}</div>
+                                            {product.family_name ? (
+                                                <div className="text-xs font-medium text-primary">Familia: {product.family_name}</div>
+                                            ) : null}
+                                            {product.size || product.color ? (
+                                                <div className="text-xs text-muted-foreground">
+                                                    {[product.size ? `Talle ${product.size}` : "", product.color || ""].filter(Boolean).join(" · ")}
+                                                </div>
+                                            ) : null}
                                             <div className="text-xs text-muted-foreground">{product.location || "Sin ubicacion"}</div>
                                         </div>
                                     </div>

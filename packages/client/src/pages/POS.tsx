@@ -242,6 +242,7 @@ export default function POSPage() {
             if (!query) return true;
             return (
                 product.name.toLowerCase().includes(query)
+                || (product.family_name ?? "").toLowerCase().includes(query)
                 || product.sku.toLowerCase().includes(query)
                 || (product.barcode ?? "").toLowerCase().includes(query)
                 || (product.brand ?? "").toLowerCase().includes(query)

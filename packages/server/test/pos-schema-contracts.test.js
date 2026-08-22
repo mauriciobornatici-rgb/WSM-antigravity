@@ -59,6 +59,7 @@ test('product contract preserves optional commercial attributes and image URL', 
     const parsed = createProductSchema.parse({
         sku: 'QA-ATTR-001',
         name: 'Camiseta QA',
+        family_name: 'Camiseta Essential',
         brand: 'Marca QA',
         size: 'M',
         color: 'Azul',
@@ -66,6 +67,7 @@ test('product contract preserves optional commercial attributes and image URL', 
     });
 
     assert.equal(parsed.brand, 'Marca QA');
+    assert.equal(parsed.family_name, 'Camiseta Essential');
     assert.equal(parsed.size, 'M');
     assert.equal(parsed.color, 'Azul');
     assert.match(parsed.image_url || '', /uploads\/products/);

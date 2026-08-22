@@ -33,6 +33,47 @@ test('ensureUniqueBarcode throws 409 when barcode already exists', async () => {
     );
 });
 
+test('resolveProductFamily reuses an existing family for a size/color variant', async () => {
+    const calls = [];
+    const connection = {
+        async query(sql, params) {
+            calls.push({ sql: String(sql), params });
+            return [[{ id: 'family-1' }]];
+        }
+    };
+
+    const result = await inventoryService.resolveProductFamily(null, {
+        name: 'Remera Essential',
+        brand: 'WSM',
+        category: 'Ropa',
+        size: 'M',
+        color: 'Azul'
+    }, connection);
+
+    assert.equal(result, 'family-1');
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].sql, /FROM product_families/i);
+    assert.deepEqual(calls[0].params, ['Remera Essential', 'WSM', 'Ropa']);
+});
+
+test('resolveProductFamily leaves a standalone product ungrouped', async () => {
+    let queryCalled = false;
+    const connection = {
+        async query() {
+            queryCalled = true;
+            return [[]];
+        }
+    };
+
+    const result = await inventoryService.resolveProductFamily(null, {
+        name: 'Pelota Oficial',
+        category: 'Accesorios'
+    }, connection);
+
+    assert.equal(result, null);
+    assert.equal(queryCalled, false);
+});
+
 test('createProduct persists initial stock and inventory movement when stock_initial is positive', async (t) => {
     const originalCreate = inventoryService.create;
     const originalEnsureUniqueBarcode = inventoryService.ensureUniqueBarcode;

@@ -10,6 +10,7 @@ const REQUIRED_TABLES = [
     'company_settings',
     'clients',
     'suppliers',
+    'product_families',
     'products',
     'inventory',
     'inventory_movements',

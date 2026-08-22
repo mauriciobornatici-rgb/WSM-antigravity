@@ -9,6 +9,7 @@ export const createProductSchema = z.object({
   name: z.string().min(1),
   description: z.string().nullable().optional(),
   category: z.string().nullable().optional(),
+  family_name: z.string().trim().max(255).nullable().optional(),
   brand: z.string().max(100).nullable().optional(),
   size: z.string().max(100).nullable().optional(),
   color: z.string().max(100).nullable().optional(),

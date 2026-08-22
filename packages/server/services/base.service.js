@@ -5,7 +5,7 @@ const SQL_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // Column allowlists per table — only these columns can be used in dynamic queries
 const TABLE_COLUMNS = {
     products: [
-        'id', 'sku', 'barcode', 'name', 'description', 'category', 'image_url', 'location',
+        'id', 'family_id', 'sku', 'barcode', 'name', 'description', 'category', 'image_url', 'location',
         'purchase_price', 'cost_price', 'sale_price',
         'brand', 'size', 'color', 'unit_measure', 'stock_current', 'stock_min', 'supplier_id', 'status',
         'created_at', 'updated_at', 'deleted_at'

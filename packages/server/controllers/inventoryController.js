@@ -151,6 +151,9 @@ export const updateProduct = catchAsync(async (req, res) => {
     const { id } = req.params;
     const previous = await inventoryService.findById(id);
     const data = { ...req.body };
+    const hasFamilyName = Object.prototype.hasOwnProperty.call(data, 'family_name');
+    const familyName = data.family_name;
+    delete data.family_name;
     if (data.cost_price != null && data.purchase_price == null) {
         data.purchase_price = data.cost_price;
     }
@@ -165,6 +168,12 @@ export const updateProduct = catchAsync(async (req, res) => {
     }
     if (Object.prototype.hasOwnProperty.call(data, 'image_url')) {
         data.image_url = normalizeProductImageUrl(data.image_url);
+    }
+    if (hasFamilyName) {
+        data.family_id = await inventoryService.resolveProductFamily(familyName, {
+            ...(previous || {}),
+            ...data
+        });
     }
 
     const updated = await inventoryService.update(id, data);

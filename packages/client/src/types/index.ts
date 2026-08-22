@@ -1,5 +1,8 @@
 export interface Product {
     id: string
+    family_id?: string | null
+    family_name?: string | null
+    family_image_url?: string | null
     sku: string
     barcode?: string | null
     name: string

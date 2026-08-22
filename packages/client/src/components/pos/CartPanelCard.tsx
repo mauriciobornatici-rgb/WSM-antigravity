@@ -97,11 +97,11 @@ export function CartPanelCard({
                             <div key={item.id} className="rounded-md border p-2 hover:border-primary/40 transition-colors bg-card/40">
                                 <div className="flex items-center justify-between gap-2">
                                     <div className="flex min-w-0 items-center gap-2">
-                                        {item.image_url ? (
+                                        {item.image_url || item.family_image_url ? (
                                             <img
-                                                src={item.image_url}
+                                                src={item.image_url || item.family_image_url || ""}
                                                 alt={item.name}
-                                                className="h-10 w-10 shrink-0 rounded-md object-cover"
+                                                className="h-10 w-10 shrink-0 rounded-md object-contain"
                                             />
                                         ) : (
                                             <div className="h-10 w-10 shrink-0 rounded-md border bg-muted/30 flex items-center justify-center text-[10px] text-muted-foreground">
@@ -110,6 +110,10 @@ export function CartPanelCard({
                                         )}
                                         <div className="min-w-0">
                                             <div className="truncate font-medium text-sm">{item.name}</div>
+                                            <div className="truncate text-[11px] font-medium text-primary">
+                                                {[item.size ? `Talle ${item.size}` : "", item.color || ""].filter(Boolean).join(" · ") || "Producto sin variante"}
+                                            </div>
+                                            <div className="truncate font-mono text-[10px] text-muted-foreground">SKU: {item.sku}</div>
                                             <div className="text-xs text-muted-foreground">
                                                 ${Number(item.sale_price).toLocaleString("es-AR")}
                                             </div>

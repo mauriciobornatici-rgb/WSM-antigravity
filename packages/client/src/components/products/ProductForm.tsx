@@ -38,6 +38,7 @@ export type ProductFormSubmitData = {
     barcode?: string | null;
     name: string;
     category: string;
+    family_name?: string | null;
     brand?: string | null;
     size?: string | null;
     color?: string | null;
@@ -89,6 +90,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             barcode: initialData?.barcode ?? "",
             name: initialData?.name ?? "",
             category: initialData?.category ?? "",
+            family_name: initialData?.family_name ?? "",
             brand: initialData?.brand ?? "",
             size: initialData?.size ?? "",
             color: initialData?.color ?? "",
@@ -298,6 +300,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             barcode: values.barcode?.trim() ? values.barcode.trim() : null,
             name: values.name.trim(),
             category: (values.category ?? "").trim(),
+            family_name: values.family_name?.trim() || null,
             brand: values.brand?.trim() || null,
             size: values.size?.trim() || null,
             color: values.color?.trim() || null,
@@ -346,6 +349,29 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                         <FormControl>
                                             <Input placeholder="Calzado, Ropa, Accesorios" {...field} value={field.value ?? ""} />
                                         </FormControl>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                        </div>
+
+                        <div className="mt-3">
+                            <FormField<ProductFormSchema>
+                                control={form.control}
+                                name="family_name"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>Familia o modelo <span className="text-xs font-normal text-muted-foreground">(opcional)</span></FormLabel>
+                                        <FormControl>
+                                            <Input
+                                                placeholder="Ej: Remera Essential"
+                                                {...field}
+                                                value={field.value ?? ""}
+                                            />
+                                        </FormControl>
+                                        <p className="text-xs text-muted-foreground">
+                                            Repite esta familia para agrupar sus talles y colores. Si cargas una variante y lo dejas vacío, se usará el nombre del producto.
+                                        </p>
                                         <FormMessage />
                                     </FormItem>
                                 )}

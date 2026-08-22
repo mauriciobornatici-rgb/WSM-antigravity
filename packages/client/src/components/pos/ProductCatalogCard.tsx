@@ -10,6 +10,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 type CatalogView = "grid" | "list";
 
+type CatalogItem = {
+    id: string;
+    name: string;
+    brand: string | null;
+    category: string;
+    imageUrl: string | null;
+    variants: POSProduct[];
+    stock: number;
+    minPrice: number;
+    maxPrice: number;
+};
+
 const CATALOG_VIEW_STORAGE_KEY = "wsm-pos-catalog-view:v1";
 const CATALOG_PAGE_SIZE: Record<CatalogView, number> = {
     grid: 60,
@@ -22,6 +34,45 @@ function getInitialCatalogView(): CatalogView {
     } catch {
         return "grid";
     }
+}
+
+function productVariantLabel(product: POSProduct) {
+    return [product.size ? `Talle ${product.size}` : "", product.color || ""]
+        .filter(Boolean)
+        .join(" · ") || "Sin variante";
+}
+
+function groupCatalogProducts(products: POSProduct[]): CatalogItem[] {
+    const grouped = new Map<string, POSProduct[]>();
+    for (const product of products) {
+        const key = product.family_id ? `family:${product.family_id}` : `product:${product.id}`;
+        const variants = grouped.get(key);
+        if (variants) variants.push(product);
+        else grouped.set(key, [product]);
+    }
+
+    return Array.from(grouped.entries()).map(([id, variants]) => {
+        const first = variants[0];
+        if (!first) throw new Error("Catalog group without variants");
+        const prices = variants.map((variant) => Number(variant.sale_price || 0));
+        return {
+            id,
+            name: first.family_name || first.name,
+            brand: first.brand || null,
+            category: first.category || "Sin categoria",
+            imageUrl: first.family_image_url || variants.find((variant) => variant.image_url)?.image_url || null,
+            variants,
+            stock: variants.reduce((total, variant) => total + Number(variant.stock || 0), 0),
+            minPrice: Math.min(...prices),
+            maxPrice: Math.max(...prices),
+        };
+    }).sort((first, second) => first.name.localeCompare(second.name, "es", { sensitivity: "base" }));
+}
+
+function formatCatalogPrice(item: CatalogItem) {
+    const minimum = `$${item.minPrice.toLocaleString("es-AR")}`;
+    if (item.minPrice === item.maxPrice) return minimum;
+    return `${minimum} - $${item.maxPrice.toLocaleString("es-AR")}`;
 }
 
 type ProductCatalogCardProps = {
@@ -59,6 +110,7 @@ export function ProductCatalogCard({
     const [manualScanValue, setManualScanValue] = useState("");
     const [catalogView, setCatalogView] = useState<CatalogView>(getInitialCatalogView);
     const [catalogPage, setCatalogPage] = useState(1);
+    const [selectedCatalogItem, setSelectedCatalogItem] = useState<CatalogItem | null>(null);
 
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -70,15 +122,19 @@ export function ProductCatalogCard({
         () => categories.filter((category) => category !== "all"),
         [categories],
     );
-    const totalItemsLabel = `${filteredProducts.length} producto${filteredProducts.length === 1 ? "" : "s"}`;
+    const catalogItems = useMemo(() => groupCatalogProducts(filteredProducts), [filteredProducts]);
+    const groupedVariantCount = filteredProducts.length - catalogItems.length;
+    const totalItemsLabel = groupedVariantCount > 0
+        ? `${catalogItems.length} productos · ${filteredProducts.length} variantes`
+        : `${catalogItems.length} producto${catalogItems.length === 1 ? "" : "s"}`;
     const pageSize = CATALOG_PAGE_SIZE[catalogView];
-    const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
+    const totalPages = Math.max(1, Math.ceil(catalogItems.length / pageSize));
     const currentPage = Math.min(catalogPage, totalPages);
     const firstVisibleIndex = (currentPage - 1) * pageSize;
-    const visibleProducts = filteredProducts.slice(firstVisibleIndex, firstVisibleIndex + pageSize);
-    const visibleRangeLabel = filteredProducts.length === 0
+    const visibleCatalogItems = catalogItems.slice(firstVisibleIndex, firstVisibleIndex + pageSize);
+    const visibleRangeLabel = catalogItems.length === 0
         ? "Sin resultados"
-        : `Mostrando ${firstVisibleIndex + 1}-${Math.min(firstVisibleIndex + pageSize, filteredProducts.length)} de ${filteredProducts.length}`;
+        : `Mostrando ${firstVisibleIndex + 1}-${Math.min(firstVisibleIndex + pageSize, catalogItems.length)} de ${catalogItems.length}`;
 
     function changeCatalogView(view: CatalogView) {
         setCatalogView(view);
@@ -90,10 +146,13 @@ export function ProductCatalogCard({
         }
     }
 
-    function productVariantLabel(product: POSProduct) {
-        return [product.size ? `Talle ${product.size}` : "", product.color || ""]
-            .filter(Boolean)
-            .join(" · ") || "Sin variante";
+    function selectCatalogItem(item: CatalogItem) {
+        if (item.variants.length === 1) {
+            const product = item.variants[0];
+            if (product) onAddToCart(product);
+            return;
+        }
+        setSelectedCatalogItem(item);
     }
 
     function stopScannerResources() {
@@ -325,20 +384,20 @@ export function ProductCatalogCard({
                         </div>
                     ) : catalogView === "grid" ? (
                         <div className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                            {visibleProducts.map((product) => (
+                            {visibleCatalogItems.map((item) => (
                                 <button
-                                    key={product.id}
-                                    onClick={() => onAddToCart(product)}
-                                    disabled={product.stock <= 0}
+                                    key={item.id}
+                                    onClick={() => selectCatalogItem(item)}
+                                    disabled={item.stock <= 0}
                                     className={`group flex h-full flex-col rounded-xl border border-blue-900/30 bg-card/80 text-left transition hover:border-blue-700/50 hover:bg-blue-950/20 ${
-                                        product.stock <= 0 ? "cursor-not-allowed opacity-60 hover:border-blue-900/30 hover:bg-card/80" : ""
+                                        item.stock <= 0 ? "cursor-not-allowed opacity-60 hover:border-blue-900/30 hover:bg-card/80" : ""
                                     }`}
                                 >
                                     <div className="h-28 overflow-hidden rounded-t-xl bg-muted/20 sm:h-32 xl:h-36">
-                                        {product.image_url ? (
+                                        {item.imageUrl ? (
                                             <img
-                                                src={product.image_url}
-                                                alt={product.name}
+                                                src={item.imageUrl}
+                                                alt={item.name}
                                                 className="h-full w-full object-contain transition duration-200 group-hover:scale-[1.03]"
                                             />
                                         ) : (
@@ -348,20 +407,23 @@ export function ProductCatalogCard({
                                         )}
                                     </div>
                                     <div className="flex flex-1 flex-col space-y-1.5 p-2.5">
-                                        <div className="line-clamp-2 text-sm font-semibold leading-tight">{product.name}</div>
-                                        <div className="truncate text-[11px] text-muted-foreground" title={[product.sku, product.barcode].filter(Boolean).join(" | ")}>
-                                            {product.sku}
-                                            {product.barcode ? ` | ${product.barcode}` : ""}
+                                        <div className="line-clamp-2 text-sm font-semibold leading-tight">{item.name}</div>
+                                        <div className="truncate text-[11px] text-muted-foreground">
+                                            {item.variants.length > 1
+                                                ? `${item.variants.length} variantes · ${item.brand || item.category}`
+                                                : item.variants[0]?.sku}
                                         </div>
-                                        <div className="truncate text-[11px] text-muted-foreground" title={product.location || "Sin ubicacion"}>
-                                            {product.location || "Sin ubicacion"}
+                                        <div className="truncate text-[11px] text-muted-foreground">
+                                            {item.variants.length > 1
+                                                ? item.variants.map(productVariantLabel).join(" | ")
+                                                : item.variants[0]?.location || "Sin ubicacion"}
                                         </div>
                                         <div className="mt-auto flex items-center justify-between gap-2 pt-1">
                                             <span className="text-sm font-bold sm:text-base">
-                                                ${Number(product.sale_price).toLocaleString("es-AR")}
+                                                {formatCatalogPrice(item)}
                                             </span>
-                                            <Badge variant={stockBadgeVariant(product.stock)}>
-                                                Stock: {product.stock}
+                                            <Badge variant={stockBadgeVariant(item.stock)}>
+                                                Stock: {item.stock}
                                             </Badge>
                                         </div>
                                     </div>
@@ -383,56 +445,61 @@ export function ProductCatalogCard({
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {visibleProducts.map((product) => (
-                                        <TableRow key={product.id} className={product.stock <= 0 ? "opacity-60" : ""}>
+                                    {visibleCatalogItems.map((item) => {
+                                        const onlyVariant = item.variants.length === 1 ? item.variants[0] : null;
+                                        return (
+                                            <TableRow key={item.id} className={item.stock <= 0 ? "opacity-60" : ""}>
                                             <TableCell>
                                                 <div className="flex min-w-52 items-center gap-2.5">
                                                     <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/20">
-                                                        {product.image_url ? (
-                                                            <img src={product.image_url} alt="" className="h-full w-full object-contain" />
+                                                        {item.imageUrl ? (
+                                                            <img src={item.imageUrl} alt="" className="h-full w-full object-contain" />
                                                         ) : (
                                                             <span className="text-[9px] text-muted-foreground">Sin imagen</span>
                                                         )}
                                                     </div>
                                                     <div className="min-w-0">
-                                                        <div className="truncate text-sm font-semibold" title={product.name}>{product.name}</div>
-                                                        <div className="truncate text-xs text-muted-foreground">{product.brand || product.category}</div>
+                                                        <div className="truncate text-sm font-semibold" title={item.name}>{item.name}</div>
+                                                        <div className="truncate text-xs text-muted-foreground">{item.brand || item.category}</div>
                                                     </div>
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="text-xs font-medium">{productVariantLabel(product)}</TableCell>
-                                            <TableCell>
-                                                <div className="font-mono text-xs">{product.sku}</div>
-                                                <div className="font-mono text-[11px] text-muted-foreground">{product.barcode || "Sin codigo"}</div>
+                                            <TableCell className="text-xs font-medium">
+                                                {item.variants.length > 1 ? `${item.variants.length} opciones` : onlyVariant ? productVariantLabel(onlyVariant) : "-"}
                                             </TableCell>
-                                            <TableCell className="text-xs">{product.location || "Sin ubicacion"}</TableCell>
+                                            <TableCell>
+                                                <div className="font-mono text-xs">{onlyVariant?.sku || "Varios SKU"}</div>
+                                                <div className="font-mono text-[11px] text-muted-foreground">{onlyVariant?.barcode || (onlyVariant ? "Sin codigo" : "Elegir variante")}</div>
+                                            </TableCell>
+                                            <TableCell className="text-xs">{onlyVariant?.location || (onlyVariant ? "Sin ubicacion" : "Varias")}</TableCell>
                                             <TableCell className="text-right">
-                                                <Badge variant={stockBadgeVariant(product.stock)}>{product.stock}</Badge>
+                                                <Badge variant={stockBadgeVariant(item.stock)}>{item.stock}</Badge>
                                             </TableCell>
                                             <TableCell className="text-right font-semibold">
-                                                ${Number(product.sale_price).toLocaleString("es-AR")}
+                                                {formatCatalogPrice(item)}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <Button
                                                     type="button"
                                                     size="sm"
                                                     className="h-8 gap-1.5"
-                                                    disabled={product.stock <= 0}
-                                                    aria-label={`Agregar ${product.name} al carrito`}
-                                                    onClick={() => onAddToCart(product)}
+                                                    disabled={item.stock <= 0}
+                                                    aria-label={`${item.variants.length > 1 ? "Elegir variante de" : "Agregar"} ${item.name}`}
+                                                    onClick={() => selectCatalogItem(item)}
                                                 >
                                                     <Plus className="h-3.5 w-3.5" />
-                                                    Agregar
+                                                    {item.variants.length > 1 ? "Elegir" : "Agregar"}
                                                 </Button>
                                             </TableCell>
-                                        </TableRow>
-                                    ))}
+                                            </TableRow>
+                                        );
+                                    })}
                                 </TableBody>
                             </Table>
                         </div>
                     )}
 
-                    {!loading && filteredProducts.length > pageSize ? (
+                    {!loading && catalogItems.length > pageSize ? (
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
                             <p className="text-xs text-muted-foreground">Pagina {currentPage} de {totalPages}</p>
                             <div className="flex gap-2">
@@ -461,6 +528,67 @@ export function ProductCatalogCard({
                     ) : null}
                 </CardContent>
             </Card>
+
+            <Dialog
+                open={selectedCatalogItem != null}
+                onOpenChange={(open) => {
+                    if (!open) setSelectedCatalogItem(null);
+                }}
+            >
+                <DialogContent className="w-[95vw] max-h-[88vh] overflow-y-auto sm:max-w-3xl">
+                    <DialogHeader>
+                        <DialogTitle>Elegir variante · {selectedCatalogItem?.name}</DialogTitle>
+                        <DialogDescription>
+                            Selecciona el talle y color exactos. Cada opcion conserva su propio SKU, precio y stock.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="overflow-x-auto rounded-md border">
+                        <Table className="min-w-[620px]">
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Variante</TableHead>
+                                    <TableHead>SKU / Codigo</TableHead>
+                                    <TableHead>Ubicacion</TableHead>
+                                    <TableHead className="text-right">Stock</TableHead>
+                                    <TableHead className="text-right">Precio</TableHead>
+                                    <TableHead className="text-right">Accion</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {(selectedCatalogItem?.variants ?? []).map((variant) => (
+                                    <TableRow key={variant.id} className={variant.stock <= 0 ? "opacity-60" : ""}>
+                                        <TableCell className="font-medium">{productVariantLabel(variant)}</TableCell>
+                                        <TableCell>
+                                            <div className="font-mono text-xs">{variant.sku}</div>
+                                            <div className="font-mono text-[11px] text-muted-foreground">{variant.barcode || "Sin codigo"}</div>
+                                        </TableCell>
+                                        <TableCell className="text-xs">{variant.location || "Sin ubicacion"}</TableCell>
+                                        <TableCell className="text-right">
+                                            <Badge variant={stockBadgeVariant(variant.stock)}>{variant.stock}</Badge>
+                                        </TableCell>
+                                        <TableCell className="text-right font-semibold">
+                                            ${Number(variant.sale_price).toLocaleString("es-AR")}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                disabled={variant.stock <= 0}
+                                                onClick={() => {
+                                                    onAddToCart(variant);
+                                                    setSelectedCatalogItem(null);
+                                                }}
+                                            >
+                                                Agregar
+                                            </Button>
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <Dialog
                 open={scanDialogOpen}

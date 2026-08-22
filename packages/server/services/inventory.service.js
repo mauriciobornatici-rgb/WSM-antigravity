@@ -23,6 +23,66 @@ class InventoryService extends BaseService {
         return sanitized.length > 0 ? sanitized : null;
     }
 
+    normalizeFamilyValue(value) {
+        if (typeof value !== 'string') return null;
+        const sanitized = value.trim().replace(/\s+/g, ' ');
+        return sanitized.length > 0 ? sanitized : null;
+    }
+
+    async resolveProductFamily(rawFamilyName, productData = {}, connection = pool) {
+        const size = this.normalizeFamilyValue(productData.size);
+        const color = this.normalizeFamilyValue(productData.color);
+        const explicitFamilyName = this.normalizeFamilyValue(rawFamilyName);
+        const familyName = explicitFamilyName || ((size || color) ? this.normalizeFamilyValue(productData.name) : null);
+        if (!familyName) return null;
+
+        const brand = this.normalizeFamilyValue(productData.brand);
+        const category = this.normalizeFamilyValue(productData.category);
+        const imageUrl = normalizeProductImageUrl(productData.image_url);
+
+        const [existingRows] = await connection.query(`
+            SELECT id
+            FROM product_families
+            WHERE deleted_at IS NULL
+              AND LOWER(TRIM(name)) = LOWER(?)
+              AND LOWER(TRIM(COALESCE(brand, ''))) = LOWER(?)
+              AND LOWER(TRIM(COALESCE(category, ''))) = LOWER(?)
+            LIMIT 1
+        `, [familyName, brand || '', category || '']);
+
+        if (existingRows[0]?.id) {
+            if (imageUrl) {
+                await connection.query(
+                    'UPDATE product_families SET image_url = COALESCE(image_url, ?) WHERE id = ?',
+                    [imageUrl, existingRows[0].id]
+                );
+            }
+            return existingRows[0].id;
+        }
+
+        const familyKey = crypto
+            .createHash('sha256')
+            .update(`manual|${familyName.toLowerCase()}|${(brand || '').toLowerCase()}|${(category || '').toLowerCase()}`)
+            .digest('hex');
+        const familyId = crypto.randomUUID();
+
+        await connection.query(`
+            INSERT INTO product_families (id, family_key, name, brand, category, image_url)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                name = VALUES(name),
+                brand = VALUES(brand),
+                category = VALUES(category),
+                image_url = COALESCE(product_families.image_url, VALUES(image_url))
+        `, [familyId, familyKey, familyName, brand, category, imageUrl]);
+
+        const [resolvedRows] = await connection.query(
+            'SELECT id FROM product_families WHERE family_key = ? AND deleted_at IS NULL LIMIT 1',
+            [familyKey]
+        );
+        return resolvedRows[0]?.id || familyId;
+    }
+
     async ensureUniqueBarcode(rawBarcode, excludeId = null, connection = pool) {
         const barcode = this.normalizeBarcode(rawBarcode);
         if (!barcode) return null;
@@ -51,8 +111,11 @@ class InventoryService extends BaseService {
         let query = `
             SELECT
                 p.*,
+                family.name AS family_name,
+                family.image_url AS family_image_url,
                 COALESCE(inv.total_quantity - inv.total_reserved, 0) AS inventory_stock_current
             FROM products p
+            LEFT JOIN product_families family ON family.id = p.family_id AND family.deleted_at IS NULL
             LEFT JOIN (
                 SELECT product_id, SUM(quantity) AS total_quantity, SUM(reserved_quantity) AS total_reserved
                 FROM inventory
@@ -139,6 +202,9 @@ class InventoryService extends BaseService {
         normalized.barcode = await this.ensureUniqueBarcode(normalized.barcode);
         normalized.location = this.normalizeLocation(normalized.location);
         normalized.image_url = normalizeProductImageUrl(normalized.image_url);
+        const familyName = normalized.family_name;
+        delete normalized.family_name;
+        normalized.family_id = await this.resolveProductFamily(familyName, normalized);
 
         const data = { id, ...normalized };
         const result = await this.create(data);

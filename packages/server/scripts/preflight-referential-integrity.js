@@ -1,6 +1,7 @@
 import pool, { closePool } from '../config/db.js';
 
 const relationships = [
+    ['products', 'family_id', 'product_families', 'id'],
     ['products', 'supplier_id', 'suppliers', 'id'],
     ['inventory', 'product_id', 'products', 'id'],
     ['inventory_movements', 'product_id', 'products', 'id'],
