@@ -2,8 +2,8 @@ import './loadEnv.js';
 
 const ALLOWED_NODE_ENVS = new Set(['development', 'staging', 'production']);
 
-function parseBooleanEnv(name, defaultValue = false) {
-    const raw = process.env[name];
+function parseBooleanEnv(environment, name, defaultValue = false) {
+    const raw = environment[name];
     if (raw == null || raw === '') return defaultValue;
 
     const normalized = String(raw).trim().toLowerCase();
@@ -12,8 +12,8 @@ function parseBooleanEnv(name, defaultValue = false) {
     throw new Error(`Invalid boolean value for ${name}: '${raw}'`);
 }
 
-function parsePortEnv(name, defaultValue) {
-    const raw = process.env[name];
+function parsePortEnv(environment, name, defaultValue) {
+    const raw = environment[name];
     const value = raw == null || raw === '' ? defaultValue : Number(raw);
 
     if (!Number.isInteger(value) || value <= 0 || value > 65535) {
@@ -22,8 +22,8 @@ function parsePortEnv(name, defaultValue) {
     return value;
 }
 
-function parsePositiveIntEnv(name, defaultValue) {
-    const raw = process.env[name];
+function parsePositiveIntEnv(environment, name, defaultValue) {
+    const raw = environment[name];
     if (raw == null || raw === '') return defaultValue;
     const value = Number(raw);
     if (!Number.isInteger(value) || value <= 0) {
@@ -71,10 +71,8 @@ function isValidHttpUrl(value, { requireHttps = false } = {}) {
 
 let cachedConfig = null;
 
-export function getEnvConfig() {
-    if (cachedConfig) return cachedConfig;
-
-    const nodeEnv = String(process.env.NODE_ENV || 'development').trim().toLowerCase();
+export function buildEnvConfig(environment = process.env, warn = console.warn) {
+    const nodeEnv = String(environment.NODE_ENV || 'development').trim().toLowerCase();
     if (!ALLOWED_NODE_ENVS.has(nodeEnv)) {
         throw new Error(`Invalid NODE_ENV '${nodeEnv}'. Allowed: development, staging, production`);
     }
@@ -90,25 +88,26 @@ export function getEnvConfig() {
         isStaging,
         isProduction,
         isNonDevelopment,
-        port: parsePortEnv('PORT', 3001),
-        dbPort: parsePortEnv('DB_PORT', 3306),
-        jwtSecret: process.env.JWT_SECRET || '',
-        jwtExpiresIn: String(process.env.JWT_EXPIRES_IN || '8h').trim(),
-        corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS, isDevelopment ? ['http://localhost:5173'] : []),
-        trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
-        encryptionKey: process.env.ENCRYPTION_KEY || '',
-        dbSsl: parseBooleanEnv('DB_SSL', false),
-        dbSslRejectUnauthorized: parseBooleanEnv('DB_SSL_REJECT_UNAUTHORIZED', true),
-        allowInsecureNonDev: parseBooleanEnv('ALLOW_INSECURE_NON_DEV', false),
-        apiRateLimitWindowMs: parsePositiveIntEnv('API_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+        port: parsePortEnv(environment, 'PORT', 3001),
+        dbPort: parsePortEnv(environment, 'DB_PORT', 3306),
+        jwtSecret: environment.JWT_SECRET || '',
+        jwtExpiresIn: String(environment.JWT_EXPIRES_IN || '8h').trim(),
+        corsOrigins: parseCorsOrigins(environment.CORS_ORIGINS, isDevelopment ? ['http://localhost:5173'] : []),
+        trustProxy: parseTrustProxy(environment.TRUST_PROXY),
+        encryptionKey: environment.ENCRYPTION_KEY || '',
+        dbSsl: parseBooleanEnv(environment, 'DB_SSL', false),
+        dbSslRejectUnauthorized: parseBooleanEnv(environment, 'DB_SSL_REJECT_UNAUTHORIZED', true),
+        allowInsecureNonDev: parseBooleanEnv(environment, 'ALLOW_INSECURE_NON_DEV', false),
+        apiRateLimitWindowMs: parsePositiveIntEnv(environment, 'API_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
         apiRateLimitMax: parsePositiveIntEnv(
+            environment,
             'API_RATE_LIMIT_MAX',
             isDevelopment ? 1200 : isStaging ? 2000 : 500
         ),
-        loginRateLimitWindowMs: parsePositiveIntEnv('LOGIN_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
-        loginRateLimitMax: parsePositiveIntEnv('LOGIN_RATE_LIMIT_MAX', 8),
-        appBaseUrl: String(process.env.APP_BASE_URL || (isDevelopment ? 'http://localhost:5173' : '')).trim(),
-        tiendanubeWebhookUrl: String(process.env.TIENDANUBE_WEBHOOK_URL || '').trim()
+        loginRateLimitWindowMs: parsePositiveIntEnv(environment, 'LOGIN_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+        loginRateLimitMax: parsePositiveIntEnv(environment, 'LOGIN_RATE_LIMIT_MAX', 8),
+        appBaseUrl: String(environment.APP_BASE_URL || (isDevelopment ? 'http://localhost:5173' : '')).trim(),
+        tiendanubeWebhookUrl: String(environment.TIENDANUBE_WEBHOOK_URL || '').trim()
     };
 
     const errors = [];
@@ -168,13 +167,17 @@ export function getEnvConfig() {
     }
 
     if (warnings.length > 0) {
-        warnings.forEach((warning) => console.warn(`[env-warning] ${warning}`));
+        warnings.forEach((warning) => warn(`[env-warning] ${warning}`));
     }
 
     if (errors.length > 0) {
         throw new Error(`Environment validation failed:\n- ${errors.join('\n- ')}`);
     }
 
-    cachedConfig = config;
     return config;
+}
+
+export function getEnvConfig() {
+    if (!cachedConfig) cachedConfig = buildEnvConfig();
+    return cachedConfig;
 }
