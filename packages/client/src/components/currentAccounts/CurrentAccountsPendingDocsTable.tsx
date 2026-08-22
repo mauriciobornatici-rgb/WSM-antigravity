@@ -44,7 +44,7 @@ export function CurrentAccountsPendingDocsTable({ pendingDocuments }: CurrentAcc
                             <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                                 <div className="flex flex-col items-center justify-center gap-1">
                                     <CheckCircle2 className="h-6 w-6 text-emerald-500 mb-1" />
-                                    <span>¡Excelente! No hay facturas pendientes de cobro/pago para esta cuenta.</span>
+                                    <span>¡Excelente! No hay comprobantes ni ventas pendientes para esta cuenta.</span>
                                 </div>
                             </TableCell>
                         </TableRow>

@@ -189,7 +189,22 @@ class SalesService extends BaseService {
                 return order;
             }
 
+            let cancellationCreditAmount = 0;
             if (nextStatus === 'cancelled') {
+                if (order.invoice_id) {
+                    const err = new Error('El pedido ya está facturado. Debe anularse mediante una nota de crédito para conservar la trazabilidad fiscal.');
+                    err.statusCode = 409;
+                    err.status = 'fail';
+                    err.errorCode = 'INVOICED_ORDER_REQUIRES_CREDIT_NOTE';
+                    throw err;
+                }
+                const [paymentRows] = await connection.query(
+                    `SELECT COALESCE(SUM(amount), 0) AS paid_amount
+                     FROM transactions
+                     WHERE reference_id = ? AND type = 'sale'`,
+                    [orderId]
+                );
+                cancellationCreditAmount = this._roundMoney(paymentRows[0]?.paid_amount || 0);
                 await this._restoreInventoryForCancelledOrder(connection, orderId, order.status);
             }
 
@@ -328,10 +343,19 @@ class SalesService extends BaseService {
                 }
             }
 
-            await connection.query(
-                'UPDATE orders SET status = ? WHERE id = ? AND deleted_at IS NULL',
-                [nextStatus, orderId]
-            );
+            if (nextStatus === 'cancelled') {
+                await connection.query(
+                    `UPDATE orders
+                     SET status = 'cancelled', payment_status = ?
+                     WHERE id = ? AND deleted_at IS NULL`,
+                    [cancellationCreditAmount > 0 ? 'credit_balance' : 'voided', orderId]
+                );
+            } else {
+                await connection.query(
+                    'UPDATE orders SET status = ? WHERE id = ? AND deleted_at IS NULL',
+                    [nextStatus, orderId]
+                );
+            }
             const [updated] = await connection.query(
                 'SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL',
                 [orderId]
@@ -346,7 +370,13 @@ class SalesService extends BaseService {
                 new_values: { status: nextStatus }
             }, connection);
             await connection.commit();
-            return updated[0];
+            return nextStatus === 'cancelled'
+                ? {
+                    ...updated[0],
+                    cancellation_credit_amount: cancellationCreditAmount,
+                    cancellation_financial_status: cancellationCreditAmount > 0 ? 'client_credit' : 'debt_voided'
+                }
+                : updated[0];
         } catch (err) {
             await connection.rollback();
             throw err;

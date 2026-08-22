@@ -53,6 +53,9 @@ export const updateOrderStatus = catchAsync(async (req, res) => {
         if (err.errorCode === 'INVALID_ORDER_TRANSITION') {
             return res.status(409).json({ error: 'invalid_transition', message: err.message });
         }
+        if (err.errorCode === 'INVOICED_ORDER_REQUIRES_CREDIT_NOTE') {
+            return res.status(409).json({ error: 'credit_note_required', message: err.message });
+        }
         throw err;
     }
     if (updated) {

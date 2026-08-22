@@ -75,6 +75,82 @@ test('_decreaseInventoryForOrder consumes inventory across locations and registe
     assert.deepEqual(updateCalls[1].params, [1, 'inv-2']);
 });
 
+test('cancelling an uninvoiced order voids debt and preserves prior collections as client credit', async () => {
+    const calls = [];
+    const connection = {
+        async beginTransaction() {},
+        async commit() {},
+        async rollback() {},
+        release() {},
+        async query(sql, params) {
+            const statement = String(sql);
+            calls.push({ sql: statement, params });
+            if (statement.includes('SELECT * FROM orders WHERE id = ?') && statement.includes('FOR UPDATE')) {
+                return [[{ id: 'order-1', status: 'pending', invoice_id: null }]];
+            }
+            if (statement.includes('SELECT COALESCE(SUM(amount)')) {
+                return [[{ paid_amount: 250 }]];
+            }
+            if (statement.includes('SELECT product_id, quantity FROM order_items')) {
+                return [[]];
+            }
+            if (statement.includes("UPDATE orders") && statement.includes("status = 'cancelled'")) {
+                return [{ affectedRows: 1 }];
+            }
+            if (statement.includes('SELECT * FROM orders WHERE id = ?') && !statement.includes('FOR UPDATE')) {
+                return [[{ id: 'order-1', status: 'cancelled', payment_status: 'credit_balance' }]];
+            }
+            throw new Error(`Unexpected SQL in order cancellation test: ${statement}`);
+        }
+    };
+    const originalGetConnection = pool.getConnection;
+    const originalAuditLog = auditService.log;
+    pool.getConnection = async () => connection;
+    auditService.log = async () => {};
+
+    try {
+        const result = await salesService.transitionOrderStatus('order-1', 'cancelled', 'user-1');
+        assert.equal(result.status, 'cancelled');
+        assert.equal(result.payment_status, 'credit_balance');
+        assert.equal(result.cancellation_credit_amount, 250);
+        assert.equal(result.cancellation_financial_status, 'client_credit');
+        assert.ok(calls.some((call) => call.params?.[0] === 'credit_balance'));
+    } finally {
+        pool.getConnection = originalGetConnection;
+        auditService.log = originalAuditLog;
+    }
+});
+
+test('cancelling an invoiced order requires a credit note', async () => {
+    const connection = {
+        async beginTransaction() {},
+        async commit() {},
+        async rollback() {},
+        release() {},
+        async query(sql) {
+            if (String(sql).includes('SELECT * FROM orders WHERE id = ?')) {
+                return [[{ id: 'order-1', status: 'packed', invoice_id: 'invoice-1' }]];
+            }
+            throw new Error(`Unexpected SQL in invoiced cancellation test: ${sql}`);
+        }
+    };
+    const originalGetConnection = pool.getConnection;
+    pool.getConnection = async () => connection;
+
+    try {
+        await assert.rejects(
+            () => salesService.transitionOrderStatus('order-1', 'cancelled', 'user-1'),
+            (error) => {
+                assert.equal(error.statusCode, 409);
+                assert.equal(error.errorCode, 'INVOICED_ORDER_REQUIRES_CREDIT_NOTE');
+                return true;
+            }
+        );
+    } finally {
+        pool.getConnection = originalGetConnection;
+    }
+});
+
 test('createOrder persists external source and id for imported marketplace orders', async () => {
     const connectionCalls = [];
     let orderInsertCall = null;

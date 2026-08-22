@@ -12,7 +12,7 @@ import {
     FileText,
     BadgeAlert
 } from "lucide-react";
-import type { Client, Supplier, Transaction } from "@/types";
+import type { Client, Order, Supplier, Transaction } from "@/types";
 import type { Invoice } from "@/types/api";
 import { Label } from "@/components/ui/label";
 import { formatMoney } from "@/lib/formatters";
@@ -55,6 +55,12 @@ export default function CurrentAccountsPage() {
     const { data: clientTransactions = [] } = useQuery<Transaction[]>({
         queryKey: ["current-accounts", "client-transactions", selectedClientId],
         queryFn: () => api.getTransactions({ client_id: selectedClientId }),
+        enabled: accountType === "client" && !!selectedClientId,
+    });
+
+    const { data: clientOrders = [] } = useQuery<Order[]>({
+        queryKey: ["current-accounts", "client-orders", selectedClientId],
+        queryFn: () => api.getOrders({ client_id: selectedClientId }),
         enabled: accountType === "client" && !!selectedClientId,
     });
 
@@ -101,6 +107,14 @@ export default function CurrentAccountsPage() {
     const clientMovements = useMemo<UnifiedMovement[]>(() => {
         if (!selectedClientId) return [];
 
+        const receivableReferenceIds = new Set(clientInvoices.map((invoice) => invoice.id));
+        for (const order of clientOrders) {
+            const hasCreditSplit = (order.payments || []).some((payment) => payment.method === "credit_account");
+            if (order.payment_method === "credit_account" || hasCreditSplit) {
+                receivableReferenceIds.add(order.id);
+            }
+        }
+
         const invoiceRows: UnifiedMovement[] = clientInvoices
             .filter(inv => inv.status !== "cancelled")
             .map(inv => ({
@@ -115,8 +129,31 @@ export default function CurrentAccountsPage() {
                 balanceAfter: 0
             }));
 
+        const uninvoicedCreditOrderRows: UnifiedMovement[] = clientOrders
+            .filter((order) => !order.invoice_id && !["cancelled", "returned"].includes(order.status))
+            .flatMap((order): UnifiedMovement[] => {
+                const splitCreditAmount = (order.payments || [])
+                    .filter((payment) => payment.method === "credit_account")
+                    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+                const creditAmount = splitCreditAmount > 0
+                    ? splitCreditAmount
+                    : (order.payment_method === "credit_account" ? Number(order.total_amount || 0) : 0);
+                if (creditAmount <= 0) return [];
+                return [{
+                    id: order.id,
+                    date: order.created_at,
+                    type: "adjustment" as const,
+                    typeLabel: "Venta sin facturar",
+                    reference: `VEN-${order.id.substring(0, 8).toUpperCase()}`,
+                    description: "Venta a cuenta corriente pendiente de comprobante fiscal",
+                    debit: creditAmount,
+                    credit: 0,
+                    balanceAfter: 0
+                }];
+            });
+
         const paymentRows: UnifiedMovement[] = clientTransactions
-            .filter(tx => String(tx.type).toLowerCase() === "sale" && Number(tx.amount || 0) > 0)
+            .filter(tx => String(tx.type).toLowerCase() === "sale" && Number(tx.amount || 0) > 0 && Boolean(tx.reference_id && receivableReferenceIds.has(tx.reference_id)))
             .map(tx => ({
                 id: String(tx.id),
                 date: String(tx.date || new Date().toISOString()),
@@ -139,7 +176,7 @@ export default function CurrentAccountsPage() {
                 reference: `NC-${String(cn.credit_note_number || "").padStart(8, "0")}`,
                 description: String(cn.reason || "Nota de crédito por devolución o ajuste"),
                 debit: 0,
-                credit: Number(cn.total_amount || 0),
+                credit: Number(cn.amount || cn.total_amount || 0),
                 balanceAfter: 0
             }));
 
@@ -157,10 +194,10 @@ export default function CurrentAccountsPage() {
                 balanceAfter: 0
             }));
 
-        return [...invoiceRows, ...paymentRows, ...creditNoteRows, ...returnRows].sort(
+        return [...invoiceRows, ...uninvoicedCreditOrderRows, ...paymentRows, ...creditNoteRows, ...returnRows].sort(
             (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
         );
-    }, [selectedClientId, clientInvoices, clientTransactions, clientCreditNotes, clientReturns]);
+    }, [selectedClientId, clientInvoices, clientOrders, clientTransactions, clientCreditNotes, clientReturns]);
 
     const supplierMovements = useMemo<UnifiedMovement[]>(() => {
         if (!selectedSupplierId) return [];
@@ -280,13 +317,20 @@ export default function CurrentAccountsPage() {
     const pendingDocuments = useMemo<PendingDoc[]>(() => {
         if (accountType === "client") {
             const paidMap = new Map<string, number>();
+            const receivableReferenceIds = new Set(clientInvoices.map((invoice) => invoice.id));
+            for (const order of clientOrders) {
+                const hasCreditSplit = (order.payments || []).some((payment) => payment.method === "credit_account");
+                if (order.payment_method === "credit_account" || hasCreditSplit) {
+                    receivableReferenceIds.add(order.id);
+                }
+            }
             for (const tx of clientTransactions) {
-                if (String(tx.type).toLowerCase() === "sale" && tx.reference_id) {
+                if (String(tx.type).toLowerCase() === "sale" && tx.reference_id && receivableReferenceIds.has(tx.reference_id)) {
                     paidMap.set(tx.reference_id, (paidMap.get(tx.reference_id) || 0) + Number(tx.amount || 0));
                 }
             }
 
-            return clientInvoices.map(inv => {
+            const pendingInvoices = clientInvoices.map(inv => {
                 const paid = paidMap.get(inv.id) || 0;
                 const pending = Number(inv.total_amount || 0) - paid;
                 const isOverdue = Boolean(inv.due_date && new Date(inv.due_date).getTime() < currentTimestamp);
@@ -302,6 +346,32 @@ export default function CurrentAccountsPage() {
                     isOverdue
                 };
             }).filter(d => d.pending > 0.01 && d.status !== "cancelled");
+
+            const pendingOrders = clientOrders
+                .filter((order) => !order.invoice_id && !["cancelled", "returned"].includes(order.status))
+                .map((order) => {
+                    const splitCreditAmount = (order.payments || [])
+                        .filter((payment) => payment.method === "credit_account")
+                        .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+                    const total = splitCreditAmount > 0
+                        ? splitCreditAmount
+                        : (order.payment_method === "credit_account" ? Number(order.total_amount || 0) : 0);
+                    const paid = paidMap.get(order.id) || 0;
+                    return {
+                        id: order.id,
+                        number: `VEN-${order.id.substring(0, 8).toUpperCase()}`,
+                        date: order.created_at,
+                        dueDate: "",
+                        total,
+                        paid,
+                        pending: Math.max(0, total - paid),
+                        status: "unbilled",
+                        isOverdue: false
+                    };
+                })
+                .filter((document) => document.total > 0 && document.pending > 0.01);
+
+            return [...pendingInvoices, ...pendingOrders];
         } else {
             const paidMap = new Map<string, number>();
             for (const p of supplierPayments) {
@@ -327,7 +397,7 @@ export default function CurrentAccountsPage() {
                 };
             }).filter((d: { pending: number; status: string }) => d.pending > 0.01 && d.status !== "cancelled");
         }
-    }, [accountType, clientInvoices, clientTransactions, currentTimestamp, supplierInvoices, supplierPayments]);
+    }, [accountType, clientInvoices, clientOrders, clientTransactions, currentTimestamp, supplierInvoices, supplierPayments]);
 
     const isAccountSelected = accountType === "client" ? !!selectedClientId : !!selectedSupplierId;
 

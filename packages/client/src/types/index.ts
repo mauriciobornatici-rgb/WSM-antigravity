@@ -110,13 +110,15 @@ export interface Order {
     client_name?: string
     client_id?: string
     status: 'pending' | 'picking' | 'packed' | 'dispatched' | 'delivered' | 'completed' | 'cancelled'
-    payment_status?: 'pending' | 'partial' | 'paid'
+    payment_status?: 'pending' | 'partial' | 'paid' | 'voided' | 'credit_balance'
     payment_method?: string
     total_amount: number
     created_at: string
     invoice_id?: string
     items: OrderItem[]
     payments?: Array<{ id: string; method: string; amount: number }>
+    cancellation_credit_amount?: number
+    cancellation_financial_status?: 'client_credit' | 'debt_voided'
 
     // Shipping fields
     shipping_method?: 'pickup' | 'delivery'

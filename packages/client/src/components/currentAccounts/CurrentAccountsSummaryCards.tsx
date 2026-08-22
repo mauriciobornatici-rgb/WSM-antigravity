@@ -44,7 +44,7 @@ export function CurrentAccountsSummaryCards({
                             {formatMoney(balance)}
                         </p>
                         <p className="text-[11px] text-muted-foreground mt-0.5">
-                            {balance > 0 ? "Saldo pendiente actual" : "Cuenta al día / Sin deuda"}
+                            {balance > 0 ? "Saldo pendiente actual" : balance < 0 ? "Saldo a favor del cliente" : "Cuenta al día / Sin deuda"}
                         </p>
                     </div>
                     <div

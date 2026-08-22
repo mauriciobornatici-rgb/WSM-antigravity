@@ -204,9 +204,18 @@ export default function OrdersPage() {
     }
 
     async function cancelOrder(order: Order) {
+        const confirmed = window.confirm(
+            "¿Cancelar este pedido? La deuda pendiente se anulará. Si ya recibió cobros, el dinero quedará como saldo a favor del cliente hasta devolverlo o aplicarlo."
+        )
+        if (!confirmed) return
         try {
-            await updateOrderStatusMutation.mutateAsync({ orderId: order.id, status: "cancelled" })
-            toast.success("Pedido cancelado")
+            const cancelled = await updateOrderStatusMutation.mutateAsync({ orderId: order.id, status: "cancelled" })
+            const creditAmount = Number(cancelled.cancellation_credit_amount || 0)
+            toast.success("Pedido cancelado", {
+                description: creditAmount > 0
+                    ? `La deuda se anuló y ${formatMoney(creditAmount)} quedó como saldo a favor del cliente.`
+                    : "La deuda pendiente fue anulada sin generar saldo a favor."
+            })
         } catch {
             // El manejo global de React Query ya informa el error.
         }
@@ -410,7 +419,7 @@ export default function OrdersPage() {
                                                     ) : null}
                                                     {canSell && (order.status === "pending" ||
                                                     order.status === "picking" ||
-                                                    order.status === "packed") ? (
+                                                    order.status === "packed") && !order.invoice_id ? (
                                                         <Button
                                                             size="sm"
                                                             variant="destructive"
