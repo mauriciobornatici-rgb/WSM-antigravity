@@ -5,6 +5,7 @@ import type { QueryParams } from "@/types/api"
 import type { Transaction } from "@/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { 
     Download, 
@@ -425,20 +426,20 @@ export default function AccountingPage() {
                     <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                         <div className="flex flex-col gap-1 w-full sm:w-36">
                             <label className="text-[10px] uppercase font-bold text-slate-500">Desde</label>
-                            <input
-                                type="date"
+                            <ArgentinaDateInput
                                 value={startDate}
-                                onChange={(e) => setStartDate(e.target.value)}
-                                className="h-9 px-3 rounded-md border border-slate-300 dark:border-slate-700 bg-transparent text-sm w-full outline-none focus:ring-1 focus:ring-blue-500"
+                                onChange={setStartDate}
+                                ariaLabel="Auditar desde"
+                                className="[&_input]:h-9"
                             />
                         </div>
                         <div className="flex flex-col gap-1 w-full sm:w-36">
                             <label className="text-[10px] uppercase font-bold text-slate-500">Hasta</label>
-                            <input
-                                type="date"
+                            <ArgentinaDateInput
                                 value={endDate}
-                                onChange={(e) => setEndDate(e.target.value)}
-                                className="h-9 px-3 rounded-md border border-slate-300 dark:border-slate-700 bg-transparent text-sm w-full outline-none focus:ring-1 focus:ring-blue-500"
+                                onChange={setEndDate}
+                                ariaLabel="Auditar hasta"
+                                className="[&_input]:h-9"
                             />
                         </div>
                         <div className="flex items-end h-full pt-4 w-full sm:w-auto">

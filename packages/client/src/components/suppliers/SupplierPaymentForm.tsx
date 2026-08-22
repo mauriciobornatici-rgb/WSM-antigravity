@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ArgentinaDateInput } from '@/components/common/ArgentinaDateInput';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DollarSign, Plus, Trash2 } from 'lucide-react';
@@ -186,11 +187,11 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                     <Label htmlFor="paymentDate">Fecha General de Pago</Label>
-                    <Input
+                    <ArgentinaDateInput
                         id="paymentDate"
-                        type="date"
                         value={paymentDate}
-                        onChange={(e) => setPaymentDate(e.target.value)}
+                        onChange={setPaymentDate}
+                        ariaLabel="Fecha general de pago"
                         required
                     />
                 </div>

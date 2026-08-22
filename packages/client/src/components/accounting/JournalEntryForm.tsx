@@ -1,4 +1,5 @@
 import { Input } from "@/components/ui/input"
+import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CheckCircle, AlertTriangle, Trash, Plus } from "lucide-react"
@@ -48,7 +49,7 @@ export function JournalEntryForm({
             <div className="grid gap-4 sm:grid-cols-3">
                 <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold text-slate-500 uppercase">Fecha del Asiento</label>
-                    <Input type="date" value={date} onChange={(e) => onDateChange(e.target.value)} />
+                    <ArgentinaDateInput value={date} onChange={onDateChange} ariaLabel="Fecha del asiento" required />
                 </div>
                 <div className="flex flex-col gap-1.5 sm:col-span-2">
                     <label className="text-xs font-bold text-slate-500 uppercase">Concepto / Glosa General</label>

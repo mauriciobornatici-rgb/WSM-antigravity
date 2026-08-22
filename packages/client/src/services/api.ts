@@ -64,7 +64,8 @@ import type {
     BulkSupplierPaymentInput,
     BulkSupplierPaymentResponse,
     PendingSupplierInvoiceResponse,
-    CustomerCheck
+    CustomerCheck,
+    OutgoingCheck
 } from "@/types/api";
 import { httpClient, isApiError } from "./httpClient";
 
@@ -829,6 +830,13 @@ export const api = {
 
     registerBulkSupplierPayments: (data: BulkSupplierPaymentInput) =>
         httpClient.post<BulkSupplierPaymentResponse>("/api/supplier-payments/bulk", data),
+
+    getOutgoingChecks: (filters?: { status?: string }) =>
+        httpClient.get<OutgoingCheck[]>(withQuery("/api/outgoing-checks", filters)),
+    getOutgoingCheck: (id: string) =>
+        httpClient.get<OutgoingCheck>(`/api/outgoing-checks/${id}`),
+    updateOutgoingCheckStatus: (id: string, data: { status: OutgoingCheck["status"]; notes?: string }) =>
+        httpClient.put<OutgoingCheck>(`/api/outgoing-checks/${id}/status`, data),
 
 
 

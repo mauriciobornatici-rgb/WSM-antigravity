@@ -300,3 +300,97 @@ test('updateCustomerCheckStatus records clearance once and returns the complete 
     assert.ok(queryCalls.some((call) => call.sql.includes('cleared_at = NOW()')));
     assert.ok(queryCalls.some((call) => call.sql.includes('INSERT INTO customer_check_events')));
 });
+
+test('registerBulkSupplierPayments creates and allocates a traceable own cheque', async (t) => {
+    const queryCalls = [];
+    mockPool(t, async (sql, params) => {
+        queryCalls.push({ sql, params });
+        if (sql.includes('SELECT * FROM supplier_invoices')) {
+            return [[{ id: 'supplier-invoice-1', supplier_id: 'supplier-1', total_amount: 1000, invoice_number: 'A-1' }]];
+        }
+        if (sql.includes('FROM supplier_payments') && sql.includes('SUM(amount)')) {
+            return [[{ paid_amount: 0 }]];
+        }
+        if (sql.includes('SELECT id, amount FROM outgoing_checks')) {
+            return [[]];
+        }
+        return [[]];
+    });
+
+    const originalLog = auditService.log;
+    const originalCreateJournalEntry = accountingService.createJournalEntry;
+    auditService.log = async () => {};
+    accountingService.createJournalEntry = async () => {};
+    t.after(() => {
+        auditService.log = originalLog;
+        accountingService.createJournalEntry = originalCreateJournalEntry;
+    });
+
+    const result = await financeService.registerBulkSupplierPayments({
+        supplierId: 'supplier-1',
+        allocations: [{
+            invoiceId: 'supplier-invoice-1',
+            payments: [{
+                method: 'check',
+                amount: 1000,
+                check: {
+                    source_type: 'own',
+                    issuer_name: 'WSM Deportes',
+                    bank_name: 'Banco QA',
+                    check_number: 'OWN-001',
+                    issue_date: '2026-08-21',
+                    due_date: '2026-09-21',
+                    instrument_amount: 1000
+                }
+            }]
+        }]
+    }, 'user-1');
+
+    assert.equal(result.total_paid, 1000);
+    assert.ok(queryCalls.some((call) => call.sql.includes('INSERT INTO outgoing_checks')));
+    assert.ok(queryCalls.some((call) => call.sql.includes('INSERT INTO outgoing_check_allocations')));
+    assert.ok(queryCalls.some((call) => call.sql.includes('outgoing_check_id')));
+});
+
+test('getOutgoingChecks normalizes amounts and status portfolio counters', async (t) => {
+    mockPool(t, async (sql) => {
+        if (sql.includes('FROM outgoing_checks oc')) {
+            return [[{ id: 'outgoing-1', amount: '2500.50', allocated_amount: '2500.50', invoice_count: '2', status: 'delivered' }]];
+        }
+        return [[]];
+    });
+
+    const result = await financeService.getOutgoingChecks({ status: 'delivered' });
+    assert.equal(result[0].amount, 2500.5);
+    assert.equal(result[0].allocated_amount, 2500.5);
+    assert.equal(result[0].invoice_count, 2);
+});
+
+test('updateOutgoingCheckStatus persists the bank clearance event', async (t) => {
+    const queryCalls = [];
+    mockPool(t, async (sql, params) => {
+        queryCalls.push({ sql, params });
+        if (sql.includes('SELECT * FROM outgoing_checks')) {
+            return [[{ id: 'outgoing-1', status: 'delivered', notes: null }]];
+        }
+        if (sql.includes('FROM outgoing_check_events')) {
+            return [[{ id: 'event-1', status: 'cleared' }]];
+        }
+        if (sql.includes('FROM outgoing_check_allocations')) {
+            return [[]];
+        }
+        if (sql.includes('FROM outgoing_checks oc')) {
+            return [[{ id: 'outgoing-1', status: 'cleared', amount: 1000 }]];
+        }
+        return [[]];
+    });
+
+    const originalLog = auditService.log;
+    auditService.log = async () => {};
+    t.after(() => { auditService.log = originalLog; });
+
+    const result = await financeService.updateOutgoingCheckStatus('outgoing-1', { status: 'cleared', notes: 'Débito confirmado' }, 'user-1');
+    assert.equal(result.status, 'cleared');
+    assert.ok(queryCalls.some((call) => call.sql.includes('cleared_at = NOW()')));
+    assert.ok(queryCalls.some((call) => call.sql.includes('INSERT INTO outgoing_check_events')));
+});

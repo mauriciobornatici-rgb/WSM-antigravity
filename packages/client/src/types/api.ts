@@ -248,6 +248,8 @@ export type InvoicePaymentLineInput = {
         issue_date?: string;
         due_date: string;
         instrument_amount?: number;
+        source_type?: "own" | "third_party";
+        source_customer_check_id?: string;
     };
 };
 
@@ -406,6 +408,41 @@ export type CustomerCheck = {
         invoice_type?: string | null;
         point_of_sale?: number | null;
         invoice_number?: number | string | null;
+        amount: number;
+        created_at: string;
+    }>;
+};
+
+export type OutgoingCheck = {
+    id: string;
+    supplier_id: string;
+    supplier_name?: string | null;
+    source_type: "own" | "third_party";
+    source_customer_check_id?: string | null;
+    issuer_name: string;
+    bank_name: string;
+    check_number: string;
+    amount: number;
+    issue_date?: string | null;
+    due_date: string;
+    status: "delivered" | "cleared" | "rejected" | "cancelled";
+    delivered_at?: string | null;
+    cleared_at?: string | null;
+    notes?: string | null;
+    allocated_amount?: number;
+    invoice_count?: number;
+    events?: Array<{
+        id: string;
+        status: OutgoingCheck["status"];
+        notes?: string | null;
+        performed_by_name?: string | null;
+        created_at: string;
+    }>;
+    allocations?: Array<{
+        id: string;
+        supplier_invoice_id?: string | null;
+        invoice_type?: string | null;
+        invoice_number?: string | null;
         amount: number;
         created_at: string;
     }>;

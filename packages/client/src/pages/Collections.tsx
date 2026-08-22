@@ -12,6 +12,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput";
+import { PaginationControls } from "@/components/common/PaginationControls";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/lib/errorHandling";
 import type { PendingInvoiceResponse, BulkPaymentAllocation, InvoicePaymentLineInput, BulkPaymentInput, CustomerCheck, FiscalSaleStatus } from "@/types/api";
@@ -29,6 +31,9 @@ type PaymentLine = {
         due_date: string;
     };
 };
+
+type CheckPortfolioFilter = "all" | "open" | "due_soon" | "overdue" | "cleared";
+const LIST_PAGE_SIZE = 10;
 
 const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentLine["method"]; label: string }> = [
     { value: "cash", label: "Efectivo" },
@@ -115,6 +120,33 @@ export default function CollectionsPage() {
     const [checkStatus, setCheckStatus] = useState<CustomerCheck["status"]>("received");
     const [checkDeliveredTo, setCheckDeliveredTo] = useState("");
     const [checkNotes, setCheckNotes] = useState("");
+    const [checkFilter, setCheckFilter] = useState<CheckPortfolioFilter>("all");
+    const [checkPage, setCheckPage] = useState(1);
+    const [fiscalPage, setFiscalPage] = useState(1);
+
+    const filteredChecks = useMemo(() => {
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+        const limit = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7);
+        const dueSoonLimit = `${limit.getFullYear()}-${String(limit.getMonth() + 1).padStart(2, "0")}-${String(limit.getDate()).padStart(2, "0")}`;
+        const isOpen = (status: CustomerCheck["status"]) => ["received", "deposited"].includes(status);
+
+        return customerChecks.filter((check) => {
+            const dueDate = String(check.due_date || "").slice(0, 10);
+            if (checkFilter === "open") return isOpen(check.status);
+            if (checkFilter === "cleared") return check.status === "cleared";
+            if (checkFilter === "overdue") return isOpen(check.status) && dueDate < today;
+            if (checkFilter === "due_soon") return isOpen(check.status) && dueDate >= today && dueDate <= dueSoonLimit;
+            return true;
+        });
+    }, [customerChecks, checkFilter]);
+
+    const checkTotalPages = Math.max(1, Math.ceil(filteredChecks.length / LIST_PAGE_SIZE));
+    const safeCheckPage = Math.min(checkPage, checkTotalPages);
+    const visibleChecks = filteredChecks.slice((safeCheckPage - 1) * LIST_PAGE_SIZE, safeCheckPage * LIST_PAGE_SIZE);
+    const fiscalTotalPages = Math.max(1, Math.ceil(fiscalSales.length / LIST_PAGE_SIZE));
+    const safeFiscalPage = Math.min(fiscalPage, fiscalTotalPages);
+    const visibleFiscalSales = fiscalSales.slice((safeFiscalPage - 1) * LIST_PAGE_SIZE, safeFiscalPage * LIST_PAGE_SIZE);
 
     const { data: selectedCheck, isFetching: isLoadingCheck } = useQuery<CustomerCheck>({
         queryKey: ["collections", "checks", selectedCheckId],
@@ -474,11 +506,26 @@ export default function CollectionsPage() {
                                             <Input value={line.check.issuer_name} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, issuer_name: event.target.value } })} placeholder="Librador / titular" />
                                             <Input value={line.check.bank_name} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, bank_name: event.target.value } })} placeholder="Banco" />
                                             <Input value={line.check.check_number} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, check_number: event.target.value } })} placeholder="Número de cheque" />
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <Input type="date" title="Fecha de emisión" value={line.check.issue_date} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, issue_date: event.target.value } })} />
-                                                <Input type="date" required title="Fecha de cobro" value={line.check.due_date} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, due_date: event.target.value } })} />
+                                            <div className="grid gap-2 sm:col-span-2 sm:grid-cols-2">
+                                                <div className="space-y-1">
+                                                    <Label className="text-xs">Fecha de emisión</Label>
+                                                    <ArgentinaDateInput
+                                                        value={line.check.issue_date}
+                                                        onChange={(value) => updatePaymentLine(line.id, { check: { ...line.check, issue_date: value } })}
+                                                        ariaLabel="Fecha de emisión del cheque"
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <Label className="text-xs">Fecha de cobro / vencimiento</Label>
+                                                    <ArgentinaDateInput
+                                                        value={line.check.due_date}
+                                                        onChange={(value) => updatePaymentLine(line.id, { check: { ...line.check, due_date: value } })}
+                                                        ariaLabel="Fecha de cobro o vencimiento del cheque"
+                                                        required
+                                                    />
+                                                </div>
                                             </div>
-                                            <p className="text-[11px] text-muted-foreground sm:col-span-2">Fechas: emisión y cobro/vencimiento. El cheque ingresará automáticamente a cartera.</p>
+                                            <p className="text-[11px] text-muted-foreground sm:col-span-2">Formato argentino: dd/mm/aaaa. El cheque ingresará automáticamente a cartera.</p>
                                         </div>
                                       ) : null}
                                     </div>
@@ -538,7 +585,7 @@ export default function CollectionsPage() {
                 </div>
             </div>
 
-            <Card>
+            <Card className="order-last">
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-lg"><Receipt className="h-5 w-5" /> Control fiscal de ventas</CardTitle>
                     <CardDescription>Todas las ventas asociadas a clientes, separando la deuda financiera del estado de facturación y CAE.</CardDescription>
@@ -552,7 +599,7 @@ export default function CollectionsPage() {
                             <TableBody>
                                 {fiscalSales.length === 0 ? (
                                     <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No hay ventas vinculadas a clientes para controlar.</TableCell></TableRow>
-                                ) : fiscalSales.map((sale) => (
+                                ) : visibleFiscalSales.map((sale) => (
                                     <TableRow key={sale.order_id}>
                                         <TableCell className="font-mono text-xs">{sale.order_id.slice(0, 8).toUpperCase()}</TableCell>
                                         <TableCell><p className="font-medium">{sale.client_name}</p><p className="text-xs text-muted-foreground">{sale.client_tax_id || "Sin CUIT/DNI"}</p></TableCell>
@@ -567,6 +614,13 @@ export default function CollectionsPage() {
                             </TableBody>
                         </Table>
                     </div>
+                    <PaginationControls
+                        page={safeFiscalPage}
+                        totalPages={fiscalTotalPages}
+                        totalCount={fiscalSales.length}
+                        itemLabel="venta"
+                        onPageChange={setFiscalPage}
+                    />
                 </CardContent>
             </Card>
 
@@ -576,13 +630,31 @@ export default function CollectionsPage() {
                     <CardDescription>Seguimiento desde la recepción hasta el depósito, endoso, acreditación o rechazo.</CardDescription>
                 </CardHeader>
                 <CardContent>
+                    <div className="mb-4 grid gap-3 sm:grid-cols-[minmax(0,240px)_1fr] sm:items-end">
+                        <div className="space-y-1.5">
+                            <Label>Estado de cartera</Label>
+                            <Select value={checkFilter} onValueChange={(value) => { setCheckFilter(value as CheckPortfolioFilter); setCheckPage(1); }}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Todos</SelectItem>
+                                    <SelectItem value="open">Pendientes de cobro</SelectItem>
+                                    <SelectItem value="due_soon">Vencen en 7 días</SelectItem>
+                                    <SelectItem value="overdue">Vencidos sin cobrar</SelectItem>
+                                    <SelectItem value="cleared">Cobrados</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                            {filteredChecks.length} cheque{filteredChecks.length === 1 ? "" : "s"} en la vista seleccionada.
+                        </p>
+                    </div>
                     <div className="overflow-x-auto">
                         <Table className="min-w-[900px]">
                             <TableHeader><TableRow>
                                 <TableHead>Cheque</TableHead><TableHead>Librador / cliente</TableHead><TableHead>Vencimiento</TableHead><TableHead className="text-right">Importe</TableHead><TableHead>Estado</TableHead><TableHead>Acción</TableHead>
                             </TableRow></TableHeader>
                             <TableBody>
-                                {customerChecks.length === 0 ? <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">Todavía no hay cheques en cartera.</TableCell></TableRow> : customerChecks.map((check) => (
+                                {visibleChecks.length === 0 ? <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No hay cheques para este filtro.</TableCell></TableRow> : visibleChecks.map((check) => (
                                     <TableRow key={check.id}>
                                         <TableCell><p className="font-medium">{check.bank_name}</p><p className="font-mono text-xs text-muted-foreground">Nº {check.check_number}</p></TableCell>
                                         <TableCell><p>{check.issuer_name}</p><p className="text-xs text-muted-foreground">{check.client_name || "Sin cliente vinculado"}</p></TableCell>
@@ -604,6 +676,13 @@ export default function CollectionsPage() {
                             </TableBody>
                         </Table>
                     </div>
+                    <PaginationControls
+                        page={safeCheckPage}
+                        totalPages={checkTotalPages}
+                        totalCount={filteredChecks.length}
+                        itemLabel="cheque"
+                        onPageChange={setCheckPage}
+                    />
                 </CardContent>
             </Card>
 

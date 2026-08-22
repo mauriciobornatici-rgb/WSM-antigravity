@@ -8,6 +8,7 @@ import { QuickClientDialog } from "@/components/pos/QuickClientDialog"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
@@ -472,10 +473,10 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                             </div>
                             <div className="space-y-2">
                                 <Label>Fecha estimada entrega/retiro</Label>
-                                <Input
-                                    type="date"
+                                <ArgentinaDateInput
                                     value={createEstimatedDelivery}
-                                    onChange={(event) => setCreateEstimatedDelivery(event.target.value)}
+                                    onChange={setCreateEstimatedDelivery}
+                                    ariaLabel="Fecha estimada de entrega o retiro"
                                 />
                             </div>
                             <div className="space-y-2">

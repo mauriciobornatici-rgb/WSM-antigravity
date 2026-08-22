@@ -1,6 +1,7 @@
 import { Save, Loader2, Terminal } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -80,11 +81,11 @@ export function BillingSettingsTab({
 
                             <div className="space-y-2">
                                 <Label htmlFor="start_date">Inicio de Actividades</Label>
-                                <Input 
+                                <ArgentinaDateInput
                                     id="start_date"
-                                    type="date" 
-                                    value={billing.start_date || ''} 
-                                    onChange={e => updateBillingField('start_date', e.target.value)} 
+                                    value={billing.start_date || ''}
+                                    onChange={value => updateBillingField('start_date', value)}
+                                    ariaLabel="Inicio de actividades"
                                 />
                             </div>
 

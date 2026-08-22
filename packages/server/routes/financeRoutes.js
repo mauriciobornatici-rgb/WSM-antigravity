@@ -8,6 +8,7 @@ const router = express.Router();
 const accountingRoles = authorizePermission(PERMISSIONS.ACCOUNTING_MANAGE);
 const cashRoles = authorizePermission(PERMISSIONS.CASH_MANAGE);
 const collectionsRoles = authorizePermission(PERMISSIONS.COLLECTIONS_MANAGE);
+const supplierPaymentRoles = authorizePermission(PERMISSIONS.SUPPLIER_PAYMENTS_MANAGE);
 
 // Transactions
 router.get('/transactions', accountingRoles, validate(schemas.transactionsFilters), financeController.getTransactions);
@@ -30,5 +31,8 @@ router.post('/collections', collectionsRoles, financeController.registerBulkPaym
 router.get('/checks', collectionsRoles, financeController.getCustomerChecks);
 router.get('/checks/:id', collectionsRoles, validate(schemas.idParam), financeController.getCustomerCheck);
 router.put('/checks/:id/status', collectionsRoles, validate(schemas.idParam), financeController.updateCustomerCheckStatus);
+router.get('/outgoing-checks', supplierPaymentRoles, financeController.getOutgoingChecks);
+router.get('/outgoing-checks/:id', supplierPaymentRoles, validate(schemas.idParam), financeController.getOutgoingCheck);
+router.put('/outgoing-checks/:id/status', supplierPaymentRoles, validate(schemas.idParam), financeController.updateOutgoingCheckStatus);
 
 export default router;

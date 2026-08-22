@@ -638,6 +638,102 @@ class FinanceService {
         }
     }
 
+    async _resolveOutgoingCheck(connection, { supplierId, payment, userId, notes }) {
+        if (payment.method !== 'check') return null;
+
+        const details = payment.check || {};
+        const sourceType = details.source_type === 'third_party' ? 'third_party' : 'own';
+        const sourceCheckId = sourceType === 'third_party' ? String(details.source_customer_check_id || '').trim() : null;
+        const instrumentAmount = this._roundMoney(details.instrument_amount || payment.amount);
+        let issuerName = String(details.issuer_name || '').trim();
+        let bankName = String(details.bank_name || '').trim();
+        let checkNumber = String(details.check_number || '').trim();
+        let issueDate = String(details.issue_date || '').trim() || null;
+        let dueDate = String(details.due_date || '').trim();
+
+        if (sourceCheckId) {
+            const [existingOutgoing] = await connection.query(
+                'SELECT id, amount FROM outgoing_checks WHERE source_customer_check_id = ? FOR UPDATE',
+                [sourceCheckId]
+            );
+            if (existingOutgoing.length > 0) {
+                if (Math.abs(Number(existingOutgoing[0].amount || 0) - instrumentAmount) > 0.01) {
+                    throw this._buildValidationError('El cheque de terceros ya fue aplicado con otro importe', 'OUTGOING_CHECK_AMOUNT_MISMATCH');
+                }
+                return existingOutgoing[0].id;
+            }
+
+            const [sourceRows] = await connection.query(
+                'SELECT * FROM customer_checks WHERE id = ? FOR UPDATE',
+                [sourceCheckId]
+            );
+            if (sourceRows.length === 0) {
+                throw this._buildValidationError('El cheque de terceros seleccionado no existe', 'SOURCE_CHECK_NOT_FOUND');
+            }
+            const source = sourceRows[0];
+            if (source.status !== 'received') {
+                throw this._buildValidationError('El cheque de terceros ya no está disponible para endoso', 'SOURCE_CHECK_NOT_AVAILABLE');
+            }
+            issuerName = source.issuer_name;
+            bankName = source.bank_name;
+            checkNumber = source.check_number;
+            issueDate = source.issue_date || null;
+            dueDate = String(source.due_date || '').slice(0, 10);
+            if (Math.abs(Number(source.amount || 0) - instrumentAmount) > 0.01) {
+                throw this._buildValidationError('El pago debe usar el importe total del cheque de terceros', 'SOURCE_CHECK_PARTIAL_USE_NOT_ALLOWED');
+            }
+        }
+
+        if (!issuerName || !bankName || !checkNumber || !dueDate || instrumentAmount <= 0) {
+            throw this._buildValidationError('Faltan datos obligatorios del cheque emitido', 'INVALID_OUTGOING_CHECK_DETAILS');
+        }
+
+        const [existing] = await connection.query(
+            'SELECT id, amount FROM outgoing_checks WHERE bank_name = ? AND check_number = ? FOR UPDATE',
+            [bankName, checkNumber]
+        );
+        if (existing.length > 0) {
+            if (Math.abs(Number(existing[0].amount || 0) - instrumentAmount) > 0.01) {
+                throw this._buildValidationError('El cheque emitido ya existe con otro importe', 'OUTGOING_CHECK_AMOUNT_MISMATCH');
+            }
+            return existing[0].id;
+        }
+
+        const checkId = crypto.randomUUID();
+        await connection.query(`
+            INSERT INTO outgoing_checks (
+                id, supplier_id, source_type, source_customer_check_id, issuer_name,
+                bank_name, check_number, amount, issue_date, due_date, status,
+                delivered_at, notes, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'delivered', NOW(), ?, ?)
+        `, [
+            checkId, supplierId, sourceType, sourceCheckId, issuerName,
+            bankName, checkNumber, instrumentAmount, issueDate, dueDate,
+            notes || null, userId || null
+        ]);
+        await connection.query(
+            `INSERT INTO outgoing_check_events (id, check_id, status, notes, performed_by)
+             VALUES (?, ?, 'delivered', ?, ?)`,
+            [crypto.randomUUID(), checkId, 'Cheque entregado al proveedor', userId || null]
+        );
+
+        if (sourceCheckId) {
+            await connection.query(
+                `UPDATE customer_checks
+                 SET status = 'endorsed', delivered_to = (SELECT name FROM suppliers WHERE id = ?), notes = ?
+                 WHERE id = ?`,
+                [supplierId, notes || 'Aplicado a pago de proveedor', sourceCheckId]
+            );
+            await connection.query(
+                `INSERT INTO customer_check_events (id, check_id, status, notes, performed_by)
+                 VALUES (?, ?, 'endorsed', CONCAT('Entregado a proveedor: ', (SELECT name FROM suppliers WHERE id = ?)), ?)`,
+                [crypto.randomUUID(), sourceCheckId, supplierId, userId || null]
+            );
+        }
+
+        return checkId;
+    }
+
     async registerBulkSupplierPayments(payload, userId) {
         const { supplierId, allocations, notes } = payload;
         if (!supplierId) throw this._buildValidationError('Falta supplierId', 'MISSING_SUPPLIER_ID');
@@ -691,19 +787,34 @@ class FinanceService {
                 // Register supplier payments
                 for (const payment of normalizedPayments) {
                     const payId = crypto.randomUUID();
+                    const outgoingCheckId = await this._resolveOutgoingCheck(connection, {
+                        supplierId,
+                        payment,
+                        userId,
+                        notes
+                    });
                     await connection.query(
-                        `INSERT INTO supplier_payments (id, supplier_id, amount, payment_date, payment_method, reference_number, notes, supplier_invoice_id)
-                         VALUES (?, ?, ?, NOW(), ?, ?, ?, ?)`,
+                        `INSERT INTO supplier_payments (id, supplier_id, amount, payment_date, payment_method, reference_number, outgoing_check_id, notes, supplier_invoice_id)
+                         VALUES (?, ?, ?, NOW(), ?, ?, ?, ?, ?)`,
                         [
                             payId,
                             supplierId,
                             payment.amount,
                             payment.method,
                             payment.reference_number || null,
+                            outgoingCheckId,
                             notes || null,
                             invoiceId
                         ]
                     );
+
+                    if (outgoingCheckId) {
+                        await connection.query(
+                            `INSERT INTO outgoing_check_allocations (id, check_id, supplier_payment_id, supplier_invoice_id, amount)
+                             VALUES (?, ?, ?, ?, ?)`,
+                            [crypto.randomUUID(), outgoingCheckId, payId, invoiceId, payment.amount]
+                        );
+                    }
 
                     // Create expense transactions
                     await connection.query(
@@ -719,9 +830,12 @@ class FinanceService {
                     );
 
                     // Journal entry for bookkeeping
-                    const cashAccount = ['transfer', 'bank'].includes(String(payment.method).toLowerCase())
-                        ? '1.1.02.01' // Banco
-                        : '1.1.01.01'; // Caja
+                    const checkSourceType = payment.check?.source_type === 'third_party' ? 'third_party' : 'own';
+                    const cashAccount = payment.method === 'check' && checkSourceType === 'third_party'
+                        ? '1.1.02.02' // Valores a depositar entregados al proveedor
+                        : (['transfer', 'bank', 'check'].includes(String(payment.method).toLowerCase())
+                            ? '1.1.02.01' // Banco / cheque propio
+                            : '1.1.01.01'); // Caja
 
                     await accountingService.createJournalEntry(connection, {
                         date: new Date(),
@@ -777,6 +891,102 @@ class FinanceService {
         } catch (err) {
             await connection.rollback();
             throw err;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async getOutgoingChecks(filters = {}) {
+        let query = `
+            SELECT oc.*, s.name AS supplier_name,
+                   COALESCE(SUM(oca.amount), 0) AS allocated_amount,
+                   COUNT(DISTINCT oca.supplier_invoice_id) AS invoice_count
+            FROM outgoing_checks oc
+            LEFT JOIN suppliers s ON s.id = oc.supplier_id
+            LEFT JOIN outgoing_check_allocations oca ON oca.check_id = oc.id
+            WHERE 1=1
+        `;
+        const params = [];
+        if (filters.status) {
+            query += ' AND oc.status = ?';
+            params.push(filters.status);
+        }
+        query += ' GROUP BY oc.id ORDER BY oc.due_date ASC, oc.created_at DESC';
+        const [rows] = await pool.query(query, params);
+        return rows.map((row) => ({
+            ...row,
+            amount: this._roundMoney(row.amount),
+            allocated_amount: this._roundMoney(row.allocated_amount),
+            invoice_count: Number(row.invoice_count || 0)
+        }));
+    }
+
+    async getOutgoingCheck(checkId) {
+        const [rows] = await pool.query(`
+            SELECT oc.*, s.name AS supplier_name
+            FROM outgoing_checks oc
+            LEFT JOIN suppliers s ON s.id = oc.supplier_id
+            WHERE oc.id = ?
+        `, [checkId]);
+        if (rows.length === 0) return null;
+        const [events] = await pool.query(`
+            SELECT oce.*, u.name AS performed_by_name
+            FROM outgoing_check_events oce
+            LEFT JOIN users u ON u.id = oce.performed_by
+            WHERE oce.check_id = ?
+            ORDER BY oce.created_at DESC
+        `, [checkId]);
+        const [allocations] = await pool.query(`
+            SELECT oca.*, si.invoice_type, si.invoice_number
+            FROM outgoing_check_allocations oca
+            LEFT JOIN supplier_invoices si ON si.id = oca.supplier_invoice_id
+            WHERE oca.check_id = ?
+            ORDER BY oca.created_at ASC
+        `, [checkId]);
+        return { ...rows[0], events, allocations };
+    }
+
+    async updateOutgoingCheckStatus(checkId, payload, userId) {
+        const allowedStatuses = new Set(['delivered', 'cleared', 'rejected', 'cancelled']);
+        const status = String(payload?.status || '').trim().toLowerCase();
+        if (!allowedStatuses.has(status)) {
+            throw this._buildValidationError('Estado de cheque emitido inválido', 'INVALID_OUTGOING_CHECK_STATUS');
+        }
+
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [rows] = await connection.query('SELECT * FROM outgoing_checks WHERE id = ? FOR UPDATE', [checkId]);
+            if (rows.length === 0) {
+                const error = new Error('Cheque emitido no encontrado');
+                error.statusCode = 404;
+                error.errorCode = 'OUTGOING_CHECK_NOT_FOUND';
+                throw error;
+            }
+            const current = rows[0];
+            const movementNotes = String(payload?.notes || '').trim();
+            let updateSql = 'UPDATE outgoing_checks SET status = ?, notes = ?';
+            if (status === 'cleared') updateSql += ', cleared_at = NOW()';
+            updateSql += ' WHERE id = ?';
+            await connection.query(updateSql, [status, movementNotes || current.notes || null, checkId]);
+            await connection.query(
+                `INSERT INTO outgoing_check_events (id, check_id, status, notes, performed_by)
+                 VALUES (?, ?, ?, ?, ?)`,
+                [crypto.randomUUID(), checkId, status, movementNotes || null, userId || null]
+            );
+            await auditService.log({
+                user_id: userId,
+                action: 'UPDATE_OUTGOING_CHECK_STATUS',
+                entity_type: 'outgoing_check',
+                entity_id: checkId,
+                old_values: { status: current.status },
+                new_values: { status, notes: movementNotes || null }
+            }, connection);
+            await connection.commit();
+            return this.getOutgoingCheck(checkId);
+        } catch (error) {
+            await connection.rollback();
+            throw error;
         } finally {
             connection.release();
         }

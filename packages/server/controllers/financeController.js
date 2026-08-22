@@ -503,3 +503,19 @@ export const updateCustomerCheckStatus = catchAsync(async (req, res) => {
     const row = await financeService.updateCustomerCheckStatus(req.params.id, req.body, req.user?.id || null);
     res.json(row);
 });
+
+export const getOutgoingChecks = catchAsync(async (req, res) => {
+    const rows = await financeService.getOutgoingChecks(req.query || {});
+    res.json(rows);
+});
+
+export const getOutgoingCheck = catchAsync(async (req, res) => {
+    const row = await financeService.getOutgoingCheck(req.params.id);
+    if (!row) return res.status(404).json({ error: 'not_found', message: 'Cheque emitido no encontrado' });
+    res.json(row);
+});
+
+export const updateOutgoingCheckStatus = catchAsync(async (req, res) => {
+    const row = await financeService.updateOutgoingCheckStatus(req.params.id, req.body, req.user?.id || null);
+    res.json(row);
+});
