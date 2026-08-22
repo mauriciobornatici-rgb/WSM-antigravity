@@ -5,6 +5,19 @@ Current continuity source: `docs/execution/BITACORA_INTEGRAL.md`
 Current score estimate: 100/100 en calidad de código local; listo para preproducción, no habilitado aún para producción.
 Immediate priority: completar los gates externos de `docs/execution/PRODUCTION_READINESS_2026-08-20.md`; ARCA y Tiendanube quedan deliberadamente para el final.
 
+## 2026-08-22 Control de stock móvil y acceso directo a Picking
+
+- Nuevo módulo `Control de stock` para conteos cíclicos desde teléfono, con verificación de ubicación, lectura por cámara/lector/teclado, cantidad física y observaciones.
+- Conteo ciego real: el backend no expone cantidad teórica, diferencia ni fidelidad mientras la sesión está en curso.
+- Alcance por Pareto ABC de valor inmovilizado: clase A (80%, cadencia semanal sugerida), B (hasta 95%, mensual) y C (resto, trimestral), además de alcance total.
+- Sesiones persistentes con snapshot, productos pendientes, productos físicos no previstos, reconteos trazados como eventos, historial acotado y métricas de fidelidad globales y por clase.
+- Separación de funciones: depósito puede contar; sólo administración/gerencia puede aprobar ajustes. El ajuste se bloquea ante stock posterior o reservas incompatibles y genera movimientos trazables por SKU.
+- `Picking` quedó como acceso directo del menú móvil y su escáner admite cámara, lector Bluetooth/USB e ingreso manual.
+- Migración `042_create_stock_audits.sql` aplicada en la base de prueba. Ensayo real completado sobre `General` sin aplicar diferencias, por lo que no se alteró el stock.
+- Verificación móvil a 319 px: sin desbordamiento, overlay ni errores capturados; encabezado global compactado para operación en teléfono.
+- Validación final: servidor 375/375, cobertura 99,43% líneas / 90,67% ramas / 98,23% funciones; cliente 47/47, typecheck, lint y build verdes; RBAC 12/12 y preflight 36 relaciones sin huérfanos.
+- Cámara móvil: el navegador exige origen HTTPS. En la red local HTTP permanecen disponibles lector externo e ingreso manual; el despliegue HTTPS habilita la cámara.
+
 ## 2026-08-22 Cobertura superior al 90% y cierre técnico
 
 - Servidor: 357/357 pruebas; cobertura 99,40% líneas / 90,71% ramas / 98,08% funciones en la ejecución final.

@@ -25,6 +25,8 @@ import {
     Moon,
     Search,
     Store,
+    ScanLine,
+    LogOut,
 } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
 import { CommandPalette } from "@/components/common/CommandPalette";
@@ -60,6 +62,8 @@ export default function AppLayout() {
         {
             title: "Depósito y Logística",
             items: [
+                { name: "Picking", href: "/picking", icon: ScanLine, permission: PERMISSIONS.ORDERS_PICK },
+                { name: "Control de stock", href: "/stock-control", icon: ClipboardCheck, permission: PERMISSIONS.INVENTORY_COUNT },
                 { name: "Inventario (WMS)", href: "/inventory", icon: Package, permission: PERMISSIONS.INVENTORY_MANAGE },
                 { name: "Órdenes de compra", href: "/purchase-orders", icon: FileSpreadsheet, permission: PERMISSIONS.PROCUREMENT_MANAGE },
                 { name: "Recepciones", href: "/receptions", icon: ClipboardCheck, permission: PERMISSIONS.RECEPTIONS_MANAGE },
@@ -158,12 +162,12 @@ export default function AppLayout() {
             <main className="flex-1 flex flex-col h-screen overflow-hidden bg-background relative selection:bg-blue-500/30">
                 <div className="absolute top-0 left-0 right-0 h-96 bg-blue-500/5 rounded-full blur-3xl -z-10 transform -translate-y-1/2" />
 
-                <header className="h-16 border-b border-border px-6 flex items-center justify-between bg-background/90 backdrop-blur-md z-10 text-foreground">
-                    <h1 className="text-xl font-bold capitalize tracking-tight flex items-center gap-2">
-                        {ActiveIcon ? <ActiveIcon className="h-5 w-5 text-blue-500" /> : null}
-                        {activeNavItem?.name || "Inicio"}
+                <header className="h-16 border-b border-border px-2 sm:px-6 flex items-center justify-between gap-2 bg-background/90 backdrop-blur-md z-10 text-foreground">
+                    <h1 className="min-w-0 flex flex-1 items-center gap-1.5 text-sm font-bold capitalize tracking-tight sm:gap-2 sm:text-xl">
+                        {ActiveIcon ? <ActiveIcon className="h-4 w-4 shrink-0 text-blue-500 sm:h-5 sm:w-5" /> : null}
+                        <span className="truncate">{activeNavItem?.name || "Inicio"}</span>
                     </h1>
-                    <div className="flex items-center gap-3">
+                    <div className="flex shrink-0 items-center gap-1 sm:gap-3">
                         <Button
                             variant="outline"
                             size="sm"
@@ -173,15 +177,6 @@ export default function AppLayout() {
                             <Search className="h-3.5 w-3.5" />
                             <span>Buscar / Comandos</span>
                             <kbd className="ml-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-mono border border-border">Ctrl K</kbd>
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Abrir buscador y paleta de comandos"
-                            onClick={() => setCommandPaletteOpen(true)}
-                            className="sm:hidden text-muted-foreground hover:text-foreground"
-                        >
-                            <Search className="h-5 w-5" />
                         </Button>
                         <Button
                             variant="ghost"
@@ -199,16 +194,19 @@ export default function AppLayout() {
                                 {roleLabels[user?.role || ""] || user?.role || "-"}
                             </p>
                         </div>
-                        <div className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-lg shadow-blue-500/20">
+                        <div className="hidden h-9 w-9 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 items-center justify-center font-bold text-white shadow-lg shadow-blue-500/20 sm:flex">
                             {(user?.name || "U").charAt(0)}
                         </div>
-                        <Button variant="ghost" size="sm" onClick={() => void logout()} className="text-slate-400 hover:text-foreground hover:bg-slate-800/40">
+                        <Button variant="ghost" size="icon" aria-label="Salir" onClick={() => void logout()} className="text-slate-400 hover:text-foreground hover:bg-slate-800/40 sm:hidden">
+                            <LogOut className="h-5 w-5" />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => void logout()} className="hidden text-slate-400 hover:text-foreground hover:bg-slate-800/40 sm:inline-flex">
                             Salir
                         </Button>
                     </div>
                 </header>
 
-                <div className="flex-1 overflow-auto p-6 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+                <div className="flex-1 overflow-auto p-2 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent sm:p-6">
                     <Outlet />
                 </div>
             </main>

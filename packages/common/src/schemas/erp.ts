@@ -492,3 +492,24 @@ export const creditNoteCreateSchema = z.object({
   reference_id: optionalUuidSchema,
   notes: z.string().nullable().optional(),
 });
+
+// 15. Cycle counts / stock audits
+export const stockAuditScopeSchema = z.enum(['A', 'B', 'C', 'ALL']);
+
+export const stockAuditCreateSchema = z.object({
+  location_code: z.string().trim().min(1).max(100),
+  abc_class: stockAuditScopeSchema.default('ALL'),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
+
+export const stockAuditCountSchema = z.object({
+  code: z.string().trim().min(1).max(255),
+  quantity: z.coerce.number().int().min(0).max(999999999),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+
+export const stockAuditFiltersSchema = z.object({
+  status: z.enum(['in_progress', 'completed', 'adjusted', 'cancelled']).optional(),
+  abc_class: stockAuditScopeSchema.optional(),
+  location_code: z.string().trim().max(100).optional(),
+});

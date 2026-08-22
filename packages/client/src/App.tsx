@@ -15,6 +15,7 @@ import { PERMISSIONS } from "@wsm/common"
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const InventoryPage = lazy(() => import("@/pages/Inventory"));
 const PickingPage = lazy(() => import("@/pages/Picking"));
+const StockControlPage = lazy(() => import("@/pages/StockControl"));
 const POSPage = lazy(() => import("@/pages/POS"));
 const OrdersPage = lazy(() => import("@/pages/Orders"));
 const AccountingPage = lazy(() => import("@/pages/Accounting"));
@@ -95,10 +96,28 @@ function App() {
                   />
 
                   <Route
+                    path="/picking"
+                    element={
+                      <ProtectedRoute permission={PERMISSIONS.ORDERS_PICK}>
+                        <PickingPage />
+                      </ProtectedRoute>
+                    }
+                  />
+
+                  <Route
                     path="/picking/:id"
                     element={
                       <ProtectedRoute permission={PERMISSIONS.ORDERS_PICK}>
                         <PickingPage />
+                      </ProtectedRoute>
+                    }
+                  />
+
+                  <Route
+                    path="/stock-control"
+                    element={
+                      <ProtectedRoute permission={PERMISSIONS.INVENTORY_COUNT}>
+                        <StockControlPage />
                       </ProtectedRoute>
                     }
                   />

@@ -12,6 +12,15 @@ const relationships = [
     ['inventory', 'product_id', 'products', 'id'],
     ['inventory_movements', 'product_id', 'products', 'id'],
     ['inventory_movements', 'performed_by', 'users', 'id'],
+    ['stock_audit_sessions', 'created_by', 'users', 'id'],
+    ['stock_audit_sessions', 'adjusted_by', 'users', 'id'],
+    ['stock_audit_items', 'audit_id', 'stock_audit_sessions', 'id'],
+    ['stock_audit_items', 'product_id', 'products', 'id'],
+    ['stock_audit_items', 'counted_by', 'users', 'id'],
+    ['stock_audit_count_events', 'audit_id', 'stock_audit_sessions', 'id'],
+    ['stock_audit_count_events', 'audit_item_id', 'stock_audit_items', 'id'],
+    ['stock_audit_count_events', 'product_id', 'products', 'id'],
+    ['stock_audit_count_events', 'performed_by', 'users', 'id'],
     ['orders', 'client_id', 'clients', 'id'],
     ['order_items', 'order_id', 'orders', 'id'],
     ['order_items', 'product_id', 'products', 'id'],
@@ -60,6 +69,19 @@ async function main() {
     `);
     if (duplicatePickingRows.length > 0) {
         const result = { check: 'duplicate_active_picking_sessions', rows: duplicatePickingRows };
+        console.log(JSON.stringify(result));
+        failures.push(result);
+    }
+
+    const [duplicateStockAuditRows] = await pool.query(`
+        SELECT location_code, abc_class, COUNT(*) AS active_sessions
+        FROM stock_audit_sessions
+        WHERE status = 'in_progress'
+        GROUP BY location_code, abc_class
+        HAVING COUNT(*) > 1
+    `);
+    if (duplicateStockAuditRows.length > 0) {
+        const result = { check: 'duplicate_active_stock_audits', rows: duplicateStockAuditRows };
         console.log(JSON.stringify(result));
         failures.push(result);
     }

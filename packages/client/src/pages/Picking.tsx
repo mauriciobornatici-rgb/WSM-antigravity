@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Box, Check, ScanLine } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Box, Camera, Check, ScanLine } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { queryKeys } from "@/lib/queryKeys";
@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePickingSession } from "@/hooks/usePickingSession";
 import { playScanErrorBeep, playScanSuccessBeep } from "@/lib/scanAudio";
+import { BarcodeScannerDialog } from "@/components/inventory/BarcodeScannerDialog";
 
 import {
     isPickableStatus,
@@ -43,6 +44,7 @@ export default function PickingPage() {
     const [pendingScanQuantity, setPendingScanQuantity] = useState<number>(1);
     const [loading, setLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [cameraScannerOpen, setCameraScannerOpen] = useState(false);
 
     const [routeDirection, setRouteDirection] = useState<'desc' | 'asc'>('desc');
     const [pickingStep, setPickingStep] = useState<'location' | 'barcode' | 'quantity'>('location');
@@ -117,6 +119,12 @@ export default function PickingPage() {
     const canPick = selectedOrder ? isPickableStatus(selectedOrder.status) : false;
 
     const { transitionToPacked } = usePickingSession();
+
+    const handleCameraScan = useCallback((value: string) => {
+        setScannerInput(value);
+        setCameraScannerOpen(false);
+        toast.info("Código leído", { description: "Presiona Buscar SKU para procesarlo." });
+    }, []);
 
     useEffect(() => {
         if (!pendingScanItem) return;
@@ -461,6 +469,9 @@ export default function PickingPage() {
                                 disabled={!canPick}
                                 autoFocus
                             />
+                            <Button type="button" variant="outline" onClick={() => setCameraScannerOpen(true)} disabled={!canPick}>
+                                <Camera className="mr-2 h-4 w-4" />Cámara
+                            </Button>
                             <Button type="submit" disabled={!canPick}>
                                 Buscar SKU
                             </Button>
@@ -731,6 +742,14 @@ export default function PickingPage() {
                         );
                     })}
                 </div>
+
+                <BarcodeScannerDialog
+                    open={cameraScannerOpen}
+                    onOpenChange={setCameraScannerOpen}
+                    title={pickingStep === "location" ? "Escanear ubicación" : "Escanear producto"}
+                    description={pickingStep === "location" ? "Lee el código de la posición indicada." : "Lee el SKU o código de barras del artículo."}
+                    onDetected={handleCameraScan}
+                />
             </div>
         );
     }

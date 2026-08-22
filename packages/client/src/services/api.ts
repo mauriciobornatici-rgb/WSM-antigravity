@@ -418,6 +418,20 @@ export const api = {
         httpClient.post<WarehouseLocation>("/api/inventory/locations", data),
     updateWarehouseLocation: (id: string, data: { code?: string; name?: string; description?: string | null; active?: boolean }) =>
         httpClient.put<WarehouseLocation>(`/api/inventory/locations/${id}`, data),
+    getStockAuditDashboard: (filters?: { status?: import("@/types").StockAuditStatus; abc_class?: import("@/types").StockAuditScope; location_code?: string }) =>
+        httpClient.get<import("@/types").StockAuditDashboard>(withQuery("/api/inventory/audits/dashboard", filters)),
+    getStockAudit: (id: string) =>
+        httpClient.get<import("@/types").StockAuditSession>(`/api/inventory/audits/${id}`),
+    createStockAudit: (data: { location_code: string; abc_class: import("@/types").StockAuditScope; notes?: string | null }) =>
+        httpClient.post<import("@/types").StockAuditSession>("/api/inventory/audits", data),
+    countStockAuditItem: (id: string, data: { code: string; quantity: number; notes?: string | null }) =>
+        httpClient.post<import("@/types").StockAuditSession>(`/api/inventory/audits/${id}/counts`, data),
+    completeStockAudit: (id: string) =>
+        httpClient.post<import("@/types").StockAuditSession>(`/api/inventory/audits/${id}/complete`),
+    cancelStockAudit: (id: string) =>
+        httpClient.post<import("@/types").StockAuditSession>(`/api/inventory/audits/${id}/cancel`),
+    applyStockAuditAdjustments: (id: string) =>
+        httpClient.post<import("@/types").StockAuditSession>(`/api/inventory/audits/${id}/adjust`),
 
     // ==================== ORDERS ====================
     getOrders: (filters?: { client_id?: string; status?: string; page?: number; limit?: number; offset?: number }) =>

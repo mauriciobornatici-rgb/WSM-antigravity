@@ -10,6 +10,15 @@ test('warehouse can fulfill orders but cannot create sales or invoices', () => {
     assert.equal(hasPermission('warehouse', PERMISSIONS.INVOICES_MANAGE), false);
 });
 
+test('warehouse can count stock while only management can approve adjustments', () => {
+    assert.equal(hasPermission('warehouse', PERMISSIONS.INVENTORY_COUNT), true);
+    assert.equal(hasPermission('warehouse', PERMISSIONS.INVENTORY_ADJUST), false);
+    assert.equal(hasPermission('manager', PERMISSIONS.INVENTORY_COUNT), true);
+    assert.equal(hasPermission('manager', PERMISSIONS.INVENTORY_ADJUST), true);
+    assert.equal(hasPermission('cashier', PERMISSIONS.INVENTORY_COUNT), false);
+    assert.equal(hasPermission('admin', PERMISSIONS.INVENTORY_ADJUST), true);
+});
+
 test('accounting, settings and integrations remain admin-only', () => {
     for (const role of ['manager', 'cashier', 'warehouse']) {
         assert.equal(hasPermission(role, PERMISSIONS.ACCOUNTING_MANAGE), false);

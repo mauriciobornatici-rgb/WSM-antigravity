@@ -168,6 +168,16 @@ export const zodSchemas = {
     inventoryMovementCreate: z.object({
         body: commonSchemas.inventoryMovementCreateSchema
     }),
+    stockAuditCreate: z.object({
+        body: commonSchemas.stockAuditCreateSchema
+    }),
+    stockAuditCount: z.object({
+        params: z.object({ id: commonSchemas.uuidSchema }),
+        body: commonSchemas.stockAuditCountSchema
+    }),
+    stockAuditFilters: z.object({
+        query: commonSchemas.stockAuditFiltersSchema.optional()
+    }),
     batchFilters: z.object({
         query: commonSchemas.batchFiltersSchema.optional()
     }),

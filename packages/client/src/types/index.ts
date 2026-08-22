@@ -275,6 +275,70 @@ export interface FailedSync {
     product_sku?: string
 }
 
+export type StockAuditScope = "A" | "B" | "C" | "ALL"
+export type StockAuditStatus = "in_progress" | "completed" | "adjusted" | "cancelled"
+
+export interface StockAuditItem {
+    id: string
+    audit_id: string
+    product_id: string
+    product_name: string
+    sku: string
+    barcode?: string | null
+    location_code: string
+    abc_class: "A" | "B" | "C"
+    expected_quantity?: number
+    counted_quantity: number | null
+    variance?: number | null
+    is_unexpected: boolean
+    notes?: string | null
+    counted_at?: string | null
+    counted_by_name?: string | null
+    count_attempts: number
+}
+
+export interface StockAuditSession {
+    id: string
+    audit_number: string
+    location_code: string
+    location_name?: string | null
+    abc_class: StockAuditScope
+    status: StockAuditStatus
+    blind_count: boolean
+    notes?: string | null
+    created_by_name?: string | null
+    adjusted_by_name?: string | null
+    started_at: string
+    completed_at?: string | null
+    adjusted_at?: string | null
+    total_items: number
+    counted_items: number
+    pending_items: number
+    exact_items?: number
+    variance_units?: number
+    accuracy_percent?: number
+    items?: StockAuditItem[]
+}
+
+export interface StockAuditDashboard {
+    summary: {
+        total_audits: number
+        active_audits: number
+        counted_items: number
+        exact_items: number
+        variance_units: number
+        accuracy_percent: number
+    }
+    by_class: Array<{
+        abc_class: "A" | "B" | "C"
+        counted_items: number
+        exact_items: number
+        variance_units: number
+        accuracy_percent: number
+    }>
+    sessions: StockAuditSession[]
+}
+
 export interface WarehouseLocation {
     id: string
     code: string
