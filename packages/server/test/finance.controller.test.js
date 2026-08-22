@@ -24,3 +24,15 @@ test('cash-shift expected balance only includes cash movements', async () => {
     assert.equal(result.expected_balance, 430);
     assert.match(queries[0], /payment_method = 'cash'/);
 });
+
+test('cash-shift expected balance defaults missing shift and aggregates to zero', async () => {
+    const connection = {
+        async query(sql) {
+            if (String(sql).includes('FROM shift_payments')) return [[]];
+            return [[]];
+        }
+    };
+    assert.deepEqual(await calculateShiftExpectedBalance(connection, 'missing'), {
+        opening_balance: 0, inflow: 0, outflow: 0, expected_balance: 0
+    });
+});

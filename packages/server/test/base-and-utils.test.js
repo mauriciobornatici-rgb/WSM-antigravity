@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import BaseService from '../services/base.service.js';
 import { getPagination, applyPaginationHeaders } from '../utils/pagination.js';
 import getRequestIp from '../utils/requestIp.js';
+import { formatMoney } from '../utils/currency.js';
 import {
     MAX_PRODUCT_IMAGE_UPLOAD_BYTES,
     MAX_PRODUCT_IMAGE_URL_LENGTH,
@@ -121,4 +122,10 @@ test('image policy covers empty, malformed, oversized and supported payloads', (
     assert.equal(gif.mimeType, 'image/gif');
     const oversized = Buffer.alloc(MAX_PRODUCT_IMAGE_UPLOAD_BYTES + 1, 1).toString('base64');
     assert.throws(() => parseProductImageDataUrl(`data:image/png;base64,${oversized}`), (error) => error.errorCode === 'IMAGE_UPLOAD_TOO_LARGE');
+});
+
+test('Argentine money formatter handles null, invalid and negative values', () => {
+    assert.equal(formatMoney(null), '$ 0,00');
+    assert.equal(formatMoney('not-a-number'), '$ 0,00');
+    assert.equal(formatMoney(-1234.5), '$ -1.234,50');
 });

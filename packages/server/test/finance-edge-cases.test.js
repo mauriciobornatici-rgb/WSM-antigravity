@@ -183,3 +183,91 @@ test('supplier payments and outgoing cheque APIs validate missing records and st
     target = 'outgoing';
     await assert.rejects(() => financeService.updateOutgoingCheckStatus('x', { status: 'cancelled' }, 'u'), (e) => e.errorCode === 'OUTGOING_CHECK_NOT_FOUND');
 });
+
+test('bulk invoice collection covers missing, overpaid and successful mixed invoices', async (t) => {
+    let mode = 'missing';
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT * FROM invoices WHERE id')) {
+            if (mode === 'missing') return [[]];
+            return [[{
+                id: 'i', client_id: 'c', total_amount: 100, payment_method: 'cash',
+                invoice_type: 'B', point_of_sale: 1, invoice_number: 2, order_id: 'o'
+            }]];
+        }
+        if (statement.includes('SUM(amount)')) return [[{ paid_amount: mode === 'overpaid' ? 90 : 0 }]];
+        if (statement.includes('SELECT id, status FROM orders')) return [[{ id: 'o', status: mode === 'cancelled' ? 'cancelled' : 'packed' }]];
+        return [[]];
+    });
+    const payload = { clientId: 'c', allocations: [{ invoiceId: 'i', payments: [{ method: 'cash', amount: 100 }] }] };
+    await assert.rejects(() => financeService.registerBulkInvoicePayments(payload, 'u'), (e) => e.errorCode === 'INVOICE_NOT_FOUND');
+    mode = 'overpaid';
+    await assert.rejects(() => financeService.registerBulkInvoicePayments(payload, 'u'), (e) => e.errorCode === 'PAYMENTS_EXCEED_TOTAL');
+
+    const originals = { register: financeService._registerInvoicePayments, audit: auditService.log };
+    financeService._registerInvoicePayments = async () => {};
+    auditService.log = async () => {};
+    t.after(() => {
+        financeService._registerInvoicePayments = originals.register;
+        auditService.log = originals.audit;
+    });
+    mode = 'success';
+    const result = await financeService.registerBulkInvoicePayments({
+        clientId: 'c', notes: '', allocations: [{ documentId: 'i', documentType: 'invoice', payments: [
+            { method: 'cash', amount: 50 }, { method: 'bank', amount: 50 }
+        ] }]
+    }, null);
+    assert.equal(result.total_paid, 100);
+    assert.equal(result.invoices[0].payment_status, 'paid');
+    assert.ok(calls.some((call) => call.params?.includes('multiple')));
+    assert.ok(calls.some((call) => call.params?.includes('completed')));
+
+    mode = 'cancelled';
+    const cancelled = await financeService.registerBulkInvoicePayments(payload, 'u');
+    assert.equal(cancelled.invoices[0].payment_status, 'paid');
+    assert.ok(calls.some((call) => call.params?.[1] === 'cancelled'));
+});
+
+test('order collection rejects overpayments and allocates received cheques before invoicing', async (t) => {
+    let mode = 'overpay';
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('FROM orders o')) return [[{ id: 'o', client_id: 'c', receivable_amount: 100 }]];
+        if (statement.includes('SUM(amount)')) return [[{ paid_amount: mode === 'overpay' ? 90 : 0 }]];
+        if (statement.includes('SELECT id, amount FROM customer_checks')) return [[]];
+        return [[]];
+    });
+    const check = {
+        issuer_name: 'Ana', bank_name: 'Banco', check_number: 'C-1', due_date: '2026-09-01', instrument_amount: 100
+    };
+    const payload = { clientId: 'c', allocations: [{ documentType: 'order', documentId: 'o', payments: [{ method: 'check', amount: 100, check }] }] };
+    await assert.rejects(() => financeService.registerBulkInvoicePayments(payload, 'u'), (e) => e.errorCode === 'PAYMENTS_EXCEED_TOTAL');
+    mode = 'success';
+    const originals = { journal: accountingService.createJournalEntry, audit: auditService.log };
+    accountingService.createJournalEntry = async () => {};
+    auditService.log = async () => {};
+    t.after(() => {
+        accountingService.createJournalEntry = originals.journal;
+        auditService.log = originals.audit;
+    });
+    const result = await financeService.registerBulkInvoicePayments(payload, 'u');
+    assert.equal(result.total_paid, 100);
+    assert.ok(calls.some((call) => call.sql.includes('INSERT INTO customer_check_allocations')));
+});
+
+test('supplier bulk payment rejects overpayment before mutating balances', async (t) => {
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('SELECT * FROM supplier_invoices')) return [[{ id: 'i', supplier_id: 's', total_amount: 100 }]];
+        if (statement.includes('SUM(amount)')) return [[{ paid_amount: 90 }]];
+        return [[]];
+    });
+    await assert.rejects(
+        () => financeService.registerBulkSupplierPayments({ supplierId: 's', allocations: [{ invoiceId: 'i', payments: [{ amount: 20, method: 'cash' }] }] }, 'u'),
+        (e) => e.errorCode === 'PAYMENTS_EXCEED_TOTAL'
+    );
+});

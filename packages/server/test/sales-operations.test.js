@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import salesService from '../services/sales.service.js';
 import auditService from '../services/audit.service.js';
 import accountingService from '../services/accounting.service.js';
+import financeService from '../services/finance.service.js';
 import { mockPool } from './helpers/mockDb.js';
 
 test('order status helpers normalize aliases and reject invalid transitions', () => {
@@ -354,4 +355,113 @@ test('invoice queries apply filters, use item fallback and tolerate legacy tax s
     assert.equal((await salesService.getTaxConditions())[0].id, 'tc-1');
     taxMode = 'error';
     await assert.rejects(() => salesService.getTaxConditions(), /db down/);
+});
+
+test('delivery, picking, picking events and summary expose missing-record failures', async (t) => {
+    let mode = 'deliver';
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (mode === 'summary' && statement.startsWith('SELECT * FROM orders')) return [[]];
+        if (statement.includes('FOR UPDATE')) return [[]];
+        if (mode === 'event' && statement.includes('FROM picking_sessions')) return [[]];
+        if (mode === 'event' && statement.includes('SUM(quantity)')) throw new Error('picking db failure');
+        return [[]];
+    });
+    await assert.rejects(() => salesService.deliverOrder('missing', {}, 'u'), /Order not found/);
+    mode = 'pick';
+    await assert.rejects(() => salesService.pickOrderItem('missing', 1, 'u'), /Order item not found/);
+    mode = 'event';
+    await assert.rejects(() => salesService.recordPickingEvent('o', {}, 'u'), /picking db failure/);
+    mode = 'summary';
+    await assert.rejects(() => salesService.getOrderSummary('missing'), /Order not found/);
+});
+
+test('_normalizePayments covers empty totals and malformed methods and amounts', () => {
+    assert.deepEqual(salesService._normalizePayments(undefined, 0), {
+        payments: [], paidAmount: 0, paymentStatus: 'pending', primaryMethod: 'cash'
+    });
+    assert.throws(
+        () => salesService._normalizePayments([{ amount: 0, method: 'cash' }], 10),
+        (error) => error.errorCode === 'INVALID_PAYMENT_AMOUNT'
+    );
+    assert.throws(
+        () => salesService._normalizePayments([{ amount: 1, method: ' ' }], 10, ''),
+        (error) => error.errorCode === 'INVALID_PAYMENT_METHOD'
+    );
+    assert.deepEqual(salesService._normalizePayments([{ amount: 5, method: 'check', check: { number: '1' } }], 10), {
+        payments: [{ amount: 5, method: 'check', check: { number: '1' } }],
+        paidAmount: 5,
+        paymentStatus: 'partial',
+        primaryMethod: 'check'
+    });
+});
+
+test('createInvoice uses configured POS, planned mixed payments and order advances', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement === 'SELECT * FROM orders WHERE id = ? FOR UPDATE') return [[{
+            id: 'o', status: 'packed', client_id: 'c', customer_name: '', payment_method: 'cash'
+        }]];
+        if (statement.includes('FROM order_items oi')) return [[
+            { product_id: 'p', quantity: 1, picked_quantity: 0, unit_price: 100, vat_rate: null, product_name: null, sku: null },
+            { product_id: 'zero', quantity: 0, picked_quantity: 0, unit_price: 1, vat_rate: 21, product_name: 'Zero' }
+        ]];
+        if (statement.includes('SELECT billing_pos')) return [[{ billing_pos: 4 }]];
+        if (statement.includes('MAX(invoice_number)')) return [[{ max_number: 7 }]];
+        if (statement.includes('FROM document_sequences')) return [[{ current_value: 7 }]];
+        if (statement.includes('SELECT id, name, tax_id, address FROM clients')) return [[{ id: 'c', name: 'Ana', tax_id: null, address: null }]];
+        if (statement.includes('FROM order_payments')) return [[
+            { method: 'credit_account', amount: 10, check_payload: null },
+            { method: 'cash', amount: 50, check_payload: '{"number":"1"}' },
+            { method: 'bank', amount: 61, check_payload: { reference: 'TR' } }
+        ]];
+        return [[]];
+    });
+    const originals = {
+        accounting: accountingService.postInvoiceAccountingEntries,
+        finance: financeService._registerInvoicePayments,
+        transfer: salesService._transferOrderReceivablePayments,
+        audit: auditService.log
+    };
+    let registeredPayments;
+    accountingService.postInvoiceAccountingEntries = async () => {};
+    financeService._registerInvoicePayments = async (_connection, payload) => { registeredPayments = payload.payments; };
+    salesService._transferOrderReceivablePayments = async () => 10;
+    auditService.log = async () => {};
+    t.after(() => {
+        accountingService.postInvoiceAccountingEntries = originals.accounting;
+        financeService._registerInvoicePayments = originals.finance;
+        salesService._transferOrderReceivablePayments = originals.transfer;
+        auditService.log = originals.audit;
+    });
+    const result = await salesService.createInvoice('o', { point_of_sale: 'bad' }, null);
+    assert.equal(result.point_of_sale, 4);
+    assert.equal(result.total_amount, 121);
+    assert.equal(result.paid_amount, 121);
+    assert.equal(result.payment_status, 'paid');
+    assert.equal(registeredPayments.length, 2);
+    assert.deepEqual(registeredPayments[0].check, { number: '1' });
+    assert.ok(calls.some((call) => call.sql.includes('UPDATE invoices SET payment_status')));
+});
+
+test('createInvoice rejects orders with no physically picked quantity', async (t) => {
+    mockPool(t, async (sql) => {
+        if (String(sql).includes('SELECT * FROM orders')) return [[{ id: 'o', invoice_id: null }]];
+        if (String(sql).includes('FROM order_items oi')) return [[{ product_id: 'p', quantity: 0, picked_quantity: 0 }]];
+        return [[]];
+    });
+    await assert.rejects(() => salesService.createInvoice('o', {}, 'u'), /No picked items found/);
+});
+
+test('createManualInvoice rejects missing orders, missing items and rolls back', async (t) => {
+    let mode = 'order';
+    mockPool(t, async (sql) => {
+        if (String(sql).includes('SELECT id, invoice_id FROM orders')) return mode === 'order' ? [[]] : [[{ id: 'o', invoice_id: null }]];
+        return [[]];
+    });
+    await assert.rejects(() => salesService.createManualInvoice({ order_id: 'missing', items: [{}] }, 'u'), /Order not found/);
+    mode = 'items';
+    await assert.rejects(() => salesService.createManualInvoice({ order_id: 'o', items: [] }, 'u'), /Invoice must contain items/);
 });

@@ -154,3 +154,31 @@ test('transferStock decrements partial source and creates a target location', as
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE inventory SET quantity = ?') && params[0] === 5));
     assert.ok(calls.some(({ sql }) => sql.startsWith('INSERT INTO inventory (id, product_id')));
 });
+
+test('inventory normalization canonicalizes empty, textual and family values', () => {
+    assert.equal(inventoryService.normalizeBarcode(null), null);
+    assert.equal(inventoryService.normalizeBarcode(' 779 '), '779');
+    assert.equal(inventoryService.normalizeLocation('  '), null);
+    assert.equal(inventoryService.normalizeLocation(' A-1 '), 'A-1');
+    assert.equal(inventoryService.normalizeFamilyValue(undefined), null);
+    assert.equal(inventoryService.normalizeFamilyValue(' Camiseta '), 'Camiseta');
+});
+
+test('inventory queries support empty filters, totals and explicit offsets', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        calls.push({ sql, params });
+        if (sql.includes('COUNT(*)')) return [[{ total: null }]];
+        return [[]];
+    });
+    assert.deepEqual(await inventoryService.getMovements({}, { limit: 10, offset: 2 }), []);
+    assert.deepEqual(await inventoryService.getBatches(), []);
+    assert.deepEqual(await inventoryService.getSerials(), []);
+    assert.ok(calls.some(({ sql }) => sql.includes('LIMIT ?')));
+});
+
+test('batch updates handle empty patches and missing refreshed rows', async (t) => {
+    mockPool(t, async () => [[]]);
+    assert.equal(await inventoryService.updateBatch('b', {}), null);
+    assert.equal(await inventoryService.updateBatch('b', { status: 'expired', expiration_date: null }), null);
+});

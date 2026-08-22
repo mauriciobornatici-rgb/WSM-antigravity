@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { clientReturnCreateSchema, createOrderSchema, createProductSchema, manualInvoiceSchema } from '@wsm/common';
+import { clientReturnCreateSchema, createOrderSchema, createProductSchema, manualInvoiceSchema, orderPaymentLineSchema } from '@wsm/common';
 
 test('POS order contract preserves the idempotency key', () => {
     const parsed = createOrderSchema.parse({
@@ -71,4 +71,17 @@ test('product contract preserves optional commercial attributes and image URL', 
     assert.equal(parsed.size, 'M');
     assert.equal(parsed.color, 'Azul');
     assert.match(parsed.image_url || '', /uploads\/products/);
+});
+
+test('cheque payment contract requires instrument details only for cheques', () => {
+    assert.equal(orderPaymentLineSchema.parse({ method: 'cash', amount: 1 }).method, 'cash');
+    assert.throws(
+        () => orderPaymentLineSchema.parse({ method: 'check', amount: 1 }),
+        (error) => error.issues?.some((issue) => issue.path?.[0] === 'check')
+    );
+    const parsed = orderPaymentLineSchema.parse({
+        method: 'check', amount: 10,
+        check: { issuer_name: 'Ana', bank_name: 'Banco', check_number: '1', due_date: '2026-09-01' }
+    });
+    assert.equal(parsed.check?.check_number, '1');
 });
