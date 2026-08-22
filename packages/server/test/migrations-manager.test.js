@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import pool from '../config/db.js';
+import { runMigrations } from '../config/migrations_manager.js';
 import { migrationInternals } from '../config/migrations_manager.js';
 
 test('migration checksums are deterministic and content-sensitive', () => {
@@ -74,4 +76,61 @@ test('historical checksum compatibility is narrowly scoped to the applied migrat
         ),
         false
     );
+});
+
+test('runMigrations executes every pending migration and releases its advisory lock', async (t) => {
+    const originalGetConnection = pool.getConnection;
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    const calls = [];
+    let began = 0;
+    let committed = 0;
+    let released = false;
+    const connection = {
+        async query(sql, params) {
+            const statement = String(sql);
+            calls.push({ sql: statement, params });
+            if (statement.includes('GET_LOCK')) return [[{ acquired: 1 }]];
+            if (statement === 'SELECT name, checksum FROM _migrations') return [[]];
+            if (statement.includes('SELECT statement_index')) return [[]];
+            return [[]];
+        },
+        async beginTransaction() { began += 1; },
+        async commit() { committed += 1; },
+        async rollback() {},
+        release() { released = true; }
+    };
+    pool.getConnection = async () => connection;
+    console.log = () => {};
+    console.warn = () => {};
+    console.error = () => {};
+    t.after(() => {
+        pool.getConnection = originalGetConnection;
+        console.log = originalLog;
+        console.warn = originalWarn;
+        console.error = originalError;
+    });
+    await runMigrations();
+    assert.equal(released, true);
+    assert.ok(calls.some((call) => call.sql.includes('INSERT INTO _migrations')));
+    assert.ok(calls.some((call) => call.sql.includes('RELEASE_LOCK')));
+    assert.equal(began, committed);
+});
+
+test('runMigrations rejects lock contention and still releases the connection', async (t) => {
+    const originalGetConnection = pool.getConnection;
+    const originalError = console.error;
+    let released = false;
+    pool.getConnection = async () => ({
+        query: async () => [[{ acquired: 0 }]],
+        release: () => { released = true; }
+    });
+    console.error = () => {};
+    t.after(() => {
+        pool.getConnection = originalGetConnection;
+        console.error = originalError;
+    });
+    await assert.rejects(() => runMigrations(), /Could not acquire/);
+    assert.equal(released, true);
 });
