@@ -88,6 +88,17 @@ test('getOrders returns both empty response shapes without loading children', as
     assert.equal(callCount, 3);
 });
 
+test('getOrders returns populated rows directly when pagination totals are not requested', async (t) => {
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('FROM orders o')) return [[{ id: 'o-direct', status: 'pending' }]];
+        if (statement.includes('FROM order_items oi')) return [[]];
+        if (statement.includes('FROM order_payments')) return [[]];
+        return [[]];
+    });
+    assert.deepEqual(await salesService.getOrders(), [{ id: 'o-direct', status: 'pending', items: [], payments: [] }]);
+});
+
 test('dispatchOrder completes pickup immediately and records an audit', async (t) => {
     const calls = [];
     mockPool(t, async (sql, params) => {
@@ -446,6 +457,55 @@ test('createInvoice uses configured POS, planned mixed payments and order advanc
     assert.ok(calls.some((call) => call.sql.includes('UPDATE invoices SET payment_status')));
 });
 
+test('createInvoice records the remaining client debt for a partial payment', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement === 'SELECT * FROM orders WHERE id = ? FOR UPDATE') {
+            return [[{ id: 'o-partial', status: 'packed', client_id: 'client-1', customer_name: 'Ana', payment_method: 'cash' }]];
+        }
+        if (statement.includes('FROM order_items oi')) {
+            return [[{ product_id: 'p-1', quantity: 1, picked_quantity: 1, unit_price: 100, vat_rate: 0, product_name: 'Producto' }]];
+        }
+        if (statement.includes('FROM order_payments')) return [[]];
+        return [[]];
+    });
+    const originals = {
+        next: salesService._nextInvoiceNumber,
+        client: salesService._resolveClientSnapshot,
+        transfer: salesService._transferOrderReceivablePayments,
+        accounting: accountingService.postInvoiceAccountingEntries,
+        finance: financeService._registerInvoicePayments,
+        audit: auditService.log,
+    };
+    salesService._nextInvoiceNumber = async () => 1;
+    salesService._resolveClientSnapshot = async () => ({
+        client_id: 'client-1', client_name: 'Ana', client_tax_id: null,
+        client_address: null, client_tax_condition: 'consumidor_final',
+    });
+    salesService._transferOrderReceivablePayments = async () => 0;
+    accountingService.postInvoiceAccountingEntries = async () => {};
+    financeService._registerInvoicePayments = async () => {};
+    auditService.log = async () => {};
+    t.after(() => {
+        salesService._nextInvoiceNumber = originals.next;
+        salesService._resolveClientSnapshot = originals.client;
+        salesService._transferOrderReceivablePayments = originals.transfer;
+        accountingService.postInvoiceAccountingEntries = originals.accounting;
+        financeService._registerInvoicePayments = originals.finance;
+        auditService.log = originals.audit;
+    });
+
+    const result = await salesService.createInvoice('o-partial', {
+        invoice_type: 'B', point_of_sale: 1, payments: [{ method: 'cash', amount: 40 }],
+    }, 'u-1');
+    assert.equal(result.payment_status, 'partial');
+    assert.equal(result.paid_amount, 40);
+    assert.ok(calls.some(({ sql, params }) => sql.includes('current_account_balance') && params[0] === 60));
+    assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE orders SET invoice_id') && params[1] === 'packed'));
+});
+
 test('createInvoice rejects orders with no physically picked quantity', async (t) => {
     mockPool(t, async (sql) => {
         if (String(sql).includes('SELECT * FROM orders')) return [[{ id: 'o', invoice_id: null }]];
@@ -464,4 +524,50 @@ test('createManualInvoice rejects missing orders, missing items and rolls back',
     await assert.rejects(() => salesService.createManualInvoice({ order_id: 'missing', items: [{}] }, 'u'), /Order not found/);
     mode = 'items';
     await assert.rejects(() => salesService.createManualInvoice({ order_id: 'o', items: [] }, 'u'), /Invoice must contain items/);
+});
+
+test('createManualInvoice links its order, applies advances and records the outstanding balance', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT id, invoice_id FROM orders')) return [[{ id: 'o-manual', invoice_id: null }]];
+        return [[]];
+    });
+    const originals = {
+        next: salesService._nextInvoiceNumber,
+        client: salesService._resolveClientSnapshot,
+        transfer: salesService._transferOrderReceivablePayments,
+        accounting: accountingService.postInvoiceAccountingEntries,
+        finance: financeService._registerInvoicePayments,
+        audit: auditService.log,
+    };
+    salesService._nextInvoiceNumber = async () => 9;
+    salesService._resolveClientSnapshot = async () => ({
+        client_id: 'client-1', client_name: 'Ana', client_tax_id: null,
+        client_address: null, client_tax_condition: 'consumidor_final',
+    });
+    salesService._transferOrderReceivablePayments = async () => 20;
+    accountingService.postInvoiceAccountingEntries = async () => {};
+    financeService._registerInvoicePayments = async () => {};
+    auditService.log = async () => {};
+    t.after(() => {
+        salesService._nextInvoiceNumber = originals.next;
+        salesService._resolveClientSnapshot = originals.client;
+        salesService._transferOrderReceivablePayments = originals.transfer;
+        accountingService.postInvoiceAccountingEntries = originals.accounting;
+        financeService._registerInvoicePayments = originals.finance;
+        auditService.log = originals.audit;
+    });
+
+    const result = await salesService.createManualInvoice({
+        order_id: 'o-manual', client_id: 'client-1', invoice_type: 'B', point_of_sale: 1,
+        items: [{ product_id: 'p-1', product_name: 'Producto', quantity: 1, unit_price: 100, vat_rate: 21 }],
+    }, 'u-1');
+    assert.equal(result.total_amount, 121);
+    assert.equal(result.paid_amount, 20);
+    assert.equal(result.payment_status, 'partial');
+    assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE invoices SET payment_status') && params[0] === 'partial'));
+    assert.ok(calls.some(({ sql, params }) => sql.includes('current_account_balance') && params[0] === 101));
+    assert.ok(calls.some(({ sql, params }) => sql.includes('UPDATE orders') && params.at(-1) === 'o-manual'));
 });

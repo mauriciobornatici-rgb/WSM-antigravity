@@ -341,3 +341,167 @@ test('fulfillment mutations validate credentials and missing local fulfillment r
     await assert.rejects(() => missing.updateFulfillment('f', {}), (e) => e.statusCode === 404);
     await assert.rejects(() => missing.createTrackingEvent('f', {}), (e) => e.statusCode === 404);
 });
+
+test('rate limiter and stock-location cache cover waiting, reuse and required selection', async () => {
+    const service = new TiendaNubeService({ http: {}, env: { TIENDANUBE_ENFORCE_RATE_LIMIT: 'true' } });
+    service.enforceRateLimit = true;
+    service.nextApiRequestAt = Date.now() + 2;
+    await service.waitForRateSlot();
+    assert.ok(service.nextApiRequestAt > Date.now());
+
+    service.locationCache = { expiresAt: Date.now() + 1000, requiresSelection: false, locationId: 'location-1' };
+    assert.equal(await service.resolveStockLocation({}), 'location-1');
+    service.locationCache = { expiresAt: Date.now() + 1000, requiresSelection: true, locationId: null };
+    await assert.rejects(() => service.resolveStockLocation({}), /múltiples ubicaciones/);
+});
+
+test('pagination accepts Tiendanube next links and remote catalog import advances pages', async () => {
+    const service = new TiendaNubeService({ db: { query: async () => [[]] }, http: {} });
+    assert.equal(
+        service.nextPageUrl('<https://api.tiendanube.com/2025-03/store/products?page=2>; rel="next"'),
+        'https://api.tiendanube.com/2025-03/store/products?page=2'
+    );
+    service.getCredentials = async () => ({ storeId: 'store' });
+    let requests = 0;
+    service.apiRequest = async () => {
+        requests += 1;
+        return { data: requests === 1 ? Array.from({ length: 200 }, (_, id) => ({ id })) : [] };
+    };
+    service.persistRemoteProduct = async () => {};
+    const result = await service.importRemoteCatalog();
+    assert.equal(requests, 2);
+    assert.equal(result.processed, 200);
+    assert.equal(result.succeeded, 200);
+    assert.equal(result.pages, 2);
+});
+
+test('stock sync tolerates a secondary failure while queueing its retry', async () => {
+    const originalError = console.error;
+    const originalLog = console.log;
+    const errors = [];
+    console.error = (...args) => errors.push(args);
+    console.log = () => {};
+    try {
+        const service = new TiendaNubeService({
+            db: { query: async (sql) => String(sql).includes('FROM products')
+                ? [[{ tiendanube_product_id: 'p', tiendanube_variant_id: 'v', tiendanube_sync_enabled: 1 }]]
+                : [[]] },
+            http: {},
+        });
+        service.getCredentials = async () => ({ storeId: 's' });
+        service.resolveStockLocation = async () => 'loc';
+        service.apiRequest = async () => { throw new Error('remote offline'); };
+        service.queueFailedSync = async () => { throw new Error('retry table offline'); };
+        assert.equal(await service.syncStock('local-product', 4), undefined);
+        assert.ok(errors.some((args) => String(args[0]).includes('Error queueing failed sync')));
+    } finally {
+        console.error = originalError;
+        console.log = originalLog;
+    }
+});
+
+test('manual retry completes a claimed failed stock synchronization', async () => {
+    const calls = [];
+    const service = new TiendaNubeService({ db: { query: async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT id, product_id')) return [[{
+            id: 'retry-1', product_id: 'local', tiendanube_product_id: 'remote-p',
+            tiendanube_variant_id: 'remote-v', stock: 8, attempts: 1, max_attempts: 3,
+        }]];
+        if (statement.includes("SET status = 'retrying'")) return [{ affectedRows: 1 }];
+        return [{ affectedRows: 1 }];
+    } }, http: {} });
+    service.getCredentials = async () => ({ storeId: 's' });
+    service.resolveStockLocation = async () => 'loc';
+    service.apiRequest = async () => ({ data: {} });
+
+    assert.deepEqual(await service.retrySync('retry-1'), { success: true });
+    assert.ok(calls.some(({ sql }) => sql.includes("SET status = 'completed'")));
+});
+
+test('recent-order synchronization separates created, skipped and failed imports', async () => {
+    const disconnected = new TiendaNubeService({ http: {} });
+    disconnected.getCredentials = async () => null;
+    await assert.rejects(() => disconnected.syncRecentOrders({}), /Credenciales/);
+
+    const service = new TiendaNubeService({ http: {
+        get: async () => ({
+            data: [{ id: 1 }, { id: 2 }, { id: 3 }],
+            headers: { link: '<https://malformed.example>; rel="prev"' },
+        }),
+    } });
+    service.getCredentials = async () => ({ storeId: 's', accessToken: 'token', userAgent: 'WSM' });
+    service.importOrderPayload = async (payload) => {
+        if (payload.id === 1) return { status: 'created' };
+        if (payload.id === 2) return { status: 'existing' };
+        throw new Error('SKU no vinculado');
+    };
+    const result = await service.syncRecentOrders({});
+    assert.deepEqual(result, {
+        syncedCount: 1,
+        skippedCount: 1,
+        failures: [{ externalId: '3', message: 'SKU no vinculado' }],
+        pages: 1,
+    });
+});
+
+test('webhook administration creates missing registrations and removes matching URLs', async () => {
+    const missingUrl = new TiendaNubeService({ http: {} });
+    assert.deepEqual(await missingUrl.ensureOrderWebhook(''), { configured: false, reason: 'missing_public_url' });
+    missingUrl.getCredentials = async () => null;
+    await assert.rejects(() => missingUrl.ensureOrderWebhook('https://app.example/webhook'), /Credenciales/);
+    assert.deepEqual(await missingUrl.removeOrderWebhook(''), { removed: 0 });
+
+    const calls = [];
+    const service = new TiendaNubeService({ http: {} });
+    service.getCredentials = async () => ({ storeId: 's' });
+    service.apiRequest = async (method, _creds, path, payload) => {
+        calls.push({ method, path, payload });
+        if (method === 'get') return { data: [{ id: 1, event: 'order/created', url: 'https://app.example/webhook' }] };
+        return { data: { id: `created-${calls.length}` } };
+    };
+    const ensured = await service.ensureOrderWebhook('https://app.example/webhook');
+    assert.equal(ensured.configured, true);
+    assert.equal(ensured.created, true);
+    assert.ok(ensured.createdCount > 0);
+    assert.equal(calls.filter(({ method }) => method === 'post').length, ensured.createdCount);
+
+    const removed = await service.removeOrderWebhook('https://app.example/webhook');
+    assert.deepEqual(removed, { removed: 1 });
+    assert.ok(calls.some(({ method, path }) => method === 'delete' && path === '/webhooks/1'));
+});
+
+test('stock-location status explains configured, automatic, ambiguous and remote-error states', async () => {
+    const service = new TiendaNubeService({ http: {} });
+    let response = [{ id: 1, active: true }, { id: 2, active: false }];
+    service.apiRequest = async () => ({ data: response });
+    assert.deepEqual(await service.getStockLocationStatus({ locationId: '1' }), { valid: true, locationId: '1' });
+    assert.equal((await service.getStockLocationStatus({ locationId: 'missing' })).valid, false);
+    assert.deepEqual(await service.getStockLocationStatus({}), { valid: true, locationId: '1' });
+    response = [{ id: 1 }, { id: 2 }];
+    assert.match((await service.getStockLocationStatus({})).message, /multiubicación/);
+    response = [];
+    assert.match((await service.getStockLocationStatus({})).message, /no informó/);
+    service.apiRequest = async () => { throw new Error('offline'); };
+    assert.match((await service.getStockLocationStatus({})).message, /offline/);
+});
+
+test('automatic catalog linking validates credentials and handles an empty remote catalog', async () => {
+    const disconnected = new TiendaNubeService({ http: {} });
+    disconnected.getCredentials = async () => null;
+    await assert.rejects(() => disconnected.autoLinkCatalog(), /Credenciales/);
+
+    const originalLog = console.log;
+    console.log = () => {};
+    try {
+        const service = new TiendaNubeService({ http: {} });
+        service.getCredentials = async () => ({ storeId: 's' });
+        service.apiRequest = async () => ({ data: [] });
+        const result = await service.autoLinkCatalog();
+        assert.equal(result.totalVariantsFound, 0);
+        assert.equal(result.linkedCount, 0);
+    } finally {
+        console.log = originalLog;
+    }
+});

@@ -35,6 +35,17 @@ test('inventory product query returns a simple array without count options', asy
     assert.deepEqual(result, [{ id: 'product-1', stock_current: 3 }]);
 });
 
+test('inventory totals and stock queries fall back safely for empty aggregate rows', async (t) => {
+    mockPool(t, async (sql) => {
+        if (sql.includes('COUNT(*)')) return [[]];
+        if (sql.includes('SUM(quantity) AS total_stock')) return [[]];
+        return [[{ id: 'product-1', inventory_stock_current: null }]];
+    });
+    const result = await inventoryService.getProductsWithInventoryStock({}, { includeTotal: true });
+    assert.deepEqual(result, { rows: [{ id: 'product-1', stock_current: 0 }], total: 0 });
+    assert.equal(await inventoryService.getProductStock('missing'), 0);
+});
+
 test('inventory movement, batch and serial queries preserve all filters', async (t) => {
     const calls = [];
     mockPool(t, async (sql, params) => {
