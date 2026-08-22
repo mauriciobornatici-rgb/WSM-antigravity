@@ -8,6 +8,12 @@ export interface Product {
     name: string
     description: string
     category: string
+    subcategory?: string | null
+    category_option_id?: string | null
+    subcategory_option_id?: string | null
+    brand_option_id?: string | null
+    size_option_id?: string | null
+    color_option_id?: string | null
     brand?: string | null
     size?: string | null
     color?: string | null
@@ -38,6 +44,22 @@ export interface InventoryItem {
     product_name?: string | null
     sku?: string | null
     category?: string | null
+}
+
+export type ProductCatalogOptionType = "group" | "subgroup" | "brand" | "size" | "color"
+
+export interface ProductCatalogOption {
+    id: string
+    type: ProductCatalogOptionType
+    name: string
+    normalized_name: string
+    parent_id?: string | null
+    parent_name?: string | null
+    active: boolean
+    sort_order: number
+    usage_count?: number
+    created_at?: string
+    updated_at?: string
 }
 
 export interface Client {

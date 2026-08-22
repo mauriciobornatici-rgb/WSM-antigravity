@@ -74,6 +74,52 @@ test('resolveProductFamily leaves a standalone product ungrouped', async () => {
     assert.equal(queryCalled, false);
 });
 
+test('applyProductCatalogOptions derives canonical product values from master ids', async () => {
+    const productData = {
+        category_option_id: 'group-1',
+        subcategory_option_id: 'subgroup-1',
+        color_option_id: 'color-1'
+    };
+    const connection = {
+        async query() {
+            return [[
+                { id: 'group-1', type: 'group', name: 'Ropa', parent_id: null },
+                { id: 'subgroup-1', type: 'subgroup', name: 'Remeras', parent_id: 'group-1' },
+                { id: 'color-1', type: 'color', name: 'Azul marino', parent_id: null }
+            ]];
+        }
+    };
+
+    await inventoryService.applyProductCatalogOptions(productData, {}, connection);
+
+    assert.equal(productData.category, 'Ropa');
+    assert.equal(productData.subcategory, 'Remeras');
+    assert.equal(productData.color, 'Azul marino');
+});
+
+test('applyProductCatalogOptions rejects a subgroup outside the selected group', async () => {
+    const connection = {
+        async query() {
+            return [[
+                { id: 'group-1', type: 'group', name: 'Ropa', parent_id: null },
+                { id: 'subgroup-1', type: 'subgroup', name: 'Pelotas', parent_id: 'group-2' }
+            ]];
+        }
+    };
+
+    await assert.rejects(
+        () => inventoryService.applyProductCatalogOptions({
+            category_option_id: 'group-1',
+            subcategory_option_id: 'subgroup-1'
+        }, {}, connection),
+        (error) => {
+            assert.equal(error.statusCode, 400);
+            assert.match(error.message, /no pertenece/i);
+            return true;
+        }
+    );
+});
+
 test('createProduct persists initial stock and inventory movement when stock_initial is positive', async (t) => {
     const originalCreate = inventoryService.create;
     const originalEnsureUniqueBarcode = inventoryService.ensureUniqueBarcode;

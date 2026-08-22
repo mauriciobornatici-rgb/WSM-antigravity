@@ -9,6 +9,11 @@ const inventoryReadRoles = authorizePermission(PERMISSIONS.PRODUCTS_READ);
 const inventoryWriteRoles = authorizePermission(PERMISSIONS.INVENTORY_MANAGE);
 const advancedInventoryRoles = authorizePermission(PERMISSIONS.INVENTORY_MANAGE);
 
+// Normalized product catalog masters
+router.get('/product-catalog-options', inventoryReadRoles, inventoryController.getProductCatalogOptions);
+router.post('/product-catalog-options', inventoryWriteRoles, inventoryController.createProductCatalogOption);
+router.put('/product-catalog-options/:id', inventoryWriteRoles, validate(schemas.idParam), inventoryController.updateProductCatalogOption);
+
 // Products
 router.get('/products', inventoryReadRoles, validateZod(zodSchemas.productFilters), inventoryController.getProducts);
 router.post('/products/image-upload', inventoryWriteRoles, validateZod(zodSchemas.uploadProductImage), inventoryController.uploadProductImage);

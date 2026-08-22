@@ -29,6 +29,59 @@ class InventoryService extends BaseService {
         return sanitized.length > 0 ? sanitized : null;
     }
 
+    async applyProductCatalogOptions(productData, previous = {}, connection = pool) {
+        const definitions = [
+            ['category_option_id', 'group', 'category'],
+            ['subcategory_option_id', 'subgroup', 'subcategory'],
+            ['brand_option_id', 'brand', 'brand'],
+            ['size_option_id', 'size', 'size'],
+            ['color_option_id', 'color', 'color']
+        ];
+        const requested = definitions.filter(([idField]) => Object.prototype.hasOwnProperty.call(productData, idField));
+        if (requested.length === 0) return productData;
+
+        const ids = requested.map(([idField]) => productData[idField]).filter(Boolean);
+        const [rows] = ids.length > 0
+            ? await connection.query('SELECT id, type, name, parent_id FROM product_catalog_options WHERE id IN (?)', [ids])
+            : [[]];
+        const optionsById = new Map(rows.map((row) => [row.id, row]));
+
+        for (const [idField, expectedType, textField] of requested) {
+            const optionId = productData[idField] || null;
+            if (!optionId) {
+                productData[idField] = null;
+                productData[textField] = null;
+                continue;
+            }
+            const option = optionsById.get(optionId);
+            if (!option || option.type !== expectedType) {
+                const error = new Error(`El valor seleccionado para ${textField} no es válido.`);
+                error.statusCode = 400;
+                throw error;
+            }
+            productData[textField] = option.name;
+        }
+
+        const subgroupId = productData.subcategory_option_id ?? previous.subcategory_option_id ?? null;
+        if (subgroupId) {
+            let subgroup = optionsById.get(subgroupId);
+            if (!subgroup) {
+                const [subgroupRows] = await connection.query(
+                    "SELECT id, type, name, parent_id FROM product_catalog_options WHERE id = ? AND type = 'subgroup' LIMIT 1",
+                    [subgroupId]
+                );
+                subgroup = subgroupRows[0];
+            }
+            const groupId = productData.category_option_id ?? previous.category_option_id ?? null;
+            if (!subgroup || subgroup.parent_id !== groupId) {
+                const error = new Error('El subgrupo seleccionado no pertenece al grupo indicado.');
+                error.statusCode = 400;
+                throw error;
+            }
+        }
+        return productData;
+    }
+
     async resolveProductFamily(rawFamilyName, productData = {}, connection = pool) {
         const size = this.normalizeFamilyValue(productData.size);
         const color = this.normalizeFamilyValue(productData.color);
@@ -202,6 +255,7 @@ class InventoryService extends BaseService {
         normalized.barcode = await this.ensureUniqueBarcode(normalized.barcode);
         normalized.location = this.normalizeLocation(normalized.location);
         normalized.image_url = normalizeProductImageUrl(normalized.image_url);
+        await this.applyProductCatalogOptions(normalized);
         const familyName = normalized.family_name;
         delete normalized.family_name;
         normalized.family_id = await this.resolveProductFamily(familyName, normalized);

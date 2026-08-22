@@ -1,11 +1,11 @@
-import { useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Camera, ImagePlus, ScanLine, Trash2, Upload } from "lucide-react";
 import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
 import * as z from "zod";
 import { createProductSchema } from "@wsm/common";
-import type { Product } from "@/types";
+import type { Product, ProductCatalogOption } from "@/types";
 import { api } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CatalogOptionSelect } from "@/components/products/CatalogOptionSelect";
 
 const MAX_PRODUCT_IMAGE_FILE_BYTES = 1_500_000;
 const IMAGE_URL_PATTERN = /^https?:\/\/.+/i;
@@ -38,6 +39,12 @@ export type ProductFormSubmitData = {
     barcode?: string | null;
     name: string;
     category: string;
+    subcategory?: string | null;
+    category_option_id?: string | null;
+    subcategory_option_id?: string | null;
+    brand_option_id?: string | null;
+    size_option_id?: string | null;
+    color_option_id?: string | null;
     family_name?: string | null;
     brand?: string | null;
     size?: string | null;
@@ -90,6 +97,12 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             barcode: initialData?.barcode ?? "",
             name: initialData?.name ?? "",
             category: initialData?.category ?? "",
+            subcategory: initialData?.subcategory ?? "",
+            category_option_id: initialData?.category_option_id ?? null,
+            subcategory_option_id: initialData?.subcategory_option_id ?? null,
+            brand_option_id: initialData?.brand_option_id ?? null,
+            size_option_id: initialData?.size_option_id ?? null,
+            color_option_id: initialData?.color_option_id ?? null,
             family_name: initialData?.family_name ?? "",
             brand: initialData?.brand ?? "",
             size: initialData?.size ?? "",
@@ -113,6 +126,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     const [locationReaderMode, setLocationReaderMode] = useState(false);
     const [isUploadingImage, setIsUploadingImage] = useState(false);
     const [imagePreviewError, setImagePreviewError] = useState<string | null>(null);
+    const [catalogOptions, setCatalogOptions] = useState<ProductCatalogOption[]>([]);
 
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -122,6 +136,25 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
 
     const canRenderImage = useMemo(() => canRenderProductImage(imageValue), [imageValue]);
     const hasImageValue = imageValue.trim().length > 0;
+    const selectedGroupId = useWatch({ control: form.control, name: "category_option_id" }) ?? null;
+
+    useEffect(() => {
+        let active = true;
+        api.getProductCatalogOptions({ include_inactive: true })
+            .then((options) => {
+                if (active) setCatalogOptions(options);
+            })
+            .catch(() => {
+                if (active) toast.error("No se pudieron cargar los maestros del catálogo");
+            });
+        return () => {
+            active = false;
+        };
+    }, []);
+
+    function addCatalogOption(option: ProductCatalogOption) {
+        setCatalogOptions((current) => current.some((item) => item.id === option.id) ? current : [...current, option]);
+    }
 
     function stopScannerResources() {
         if (rafRef.current != null) {
@@ -300,6 +333,12 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             barcode: values.barcode?.trim() ? values.barcode.trim() : null,
             name: values.name.trim(),
             category: (values.category ?? "").trim(),
+            subcategory: values.subcategory?.trim() || null,
+            category_option_id: values.category_option_id || null,
+            subcategory_option_id: values.subcategory_option_id || null,
+            brand_option_id: values.brand_option_id || null,
+            size_option_id: values.size_option_id || null,
+            color_option_id: values.color_option_id || null,
             family_name: values.family_name?.trim() || null,
             brand: values.brand?.trim() || null,
             size: values.size?.trim() || null,
@@ -342,12 +381,46 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                             />
                             <FormField<ProductFormSchema>
                                 control={form.control}
-                                name="category"
+                                name="category_option_id"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Categoria</FormLabel>
+                                        <FormLabel>Grupo / categoría</FormLabel>
                                         <FormControl>
-                                            <Input placeholder="Calzado, Ropa, Accesorios" {...field} value={field.value ?? ""} />
+                                            <CatalogOptionSelect
+                                                type="group"
+                                                value={typeof field.value === "string" ? field.value : null}
+                                                options={catalogOptions}
+                                                placeholder="Seleccionar grupo"
+                                                onCreated={addCatalogOption}
+                                                onValueChange={(value) => {
+                                                    form.setValue("category_option_id", value, { shouldDirty: true, shouldValidate: true });
+                                                    form.setValue("subcategory_option_id", null, { shouldDirty: true });
+                                                }}
+                                            />
+                                        </FormControl>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                        </div>
+
+                        <div className="mt-3">
+                            <FormField<ProductFormSchema>
+                                control={form.control}
+                                name="subcategory_option_id"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>Subgrupo <span className="text-xs font-normal text-muted-foreground">(opcional)</span></FormLabel>
+                                        <FormControl>
+                                            <CatalogOptionSelect
+                                                type="subgroup"
+                                                value={typeof field.value === "string" ? field.value : null}
+                                                parentId={selectedGroupId}
+                                                options={catalogOptions}
+                                                placeholder={selectedGroupId ? "Seleccionar subgrupo" : "Primero seleccione un grupo"}
+                                                onCreated={addCatalogOption}
+                                                onValueChange={(value) => form.setValue("subcategory_option_id", value, { shouldDirty: true, shouldValidate: true })}
+                                            />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -380,21 +453,26 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
 
                         <div className="mt-3 grid gap-3 md:grid-cols-3">
                             {([
-                                ["brand", "Marca", "Ej: Adidas"],
-                                ["size", "Talle", "Ej: M, 42"],
-                                ["color", "Color", "Ej: Azul"],
-                            ] as const).map(([name, label, placeholder]) => (
+                                ["brand_option_id", "brand", "Marca", "Seleccionar marca"],
+                                ["size_option_id", "size", "Talle", "Seleccionar talle"],
+                                ["color_option_id", "color", "Color", "Seleccionar color"],
+                            ] as const).map(([name, type, label, placeholder]) => (
                                 <FormField<ProductFormSchema>
                                     key={name}
                                     control={form.control}
                                     name={name}
                                     render={({ field }) => (
                                         <FormItem>
-                                            <FormLabel>
-                                                {label} <span className="text-xs font-normal text-muted-foreground">(opcional)</span>
-                                            </FormLabel>
+                                            <FormLabel>{label} <span className="text-xs font-normal text-muted-foreground">(opcional)</span></FormLabel>
                                             <FormControl>
-                                                <Input placeholder={placeholder} {...field} value={field.value ?? ""} />
+                                                <CatalogOptionSelect
+                                                    type={type}
+                                                    value={typeof field.value === "string" ? field.value : null}
+                                                    options={catalogOptions}
+                                                    placeholder={placeholder}
+                                                    onCreated={addCatalogOption}
+                                                    onValueChange={(value) => form.setValue(name, value, { shouldDirty: true, shouldValidate: true })}
+                                                />
                                             </FormControl>
                                             <FormMessage />
                                         </FormItem>

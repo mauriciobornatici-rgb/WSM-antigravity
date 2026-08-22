@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, Plus, TrendingDown, Sparkles, MapPin, Move, Download, Tag, BarChart3 } from "lucide-react";
+import { Activity, Plus, TrendingDown, Sparkles, MapPin, Move, Download, Tag, BarChart3, Layers3 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { convertToCSV, downloadCSV } from "@/lib/exportUtils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { Supplier, InventoryItem, WarehouseLocation } from "@/types";
+import type { Supplier, InventoryItem, WarehouseLocation, ProductCatalogOption } from "@/types";
 import type { PaginationMeta } from "@/types/api";
 import { getErrorMessage, showErrorToast } from "@/lib/errorHandling";
 import { fetchInventorySnapshot, invalidateInventorySnapshotCache, type ProductWithStock } from "@/lib/inventorySnapshot";
@@ -24,6 +24,7 @@ import { InventoryABCTab } from "@/components/inventory/InventoryABCTab";
 import { InventoryTransferDialog } from "@/components/inventory/InventoryTransferDialog";
 import { InventoryProcureDialog } from "@/components/inventory/InventoryProcureDialog";
 import { analyzeInventoryABC } from "@/lib/inventoryAnalytics";
+import { ProductCatalogMastersTab } from "@/components/inventory/ProductCatalogMastersTab";
 
 export default function InventoryPage() {
     const PRODUCTS_PAGE_SIZE = 20;
@@ -31,6 +32,7 @@ export default function InventoryPage() {
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
     const [warehouseLocations, setWarehouseLocations] = useState<WarehouseLocation[]>([]);
+    const [catalogOptions, setCatalogOptions] = useState<ProductCatalogOption[]>([]);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [productsPage, setProductsPage] = useState(1);
@@ -59,7 +61,7 @@ export default function InventoryPage() {
         try {
             setLoading(true);
             setLoadError(null);
-            const [snapshot, suppliersList, rawInventory, locations] = await Promise.all([
+            const [snapshot, suppliersList, rawInventory, locations, masterOptions] = await Promise.all([
                 fetchInventorySnapshot({
                     force,
                     page: productsPage,
@@ -67,13 +69,15 @@ export default function InventoryPage() {
                 }),
                 api.getSuppliers(),
                 api.getInventory(),
-                api.getWarehouseLocations()
+                api.getWarehouseLocations(),
+                api.getProductCatalogOptions({ include_inactive: true })
             ]);
             setProducts(snapshot.rows);
             setProductsPagination(snapshot.pagination ?? null);
             setSuppliers(suppliersList);
             setInventoryItems(rawInventory);
             setWarehouseLocations(locations);
+            setCatalogOptions(masterOptions);
         } catch (error) {
             setLoadError(getErrorMessage(error, "No se pudo cargar el inventario."));
         } finally {
@@ -437,6 +441,10 @@ export default function InventoryPage() {
                         <MapPin className="h-4 w-4 text-indigo-500" />
                         Góndolas & Almacén
                     </TabsTrigger>
+                    <TabsTrigger value="masters" className="gap-2 shrink-0">
+                        <Layers3 className="h-4 w-4 text-violet-500" />
+                        Maestros de catálogo
+                    </TabsTrigger>
                     <TabsTrigger value="replenish" className="gap-2 shrink-0">
                         <TrendingDown className="h-4 w-4 text-amber-500" />
                         Reabastecimiento Inteligente
@@ -516,6 +524,13 @@ export default function InventoryPage() {
                             setTransferQty(1);
                             setTransferDialogOpen(true);
                         }}
+                    />
+                </TabsContent>
+
+                <TabsContent value="masters" className="space-y-4">
+                    <ProductCatalogMastersTab
+                        options={catalogOptions}
+                        onOptionsChanged={() => void loadData(true)}
                     />
                 </TabsContent>
 

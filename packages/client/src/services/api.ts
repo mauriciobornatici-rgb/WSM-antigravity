@@ -11,6 +11,8 @@ import type {
     Order,
     OrderItem,
     Product,
+    ProductCatalogOption,
+    ProductCatalogOptionType,
     PurchaseOrder,
     Supplier,
     SupplierPayment,
@@ -365,6 +367,12 @@ export const api = {
 
     deleteProduct: (id: string) =>
         httpClient.del<{ success: boolean; message?: string }>(`/api/products/${id}`),
+    getProductCatalogOptions: (filters?: { type?: ProductCatalogOptionType; parent_id?: string; include_inactive?: boolean }) =>
+        httpClient.get<ProductCatalogOption[]>(withQuery("/api/product-catalog-options", filters)),
+    createProductCatalogOption: (data: { type: ProductCatalogOptionType; name: string; parent_id?: string | null; sort_order?: number }) =>
+        httpClient.post<ProductCatalogOption>("/api/product-catalog-options", data),
+    updateProductCatalogOption: (id: string, data: { name?: string; parent_id?: string | null; active?: boolean; sort_order?: number }) =>
+        httpClient.put<ProductCatalogOption>(`/api/product-catalog-options/${id}`, data),
 
     // ==================== CLIENTS ====================
     getClients: () =>

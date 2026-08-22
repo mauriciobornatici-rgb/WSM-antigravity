@@ -11,6 +11,7 @@ const REQUIRED_TABLES = [
     'clients',
     'suppliers',
     'product_families',
+    'product_catalog_options',
     'products',
     'inventory',
     'inventory_movements',
