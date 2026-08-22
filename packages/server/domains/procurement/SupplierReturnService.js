@@ -2,7 +2,6 @@ import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
-import { nextDocumentSequence } from '../../utils/documentSequence.js';
 
 export class SupplierReturnService {
     async decreaseInventory(connection, productId, quantityToRemove) {
@@ -37,14 +36,12 @@ export class SupplierReturnService {
 
             const [returns] = await connection.query('SELECT * FROM supplier_returns WHERE id = ? FOR UPDATE', [id]);
             if (returns.length === 0) {
-                await connection.rollback();
                 const err = new Error('Devolución no encontrada');
                 err.errorCode = 'RETURN_NOT_FOUND';
                 throw err;
             }
             const supplierReturn = returns[0];
             if (supplierReturn.status === 'approved') {
-                await connection.rollback();
                 const err = new Error('La devolución ya fue aprobada');
                 err.errorCode = 'RETURN_ALREADY_APPROVED';
                 throw err;
@@ -79,32 +76,34 @@ export class SupplierReturnService {
 
             await connection.query('UPDATE supplier_returns SET status = "approved" WHERE id = ?', [id]);
 
-            await accountingService.createJournalEntry(connection, {
-                description: `Devolución a proveedor ${supplierReturn.return_number}`,
-                reference_type: 'supplier_return',
-                reference_id: id,
-                lines: [
-                    { account_code: '2.1.01.01', debit: totalAmount, credit: 0 },
-                    { account_code: '1.1.04.01', debit: 0, credit: totalAmount }
-                ]
-            });
+            if (totalAmount > 0) {
+                await accountingService.createJournalEntry(connection, {
+                    description: `Devolución a proveedor ${supplierReturn.return_number}`,
+                    reference_type: 'supplier_return',
+                    reference_id: id,
+                    lines: [
+                        { account_code: '2.1.01.01', debit: totalAmount, credit: 0 },
+                        { account_code: '1.1.04.01', debit: 0, credit: totalAmount }
+                    ]
+                });
 
-            await connection.query(`
-                INSERT INTO transactions (id, type, amount, description, reference_id, supplier_id)
-                VALUES (?, 'expense', ?, ?, ?, ?)
-            `, [
-                crypto.randomUUID(),
-                totalAmount,
-                `Devolución a proveedor ${supplierReturn.return_number}`,
-                id,
-                supplierReturn.supplier_id
-            ]);
+                await connection.query(`
+                    INSERT INTO transactions (id, type, amount, description, reference_id, supplier_id)
+                    VALUES (?, 'expense', ?, ?, ?, ?)
+                `, [
+                    crypto.randomUUID(),
+                    totalAmount,
+                    `Devolución a proveedor ${supplierReturn.return_number}`,
+                    id,
+                    supplierReturn.supplier_id
+                ]);
 
-            await connection.query(`
-                UPDATE suppliers
-                SET account_balance = GREATEST(COALESCE(account_balance, 0) - ?, 0)
-                WHERE id = ?
-            `, [totalAmount, supplierReturn.supplier_id]);
+                await connection.query(`
+                    UPDATE suppliers
+                    SET account_balance = GREATEST(COALESCE(account_balance, 0) - ?, 0)
+                    WHERE id = ?
+                `, [totalAmount, supplierReturn.supplier_id]);
+            }
 
             await auditService.log({
                 user_id: userId || null,

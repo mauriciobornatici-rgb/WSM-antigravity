@@ -18,6 +18,39 @@ test('finance payment helpers classify and validate payment lines', () => {
     assert.deepEqual(financeService._normalizePaymentLines([{ amount: '5.50', method: ' BANK ' }]), [{ amount: 5.5, method: 'bank' }]);
 });
 
+test('invoice payment persistence traces cheque allocation and selects the matching ledger accounts', async (t) => {
+    const calls = [];
+    const journals = [];
+    const connection = { query: async (sql, params) => { calls.push({ sql: String(sql), params }); return [[]]; } };
+    const originals = {
+        check: financeService._resolveCustomerCheck,
+        journal: accountingService.createJournalEntry,
+    };
+    financeService._resolveCustomerCheck = async (_connection, { payment }) => payment.method === 'check' ? 'check-1' : null;
+    accountingService.createJournalEntry = async (_connection, entry) => { journals.push(entry); };
+    t.after(() => {
+        financeService._resolveCustomerCheck = originals.check;
+        accountingService.createJournalEntry = originals.journal;
+    });
+
+    await financeService._registerInvoicePayments(connection, {
+        invoiceId: 'invoice-1', clientId: 'client-1', invoiceLabel: 'B-0001-00000001', userId: 'u-1',
+        payments: [
+            null,
+            { method: 'cash', amount: 0 },
+            { method: 'check', amount: 10 },
+            { method: 'transfer', amount: 20 },
+            { method: 'cash', amount: 5 },
+        ],
+    });
+
+    const allocation = calls.find(({ sql }) => sql.includes('INSERT INTO customer_check_allocations'));
+    assert.ok(allocation);
+    assert.equal(allocation.params[1], 'check-1');
+    assert.equal(allocation.params[3], 'invoice-1');
+    assert.deepEqual(journals.map((entry) => entry.lines[0].account_code), ['1.1.02.02', '1.1.02.01', '1.1.01.01']);
+});
+
 test('_resolveCustomerCheck handles non-check, invalid, duplicate and new cheques', async () => {
     assert.equal(await financeService._resolveCustomerCheck({}, { payment: { method: 'cash' } }), null);
     await assert.rejects(

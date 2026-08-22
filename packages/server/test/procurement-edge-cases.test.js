@@ -84,7 +84,7 @@ test('supplier return inventory deduction handles no-op, multiple rows and insuf
 
 test('supplier return approval rejects missing, repeated and empty returns', async (t) => {
     let mode = 'missing';
-    installConnection(t, async (sql) => {
+    const { lifecycle } = installConnection(t, async (sql) => {
         const statement = String(sql);
         if (statement.includes('SELECT * FROM supplier_returns')) {
             if (mode === 'missing') return [[]];
@@ -96,10 +96,42 @@ test('supplier return approval rejects missing, repeated and empty returns', asy
     });
     const service = new SupplierReturnService();
     await assert.rejects(() => service.approveSupplierReturn('r'), (e) => e.errorCode === 'RETURN_NOT_FOUND');
+    assert.equal(lifecycle.filter((event) => event === 'rollback').length, 1);
     mode = 'approved';
     await assert.rejects(() => service.approveSupplierReturn('r'), (e) => e.errorCode === 'RETURN_ALREADY_APPROVED');
+    assert.equal(lifecycle.filter((event) => event === 'rollback').length, 2);
     mode = 'empty';
     await assert.rejects(() => service.approveSupplierReturn('r'), (e) => e.errorCode === 'RETURN_WITHOUT_ITEMS');
+    assert.equal(lifecycle.filter((event) => event === 'rollback').length, 3);
+});
+
+test('supplier payments preserve explicit metadata and roll back database failures once', async (t) => {
+    let insertCount = 0;
+    const { lifecycle } = installConnection(t, async (sql, params) => {
+        if (String(sql).includes('INSERT INTO supplier_payments')) {
+            insertCount += 1;
+            assert.equal(params[3], '2026-08-22');
+            assert.equal(params[4], 'Cheque');
+            assert.equal(params[5], 'CH-9');
+            assert.equal(params[6], null);
+        }
+        if (String(sql).includes('UPDATE suppliers')) throw new Error('balance unavailable');
+        return [[]];
+    });
+    const originalAudit = auditService.log;
+    let audited = false;
+    auditService.log = async () => { audited = true; };
+    t.after(() => { auditService.log = originalAudit; });
+
+    await assert.rejects(() => new SupplierPaymentService().createSupplierPayment({
+        supplier_id: 's', payment_date: '2026-08-22', payments: [
+            { amount: '12.50', payment_method: 'Cheque', reference_number: 'CH-9' },
+            { amount: null },
+        ],
+    }, 'u-1'), /balance unavailable/);
+    assert.equal(insertCount, 1);
+    assert.equal(audited, false);
+    assert.deepEqual(lifecycle, ['begin', 'rollback', 'release']);
 });
 
 test('supplier return approval updates inventory, accounting, balance and audit', async (t) => {
@@ -124,6 +156,41 @@ test('supplier return approval updates inventory, accounting, balance and audit'
     assert.equal(result.success, true);
     assert.equal(journal.lines[0].debit, 10);
     assert.ok(calls.some((call) => call.sql.includes('UPDATE suppliers')));
+});
+
+test('supplier return approval accepts missing historical cost without creating zero-value accounting', async (t) => {
+    const calls = [];
+    const { lifecycle } = installConnection(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT * FROM supplier_returns')) {
+            return [[{ id: 'r-zero', status: 'pending', return_number: 'DR-ZERO', supplier_id: 's' }]];
+        }
+        if (statement.includes('SELECT * FROM supplier_return_items')) {
+            return [[{ product_id: 'p', quantity: 1, unit_cost: null, reason: 'Sin costo histórico' }]];
+        }
+        if (statement.startsWith('SELECT id, quantity FROM inventory')) return [[{ id: 'i', quantity: 1 }]];
+        return [[]];
+    });
+    const originals = { audit: auditService.log, journal: accountingService.createJournalEntry };
+    let audited;
+    let journalCalls = 0;
+    auditService.log = async (payload) => { audited = payload; };
+    accountingService.createJournalEntry = async () => { journalCalls += 1; };
+    t.after(() => {
+        auditService.log = originals.audit;
+        accountingService.createJournalEntry = originals.journal;
+    });
+
+    const result = await new SupplierReturnService().approveSupplierReturn('r-zero', 'u-1', '127.0.0.1');
+    assert.equal(result.success, true);
+    assert.equal(journalCalls, 0);
+    assert.equal(audited.new_values.total_amount, 0);
+    assert.equal(audited.user_id, 'u-1');
+    assert.equal(audited.ip_address, '127.0.0.1');
+    assert.equal(calls.some(({ sql }) => sql.includes('INSERT INTO transactions')), false);
+    assert.equal(calls.some(({ sql }) => sql.includes('UPDATE suppliers')), false);
+    assert.deepEqual(lifecycle, ['begin', 'commit', 'release']);
 });
 
 test('goods reception rejects duplicate products and missing quality control', async (t) => {
@@ -197,4 +264,39 @@ test('goods reception segregates failed stock, creates batches and marks partial
     assert.equal(journal.lines[2].credit, 36.3);
     assert.ok(calls.some((call) => call.params?.[0] === 'partial' && call.params?.[1] === 'po'));
     assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO product_batches')).length, 2);
+});
+
+test('goods reception accepts zero-cost stock without PO, batch, quarantine or accounting entry', async (t) => {
+    const calls = [];
+    const { lifecycle } = installConnection(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT * FROM receptions')) return [[{
+            id: 'r-free', status: 'pending', supplier_id: 's', reception_number: 'REC-FREE',
+        }]];
+        if (statement.includes('SELECT * FROM reception_items')) return [[{
+            id: 'ri-free', product_id: 'gift', quantity_received: 2, unit_cost: 0,
+            location_assigned: '', batch_number: null, po_item_id: null,
+        }]];
+        if (statement.includes('FROM quality_checks')) return [[{
+            quantity_checked: 2, quantity_passed: 2, quantity_failed: 0, defect_description: null,
+        }]];
+        if (statement.includes('SELECT id FROM inventory')) return [[{ id: 'inventory-general' }]];
+        return [[]];
+    });
+    const originals = { audit: auditService.log, journal: accountingService.createJournalEntry };
+    let journalCalls = 0;
+    auditService.log = async () => {};
+    accountingService.createJournalEntry = async () => { journalCalls += 1; };
+    t.after(() => {
+        auditService.log = originals.audit;
+        accountingService.createJournalEntry = originals.journal;
+    });
+
+    assert.deepEqual(await new GoodsReceptionService().processReceptionApproval('r-free'), { success: true });
+    assert.equal(journalCalls, 0);
+    assert.equal(calls.filter(({ sql }) => sql.includes('INSERT INTO inventory_movements')).length, 1);
+    assert.equal(calls.filter(({ sql }) => sql.includes('INSERT INTO product_batches')).length, 0);
+    assert.equal(calls.some(({ sql }) => sql.includes('UPDATE purchase_orders')), false);
+    assert.deepEqual(lifecycle, ['begin', 'commit', 'release']);
 });

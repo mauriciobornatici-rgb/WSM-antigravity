@@ -86,6 +86,65 @@ test('updateCompanySettings preserves omitted secrets, normalizes operation and 
     assert.ok(insert.params.includes('token'));
 });
 
+test('updateCompanySettings creates a complete encrypted configuration from an empty installation', async (t) => {
+    const previousKey = process.env.ENCRYPTION_KEY;
+    process.env.ENCRYPTION_KEY = 'settings-test-encryption-key';
+    const calls = [];
+    const connection = mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('FOR UPDATE')) return [[]];
+        if (statement.startsWith('SELECT * FROM company_settings WHERE id = 1 LIMIT 1')) {
+            return [[{
+                brand_name: 'WSM', legal_name: 'WSM SA', tax_id: '30700000001', tax_rate: 0.21,
+                default_currency: 'ARS', billing_afip_crt: 'encrypted', billing_afip_key: 'encrypted',
+                tiendanube_access_token: 'encrypted', tiendanube_client_secret: 'encrypted',
+            }]];
+        }
+        return [[]];
+    });
+    let audited;
+    const originalAudit = auditService.log;
+    auditService.log = async (payload) => { audited = payload; };
+    t.after(() => {
+        auditService.log = originalAudit;
+        if (previousKey === undefined) delete process.env.ENCRYPTION_KEY;
+        else process.env.ENCRYPTION_KEY = previousKey;
+    });
+
+    const body = {
+        identity: { brand_name: 'WSM', legal_name: 'WSM SA', tax_id: '30700000001', logo_url: 'https://cdn.example/logo.png' },
+        contact: { phone: '11-5555-5555', email: 'ventas@example.com', website: 'https://example.com' },
+        address: { street: 'Av. Siempre Viva 123', city: 'Buenos Aires' },
+        socials: { instagram: '@wsm', facebook: 'wsm', linkedin: 'wsm-sa' },
+        operation: { tax_rate: 0.21, default_currency: 'ars' },
+        billing: {
+            iibb: '901-000000-1', start_date: '2026-08-22', iva_condition: 'Responsable Inscripto',
+            pos: 4, afip_crt: ' certificate ', afip_key: ' private-key ', afip_env: 'produccion',
+        },
+        integrations: {
+            tiendanube_access_token: ' access-token ', tiendanube_store_id: 'store-1',
+            tiendanube_location_id: 'location-1', tiendanube_client_id: 'client-1',
+            tiendanube_client_secret: ' client-secret ',
+        },
+    };
+    const result = await invoke(updateCompanySettings, {
+        body, user: { id: 'admin-1' }, headers: {}, ip: '127.0.0.1',
+    });
+    assert.deepEqual(result.body, { success: true });
+    const insert = calls.find(({ sql }) => sql.includes('INSERT INTO company_settings'));
+    assert.ok(insert);
+    for (const secret of ['certificate', 'private-key', 'access-token', 'client-secret']) {
+        assert.equal(insert.params.includes(secret), false);
+    }
+    assert.ok(insert.params.filter((value) => typeof value === 'string' && value.split(':').length === 3).length >= 4);
+    assert.ok(insert.params.includes('store-1'));
+    assert.ok(insert.params.includes('location-1'));
+    assert.ok(insert.params.includes('client-1'));
+    assert.equal(audited.user_id, 'admin-1');
+    assert.equal(audited.ip_address, '127.0.0.1');
+});
+
 test('updateCompanySettings rolls back and forwards database errors', async (t) => {
     let rolledBack = false;
     const connection = mockPool(t, async (sql) => {
