@@ -152,6 +152,43 @@ class FinanceService {
         }
     }
 
+    async _registerOrderReceivablePayments(connection, { orderId, clientId, orderLabel, payments, userId = null }) {
+        for (const payment of payments) {
+            if (!payment || Number(payment.amount || 0) <= 0) continue;
+            const checkId = await this._resolveCustomerCheck(connection, { clientId, payment, userId });
+            const transactionId = crypto.randomUUID();
+            const amount = this._roundMoney(payment.amount);
+            await connection.query(
+                `INSERT INTO transactions (id, type, amount, description, payment_method, check_id, reference_id, client_id, date)
+                 VALUES (?, 'sale', ?, ?, ?, ?, ?, ?, NOW())`,
+                [transactionId, amount, `Cobro venta ${orderLabel} (${payment.method})`, payment.method, checkId, orderId, clientId]
+            );
+
+            if (checkId) {
+                await connection.query(
+                    `INSERT INTO customer_check_allocations (id, check_id, transaction_id, invoice_id, amount)
+                     VALUES (?, ?, ?, NULL, ?)`,
+                    [crypto.randomUUID(), checkId, transactionId, amount]
+                );
+            }
+
+            const normalizedMethod = String(payment.method).toLowerCase();
+            const cashAccount = normalizedMethod === 'check'
+                ? '1.1.02.02'
+                : (['transfer', 'bank'].includes(normalizedMethod) ? '1.1.02.01' : '1.1.01.01');
+            await accountingService.createJournalEntry(connection, {
+                date: new Date(),
+                description: `Cobro anticipado de venta ${orderLabel} - (${payment.method})`,
+                reference_type: 'order_receivable',
+                reference_id: orderId,
+                lines: [
+                    { account_code: cashAccount, debit: amount, credit: 0, notes: `Cobro de ${orderLabel}` },
+                    { account_code: '2.1.03.01', debit: 0, credit: amount, notes: 'Anticipo recibido antes de facturar' }
+                ]
+            });
+        }
+    }
+
     async registerInvoicePayments(invoiceId, payload, userId) {
         const connection = await pool.getConnection();
         try {
@@ -298,7 +335,68 @@ class FinanceService {
             const results = [];
 
             for (const alloc of allocations) {
-                const { invoiceId, payments } = alloc;
+                const documentType = alloc.documentType || (alloc.invoiceId ? 'invoice' : null);
+                const documentId = alloc.documentId || alloc.invoiceId;
+                const payments = alloc.payments;
+
+                if (documentType === 'order') {
+                    const [orders] = await connection.query(
+                        `SELECT o.*, c.name AS client_name,
+                                CASE
+                                    WHEN COALESCE(SUM(CASE WHEN op.payment_method = 'credit_account' THEN op.amount ELSE 0 END), 0) > 0
+                                        THEN SUM(CASE WHEN op.payment_method = 'credit_account' THEN op.amount ELSE 0 END)
+                                    WHEN o.payment_method = 'credit_account' THEN o.total_amount
+                                    ELSE 0
+                                END AS receivable_amount
+                         FROM orders o
+                         JOIN clients c ON c.id = o.client_id AND c.deleted_at IS NULL
+                         LEFT JOIN order_payments op ON op.order_id = o.id
+                         WHERE o.id = ? AND o.client_id = ? AND o.deleted_at IS NULL AND o.invoice_id IS NULL
+                         GROUP BY o.id, c.name
+                         FOR UPDATE`,
+                        [documentId, clientId]
+                    );
+                    if (orders.length === 0 || Number(orders[0].receivable_amount || 0) <= 0) {
+                        throw this._buildValidationError(`Venta ${documentId} no encontrada o ya facturada`, 'ORDER_RECEIVABLE_NOT_FOUND');
+                    }
+                    const order = orders[0];
+                    const totalAmount = this._roundMoney(order.receivable_amount);
+                    const [paymentRows] = await connection.query(
+                        `SELECT COALESCE(SUM(amount), 0) AS paid_amount
+                         FROM transactions WHERE reference_id = ? AND type = 'sale'`,
+                        [documentId]
+                    );
+                    const paidBefore = this._roundMoney(paymentRows[0]?.paid_amount || 0);
+                    const normalizedPayments = this._normalizePaymentLines(payments, 'cash');
+                    const paidNow = this._roundMoney(normalizedPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
+                    const paidAfter = this._roundMoney(paidBefore + paidNow);
+                    if (paidAfter > totalAmount + 0.01) {
+                        throw this._buildValidationError(
+                            `El total de pagos (${paidAfter}) supera el saldo de la venta ${documentId} (${totalAmount})`,
+                            'PAYMENTS_EXCEED_TOTAL'
+                        );
+                    }
+
+                    await this._registerOrderReceivablePayments(connection, {
+                        orderId: documentId,
+                        clientId,
+                        orderLabel: `pedido ${String(documentId).slice(0, 8)}`,
+                        payments: normalizedPayments,
+                        userId
+                    });
+                    const paymentStatus = this._resolvePaymentStatus(totalAmount, paidAfter);
+                    await connection.query('UPDATE orders SET payment_status = ? WHERE id = ?', [paymentStatus, documentId]);
+                    totalPaid += paidNow;
+                    results.push({
+                        documentId,
+                        documentType: 'order',
+                        paid_now: paidNow,
+                        payment_status: paymentStatus
+                    });
+                    continue;
+                }
+
+                const invoiceId = documentId;
                 
                 const [invoices] = await connection.query(
                     'SELECT * FROM invoices WHERE id = ? AND client_id = ? AND deleted_at IS NULL FOR UPDATE',
@@ -375,6 +473,8 @@ class FinanceService {
 
                 results.push({
                     invoiceId,
+                    documentId: invoiceId,
+                    documentType: 'invoice',
                     paid_now: paidNow,
                     payment_status: paymentStatus
                 });

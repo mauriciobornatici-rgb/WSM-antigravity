@@ -145,6 +145,51 @@ test('registerInvoicePayments successfully registers payments, updates invoice/o
     assert.ok(updates.some((c) => c.sql.includes('UPDATE clients') && c.sql.includes('current_account_balance')));
 });
 
+test('registerBulkInvoicePayments collects an uninvoiced credit-account order without creating a fiscal invoice', async (t) => {
+    const queryCalls = [];
+    mockPool(t, async (sql, params) => {
+        queryCalls.push({ sql, params });
+        if (sql.includes('FROM orders o') && sql.includes('receivable_amount')) {
+            return [[{
+                id: 'order-1',
+                client_id: 'client-1',
+                client_name: 'Pedro',
+                receivable_amount: 60000,
+                payment_method: 'credit_account'
+            }]];
+        }
+        if (sql.includes('SELECT COALESCE(SUM(amount)')) {
+            return [[{ paid_amount: 0 }]];
+        }
+        return [[]];
+    });
+
+    const originalLog = auditService.log;
+    const originalCreateJournalEntry = accountingService.createJournalEntry;
+    auditService.log = async () => {};
+    accountingService.createJournalEntry = async () => {};
+    t.after(() => {
+        auditService.log = originalLog;
+        accountingService.createJournalEntry = originalCreateJournalEntry;
+    });
+
+    const result = await financeService.registerBulkInvoicePayments({
+        clientId: 'client-1',
+        allocations: [{
+            documentId: 'order-1',
+            documentType: 'order',
+            payments: [{ method: 'transfer', amount: 60000 }]
+        }]
+    }, 'user-1');
+
+    assert.equal(result.total_paid, 60000);
+    assert.equal(result.invoices[0].documentType, 'order');
+    assert.equal(result.invoices[0].payment_status, 'paid');
+    assert.ok(queryCalls.some((call) => call.sql.includes('INSERT INTO transactions')));
+    assert.ok(queryCalls.some((call) => call.sql.includes('UPDATE orders SET payment_status')));
+    assert.equal(queryCalls.some((call) => call.sql.includes('INSERT INTO invoices')), false);
+});
+
 test('getCustomerChecks normalizes portfolio amounts and allocation counters', async (t) => {
     mockPool(t, async (sql) => {
         if (sql.includes('FROM customer_checks cc')) {

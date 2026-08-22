@@ -180,6 +180,40 @@ test('createOrder returns an existing order for an idempotent replay', async () 
     }
 });
 
+test('createOrder rejects cuenta corriente for Consumidor final without a registered client', async () => {
+    const connection = {
+        async beginTransaction() {},
+        async commit() {},
+        async rollback() {},
+        release() {},
+        async query(sql) {
+            if (String(sql).includes('SELECT id, sale_price, name FROM products')) {
+                return [[{ id: 'prod-1', sale_price: 100, name: 'Botin Pro' }]];
+            }
+            throw new Error(`Unexpected SQL in credit-account client test: ${sql}`);
+        }
+    };
+    const originalGetConnection = pool.getConnection;
+    pool.getConnection = async () => connection;
+
+    try {
+        await assert.rejects(
+            () => salesService.createOrder({
+                customer_name: 'Consumidor final',
+                payment_method: 'credit_account',
+                items: [{ product_id: 'prod-1', quantity: 1 }]
+            }, 'user-1'),
+            (error) => {
+                assert.equal(error.statusCode, 400);
+                assert.equal(error.errorCode, 'CREDIT_ACCOUNT_REQUIRES_CLIENT');
+                return true;
+            }
+        );
+    } finally {
+        pool.getConnection = originalGetConnection;
+    }
+});
+
 test('createManualInvoice returns the invoice already linked to an order', async () => {
     let committed = false;
     const connection = {

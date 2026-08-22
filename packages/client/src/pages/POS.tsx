@@ -443,6 +443,7 @@ export default function POSPage() {
                 idempotency_key: checkoutIdempotencyKey,
                 customer_name: selectedClient?.name || "Consumidor final",
                 payment_method: primaryPaymentMethod,
+                payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
                 items: previousCart.map((item) => ({
                     product_id: item.id,
                     quantity: item.quantity,

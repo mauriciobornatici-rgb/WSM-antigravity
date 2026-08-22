@@ -353,7 +353,9 @@ export type ApiCatalog = {
 };
 
 export type BulkPaymentAllocation = {
-    invoiceId: string;
+    invoiceId?: string;
+    documentId?: string;
+    documentType?: "invoice" | "order";
     payments: InvoicePaymentLineInput[];
 };
 
@@ -410,10 +412,32 @@ export type CustomerCheck = {
 };
 
 export type PendingInvoiceResponse = Invoice & {
+    document_type: "invoice" | "order";
+    fiscal_status: "authorized" | "pending_cae" | "not_invoiced";
+    order_id?: string | null;
     client_name?: string;
     client_tax_id?: string;
     paid_amount: number;
     pending_amount: number;
+};
+
+export type FiscalSaleStatus = {
+    order_id: string;
+    sale_date: string;
+    order_total: number;
+    customer_name?: string | null;
+    client_id: string;
+    client_name: string;
+    client_tax_id?: string | null;
+    invoice_id?: string | null;
+    invoice_type?: string | null;
+    point_of_sale?: number | null;
+    invoice_number?: number | null;
+    invoice_total?: number | null;
+    invoice_status?: string | null;
+    cae?: string | null;
+    cae_expiration_date?: string | null;
+    fiscal_status: "authorized" | "pending_cae" | "not_invoiced";
 };
 
 export type BulkSupplierPaymentAllocation = {

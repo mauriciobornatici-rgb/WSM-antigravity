@@ -792,6 +792,49 @@ class SalesService extends BaseService {
         };
     }
 
+    async _transferOrderReceivablePayments(connection, { orderId, invoiceId, invoiceLabel, totalAmount }) {
+        if (!orderId) return 0;
+        const [paymentRows] = await connection.query(
+            `SELECT COALESCE(SUM(amount), 0) AS paid_amount
+             FROM transactions
+             WHERE reference_id = ? AND type = 'sale'`,
+            [orderId]
+        );
+        const paidAmount = this._roundMoney(paymentRows[0]?.paid_amount || 0);
+        if (paidAmount <= 0) return 0;
+        if (paidAmount > this._roundMoney(totalAmount) + 0.01) {
+            throw this._buildValidationError(
+                'Los cobros anticipados del pedido superan el total de la factura. Revise importes antes de facturar.',
+                'ORDER_PAYMENTS_EXCEED_INVOICE'
+            );
+        }
+
+        await connection.query(
+            `UPDATE transactions
+             SET reference_id = ?, description = REPLACE(description, 'venta pedido', 'factura')
+             WHERE reference_id = ? AND type = 'sale'`,
+            [invoiceId, orderId]
+        );
+        await connection.query(
+            `UPDATE customer_check_allocations cca
+             JOIN transactions t ON t.id = cca.transaction_id
+             SET cca.invoice_id = ?
+             WHERE t.reference_id = ? AND cca.invoice_id IS NULL`,
+            [invoiceId, invoiceId]
+        );
+        await accountingService.createJournalEntry(connection, {
+            date: new Date(),
+            description: `Aplicación de anticipos a factura ${invoiceLabel}`,
+            reference_type: 'invoice',
+            reference_id: invoiceId,
+            lines: [
+                { account_code: '2.1.03.01', debit: paidAmount, credit: 0, notes: 'Cancelación de anticipos de clientes' },
+                { account_code: '1.1.03.01', debit: 0, credit: paidAmount, notes: `Aplicación a factura ${invoiceLabel}` }
+            ]
+        });
+        return paidAmount;
+    }
+
 
 
     async createInvoice(orderId, invoiceData, userId) {
@@ -940,6 +983,13 @@ class SalesService extends BaseService {
 
             await accountingService.postInvoiceAccountingEntries(connection, invoiceId);
 
+            const anticipatedAmount = await this._transferOrderReceivablePayments(connection, {
+                orderId,
+                invoiceId,
+                invoiceLabel,
+                totalAmount
+            });
+
             await financeService._registerInvoicePayments(connection, {
                 invoiceId,
                 clientId: client.client_id,
@@ -948,8 +998,17 @@ class SalesService extends BaseService {
                 userId
             });
 
+            const totalPaidAmount = this._roundMoney(anticipatedAmount + paymentData.paidAmount);
+            const resolvedPaymentStatus = this._resolvePaymentStatus(totalAmount, totalPaidAmount);
+            if (anticipatedAmount > 0) {
+                await connection.query(
+                    'UPDATE invoices SET payment_status = ? WHERE id = ?',
+                    [resolvedPaymentStatus, invoiceId]
+                );
+            }
+
             if (client.client_id) {
-                const outstanding = this._roundMoney(totalAmount - paymentData.paidAmount);
+                const outstanding = this._roundMoney(totalAmount - totalPaidAmount);
                 if (outstanding > 0) {
                     await connection.query(
                         `UPDATE clients
@@ -960,10 +1019,10 @@ class SalesService extends BaseService {
                 }
             }
 
-            const nextOrderStatus = paymentData.paymentStatus === 'paid' ? 'completed' : order.status;
+            const nextOrderStatus = resolvedPaymentStatus === 'paid' ? 'completed' : order.status;
             await connection.query(
                 'UPDATE orders SET invoice_id = ?, status = ?, payment_status = ? WHERE id = ?',
-                [invoiceId, nextOrderStatus, paymentData.paymentStatus, orderId]
+                [invoiceId, nextOrderStatus, resolvedPaymentStatus, orderId]
             );
 
             await auditService.log({
@@ -977,8 +1036,8 @@ class SalesService extends BaseService {
                     pointOfSale,
                     invoiceNumber,
                     totalAmount,
-                    paid_amount: paymentData.paidAmount,
-                    payment_status: paymentData.paymentStatus
+                    paid_amount: totalPaidAmount,
+                    payment_status: resolvedPaymentStatus
                 }
             }, connection);
 
@@ -989,8 +1048,8 @@ class SalesService extends BaseService {
                 point_of_sale: pointOfSale,
                 invoice_number: invoiceNumber,
                 total_amount: totalAmount,
-                paid_amount: paymentData.paidAmount,
-                payment_status: paymentData.paymentStatus
+                paid_amount: totalPaidAmount,
+                payment_status: resolvedPaymentStatus
             };
         } catch (err) {
             await connection.rollback();
@@ -1069,11 +1128,12 @@ class SalesService extends BaseService {
             netAmount = this._roundMoney(netAmount);
             vatAmount = this._roundMoney(vatAmount);
             const totalAmount = this._roundMoney(netAmount + vatAmount);
-            const paymentData = this._normalizePayments(
-                invoiceData.payments,
-                totalAmount,
-                invoiceData.payment_method || 'cash'
-            );
+            const collectiblePayments = Array.isArray(invoiceData.payments)
+                ? invoiceData.payments.filter((payment) => payment.method !== 'credit_account')
+                : [];
+            const paymentData = collectiblePayments.length > 0
+                ? this._normalizePayments(collectiblePayments, totalAmount, invoiceData.payment_method || 'cash')
+                : { payments: [], paidAmount: 0, paymentStatus: 'pending', primaryMethod: invoiceData.payment_method || null };
             const invoiceLabel = `${invoiceType}-${String(pointOfSale).padStart(4, '0')}-${String(invoiceNumber).padStart(8, '0')}`;
 
             await connection.query(`
@@ -1130,6 +1190,13 @@ class SalesService extends BaseService {
 
             await accountingService.postInvoiceAccountingEntries(connection, invoiceId);
 
+            const anticipatedAmount = await this._transferOrderReceivablePayments(connection, {
+                orderId: invoiceData.order_id || null,
+                invoiceId,
+                invoiceLabel,
+                totalAmount
+            });
+
             await financeService._registerInvoicePayments(connection, {
                 invoiceId,
                 clientId: client.client_id,
@@ -1138,8 +1205,14 @@ class SalesService extends BaseService {
                 userId
             });
 
+            const totalPaidAmount = this._roundMoney(anticipatedAmount + paymentData.paidAmount);
+            const resolvedPaymentStatus = this._resolvePaymentStatus(totalAmount, totalPaidAmount);
+            if (anticipatedAmount > 0) {
+                await connection.query('UPDATE invoices SET payment_status = ? WHERE id = ?', [resolvedPaymentStatus, invoiceId]);
+            }
+
             if (client.client_id) {
-                const outstanding = this._roundMoney(totalAmount - paymentData.paidAmount);
+                const outstanding = this._roundMoney(totalAmount - totalPaidAmount);
                 if (outstanding > 0) {
                     await connection.query(
                         `UPDATE clients
@@ -1157,7 +1230,7 @@ class SalesService extends BaseService {
                          status = CASE WHEN ? = 'paid' THEN 'completed' ELSE status END,
                          payment_status = ?
                      WHERE id = ?`,
-                    [invoiceId, paymentData.paymentStatus, paymentData.paymentStatus, invoiceData.order_id]
+                    [invoiceId, resolvedPaymentStatus, resolvedPaymentStatus, invoiceData.order_id]
                 );
             }
 
@@ -1171,8 +1244,8 @@ class SalesService extends BaseService {
                     pointOfSale,
                     invoiceNumber,
                     totalAmount,
-                    paid_amount: paymentData.paidAmount,
-                    payment_status: paymentData.paymentStatus
+                    paid_amount: totalPaidAmount,
+                    payment_status: resolvedPaymentStatus
                 }
             }, connection);
 
@@ -1186,8 +1259,8 @@ class SalesService extends BaseService {
                 issue_date: new Date().toISOString(),
                 status: 'issued',
                 client_name: client.client_name,
-                paid_amount: paymentData.paidAmount,
-                payment_status: paymentData.paymentStatus
+                paid_amount: totalPaidAmount,
+                payment_status: resolvedPaymentStatus
             };
         } catch (err) {
             await connection.rollback();

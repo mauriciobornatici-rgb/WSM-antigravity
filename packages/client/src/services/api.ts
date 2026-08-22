@@ -60,6 +60,7 @@ import type {
     BulkPaymentInput,
     BulkPaymentResponse,
     PendingInvoiceResponse,
+    FiscalSaleStatus,
     BulkSupplierPaymentInput,
     BulkSupplierPaymentResponse,
     PendingSupplierInvoiceResponse,
@@ -810,6 +811,8 @@ export const api = {
     // ==================== COLLECTIONS (CUENTA CORRIENTE) ====================
     getPendingInvoices: (filters?: { client_id?: string }) =>
         httpClient.get<PendingInvoiceResponse[]>("/api/collections/pending-invoices" + (filters?.client_id ? `?client_id=${filters.client_id}` : "")),
+    getFiscalSalesStatus: () =>
+        httpClient.get<FiscalSaleStatus[]>("/api/collections/fiscal-status"),
 
     registerBulkInvoicePayments: (data: BulkPaymentInput) =>
         httpClient.post<BulkPaymentResponse>("/api/collections", data),

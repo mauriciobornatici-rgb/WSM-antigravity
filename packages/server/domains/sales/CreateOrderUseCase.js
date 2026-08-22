@@ -132,6 +132,32 @@ export class CreateOrderUseCase {
                 ? 'multiple'
                 : normalizedPayments[0]?.method || orderData.payment_method || 'cash';
 
+            const creditAccountAmount = normalizedPayments.length > 0
+                ? normalizedPayments
+                    .filter((payment) => payment.method === 'credit_account')
+                    .reduce((sum, payment) => sum + payment.amount, 0)
+                : (resolvedPaymentMethod === 'credit_account' ? resolvedTotal : 0);
+            if (creditAccountAmount > 0) {
+                if (!orderData.client_id) {
+                    const err = new Error('La venta a cuenta corriente requiere seleccionar un cliente registrado. Consumidor final no puede tener cuenta corriente.');
+                    err.statusCode = 400;
+                    err.status = 'fail';
+                    err.errorCode = 'CREDIT_ACCOUNT_REQUIRES_CLIENT';
+                    throw err;
+                }
+                const [clients] = await connection.query(
+                    'SELECT id, name FROM clients WHERE id = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE',
+                    [orderData.client_id]
+                );
+                if (clients.length === 0 || String(clients[0].name || '').trim().toLowerCase() === 'consumidor final') {
+                    const err = new Error('La cuenta corriente solo puede asignarse a un cliente registrado distinto de Consumidor final.');
+                    err.statusCode = 400;
+                    err.status = 'fail';
+                    err.errorCode = 'INVALID_CREDIT_ACCOUNT_CLIENT';
+                    throw err;
+                }
+            }
+
             let counterName = String(orderData.counter_name || '').trim();
             if (!counterName && userId) {
                 const [users] = await connection.query(

@@ -10,10 +10,11 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/lib/errorHandling";
-import type { PendingInvoiceResponse, BulkPaymentAllocation, InvoicePaymentLineInput, BulkPaymentInput, CustomerCheck } from "@/types/api";
+import type { PendingInvoiceResponse, BulkPaymentAllocation, InvoicePaymentLineInput, BulkPaymentInput, CustomerCheck, FiscalSaleStatus } from "@/types/api";
 import type { Client } from "@/types";
 
 type PaymentLine = {
@@ -61,6 +62,7 @@ function createPaymentLine(defaultAmount = ""): PaymentLine {
 import { formatMoney } from "@/lib/formatters";
 
 function formatInvoiceLabel(invoice: PendingInvoiceResponse): string {
+    if (invoice.document_type === "order") return `Venta ${String(invoice.order_id || invoice.id).slice(0, 8).toUpperCase()}`;
     const type = String(invoice.invoice_type || "B");
     const pos = String(Number(invoice.point_of_sale || 1)).padStart(4, "0");
     const number = String(Number(invoice.invoice_number || 0)).padStart(8, "0");
@@ -82,6 +84,10 @@ export default function CollectionsPage() {
     const { data: customerChecks = [] } = useQuery<CustomerCheck[]>({
         queryKey: ["collections", "checks"],
         queryFn: () => api.getCustomerChecks(),
+    });
+    const { data: fiscalSales = [] } = useQuery<FiscalSaleStatus[]>({
+        queryKey: ["collections", "fiscal-status"],
+        queryFn: () => api.getFiscalSalesStatus(),
     });
 
     // 2. Keep every registered client visible and enrich it with collectible invoiced debt.
@@ -228,7 +234,8 @@ export default function CollectionsPage() {
                 
                 if (invPayments.length > 0) {
                     allocations.push({
-                        invoiceId: inv.id,
+                        documentId: inv.id,
+                        documentType: inv.document_type,
                         payments: invPayments
                     });
                 }
@@ -248,6 +255,8 @@ export default function CollectionsPage() {
                 description: `Se aplicaron ${formatMoney(data.total_paid)} a cuenta corriente.`
             });
             queryClient.invalidateQueries({ queryKey: ["collections", "pending-invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["collections", "fiscal-status"] });
+            queryClient.invalidateQueries({ queryKey: ["collections", "clients"] });
             queryClient.invalidateQueries({ queryKey: ["collections", "checks"] });
             setSelectedInvoiceIds(new Set());
             setPaymentLines([createPaymentLine()]);
@@ -283,7 +292,7 @@ export default function CollectionsPage() {
                     <Card>
                         <CardHeader>
                             <CardTitle className="text-lg">1. Seleccionar Cliente</CardTitle>
-                            <CardDescription>Clientes registrados, priorizando quienes tienen facturas con saldo pendiente.</CardDescription>
+                            <CardDescription>Clientes registrados, priorizando quienes tienen ventas a cuenta corriente pendientes.</CardDescription>
                         </CardHeader>
                         <CardContent>
                             <Select value={selectedClientId} onValueChange={(val) => {
@@ -301,7 +310,7 @@ export default function CollectionsPage() {
                                             <div className="flex items-center justify-between w-full pr-4">
                                                 <span>{client.name}</span>
                                                 <span className="text-muted-foreground tabular-nums ml-4">
-                                                    {client.debt > 0 ? formatMoney(client.debt) : "Sin facturas pendientes"}
+                                                    {client.debt > 0 ? formatMoney(client.debt) : "Sin deuda pendiente"}
                                                 </span>
                                             </div>
                                         </SelectItem>
@@ -321,9 +330,9 @@ export default function CollectionsPage() {
                         <Card className="flex-1">
                             <CardHeader className="flex flex-row items-center justify-between pb-2">
                                 <div>
-                                    <CardTitle className="text-lg">2. Facturas Pendientes</CardTitle>
+                                    <CardTitle className="text-lg">2. Comprobantes pendientes</CardTitle>
                                     <CardDescription>
-                                        Selecciona las facturas que se van a cobrar en esta operación.
+                                        Incluye ventas a cuenta corriente aunque todavía no tengan factura o CAE.
                                     </CardDescription>
                                 </div>
                             </CardHeader>
@@ -341,6 +350,7 @@ export default function CollectionsPage() {
                                                     />
                                                 </TableHead>
                                                 <TableHead>Comprobante</TableHead>
+                                                <TableHead>Estado fiscal</TableHead>
                                                 <TableHead>Fecha</TableHead>
                                                 <TableHead className="text-right">Total</TableHead>
                                                 <TableHead className="text-right">Pagado</TableHead>
@@ -350,8 +360,8 @@ export default function CollectionsPage() {
                                         <TableBody>
                                             {clientInvoices.length === 0 ? (
                                                 <TableRow>
-                                                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                                                        No hay facturas pendientes vinculadas a este cliente. Si la deuda proviene de un pedido en cuenta corriente, primero debe emitirse su factura.
+                                                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                                                        No hay ventas a cuenta corriente con saldo pendiente para este cliente.
                                                     </TableCell>
                                                 </TableRow>
                                             ) : (
@@ -376,6 +386,9 @@ export default function CollectionsPage() {
                                                                 {formatInvoiceLabel(inv)}
                                                             </div>
                                                         </TableCell>
+                                                        <TableCell>
+                                                            {inv.fiscal_status === "authorized" ? <Badge className="bg-emerald-600">Con CAE</Badge> : inv.fiscal_status === "pending_cae" ? <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">Sin CAE</Badge> : <Badge variant="secondary">Sin facturar</Badge>}
+                                                        </TableCell>
                                                         <TableCell>{new Date(inv.issue_date || "").toLocaleDateString()}</TableCell>
                                                         <TableCell className="text-right font-mono">{formatMoney(inv.total_amount)}</TableCell>
                                                         <TableCell className="text-right font-mono">{formatMoney(inv.paid_amount)}</TableCell>
@@ -397,7 +410,7 @@ export default function CollectionsPage() {
                             </div>
                             <h3 className="font-semibold text-lg">Selecciona un cliente</h3>
                             <p className="text-sm text-muted-foreground max-w-sm mt-1">
-                                Elige un cliente con deuda arriba para cargar sus facturas pendientes y armar el cobro.
+                                Elige un cliente para cargar sus ventas pendientes y armar el cobro.
                             </p>
                         </Card>
                     )}
@@ -524,6 +537,38 @@ export default function CollectionsPage() {
                     </Card>
                 </div>
             </div>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-lg"><Receipt className="h-5 w-5" /> Control fiscal de ventas</CardTitle>
+                    <CardDescription>Todas las ventas asociadas a clientes, separando la deuda financiera del estado de facturación y CAE.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="overflow-x-auto">
+                        <Table className="min-w-[900px]">
+                            <TableHeader><TableRow>
+                                <TableHead>Venta</TableHead><TableHead>Cliente</TableHead><TableHead>Fecha</TableHead><TableHead>Factura</TableHead><TableHead>Estado fiscal</TableHead><TableHead className="text-right">Total venta</TableHead>
+                            </TableRow></TableHeader>
+                            <TableBody>
+                                {fiscalSales.length === 0 ? (
+                                    <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No hay ventas vinculadas a clientes para controlar.</TableCell></TableRow>
+                                ) : fiscalSales.map((sale) => (
+                                    <TableRow key={sale.order_id}>
+                                        <TableCell className="font-mono text-xs">{sale.order_id.slice(0, 8).toUpperCase()}</TableCell>
+                                        <TableCell><p className="font-medium">{sale.client_name}</p><p className="text-xs text-muted-foreground">{sale.client_tax_id || "Sin CUIT/DNI"}</p></TableCell>
+                                        <TableCell>{new Date(sale.sale_date).toLocaleDateString("es-AR")}</TableCell>
+                                        <TableCell>{sale.invoice_id ? `${sale.invoice_type}-${String(sale.point_of_sale || 0).padStart(4, "0")}-${String(sale.invoice_number || 0).padStart(8, "0")}` : "—"}</TableCell>
+                                        <TableCell>
+                                            {sale.fiscal_status === "authorized" ? <Badge className="bg-emerald-600">CAE autorizado</Badge> : sale.fiscal_status === "pending_cae" ? <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">Factura sin CAE</Badge> : <Badge variant="secondary">Pendiente de facturar</Badge>}
+                                        </TableCell>
+                                        <TableCell className="text-right font-mono font-semibold">{formatMoney(sale.order_total)}</TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </CardContent>
+            </Card>
 
             <Card>
                 <CardHeader>
