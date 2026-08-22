@@ -48,7 +48,13 @@ class FinanceService {
                 );
             }
 
-            return { method, amount, ...(payment?.check ? { check: payment.check } : {}) };
+            const referenceNumber = String(payment?.reference_number || '').trim();
+            return {
+                method,
+                amount,
+                ...(referenceNumber ? { reference_number: referenceNumber } : {}),
+                ...(payment?.check ? { check: payment.check } : {})
+            };
         });
     }
 

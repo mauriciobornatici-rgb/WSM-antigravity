@@ -5,6 +5,7 @@ import BaseService from '../services/base.service.js';
 import { getPagination, applyPaginationHeaders } from '../utils/pagination.js';
 import getRequestIp from '../utils/requestIp.js';
 import { formatMoney } from '../utils/currency.js';
+import { nextDocumentSequence } from '../utils/documentSequence.js';
 import {
     MAX_PRODUCT_IMAGE_UPLOAD_BYTES,
     MAX_PRODUCT_IMAGE_URL_LENGTH,
@@ -128,4 +129,23 @@ test('Argentine money formatter handles null, invalid and negative values', () =
     assert.equal(formatMoney(null), '$ 0,00');
     assert.equal(formatMoney('not-a-number'), '$ 0,00');
     assert.equal(formatMoney(-1234.5), '$ -1.234,50');
+});
+
+test('document sequences advance from persisted, minimum and safe fallback values', async () => {
+    const run = async (row, minimum) => {
+        const calls = [];
+        const connection = { query: async (sql, params) => {
+            calls.push({ sql: String(sql), params });
+            if (String(sql).startsWith('SELECT last_value')) return [row ? [row] : []];
+            return [{ affectedRows: 1 }];
+        } };
+        const value = await nextDocumentSequence(connection, 'invoice:B:1', minimum);
+        return { value, calls };
+    };
+
+    assert.equal((await run({ last_value: 8 }, 3)).value, 9);
+    const minimum = await run({ last_value: 2 }, 10);
+    assert.equal(minimum.value, 11);
+    assert.deepEqual(minimum.calls.at(-1).params, [11, 'invoice:B:1']);
+    assert.equal((await run(null, 'invalid')).value, 1);
 });

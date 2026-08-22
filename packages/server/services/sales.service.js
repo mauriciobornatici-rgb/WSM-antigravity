@@ -101,11 +101,13 @@ class SalesService extends BaseService {
 
             if (deductionMovements.length > 0) {
                 for (const m of deductionMovements) {
+                    const quantity = Number(m.quantity || 0);
+                    if (quantity <= 0) continue;
                     await connection.query(
                         `INSERT INTO inventory (id, product_id, location, quantity)
                          VALUES (?, ?, ?, ?)
                          ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
-                        [crypto.randomUUID(), m.product_id, m.from_location || 'General', m.quantity]
+                        [crypto.randomUUID(), m.product_id, m.from_location || 'General', quantity]
                     );
 
                     await connection.query(
@@ -116,7 +118,7 @@ class SalesService extends BaseService {
                             crypto.randomUUID(),
                             m.product_id,
                             m.from_location || 'General',
-                            m.quantity,
+                            quantity,
                             Number(m.unit_cost || 0),
                             'Order cancellation restock',
                             orderId

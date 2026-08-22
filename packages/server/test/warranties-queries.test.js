@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { warrantiesService, returnsService, creditNotesService } from '../services/warranties.service.js';
 import auditService from '../services/audit.service.js';
 import afipService from '../services/afip.service.js';
+import accountingService from '../services/accounting.service.js';
 import { mockPool } from './helpers/mockDb.js';
 
 test('warranties list applies filters and create supplies an id', async (t) => {
@@ -19,6 +20,19 @@ test('warranties list applies filters and create supplies an id', async (t) => {
     assert.ok(calls[0].sql.includes('w.client_id = ?') && calls[0].sql.includes('w.status = ?'));
     assert.deepEqual(calls[0].params, ['c-1', 'open']);
     assert.ok(created.id);
+});
+
+test('warranty creation preserves an explicit id and listing supports no filters', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        calls.push({ sql: String(sql), params });
+        if (String(sql).startsWith('INSERT INTO warranty_claims')) return [{ affectedRows: 1 }];
+        return [[]];
+    });
+    assert.deepEqual(await warrantiesService.getWarranties(), []);
+    const created = await warrantiesService.createWarranty({ id: 'w-explicit', issue_description: 'Falla' });
+    assert.equal(created.id, 'w-explicit');
+    assert.equal(calls[0].params.length, 0);
 });
 
 test('returns list handles empty and populated filtered responses', async (t) => {
@@ -67,6 +81,41 @@ test('createReturn supports a document without items and rolls back database err
     assert.equal(committed, true);
 });
 
+test('createReturn persists item defaults and computed totals', async (t) => {
+    const calls = [];
+    const connection = mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT COALESCE(SUM')) return [[{ total: '30.50' }]];
+        return [[]];
+    });
+    let committed = false;
+    connection.commit = async () => { committed = true; };
+    const result = await returnsService.createReturn({
+        client_id: 'c', order_id: 'o', reason: 'Talle', items: [
+            { product_id: 'p', quantity: 1 },
+            { product_id: 'p2', quantity: 2, condition_status: 'loss', unit_price: 15.25 },
+        ],
+    });
+    assert.ok(result.id);
+    assert.equal(committed, true);
+    const itemInsert = calls.find(({ sql }) => sql.includes('INSERT INTO client_return_items'));
+    assert.equal(itemInsert.params[0][0][4], 'sellable');
+    assert.equal(itemInsert.params[0][0][5], 0);
+    assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE client_returns SET total_amount') && params[0] === '30.50'));
+});
+
+test('createReturn rolls back and releases its connection on insert failure', async (t) => {
+    const connection = mockPool(t, async () => { throw new Error('return insert failed'); });
+    let rolledBack = 0;
+    let released = 0;
+    connection.rollback = async () => { rolledBack += 1; };
+    connection.release = () => { released += 1; };
+    await assert.rejects(() => returnsService.createReturn({}), /return insert failed/);
+    assert.equal(rolledBack, 1);
+    assert.equal(released, 1);
+});
+
 test('return inventory impact covers supplier RMA, loss, rejection and zero quantity', async () => {
     const calls = [];
     const connection = { query: async (sql, params) => {
@@ -85,6 +134,24 @@ test('return inventory impact covers supplier RMA, loss, rejection and zero quan
     assert.ok(calls.some((call) => call.params?.includes('rejected')));
 });
 
+test('sellable return inventory reuses its location and traces actor and cost', async () => {
+    const calls = [];
+    const connection = { query: async (sql, params) => {
+        calls.push({ sql: String(sql), params });
+        if (String(sql).startsWith('SELECT id FROM inventory')) return [[{ id: 'inv-general' }]];
+        return [[]];
+    } };
+    const result = await returnsService._increaseInventoryForReturn(connection, {
+        returnId: 'r', actorUserId: 'u',
+        item: { product_id: 'p', quantity: 2, condition_status: 'SELLABLE', unit_price: 12.5 },
+    });
+    assert.deepEqual(result, { restocked: 2, discarded: 0 });
+    assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE inventory') && params[1] === 'inv-general'));
+    const movement = calls.find(({ sql }) => sql.includes('INSERT INTO inventory_movements'));
+    assert.equal(movement.params[5], 12.5);
+    assert.equal(movement.params.at(-1), 'u');
+});
+
 test('approveReturn rejects invalid states', async (t) => {
     mockPool(t, async (sql) => {
         if (String(sql).includes('SELECT * FROM client_returns')) return [[{ id: 'r-1', status: 'cancelled' }]];
@@ -94,6 +161,99 @@ test('approveReturn rejects invalid states', async (t) => {
         () => returnsService.approveReturn('r-1', 'u-1'),
         (error) => error.errorCode === 'RETURN_INVALID_STATE' && error.statusCode === 400
     );
+});
+
+test('approveReturn validates missing, replayed and itemless returns', async (t) => {
+    let mode = 'missing';
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('SELECT * FROM client_returns')) {
+            if (mode === 'missing') return [[]];
+            if (mode === 'approved') return [[{ id: 'r', status: 'approved' }]];
+            return [[{ id: 'r', status: 'pending' }]];
+        }
+        if (statement.includes('client_return_items')) return [[]];
+        return [[]];
+    });
+    await assert.rejects(() => returnsService.approveReturn('r'), (e) => e.errorCode === 'RETURN_NOT_FOUND' && e.statusCode === 404);
+    mode = 'approved';
+    await assert.rejects(() => returnsService.approveReturn('r'), (e) => e.errorCode === 'RETURN_ALREADY_APPROVED' && e.statusCode === 409);
+    mode = 'empty';
+    await assert.rejects(() => returnsService.approveReturn('r'), (e) => e.errorCode === 'RETURN_WITHOUT_ITEMS');
+});
+
+test('approveReturn creates a type A credit note, client credit and accounting entry', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT * FROM client_returns')) return [[{
+            id: 'r', status: 'pending', client_id: 'c', customer_name: 'Empresa SA',
+        }]];
+        if (statement.includes('SELECT * FROM client_return_items')) return [[
+            { product_id: 'p', quantity: 2, unit_price: 50, condition_status: 'sellable' },
+            { product_id: 'rejected', quantity: 1, unit_price: 999, condition_status: 'rejected' },
+        ]];
+        if (statement.includes('SELECT billing_pos')) return [[{ billing_pos: '4' }]];
+        if (statement.includes('SELECT tax_condition_id')) return [[{ tax_condition_id: 'tc_RespInscripto' }]];
+        return [[]];
+    });
+    const originals = {
+        impact: returnsService._increaseInventoryForReturn,
+        number: returnsService._nextCreditNoteNumber,
+        journal: accountingService.createJournalEntry,
+        audit: auditService.log,
+    };
+    const impacts = [
+        { restocked: 2, discarded: 0 },
+        { restocked: 0, discarded: 1 },
+    ];
+    let journal;
+    let audited;
+    returnsService._increaseInventoryForReturn = async () => impacts.shift();
+    returnsService._nextCreditNoteNumber = async () => 'NC-2026-0001';
+    accountingService.createJournalEntry = async (_connection, entry) => { journal = entry; };
+    auditService.log = async (payload) => { audited = payload; };
+    t.after(() => {
+        returnsService._increaseInventoryForReturn = originals.impact;
+        returnsService._nextCreditNoteNumber = originals.number;
+        accountingService.createJournalEntry = originals.journal;
+        auditService.log = originals.audit;
+    });
+
+    const result = await returnsService.approveReturn('r', 'u', '127.0.0.1');
+    assert.equal(result.total_amount, 100);
+    assert.equal(result.restocked_quantity, 2);
+    assert.equal(result.discarded_quantity, 1);
+    const creditNote = calls.find(({ sql }) => sql.includes('INSERT INTO credit_notes'));
+    assert.equal(creditNote.params[3], 4);
+    assert.equal(creditNote.params[4], 'A');
+    assert.ok(calls.some(({ sql, params }) => sql.includes('UPDATE clients') && params[0] === 100));
+    assert.equal(journal.lines[0].debit, 100);
+    assert.equal(audited.ip_address, '127.0.0.1');
+});
+
+test('approveReturn handles rejected-only documents without monetary credit', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        calls.push({ sql: String(sql), params });
+        if (String(sql).includes('SELECT * FROM client_returns')) return [[{ id: 'r', status: 'pending', client_id: null }]];
+        if (String(sql).includes('SELECT * FROM client_return_items')) return [[{
+            product_id: 'p', quantity: 1, unit_price: 20, condition_status: 'rejected',
+        }]];
+        return [[]];
+    });
+    const originals = { impact: returnsService._increaseInventoryForReturn, audit: auditService.log };
+    returnsService._increaseInventoryForReturn = async () => ({ restocked: 0, discarded: 1 });
+    auditService.log = async () => {};
+    t.after(() => {
+        returnsService._increaseInventoryForReturn = originals.impact;
+        auditService.log = originals.audit;
+    });
+    const result = await returnsService.approveReturn('r');
+    assert.equal(result.total_amount, 0);
+    assert.equal(result.credit_note_id, null);
+    assert.equal(calls.some(({ sql }) => sql.includes('INSERT INTO credit_notes')), false);
 });
 
 test('credit note listing filters clients and authorization handles missing and replay', async (t) => {
@@ -164,4 +324,28 @@ test('authorizeCreditNote surfaces an AFIP rejection', async (t) => {
     afipService.authorizeVoucher = async () => { throw new Error('rechazo QA'); };
     t.after(() => { afipService.authorizeVoucher = original; });
     await assert.rejects(() => creditNotesService.authorizeCreditNote('cn-1', 'u'), /AFIP rechazó.*rechazo QA/);
+});
+
+test('authorizeCreditNote authorizes non-fiscal legacy notes without a CAE', async (t) => {
+    const calls = [];
+    let lookup = 0;
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.startsWith('SELECT * FROM credit_notes WHERE id = ? AND')) {
+            return [[{ id: 'cn-legacy', status: 'issued', reference_type: 'manual', amount: 10 }]];
+        }
+        if (statement.startsWith('SELECT * FROM credit_notes WHERE id = ?')) {
+            lookup += 1;
+            return [[{ id: 'cn-legacy', status: 'authorized', cae: null }]];
+        }
+        return [[]];
+    });
+    const originalAudit = auditService.log;
+    auditService.log = async () => {};
+    t.after(() => { auditService.log = originalAudit; });
+    const result = await creditNotesService.authorizeCreditNote('cn-legacy', 'u');
+    assert.equal(result.status, 'authorized');
+    assert.equal(result.cae, null);
+    assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE credit_notes') && params[0] === null && params[1] === null));
 });

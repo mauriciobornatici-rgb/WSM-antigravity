@@ -1,9 +1,20 @@
 # Execution State Snapshot
 
-Last reviewed: 2026-08-20
+Last reviewed: 2026-08-22
 Current continuity source: `docs/execution/BITACORA_INTEGRAL.md`
 Current score estimate: 100/100 en calidad de código local; listo para preproducción, no habilitado aún para producción.
 Immediate priority: completar los gates externos de `docs/execution/PRODUCTION_READINESS_2026-08-20.md`; ARCA y Tiendanube quedan deliberadamente para el final.
+
+## 2026-08-22 Cobertura superior al 90% y cierre técnico
+
+- Servidor: 357/357 pruebas; cobertura 99,40% líneas / 90,71% ramas / 98,08% funciones en la ejecución final.
+- El piso bloqueante de CI quedó elevado a 90% para líneas, ramas y funciones.
+- Cliente: 45/45 pruebas; typecheck, lint y build de producción verdes.
+- Smoke RBAC/validaciones: 12/12; preflight de integridad: 27/27 relaciones sin huérfanos.
+- Se añadieron variantes de regresión para ventas, cancelaciones, cobros, cheques, garantías, secuencias, cookies y operaciones Tiendanube.
+- Mejora funcional detectada por las pruebas: las referencias bancarias de pagos a proveedor ahora se preservan normalizadas para su trazabilidad.
+- Las cancelaciones de pedidos ya no generan movimientos de reposición con cantidad cero.
+- Pendiente externo deliberado: cargar/probar credenciales reales de ARCA y Tiendanube y ejecutar el ensayo controlado de staging indicado en los runbooks.
 
 ## 2026-08-20 Cierre de preproducción sin credenciales externas
 

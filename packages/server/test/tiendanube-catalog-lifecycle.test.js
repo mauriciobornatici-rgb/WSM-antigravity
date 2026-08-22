@@ -17,7 +17,9 @@ test('catalog detail returns null and updates only allowlisted family/product fi
     familyRows = [{ id: 'f', name: 'Anterior' }];
     const unchanged = await service.updateCatalogFamily('f', { forbidden: 'x' });
     assert.equal(unchanged.variant_count, 1);
-    const updated = await service.updateCatalogFamily('f', { name: 'Nuevo', brand: null, visibility: 'visible' });
+    const updated = await service.updateCatalogFamily('f', {
+        name: 'Nuevo', description: 'Descripción', brand: null, category: 'Ropa', visibility: 'visible'
+    });
     assert.equal(updated.total_stock, 2);
     assert.ok(calls.some((call) => call.sql.includes('UPDATE tiendanube_catalog_families')));
     assert.ok(calls.some((call) => call.sql.includes('UPDATE products p JOIN')));

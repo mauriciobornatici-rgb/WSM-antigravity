@@ -18,6 +18,8 @@ test('session cookie is HttpOnly, strict and scoped to the API', () => {
 });
 
 test('cookie parser extracts and decodes the named cookie safely', () => {
+    assert.equal(getCookieValue(null), null);
+    assert.equal(getCookieValue('flag; custom=value', 'custom'), 'value');
     assert.equal(getCookieValue('theme=dark; wsm_session=a%2Eb%2Ec; other=1'), 'a.b.c');
     assert.equal(getCookieValue('theme=dark'), null);
     assert.equal(getCookieValue('wsm_session=%E0%A4%A'), null);
@@ -29,6 +31,8 @@ test('expired cookie clears the same secure scope', () => {
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /Secure/);
     assert.match(cookie, /Path=\/api/);
+    assert.doesNotMatch(expiredSessionCookie(), /; Secure/);
+    assert.doesNotMatch(sessionCookie('token'), /; Secure/);
 });
 
 test('cookie-authenticated mutations require an explicitly trusted Origin', () => {
@@ -37,4 +41,6 @@ test('cookie-authenticated mutations require an explicitly trusted Origin', () =
     assert.equal(isTrustedCookieRequest('POST', 'http://localhost:5173', allowed), true);
     assert.equal(isTrustedCookieRequest('POST', 'https://evil.example', allowed), false);
     assert.equal(isTrustedCookieRequest('DELETE', undefined, allowed), false);
+    assert.equal(isTrustedCookieRequest('head', undefined, allowed), true);
+    assert.equal(isTrustedCookieRequest('PATCH', '', allowed), false);
 });
