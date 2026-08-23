@@ -1,4 +1,5 @@
 import type { Invoice } from "@/types/api";
+import { createClientUuid } from "@/lib/clientUuid";
 
 export interface OfflineSaleItem {
     product_id: string;
@@ -88,7 +89,7 @@ export function saveOfflineQueue(queue: OfflineSalePayload[]): boolean {
 
 export function enqueueOfflineSale(sale: OfflineSaleInput): OfflineSalePayload {
     const queue = getOfflineQueue();
-    const idempotencyKey = sale.idempotency_key || crypto.randomUUID();
+    const idempotencyKey = sale.idempotency_key || createClientUuid();
     const entry: OfflineSalePayload = {
         ...sale,
         id: idempotencyKey,

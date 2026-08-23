@@ -23,6 +23,7 @@ import { PrintableThermalTicket } from "@/components/invoices/PrintableThermalTi
 import { usePOSCart } from "@/hooks/usePOSCart";
 import { usePOSHotkeys } from "@/hooks/usePOSHotkeys";
 import { playScanErrorBeep } from "@/lib/scanAudio";
+import { createClientUuid } from "@/lib/clientUuid";
 import {
     enqueueOfflineSale,
     getOfflineQueue,
@@ -34,7 +35,7 @@ function roundMoney(value: number): number {
 }
 
 function defaultPaymentSplit(amount = 0): PaymentSplit {
-    return { id: crypto.randomUUID(), method: "cash", amount: roundMoney(amount) };
+    return { id: createClientUuid(), method: "cash", amount: roundMoney(amount) };
 }
 
 export default function POSPage() {
@@ -63,7 +64,7 @@ export default function POSPage() {
     const [selectedClientId, setSelectedClientId] = useState("");
 
     const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-    const [paymentSplits, setPaymentSplits] = useState<PaymentSplit[]>([defaultPaymentSplit(0)]);
+    const [paymentSplits, setPaymentSplits] = useState<PaymentSplit[]>(() => [defaultPaymentSplit(0)]);
     const [emitInvoice, setEmitInvoice] = useState(false);
     const [invoiceType, setInvoiceType] = useState<InvoiceType>("B");
     const [processing, setProcessing] = useState(false);
@@ -371,7 +372,7 @@ export default function POSPage() {
         const previousClientId = selectedClientId;
         const previousEmitInvoice = emitInvoice;
         const previousPaymentSplits = [...paymentSplits];
-        const checkoutIdempotencyKey = crypto.randomUUID();
+        const checkoutIdempotencyKey = createClientUuid();
         let orderCommitted = false;
 
         const contingencySale = {

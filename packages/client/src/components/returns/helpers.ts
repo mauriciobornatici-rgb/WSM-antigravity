@@ -1,4 +1,5 @@
 import type { WarrantyRow, ClientReturnRow, ClientReturnItemRow, CreditNoteRow, GenericRow } from "@/types/returns"
+import { createClientUuid } from "@/lib/clientUuid"
 
 export function readText(value: unknown, fallback = "-"): string {
     return typeof value === "string" && value.length > 0 ? value : fallback
@@ -71,7 +72,7 @@ export function creditNoteStatusLabel(status: string): string {
 
 export function mapWarrantyRows(rows: GenericRow[]): WarrantyRow[] {
     return rows.map((row) => ({
-        id: readText(row.id, crypto.randomUUID()),
+        id: readText(row.id, createClientUuid()),
         created_at: readIsoDate(row.created_at),
         client_name: readText(row.client_name),
         product_name: readText(row.product_name),
@@ -84,7 +85,7 @@ export function mapClientReturnRows(rows: GenericRow[]): ClientReturnRow[] {
     return rows.map((row) => {
         const items = mapClientReturnItemRows(row.items)
         const mapped: ClientReturnRow = {
-            id: readText(row.id, crypto.randomUUID()),
+            id: readText(row.id, createClientUuid()),
             created_at: readIsoDate(row.created_at),
             client_name: readText(row.client_name),
             reason: readText(row.reason),
@@ -103,7 +104,7 @@ export function mapClientReturnRows(rows: GenericRow[]): ClientReturnRow[] {
 
 export function mapCreditNoteRows(rows: GenericRow[]): CreditNoteRow[] {
     return rows.map((row) => ({
-        id: readText(row.id, crypto.randomUUID()),
+        id: readText(row.id, createClientUuid()),
         number: readText(row.number, "-"),
         created_at: readIsoDate(row.created_at),
         client_name: readText(row.client_name),

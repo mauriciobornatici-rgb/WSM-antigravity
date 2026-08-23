@@ -16,6 +16,7 @@ import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput";
 import { PaginationControls } from "@/components/common/PaginationControls";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/lib/errorHandling";
+import { createClientUuid } from "@/lib/clientUuid";
 import type { PendingSupplierInvoiceResponse, BulkSupplierPaymentAllocation, InvoicePaymentLineInput, BulkSupplierPaymentInput, CustomerCheck, OutgoingCheck } from "@/types/api";
 import type { Supplier } from "@/types";
 
@@ -57,7 +58,7 @@ const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentLine["method"]; label: strin
 
 function createPaymentLine(defaultAmount = ""): PaymentLine {
     return {
-        id: crypto.randomUUID(),
+        id: createClientUuid(),
         method: "cash",
         amount: defaultAmount,
         check: { source_type: "own", source_customer_check_id: "", issuer_name: "", bank_name: "", check_number: "", issue_date: "", due_date: "" },

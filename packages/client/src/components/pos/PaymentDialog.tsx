@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatMoney } from "@/lib/formatters";
+import { createClientUuid } from "@/lib/clientUuid";
 
 type PaymentDialogProps = {
     open: boolean;
@@ -86,7 +87,7 @@ export function PaymentDialog({
         onPaymentSplitsChange([
             ...paymentSplits,
             {
-                id: crypto.randomUUID(),
+                id: createClientUuid(),
                 method: "cash",
                 amount: Math.max(0, difference),
             },

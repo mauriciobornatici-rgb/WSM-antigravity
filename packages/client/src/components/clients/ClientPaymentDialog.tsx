@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/lib/errorHandling";
+import { createClientUuid } from "@/lib/clientUuid";
 import type { InvoiceSummary } from "./ClientDocumentsCards";
 
 type PaymentLine = {
@@ -30,7 +31,7 @@ const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentLine["method"]; label: strin
 
 function createPaymentLine(defaultAmount = ""): PaymentLine {
     return {
-        id: crypto.randomUUID(),
+        id: createClientUuid(),
         method: "cash",
         amount: defaultAmount,
     };

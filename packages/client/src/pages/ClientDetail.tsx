@@ -4,6 +4,7 @@ import { api } from "@/services/api";
 import type { Client, Order, Transaction } from "@/types";
 import type { Invoice } from "@/types/api";
 import { showErrorToast } from "@/lib/errorHandling";
+import { createClientUuid } from "@/lib/clientUuid";
 
 // Extracted Subcomponents
 import { ClientHeaderCard } from "@/components/clients/ClientHeaderCard";
@@ -74,7 +75,7 @@ function parseMovements(
     }));
 
     const creditRows: ClientMovement[] = creditNotes.map((credit) => ({
-        id: String(credit.id || crypto.randomUUID()),
+        id: String(credit.id || createClientUuid()),
         date: String(credit.created_at || new Date().toISOString()),
         type: "credit_note",
         description: `Nota de credito ${String(credit.number || credit.id || "-")}`,
@@ -84,7 +85,7 @@ function parseMovements(
 
     const transactionRows: ClientMovement[] = transactions.flatMap<ClientMovement>((tx) => {
         const txType = String(tx.type || "").toLowerCase();
-        const txId = String(tx.id || crypto.randomUUID());
+        const txId = String(tx.id || createClientUuid());
         const txDescription = readText(tx.description, `Movimiento ${paymentTypeLabel(txType)}`);
         const txAmount = readNumber(tx.amount);
         const txReferenceId = String(tx.reference_id || "");
@@ -116,7 +117,7 @@ function parseMovements(
         }
 
         return [{
-            id: String(tx.id || crypto.randomUUID()),
+            id: String(tx.id || createClientUuid()),
             date: readDate(tx.date),
             type: "payment" as const,
             description: txDescription,
@@ -173,7 +174,7 @@ export default function ClientDetailPage() {
             setMovements(parseMovements(invoicesResponse, creditNotesResponse, transactionsResponse));
             setInvoices(
                 (invoicesResponse as Invoice[]).map((invoice) => ({
-                    id: String(invoice.id || crypto.randomUUID()),
+                    id: String(invoice.id || createClientUuid()),
                     issue_date: String(invoice.issue_date || invoice.created_at || new Date().toISOString()),
                     invoice_type: String(invoice.invoice_type || "B"),
                     point_of_sale: Number(invoice.point_of_sale || 1),
@@ -185,7 +186,7 @@ export default function ClientDetailPage() {
             );
             setCreditNotes(
                 creditNotesResponse.map((note) => ({
-                    id: String(note.id || crypto.randomUUID()),
+                    id: String(note.id || createClientUuid()),
                     number: String(note.number || note.id || "-"),
                     created_at: readDate(note.created_at),
                     amount: Math.abs(readNumber(note.amount)),
@@ -194,7 +195,7 @@ export default function ClientDetailPage() {
             );
             setWarranties(
                 warrantiesResponse.map((warranty) => ({
-                    id: String(warranty.id || crypto.randomUUID()),
+                    id: String(warranty.id || createClientUuid()),
                     created_at: String(warranty.created_at || new Date().toISOString()),
                     product_name: String(warranty.product_name || "-"),
                     issue_description: String(warranty.issue_description || "-"),
@@ -203,7 +204,7 @@ export default function ClientDetailPage() {
             );
             setReturns(
                 returnsResponse.map((row) => ({
-                    id: String(row.id || crypto.randomUUID()),
+                    id: String(row.id || createClientUuid()),
                     created_at: readDate(row.created_at),
                     reason: readText(row.reason),
                     status: readText(row.status, "pending"),
@@ -212,7 +213,7 @@ export default function ClientDetailPage() {
             );
             setPayments(
                 transactionsResponse.map((tx) => ({
-                    id: String(tx.id || crypto.randomUUID()),
+                    id: String(tx.id || createClientUuid()),
                     date: readDate(tx.date),
                     type: String(tx.type || ""),
                     description: readText(tx.description),

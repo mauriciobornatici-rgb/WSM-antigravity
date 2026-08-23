@@ -4,6 +4,7 @@ import { Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
+import { createClientUuid } from "@/lib/clientUuid"
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -37,7 +38,7 @@ const CONSUMIDOR_FINAL_VALUE = "__consumidor_final__"
 type CreatePaymentLine = { id: string; method: string; amount: string }
 
 function newPaymentLine(method = "cash", amount = ""): CreatePaymentLine {
-    return { id: crypto.randomUUID(), method, amount }
+    return { id: createClientUuid(), method, amount }
 }
 
 export function CreateOrderDialog({ open, onOpenChange, clients, products, currentUser }: CreateOrderDialogProps) {

@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { DollarSign, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { SupplierPaymentCreateInput } from '@/types/api';
+import { createClientUuid } from '@/lib/clientUuid';
 
 interface PaymentLine {
     id: string;
@@ -31,12 +32,12 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
     const [submitting, setSubmitting] = useState(false);
 
     const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([
-        { id: crypto.randomUUID(), amount: '', payment_method: 'Efectivo', reference_number: '' }
+        { id: createClientUuid(), amount: '', payment_method: 'Efectivo', reference_number: '' }
     ]);
 
     const addPaymentLine = () => {
         setPaymentLines([...paymentLines, {
-            id: crypto.randomUUID(),
+            id: createClientUuid(),
             amount: '',
             payment_method: 'Efectivo',
             reference_number: ''

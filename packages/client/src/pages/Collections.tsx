@@ -16,6 +16,7 @@ import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput";
 import { PaginationControls } from "@/components/common/PaginationControls";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/lib/errorHandling";
+import { createClientUuid } from "@/lib/clientUuid";
 import type { PendingInvoiceResponse, BulkPaymentAllocation, InvoicePaymentLineInput, BulkPaymentInput, CustomerCheck, FiscalSaleStatus } from "@/types/api";
 import type { Client } from "@/types";
 
@@ -57,7 +58,7 @@ const CHECK_STATUS_LABELS: Record<CustomerCheck["status"], string> = {
 
 function createPaymentLine(defaultAmount = ""): PaymentLine {
     return {
-        id: crypto.randomUUID(),
+        id: createClientUuid(),
         method: "cash",
         amount: defaultAmount,
         check: { issuer_name: "", bank_name: "", check_number: "", issue_date: "", due_date: "" },

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { CartItem, POSProduct } from "@/components/pos/types";
 import { playScanErrorBeep, playScanSuccessBeep } from "@/lib/scanAudio";
+import { createClientUuid } from "@/lib/clientUuid";
 
 function roundMoney(value: number): number {
     return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -156,7 +157,7 @@ export function usePOSCart() {
         }
 
         const newParked: ParkedCart = {
-            id: crypto.randomUUID(),
+            id: createClientUuid(),
             label: label?.trim() || `Venta en espera #${parkedCarts.length + 1}`,
             timestamp: Date.now(),
             items: [...cart],
