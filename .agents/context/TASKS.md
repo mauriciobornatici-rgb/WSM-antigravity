@@ -12,30 +12,33 @@ Normalización y gobierno del workspace bajo las mejores prácticas de Google An
 - [x] Verificación determinista (`npm run typecheck` y validaciones) pasando limpiamente.
 
 ## Estado Actual
-`completed`
+`in_progress`
 
 ## Evidencia Completada
-- Servidor: pruebas y cobertura validadas vía `npm run validate`.
-- Cliente: 14 archivos de prueba, 50 pruebas pasando (50/50), typecheck, lint y build de producción limpios.
-- Preflight Integridad BD: 36/36 relaciones sin registros huérfanos (`preflight:integrity` exit 0).
-- Monorepo: `npm run validate` ejecutado con éxito total (código 0).
-- Plantilla Maestra: Creada y verificada en `C:\Dev\Base antigravity`.
+- Bloque P0 completado:
+  - Vulnerabilidades de dependencias resueltas con `npm audit fix` (0 vulnerabilidades, actualización de `mysql2`, `browserslist`, `qs`).
+  - Suite `npm run validate` en verde tras actualización (375 tests backend, 50 tests frontend, lint, typecheck y build limpios).
+  - Integridad relacional en BD verificada con `npm run preflight:integrity` (36/36 relaciones sin huérfanos).
+  - Commit de respaldo de gobernanza y dependencias ejecutado con éxito: `96e7dc3` (árbol de trabajo limpio).
+- Plantilla Maestra: Consolidada y disponible en `C:\Dev\Base antigravity`.
 - Capa de Gobernanza Antigravity: `GEMINI.md`, `AGENTS.md`, `CLAUDE.md`, `.agents/context/*` y `.ai/*` operativos en WSM SportsERP.
-- Plugin de ingeniería `wsm-erp-engineering` normalizado al estándar oficial `plugin.json`.
 
 ## Hallazgos y Datos Relevantes
-- La gobernanza oficial de Google Antigravity queda 100% activa en el monorepo WSM SportsERP.
-- `smoke:rbac` requiere tener el backend HTTP activo (`npm run server`), por lo que aplica en modo staging previo a despliegue.
+- El plan integral de auditoría y evolución fue aprobado y se encuentra detallado en `implementation_plan.md`.
+- El árbol de trabajo de Git está 100% limpio y respaldado en commit `96e7dc3`.
 
-## Siguientes Acciones
-1. Desarrollar o probar la siguiente funcionalidad o gate de preproducción según la hoja de ruta de `docs/execution/MASTER_PLAN.md`.
-2. Mantener la disciplina de actualización de `TASKS.md` al cierre de cada tarea sustancial.
+## Siguientes Acciones (Bloque P1)
+1. Eje 1 (Logística WMS): Implementar y testear la migración `044_harden_order_picking.sql` para reservas granulares por ubicación (`order_item_allocations`) y control de concurrencia en picking.
+2. Eje 3 (Seguridad): Implementar helper de cifrado simétrico (`aes-256-gcm`) para certificados y secretos en la tabla `settings`.
+3. Eje 2 (Comercial/POS): Desacoplar facturación de cobranza para soportar comprobantes con saldo pendiente en cuenta corriente y cobranzas con pagos mixtos.
 
 ## Bloqueos o Aprobaciones Requeridas
-- Ninguno.
+- Ninguno. Listo para comenzar con el Bloque P1.
 
 ## Último Checkpoint
-- **Fecha/Hora:** 2026-09-02T23:55 (Bootstrap Antigravity Completado)
-- **Archivos Modificados:** `GEMINI.md`, `AGENTS.md`, `CLAUDE.md`, `.agents/context/*`, `plugins/wsm-erp-engineering/plugin.json`.
-- **Chequeos Ejecutados:** `npm run validate` (exit 0), `npm run preflight:integrity` (exit 0).
+- **Fecha/Hora:** 2026-09-03T00:04 (Hito P0 Completado y Respaldado)
+- **Archivos Modificados:** `package-lock.json`, `.agents/context/*`, `.ai/*`, `docs/execution/STATE.md`.
+- **Commit:** `96e7dc3`
+- **Chequeos Ejecutados:** `npm audit` (0 vulnerabilidades), `npm run validate` (exit 0), `npm run preflight:integrity` (exit 0).
+
 
