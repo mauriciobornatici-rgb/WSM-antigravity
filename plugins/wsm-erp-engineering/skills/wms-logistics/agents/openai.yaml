@@ -1,0 +1,4 @@
+interface:
+  display_name: "Logística WMS WSM"
+  short_description: "Protege stock, reservas y tareas de depósito"
+  default_prompt: "Usa $wms-logistics para revisar e implementar este flujo físico sin inconsistencias de stock."

@@ -1,0 +1,23 @@
+{
+  "name": "wsm-erp-engineering",
+  "version": "0.1.0",
+  "description": "Gobernanza, auditoría y reglas de entrega para WSM SportsERP.",
+  "author": {
+    "name": "WSM SportsERP Team"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "WSM ERP Engineering",
+    "shortDescription": "Gobernanza y auditoría del ERP WSM",
+    "longDescription": "Flujos de ingeniería, invariantes WMS, migraciones seguras y auditorías repetibles para evolucionar WSM SportsERP sin perder trazabilidad ni integridad.",
+    "developerName": "WSM SportsERP Team",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "Audita este cambio de WSM SportsERP antes de integrarlo.",
+      "Planifica e implementa este cambio respetando las invariantes WMS.",
+      "Verifica la migración y actualiza la bitácora del proyecto."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

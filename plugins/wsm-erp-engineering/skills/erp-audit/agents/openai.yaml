@@ -1,0 +1,4 @@
+interface:
+  display_name: "Auditoría integral WSM"
+  short_description: "Revisa seguridad, arquitectura y calidad del ERP"
+  default_prompt: "Usa $erp-audit para auditar este cambio, validar cada hallazgo y priorizar riesgos reales."

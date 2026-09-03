@@ -1,9 +1,18 @@
 # Execution State Snapshot
 
-Last reviewed: 2026-08-22
-Current continuity source: `docs/execution/BITACORA_INTEGRAL.md`
-Current score estimate: 100/100 en calidad de código local; listo para preproducción, no habilitado aún para producción.
+Last reviewed: 2026-09-02
+Current continuity source: `docs/execution/BITACORA_INTEGRAL.md` y `.agents/context/TASKS.md`
+Current score estimate: 100/100 en calidad de código local; listo para preproducción, gobernanza Antigravity activa.
 Immediate priority: completar los gates externos de `docs/execution/PRODUCTION_READINESS_2026-08-20.md`; ARCA y Tiendanube quedan deliberadamente para el final.
+
+## 2026-09-02 Integración de Gobernanza Oficial Antigravity y Template Base
+
+- Creación de la plantilla maestra reutilizable en `C:\Dev\Base antigravity` a partir de la adaptación profunda de `AI_Project_Starter_Kit_v1.1.zip` a lineamientos de Antigravity.
+- Despliegue de reglas de gobierno en la raíz de WSM SportsERP (`GEMINI.md`, `AGENTS.md`, `CLAUDE.md`) blindando las invariantes no negociables de WMS, contabilidad y RBAC.
+- Implementación de la capa de contexto `.agents/context/` (`PROJECT.md`, `TASKS.md`, `QUALITY.md`, `BUDGET.yaml`, `PROFILE.md`, `DECISIONS.md`) y sincronización con `.ai/`.
+- Normalización del plugin de ingeniería a estándar Antigravity (`plugins/wsm-erp-engineering/plugin.json`).
+- Instalación de skills genéricos de preflight y verificación determinista en `.agents/skills/`.
+- Validación determinista completa: `npm run validate` en verde (build common, 375 tests server, 50 tests client, lint, typecheck y build client); `npm run preflight:integrity` con 36/36 relaciones sin huérfanos.
 
 ## 2026-08-22 Control de stock móvil y acceso directo a Picking
 

@@ -1,0 +1,15 @@
+{
+  "$comment": "Configuración de Servidores MCP (Model Context Protocol) para Antigravity. Renombrar a mcp_config.json para activar.",
+  "mcpServers": {
+    "local-node-tool": {
+      "command": "node",
+      "args": ["./scripts/mcp-server.js"],
+      "env": {
+        "NODE_ENV": "development"
+      }
+    },
+    "remote-api-service": {
+      "serverUrl": "https://mcp.example.com/sse"
+    }
+  }
+}
