@@ -1,9 +1,22 @@
 # Execution State Snapshot
 
-Last reviewed: 2026-09-02
+Last reviewed: 2026-09-03
 Current continuity source: `docs/execution/BITACORA_INTEGRAL.md` y `.agents/context/TASKS.md`
 Current score estimate: 100/100 en calidad de código local; listo para preproducción, gobernanza Antigravity activa.
 Immediate priority: completar los gates externos de `docs/execution/PRODUCTION_READINESS_2026-08-20.md`; ARCA y Tiendanube quedan deliberadamente para el final.
+
+## 2026-09-03 Endurecimiento WMS: Migración 044 (order_item_allocations) y Picking Concurrente
+
+- Aplicación exitosa de la migración `044_harden_order_picking.sql` en base de datos: creación de tabla `order_item_allocations`, columnas de concurrencia en `picking_sessions` (`version`, `claim_idempotency_key`, `completed_with_shortage`, `released_at`), e instrumentación de eventos granulares en `picking_session_events`.
+- Integración en `CreateOrderUseCase`: ahora cada ítem de pedido reserva y persiste registros atómicos en `order_item_allocations` vinculando ítem, ubicación de inventario y cantidades reservadas.
+- Actualización de `sales.service.js`:
+  - Cancelación de pedidos: liberación exacta de reservas por ubicación desde `order_item_allocations` con estado `cancelled`.
+  - Transición a `packed`: deducción física del inventario basada en las ubicaciones asignadas y marcado de faltantes (`shortage_quantity`).
+  - `pickOrderItem`: registro de eventos con `allocation_id`, `order_item_id` y `picker_id`.
+  - `getOrderSummary`: incluye la lista de `allocations` con ubicaciones físicas.
+- Extensión del contrato TypeScript en cliente: interfaces `OrderItemAllocation` y actualización de `getOrderSummary`.
+- Preflight de integridad actualizado: 40 relaciones relacionales verificadas, 0 registros huérfanos.
+- Validación determinista completa: `npm run validate` superado (379 tests backend, 50 tests frontend, typecheck, lint y build limpios).
 
 ## 2026-09-02 Integración de Gobernanza Oficial Antigravity y Template Base
 

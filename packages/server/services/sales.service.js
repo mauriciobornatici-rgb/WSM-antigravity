@@ -127,37 +127,59 @@ class SalesService extends BaseService {
                 }
             }
         } else {
-            // Otherwise, it was only reserved (pending or picking), so we release the reservation
-            const [orderItems] = await connection.query(
-                'SELECT product_id, quantity FROM order_items WHERE order_id = ? FOR UPDATE',
+            // Check if exact allocations exist for this order
+            const [allocations] = await connection.query(
+                `SELECT id, inventory_id, reserved_quantity
+                 FROM order_item_allocations
+                 WHERE order_id = ? AND status = 'reserved'
+                 FOR UPDATE`,
                 [orderId]
             );
-            for (const item of orderItems) {
-                let remainingRelease = Number(item.quantity || 0);
-                const [reserveRows] = await connection.query(
-                    `SELECT id, reserved_quantity 
-                     FROM inventory 
-                     WHERE product_id = ? AND reserved_quantity > 0 
-                     ORDER BY reserved_quantity DESC 
-                     FOR UPDATE`,
-                    [item.product_id]
-                );
 
-                for (const r of reserveRows) {
-                    if (remainingRelease <= 0) break;
-                    const release = Math.min(Number(r.reserved_quantity || 0), remainingRelease);
+            if (allocations.length > 0) {
+                for (const alloc of allocations) {
                     await connection.query(
-                        'UPDATE inventory SET reserved_quantity = reserved_quantity - ? WHERE id = ?',
-                        [release, r.id]
+                        'UPDATE inventory SET reserved_quantity = GREATEST(reserved_quantity - ?, 0) WHERE id = ?',
+                        [alloc.reserved_quantity, alloc.inventory_id]
                     );
-                    remainingRelease -= release;
+                    await connection.query(
+                        "UPDATE order_item_allocations SET status = 'cancelled' WHERE id = ?",
+                        [alloc.id]
+                    );
                 }
-
-                if (remainingRelease > 0) {
-                    await connection.query(
-                        'UPDATE inventory SET reserved_quantity = GREATEST(reserved_quantity - ?, 0) WHERE product_id = ? LIMIT 1',
-                        [remainingRelease, item.product_id]
+            } else {
+                // Legacy fallback: release by product reservation
+                const [orderItems] = await connection.query(
+                    'SELECT product_id, quantity FROM order_items WHERE order_id = ? FOR UPDATE',
+                    [orderId]
+                );
+                for (const item of orderItems) {
+                    let remainingRelease = Number(item.quantity || 0);
+                    const [reserveRows] = await connection.query(
+                        `SELECT id, reserved_quantity 
+                         FROM inventory 
+                         WHERE product_id = ? AND reserved_quantity > 0 
+                         ORDER BY reserved_quantity DESC 
+                         FOR UPDATE`,
+                        [item.product_id]
                     );
+
+                    for (const r of reserveRows) {
+                        if (remainingRelease <= 0) break;
+                        const release = Math.min(Number(r.reserved_quantity || 0), remainingRelease);
+                        await connection.query(
+                            'UPDATE inventory SET reserved_quantity = reserved_quantity - ? WHERE id = ?',
+                            [release, r.id]
+                        );
+                        remainingRelease -= release;
+                    }
+
+                    if (remainingRelease > 0) {
+                        await connection.query(
+                            'UPDATE inventory SET reserved_quantity = GREATEST(reserved_quantity - ?, 0) WHERE product_id = ? LIMIT 1',
+                            [remainingRelease, item.product_id]
+                        );
+                    }
                 }
             }
         }
@@ -230,115 +252,157 @@ class SalesService extends BaseService {
                     );
                 }
             } else if (nextStatus === 'packed') {
-                const [pickedRows] = await connection.query(
-                    'SELECT COALESCE(SUM(picked_quantity), 0) AS total_picked FROM order_items WHERE order_id = ?',
+                const [countRows] = await connection.query(
+                    'SELECT COALESCE(SUM(quantity), 0) AS total_items, COALESCE(SUM(picked_quantity), 0) AS total_picked FROM order_items WHERE order_id = ?',
                     [orderId]
                 );
-                const totalPicked = pickedRows[0]?.total_picked || 0;
+                const totalItems = Number(countRows[0]?.total_items || 0);
+                const totalPicked = Number(countRows[0]?.total_picked || 0);
+                const hasShortage = totalPicked < totalItems;
+
                 await connection.query(
                     `UPDATE picking_sessions 
-                     SET status = 'completed', completed_at = CURRENT_TIMESTAMP, total_items_picked = ? 
+                     SET status = 'completed', completed_at = CURRENT_TIMESTAMP, total_items_picked = ?, completed_with_shortage = ?
                      WHERE order_id = ? AND status = 'in_progress'`,
-                    [totalPicked, orderId]
+                    [totalPicked, hasShortage, orderId]
                 );
 
-                // 1. Release reservations & 2. Deduct physical stock recolectado
-                const [orderItems] = await connection.query(
-                    'SELECT product_id, quantity, picked_quantity FROM order_items WHERE order_id = ?',
+                // 1. Check if exact allocations exist for this order
+                const [allocations] = await connection.query(
+                    `SELECT oia.*
+                     FROM order_item_allocations oia
+                     WHERE oia.order_id = ? AND oia.status = 'reserved'
+                     FOR UPDATE`,
                     [orderId]
                 );
 
-                for (const item of orderItems) {
-                    const reqQty = Number(item.quantity || 0);
-                    const pickQty = Number(item.picked_quantity || 0);
-                    
-                    if (reqQty <= 0) continue;
+                if (allocations.length > 0) {
+                    for (const alloc of allocations) {
+                        const reserved = Number(alloc.reserved_quantity || 0);
+                        const picked = Math.min(reserved, Math.max(Number(alloc.picked_quantity || 0), 0));
 
-                    // Release original reservation
-                    let remainingRelease = reqQty;
-                    const [reserveRows] = await connection.query(
-                        `SELECT id, location, reserved_quantity 
-                         FROM inventory 
-                         WHERE product_id = ? AND reserved_quantity > 0 
-                         ORDER BY reserved_quantity DESC 
-                         FOR UPDATE`,
-                        [item.product_id]
-                    );
-                    
-                    const releasedLocations = [];
-                    for (const r of reserveRows) {
-                        if (remainingRelease <= 0) break;
-                        const release = Math.min(Number(r.reserved_quantity || 0), remainingRelease);
+                        // Release original reservation
                         await connection.query(
-                            'UPDATE inventory SET reserved_quantity = reserved_quantity - ? WHERE id = ?',
-                            [release, r.id]
+                            'UPDATE inventory SET reserved_quantity = GREATEST(reserved_quantity - ?, 0) WHERE id = ?',
+                            [reserved, alloc.inventory_id]
                         );
-                        remainingRelease -= release;
-                        releasedLocations.push({ location: r.location, quantity: release });
-                    }
 
-                    if (remainingRelease > 0) {
-                        await connection.query(
-                            'UPDATE inventory SET reserved_quantity = GREATEST(reserved_quantity - ?, 0) WHERE product_id = ? LIMIT 1',
-                            [remainingRelease, item.product_id]
-                        );
-                        releasedLocations.push({ location: 'General', quantity: remainingRelease });
-                    }
-
-                    // Deduct physical stock physically picked
-                    let remainingDeduct = pickQty;
-                    for (const loc of releasedLocations) {
-                        if (remainingDeduct <= 0) break;
-                        const [invRows] = await connection.query(
-                            'SELECT id, quantity FROM inventory WHERE product_id = ? AND location = ? FOR UPDATE',
-                            [item.product_id, loc.location]
-                        );
-                        if (invRows.length > 0) {
-                            const currentQty = Number(invRows[0].quantity || 0);
-                            const deduct = Math.min(currentQty, remainingDeduct);
-                            if (deduct > 0) {
-                                await connection.query(
-                                    'UPDATE inventory SET quantity = quantity - ? WHERE id = ?',
-                                    [deduct, invRows[0].id]
-                                );
-                                
-                                await connection.query(
-                                    `INSERT INTO inventory_movements (
-                                        id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
-                                    ) VALUES (?, 'sale', ?, ?, ?, 0, 'Order stock deduction', 'order', ?)`,
-                                    [crypto.randomUUID(), item.product_id, loc.location, deduct, orderId]
-                                );
-                                
-                                remainingDeduct -= deduct;
-                            }
+                        // Deduct physical stock
+                        if (picked > 0) {
+                            await connection.query(
+                                'UPDATE inventory SET quantity = GREATEST(quantity - ?, 0) WHERE id = ?',
+                                [picked, alloc.inventory_id]
+                            );
+                            await connection.query(
+                                `INSERT INTO inventory_movements (
+                                    id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
+                                ) VALUES (?, 'sale', ?, ?, ?, 0, 'Order stock deduction (allocated)', 'order', ?)`,
+                                [crypto.randomUUID(), alloc.product_id, alloc.location_code || 'General', picked, orderId]
+                            );
                         }
-                    }
 
-                    if (remainingDeduct > 0) {
-                        const [fallbackRows] = await connection.query(
-                            `SELECT id, location, quantity 
+                        await connection.query(
+                            "UPDATE order_item_allocations SET status = 'picked', picked_quantity = ?, shortage_quantity = ? WHERE id = ?",
+                            [picked, Math.max(0, reserved - picked), alloc.id]
+                        );
+                    }
+                } else {
+                    // Legacy fallback: release reservations & deduct physical stock
+                    const [orderItems] = await connection.query(
+                        'SELECT product_id, quantity, picked_quantity FROM order_items WHERE order_id = ?',
+                        [orderId]
+                    );
+
+                    for (const item of orderItems) {
+                        const reqQty = Number(item.quantity || 0);
+                        const pickQty = Number(item.picked_quantity || 0);
+                        
+                        if (reqQty <= 0) continue;
+
+                        let remainingRelease = reqQty;
+                        const [reserveRows] = await connection.query(
+                            `SELECT id, location, reserved_quantity 
                              FROM inventory 
-                             WHERE product_id = ? AND quantity > 0 
-                             ORDER BY quantity DESC 
+                             WHERE product_id = ? AND reserved_quantity > 0 
+                             ORDER BY reserved_quantity DESC 
                              FOR UPDATE`,
                             [item.product_id]
                         );
-                        for (const fb of fallbackRows) {
+                        
+                        const releasedLocations = [];
+                        for (const r of reserveRows) {
+                            if (remainingRelease <= 0) break;
+                            const release = Math.min(Number(r.reserved_quantity || 0), remainingRelease);
+                            await connection.query(
+                                'UPDATE inventory SET reserved_quantity = reserved_quantity - ? WHERE id = ?',
+                                [release, r.id]
+                            );
+                            remainingRelease -= release;
+                            releasedLocations.push({ location: r.location, quantity: release });
+                        }
+
+                        if (remainingRelease > 0) {
+                            await connection.query(
+                                'UPDATE inventory SET reserved_quantity = GREATEST(reserved_quantity - ?, 0) WHERE product_id = ? LIMIT 1',
+                                [remainingRelease, item.product_id]
+                            );
+                            releasedLocations.push({ location: 'General', quantity: remainingRelease });
+                        }
+
+                        let remainingDeduct = pickQty;
+                        for (const loc of releasedLocations) {
                             if (remainingDeduct <= 0) break;
-                            const currentQty = Number(fb.quantity || 0);
-                            const deduct = Math.min(currentQty, remainingDeduct);
-                            if (deduct > 0) {
-                                await connection.query(
-                                    'UPDATE inventory SET quantity = quantity - ? WHERE id = ?',
-                                    [deduct, fb.id]
-                                );
-                                await connection.query(
-                                    `INSERT INTO inventory_movements (
-                                        id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
-                                    ) VALUES (?, 'sale', ?, ?, ?, 0, 'Order stock deduction (fallback)', 'order', ?)`,
-                                    [crypto.randomUUID(), item.product_id, fb.location, deduct, orderId]
-                                );
-                                remainingDeduct -= deduct;
+                            const [invRows] = await connection.query(
+                                'SELECT id, quantity FROM inventory WHERE product_id = ? AND location = ? FOR UPDATE',
+                                [item.product_id, loc.location]
+                            );
+                            if (invRows.length > 0) {
+                                const currentQty = Number(invRows[0].quantity || 0);
+                                const deduct = Math.min(currentQty, remainingDeduct);
+                                if (deduct > 0) {
+                                    await connection.query(
+                                        'UPDATE inventory SET quantity = quantity - ? WHERE id = ?',
+                                        [deduct, invRows[0].id]
+                                    );
+                                    
+                                    await connection.query(
+                                        `INSERT INTO inventory_movements (
+                                            id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
+                                        ) VALUES (?, 'sale', ?, ?, ?, 0, 'Order stock deduction', 'order', ?)`,
+                                        [crypto.randomUUID(), item.product_id, loc.location, deduct, orderId]
+                                    );
+                                    
+                                    remainingDeduct -= deduct;
+                                }
+                            }
+                        }
+
+                        if (remainingDeduct > 0) {
+                            const [fallbackRows] = await connection.query(
+                                `SELECT id, location, quantity 
+                                 FROM inventory 
+                                 WHERE product_id = ? AND quantity > 0 
+                                 ORDER BY quantity DESC 
+                                 FOR UPDATE`,
+                                [item.product_id]
+                            );
+                            for (const fb of fallbackRows) {
+                                if (remainingDeduct <= 0) break;
+                                const currentQty = Number(fb.quantity || 0);
+                                const deduct = Math.min(currentQty, remainingDeduct);
+                                if (deduct > 0) {
+                                    await connection.query(
+                                        'UPDATE inventory SET quantity = quantity - ? WHERE id = ?',
+                                        [deduct, fb.id]
+                                    );
+                                    await connection.query(
+                                        `INSERT INTO inventory_movements (
+                                            id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
+                                        ) VALUES (?, 'sale', ?, ?, ?, 0, 'Order stock deduction (fallback)', 'order', ?)`,
+                                        [crypto.randomUUID(), item.product_id, fb.location, deduct, orderId]
+                                    );
+                                    remainingDeduct -= deduct;
+                                }
                             }
                         }
                     }
@@ -574,15 +638,34 @@ class SalesService extends BaseService {
             const safeQty = Math.max(0, Math.min(Number(pickedQuantity || 0), Number(item.quantity)));
             await connection.query('UPDATE order_items SET picked_quantity = ? WHERE id = ?', [safeQty, itemId]);
 
+            const [allocs] = await connection.query(
+                'SELECT * FROM order_item_allocations WHERE order_item_id = ? FOR UPDATE',
+                [itemId]
+            );
+            let firstAllocId = null;
+            if (allocs.length > 0) {
+                firstAllocId = allocs[0].id;
+                let remainingPick = safeQty;
+                for (const alloc of allocs) {
+                    const thisPick = Math.min(Number(alloc.reserved_quantity || 0), remainingPick);
+                    const thisShortage = Math.max(0, Number(alloc.reserved_quantity || 0) - thisPick);
+                    await connection.query(
+                        'UPDATE order_item_allocations SET picked_quantity = ?, shortage_quantity = ? WHERE id = ?',
+                        [thisPick, thisShortage, alloc.id]
+                    );
+                    remainingPick -= thisPick;
+                }
+            }
+
             const [sessions] = await connection.query(
                 'SELECT id FROM picking_sessions WHERE order_id = ? AND status = "in_progress" LIMIT 1 FOR UPDATE',
                 [item.order_id]
             );
             if (sessions.length > 0) {
                 await connection.query(
-                    `INSERT INTO picking_session_events (id, session_id, product_id, action_type, location_code, quantity)
-                     VALUES (?, ?, ?, 'quantity_confirmed', ?, ?)`,
-                    [crypto.randomUUID(), sessions[0].id, item.product_id, item.location || 'General', safeQty]
+                    `INSERT INTO picking_session_events (id, session_id, product_id, order_item_id, allocation_id, picker_id, action_type, location_code, quantity)
+                     VALUES (?, ?, ?, ?, ?, ?, 'quantity_confirmed', ?, ?)`,
+                    [crypto.randomUUID(), sessions[0].id, item.product_id, itemId, firstAllocId, userId || null, item.location || 'General', safeQty]
                 );
             }
 
@@ -681,9 +764,19 @@ class SalesService extends BaseService {
             [orderId]
         );
 
+        const [allocations] = await pool.query(
+            `SELECT oia.*, inv.location AS inventory_location
+             FROM order_item_allocations oia
+             LEFT JOIN inventory inv ON inv.id = oia.inventory_id
+             WHERE oia.order_id = ?
+             ORDER BY oia.location_code ASC`,
+            [orderId]
+        );
+
         return {
             order: { ...orders[0], payments: payments.map((payment) => ({ ...payment, amount: Number(payment.amount || 0) })) },
             items,
+            allocations,
             summary: {
                 total_items: totalItems,
                 total_picked: totalPicked,

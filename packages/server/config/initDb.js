@@ -41,7 +41,8 @@ const REQUIRED_TABLES = [
     'document_sequences',
     'chart_of_accounts',
     'journal_entries',
-    'journal_entry_lines'
+    'journal_entry_lines',
+    'order_item_allocations'
 ];
 
 async function assertRequiredTables() {

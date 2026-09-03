@@ -102,6 +102,20 @@ export interface OrderItem {
     picked?: boolean
 }
 
+export interface OrderItemAllocation {
+    id: string
+    order_id: string
+    order_item_id: string
+    product_id: string
+    inventory_id: string
+    location_code: string
+    reserved_quantity: number
+    picked_quantity: number
+    shortage_quantity: number
+    status: 'reserved' | 'picked' | 'shortage' | 'cancelled'
+    inventory_location?: string
+}
+
 export interface Order {
     id: string
     customer_name: string

@@ -37,6 +37,10 @@ const relationships = [
     ['cash_shifts', 'cash_register_id', 'cash_registers', 'id'],
     ['shift_payments', 'shift_id', 'cash_shifts', 'id'],
     ['shift_payments', 'order_id', 'orders', 'id'],
+    ['order_item_allocations', 'order_id', 'orders', 'id'],
+    ['order_item_allocations', 'order_item_id', 'order_items', 'id'],
+    ['order_item_allocations', 'product_id', 'products', 'id'],
+    ['order_item_allocations', 'inventory_id', 'inventory', 'id'],
 ];
 
 async function countOrphans(childTable, childColumn, parentTable, parentColumn) {

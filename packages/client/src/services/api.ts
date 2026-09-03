@@ -10,6 +10,7 @@ import type {
     WarehouseLocation,
     Order,
     OrderItem,
+    OrderItemAllocation,
     Product,
     ProductCatalogOption,
     ProductCatalogOptionType,
@@ -494,6 +495,7 @@ export const api = {
         httpClient.get<{
             order: Order;
             items: OrderItem[];
+            allocations?: OrderItemAllocation[];
             summary: { total_items: number; total_picked: number; completion_percent: number };
             picking_session?: {
                 id: string;

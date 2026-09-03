@@ -94,6 +94,9 @@ test('cancelling an uninvoiced order voids debt and preserves prior collections 
             if (statement.includes('SELECT product_id, quantity FROM order_items')) {
                 return [[]];
             }
+            if (statement.includes('FROM order_item_allocations')) {
+                return [[]];
+            }
             if (statement.includes("UPDATE orders") && statement.includes("status = 'cancelled'")) {
                 return [{ affectedRows: 1 }];
             }
@@ -182,6 +185,9 @@ test('createOrder persists external source and id for imported marketplace order
             }
             if (statement.includes('INSERT INTO order_items')) {
                 orderItemInsertCall = { sql: statement, params };
+                return [{ affectedRows: 1 }];
+            }
+            if (statement.includes('INSERT INTO order_item_allocations')) {
                 return [{ affectedRows: 1 }];
             }
 

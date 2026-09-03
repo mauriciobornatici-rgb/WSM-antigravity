@@ -12,7 +12,7 @@ export class CreateOrderUseCase {
         return err;
     }
 
-    async _decreaseInventoryForOrder(connection, { orderId, productId, productName, quantity }) {
+    async _decreaseInventoryForOrder(connection, { orderId, orderItemId, productId, productName, quantity }) {
         const requestedQty = Number.parseInt(String(quantity), 10);
         if (!Number.isFinite(requestedQty) || requestedQty <= 0) {
             const err = new Error(`Cantidad invalida para producto ${productName || productId}`);
@@ -47,6 +47,26 @@ export class CreateOrderUseCase {
                 'UPDATE inventory SET reserved_quantity = reserved_quantity + ? WHERE id = ?',
                 [consume, row.id]
             );
+
+            if (orderId && orderItemId) {
+                await connection.query(
+                    `INSERT INTO order_item_allocations (
+                        id, order_id, order_item_id, product_id, inventory_id,
+                        location_code, reserved_quantity, picked_quantity, shortage_quantity,
+                        status, version
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'reserved', 0)`,
+                    [
+                        crypto.randomUUID(),
+                        orderId,
+                        orderItemId,
+                        productId,
+                        row.id,
+                        row.location || 'General',
+                        consume
+                    ]
+                );
+            }
+
             remaining -= consume;
         }
 
@@ -198,13 +218,6 @@ export class CreateOrderUseCase {
             );
 
             for (const item of orderData.items) {
-                await this._decreaseInventoryForOrder(connection, {
-                    orderId,
-                    productId: item.product_id,
-                    productName: nameByProduct.get(item.product_id),
-                    quantity: item.quantity
-                });
-
                 const itemId = crypto.randomUUID();
                 const requestedPrice = Number(item.unit_price);
                 const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
@@ -214,6 +227,14 @@ export class CreateOrderUseCase {
                     'INSERT INTO order_items (id, order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?, ?)',
                     [itemId, orderId, item.product_id, item.quantity, unitPrice]
                 );
+
+                await this._decreaseInventoryForOrder(connection, {
+                    orderId,
+                    orderItemId: itemId,
+                    productId: item.product_id,
+                    productName: nameByProduct.get(item.product_id),
+                    quantity: item.quantity
+                });
             }
 
             for (const payment of normalizedPayments) {
