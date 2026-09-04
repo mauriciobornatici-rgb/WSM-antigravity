@@ -1,5 +1,11 @@
 import type { Invoice } from "@/types/api";
 import { createClientUuid } from "@/lib/clientUuid";
+import {
+    clearSalesFromIndexedDb,
+    getAllSalesFromIndexedDb,
+    removeSaleFromIndexedDb,
+    saveSaleToIndexedDb,
+} from "./offlineIndexedDb";
 
 export interface OfflineSaleItem {
     product_id: string;
@@ -102,12 +108,14 @@ export function enqueueOfflineSale(sale: OfflineSaleInput): OfflineSalePayload {
     if (!saveOfflineQueue(updatedQueue)) {
         throw new Error("No se pudo guardar la venta en el almacenamiento de contingencia");
     }
+    void saveSaleToIndexedDb(entry);
     return entry;
 }
 
 export function removeOfflineSale(id: string): void {
     const queue = getOfflineQueue().filter((item) => item.id !== id);
     saveOfflineQueue(queue);
+    void removeSaleFromIndexedDb(id);
 }
 
 export function clearOfflineQueue(): void {
@@ -116,6 +124,19 @@ export function clearOfflineQueue(): void {
     } catch (e) {
         console.error("Error clearing offline queue", e);
     }
+    void clearSalesFromIndexedDb();
+}
+
+export async function restoreOfflineQueueFromIndexedDb(): Promise<OfflineSalePayload[]> {
+    const localSales = getOfflineQueue();
+    if (localSales.length > 0) return localSales;
+
+    const idbSales = await getAllSalesFromIndexedDb();
+    if (idbSales.length > 0) {
+        saveOfflineQueue(idbSales);
+        return idbSales;
+    }
+    return [];
 }
 
 export interface POSApiClient {

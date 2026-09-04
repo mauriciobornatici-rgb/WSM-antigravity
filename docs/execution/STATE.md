@@ -5,6 +5,21 @@ Current continuity source: `docs/execution/BITACORA_INTEGRAL.md` y `.agents/cont
 Current score estimate: 100/100 en calidad de código local; listo para preproducción, gobernanza Antigravity activa.
 Immediate priority: completar los gates externos de `docs/execution/PRODUCTION_READINESS_2026-08-20.md`; ARCA y Tiendanube quedan deliberadamente para el final.
 
+## 2026-09-03 Buffer Offline IndexedDB en POS y Guía PDF de Homologación Externa (Bloque P3)
+
+- Buffer de contingencia offline avanzado en POS:
+  - Implementación de `offlineIndexedDb.ts` para persistencia transaccional en IndexedDB (`wsm_pos_offline_db` con store `offline_sales`).
+  - Dual-write en `offlineSalesQueue.ts`: respaldo asincrónico inmediato en IndexedDB al encolar ventas offline, previniendo pérdida de datos por descarte de memoria o cuota de localStorage.
+  - Recuperación automática (`restoreOfflineQueueFromIndexedDb`): POS restaura la cola desde IndexedDB al iniciar si el almacenamiento local fue vaciado.
+  - Tests unitarios ampliados a 52 casos pasando.
+- Documentación y Guía de Homologación Externa:
+  - Publicada la guía paso a paso en Markdown: `docs/execution/GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.md`.
+  - Generado el documento oficial en formato PDF listo para impresión/ejecución: `docs/execution/GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.pdf` (162 KB).
+  - Script CLI automatizado de compilación PDF: `packages/server/scripts/generate-homologation-pdf.js`.
+- Determinismo y Calidad:
+  - `npm run validate`: Exit code 0 (build `@wsm/common`, 379 tests backend, 52 tests frontend, typecheck y linter limpios, Vite build exitoso).
+  - `npm run preflight:integrity`: 40 relaciones validadas sin huérfanos.
+
 ## 2026-09-03 Descomposición Modular Frontend y Casos de Uso Backend (Bloque P2)
 
 - Descomposición de páginas monolíticas en el frontend (`@wsm/client`):

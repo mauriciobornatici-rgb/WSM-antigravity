@@ -50,16 +50,26 @@ Normalización y gobierno del workspace bajo las mejores prácticas de Google An
 - Las interfaces de usuario de alta densidad (`Picking`, `Collections`, `POS`) ahora tienen responsabilidades separadas y componentes reusables.
 - El dominio backend avanza hacia DDD/Clean Architecture preservando 100% de compatibilidad y 379 tests pasando.
 
-## Siguientes Acciones (Bloque P3 / Ensayos Externos)
-1. Preparación de credenciales y runbook para ensayo controlado en homologación ARCA (AFIP WSFE/WSAA) y sandbox de Tiendanube.
-2. Buffer de contingencia offline con IndexedDB para resiliencia en POS sin conexión prolongada.
+- Bloque P3 (Completado):
+  - Guía oficial de homologación externa generada en Markdown y compilada a PDF ejecutivo: `docs/execution/GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.pdf` (162 KB).
+  - Buffer de contingencia offline con IndexedDB (`packages/client/src/lib/offlineIndexedDb.ts`), dual-write y recuperación automática en POS (`restoreOfflineQueueFromIndexedDb`).
+  - Suite Vitest ampliada a 52 tests pasando.
+  - Validación completa en verde: `npm run validate` (exit 0) y `npm run preflight:integrity` (exit 0).
+
+## Hallazgos y Datos Relevantes
+- La contingencia offline del POS ahora está respaldada contra fallas de almacenamiento o pérdida de sesión mediante IndexedDB.
+- La guía de homologación contiene los comandos exactos de OpenSSL, WSASS, puntos de venta y credenciales de Tiendanube.
+
+## Siguientes Acciones
+1. Ejecutar las pruebas de homologación siguiendo `GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.pdf` cuando el usuario disponga de los certificados y claves de prueba.
+2. Despliegue en entorno de preproducción / staging.
 
 ## Bloqueos o Aprobaciones Requeridas
-- La ejecución con credenciales reales de AFIP y Tiendanube requiere las claves proporcionadas por el usuario.
+- Carga de certificados de testing por parte del usuario para iniciar las pruebas de red con AFIP / Tiendanube.
 
 ## Último Checkpoint
-- **Fecha/Hora:** 2026-09-03T22:27 (Hito P2 Completado y Verificado)
-- **Archivos Modificados:** `Picking.tsx`, `Collections.tsx`, `POS.tsx`, `sales.service.js`, `STATE.md`, nuevos componentes en `components/picking/`, `components/collections/`, `components/pos/`, y nuevos UseCases en `domains/sales/`.
+- **Fecha/Hora:** 2026-09-03T22:36 (Hito P3 Completado y Verificado)
+- **Archivos Modificados/Creados:** `GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.pdf`, `GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.md`, `offlineIndexedDb.ts`, `offlineSalesQueue.ts`, `offlineSalesQueue.test.ts`, `POS.tsx`, `STATE.md`.
 - **Chequeos Ejecutados:** `npm run validate` (exit 0), `npm run preflight:integrity` (exit 0).
 
 

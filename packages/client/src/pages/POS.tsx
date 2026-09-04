@@ -26,6 +26,7 @@ import { createClientUuid } from "@/lib/clientUuid";
 import {
     enqueueOfflineSale,
     getOfflineQueue,
+    restoreOfflineQueueFromIndexedDb,
     syncOfflineSales,
 } from "@/lib/offlineSalesQueue";
 
@@ -193,6 +194,11 @@ export default function POSPage() {
 
     useEffect(() => {
         void loadData();
+        void restoreOfflineQueueFromIndexedDb().then((queue) => {
+            if (queue.length > 0) {
+                setOfflineQueueCount(queue.length);
+            }
+        });
     }, []);
 
     async function loadData() {

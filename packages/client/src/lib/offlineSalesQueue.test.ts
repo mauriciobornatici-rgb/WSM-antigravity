@@ -4,6 +4,7 @@ import {
     enqueueOfflineSale,
     getOfflineQueue,
     removeOfflineSale,
+    restoreOfflineQueueFromIndexedDb,
     syncOfflineSales,
     type POSApiClient,
 } from "./offlineSalesQueue";
@@ -178,5 +179,25 @@ describe("offlineSalesQueue", () => {
         }]));
 
         expect(getOfflineQueue()[0]!.idempotency_key).toBe("legacy-id");
+    });
+
+    it("restoreOfflineQueueFromIndexedDb returns local sales immediately when available", async () => {
+        enqueueOfflineSale({
+            customer_name: "Local Immediate",
+            payment_method: "cash",
+            payments: [{ method: "cash", amount: 500 }],
+            items: [{ product_id: "p1", quantity: 1, sale_price: 500 }],
+            emit_invoice: false,
+        });
+
+        const restored = await restoreOfflineQueueFromIndexedDb();
+        expect(restored).toHaveLength(1);
+        expect(restored[0]!.customer_name).toBe("Local Immediate");
+    });
+
+    it("restoreOfflineQueueFromIndexedDb returns empty array when both localStorage and IndexedDB are empty", async () => {
+        clearOfflineQueue();
+        const restored = await restoreOfflineQueueFromIndexedDb();
+        expect(restored).toEqual([]);
     });
 });
