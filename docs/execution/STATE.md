@@ -1,9 +1,31 @@
 # Execution State Snapshot
 
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-04
 Current continuity source: `docs/execution/BITACORA_INTEGRAL.md` y `.agents/context/TASKS.md`
 Current score estimate: 100/100 en calidad de código local; listo para preproducción, gobernanza Antigravity activa.
 Immediate priority: completar los gates externos de `docs/execution/PRODUCTION_READINESS_2026-08-20.md`; ARCA y Tiendanube quedan deliberadamente para el final.
+
+## 2026-09-04 Infraestructura Preproducción, CI/CD, Containerización y Observabilidad (Bloque P4)
+
+- Configuración y Gobernanza de Entorno:
+  - Creada plantilla canónica `.env.example` en raíz documentando exhaustivamente `development`, `staging` y `production` (exigencias de HTTPS, claves simétricas de cifrado AES-256-GCM, SSL en base de datos y longitud mínima de JWT).
+  - Script CLI determinista `packages/server/scripts/preflight-env.js` y script npm `preflight:env` en server y raíz con soporte de flags (`--target`, `--file`) para validar el entorno previo al arranque o build.
+- Integración Continua (CI/CD):
+  - Workflow de GitHub Actions `.github/workflows/ci.yml` configurado con Node 20 LTS, caché de npm y ejecución determinista de los gates: validación de entorno, build de `@wsm/common`, tests backend, linting, typecheck, tests frontend Vitest, build Vite y `npm audit --audit-level=high`.
+- Containerización para Staging:
+  - `Dockerfile` multi-stage: etapa de compilación limpia y etapa runtime mínima sobre Alpine con usuario no privilegiado `node`, healthcheck nativo `/api/live` y empaquetado del SPA frontend.
+  - `docker-compose.staging.yml` con servicio MySQL 8.0, healthcheck de base de datos (`mysqladmin ping`), redes bridge dedicadas y volúmenes persistentes.
+  - `.dockerignore` exhaustivo para builds eficientes y seguros.
+- Observabilidad y Trazabilidad Avanzada:
+  - Middleware de Correlation ID en Express: inyecta y preserva `X-Request-Id` y `X-Request-ID` (UUID v4), correlacionándolo en los logs JSON de acceso estructurados.
+  - Endpoint `/api/health` enriquecido: incluye métricas de latencia de BD (`db_latency_ms`), `uptime_seconds`, memoria RSS y Heap (`memory_rss_mb`, `memory_heap_mb`) preservando 100% de compatibilidad con smoke tests.
+  - Fallback SPA compatible con Express 5 para servir el cliente compilado estáticamente.
+  - Nueva suite automatizada `packages/server/test/health-and-correlation.test.js` pasando al 100% (4/4 tests).
+- Determinismo y Verificación:
+  - `npm run preflight:env`: Exit code 0.
+  - `npm run validate`: Exit code 0 (383 tests backend + 52 tests frontend + lint + typecheck + build Vite).
+  - `npm run preflight:integrity`: Exit code 0 (40 relaciones foráneas, 0 huérfanos).
+  - `npm run audit`: Exit code 0 (0 vulnerabilidades).
 
 ## 2026-09-03 Buffer Offline IndexedDB en POS y Guía PDF de Homologación Externa (Bloque P3)
 

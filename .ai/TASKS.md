@@ -56,20 +56,38 @@ Normalización y gobierno del workspace bajo las mejores prácticas de Google An
   - Suite Vitest ampliada a 52 tests pasando.
   - Validación completa en verde: `npm run validate` (exit 0) y `npm run preflight:integrity` (exit 0).
 
+- Bloque P4 (Completado):
+  - Gobernanza y validación de variables de entorno:
+    - Creado `.env.example` canónico documentando `development`, `staging` y `production`.
+    - Creado `packages/server/scripts/preflight-env.js` y expuesto como `npm run preflight:env` con soporte de flags (`--target`, `--file`).
+  - Integración Continua (CI/CD):
+    - Workflow de GitHub Actions en `.github/workflows/ci.yml` ejecutando gates deterministas: Node 20 LTS, `preflight:env`, build common, tests backend, lint frontend, typecheck, tests frontend Vitest, build Vite y `npm audit --audit-level=high`.
+  - Containerización de Preproducción:
+    - Creado `Dockerfile` multi-stage (builder Node 20 + runner liviano Alpine, usuario `node`, healthcheck nativo `/api/live`).
+    - Creado `docker-compose.staging.yml` orquestando MySQL 8.0 y aplicación con healthchecks y redes aisladas.
+    - Creado `.dockerignore` para optimizar capas y excluir secretos y dependencias locales.
+  - Observabilidad y Trazabilidad Avanzada:
+    - Middleware de correlation ID: inyección de `X-Request-Id` y `X-Request-ID` (UUID v4), asignación a `req.id`/`req.requestId`, y correlación en logs estructurados JSON.
+    - Health Check `/api/health` enriquecido con latencia de DB (`db_latency_ms`), `uptime_seconds`, memoria RSS y Heap (`memory_rss_mb`, `memory_heap_mb`).
+    - Fallback SPA compatible con Express 5 para servir el cliente compilado estáticamente desde el backend en contenedores.
+    - Suite de pruebas automatizadas `packages/server/test/health-and-correlation.test.js` pasando al 100%.
+
 ## Hallazgos y Datos Relevantes
 - La contingencia offline del POS ahora está respaldada contra fallas de almacenamiento o pérdida de sesión mediante IndexedDB.
 - La guía de homologación contiene los comandos exactos de OpenSSL, WSASS, puntos de venta y credenciales de Tiendanube.
+- El preflight de variables previene arranques inválidos en staging/producción (rechaza orígenes locales, exige HTTPS, JWT >= 32 caracteres y DB_SSL).
+- El sistema cuenta con trazabilidad por request ID extremo a extremo en todas las peticiones HTTP.
 
 ## Siguientes Acciones
-1. Ejecutar las pruebas de homologación siguiendo `GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.pdf` cuando el usuario disponga de los certificados y claves de prueba.
-2. Despliegue en entorno de preproducción / staging.
+1. Ejecutar las pruebas de homologación siguiendo `GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.pdf` cuando el usuario disponga de los certificados y claves de prueba en AFIP (WSASS) y Tiendanube Partners.
+2. Despliegue en entorno de preproducción / staging utilizando `docker-compose.staging.yml`.
 
 ## Bloqueos o Aprobaciones Requeridas
 - Carga de certificados de testing por parte del usuario para iniciar las pruebas de red con AFIP / Tiendanube.
 
 ## Último Checkpoint
-- **Fecha/Hora:** 2026-09-03T22:36 (Hito P3 Completado y Verificado)
-- **Archivos Modificados/Creados:** `GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.pdf`, `GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.md`, `offlineIndexedDb.ts`, `offlineSalesQueue.ts`, `offlineSalesQueue.test.ts`, `POS.tsx`, `STATE.md`.
-- **Chequeos Ejecutados:** `npm run validate` (exit 0), `npm run preflight:integrity` (exit 0).
+- **Fecha/Hora:** 2026-09-04T18:22 (Hito P4 Completado y Verificado)
+- **Archivos Modificados/Creados:** `.env.example`, `.github/workflows/ci.yml`, `Dockerfile`, `docker-compose.staging.yml`, `.dockerignore`, `packages/server/scripts/preflight-env.js`, `packages/server/test/health-and-correlation.test.js`, `packages/server/index.js`, `package.json`, `packages/server/package.json`.
+- **Chequeos Ejecutados:** `npm run preflight:env` (exit 0), `npm run validate` (exit 0 - 383 tests backend + 52 tests frontend + lint + typecheck + build Vite), `npm run preflight:integrity` (exit 0 - 40/40 relaciones), `npm run audit` (exit 0 - 0 vulnerabilidades).
 
 

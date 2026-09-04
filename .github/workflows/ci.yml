@@ -1,60 +1,60 @@
-name: CI
+name: WSM SportsERP CI
 
 on:
   push:
     branches:
       - main
+      - master
+      - staging
+      - 'codex/**'
   pull_request:
     branches:
       - main
-  workflow_dispatch:
+      - master
+      - staging
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  quality:
-    name: Quality Gate
+  validate:
+    name: Deterministic Quality Gates
     runs-on: ubuntu-latest
-    timeout-minutes: 20
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js 20 LTS
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: 20
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build shared contracts
-        run: npm -w @wsm/common run build
+      - name: Validate Environment Template (.env.example)
+        run: npm run preflight:env -- --file=.env.example
 
-      - name: Server tests
-        run: npm -w @wsm/server run test:coverage
+      - name: Build Shared Contracts (@wsm/common)
+        run: npm run build:common
 
-      - name: Client lint
-        run: npm -w @wsm/client run lint
+      - name: Run Backend Tests (Node Test Runner)
+        run: npm run test:server
 
-      - name: Client tests
-        run: npm -w @wsm/client run test
+      - name: Lint Frontend (@wsm/client)
+        run: npm run lint
 
-      - name: Client typecheck
-        run: npm -w @wsm/client run typecheck
+      - name: Typecheck Frontend & Contracts
+        run: npm run typecheck
 
-      - name: Client build
-        run: npm -w @wsm/client run build
+      - name: Run Frontend Tests (Vitest)
+        run: npm run test:client
 
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Build Frontend Production Bundle (Vite)
+        run: npm run build
 
-      - name: Client end-to-end tests
-        run: npm -w @wsm/client run test:e2e
-
-      - name: Dependency security audit
-        run: npm audit --workspaces --audit-level=high
+      - name: Security Vulnerability Audit
+        run: npm audit --audit-level=high

@@ -1,0 +1,80 @@
+# ==============================================================================
+# WSM SportsERP — Docker Compose para Staging / Preproducción
+# ==============================================================================
+# Inicia la base de datos MySQL 8.0 y el backend + frontend compilado en un contenedor
+# aislado con healthchecks y persistencia de datos.
+#
+# Uso:
+#   docker compose -f docker-compose.staging.yml up -d --build
+#   docker compose -f docker-compose.staging.yml ps
+#   docker compose -f docker-compose.staging.yml logs -f app
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: wsm-mysql-staging
+    restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: wsm_staging_root_password_2026
+      MYSQL_DATABASE: wsm_sports_erp
+      MYSQL_USER: wsm_user
+      MYSQL_PASSWORD: wsm_staging_password_2026
+    ports:
+      - "3307:3306"
+    volumes:
+      - wsm_mysql_staging_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "wsm_user", "-pwsm_staging_password_2026"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    networks:
+      - wsm-staging-net
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wsm-app-staging
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: staging
+      PORT: 3001
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: wsm_user
+      DB_PASSWORD: wsm_staging_password_2026
+      DB_NAME: wsm_sports_erp
+      DB_SSL: "false"
+      ALLOW_INSECURE_NON_DEV: "true"
+      JWT_SECRET: wsm_staging_secret_jwt_key_at_least_32_chars_long_2026
+      JWT_EXPIRES_IN: 8h
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      CORS_ORIGINS: http://localhost:3001,http://127.0.0.1:3001
+      APP_BASE_URL: http://localhost:3001
+      TRUST_PROXY: "true"
+      API_RATE_LIMIT_MAX: 2000
+    ports:
+      - "3001:3001"
+    volumes:
+      - wsm_staging_uploads:/app/packages/server/uploads
+      - wsm_staging_logs:/app/logs
+    networks:
+      - wsm-staging-net
+
+networks:
+  wsm-staging-net:
+    driver: bridge
+
+volumes:
+  wsm_mysql_staging_data:
+  wsm_staging_uploads:
+  wsm_staging_logs:

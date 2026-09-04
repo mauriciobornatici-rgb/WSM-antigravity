@@ -22,6 +22,7 @@
     "smoke:rbac": "npm -w @wsm/server run smoke:rbac",
     "smoke:integrity": "npm -w @wsm/server run smoke:integrity",
     "preflight:integrity": "npm -w @wsm/server run preflight:integrity",
+    "preflight:env": "npm -w @wsm/server run preflight:env --",
     "preflight:staging": "npm run validate && npm run preflight:integrity && npm run smoke:rbac && npm run smoke:integrity",
     "audit": "npm audit --workspaces"
   },

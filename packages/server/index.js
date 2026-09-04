@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,24 +79,27 @@ app.use('/uploads', express.static(path.resolve(__dirname, 'uploads'), {
     }
 }));
 
+
 // Rate Limiting
 const limiter = rateLimit({
     windowMs: env.apiRateLimitWindowMs,
     limit: env.apiRateLimitMax,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => req.path === '/health',
+    skip: (req) => req.path === '/health' || req.path === '/live',
     message: { error: 'too_many_requests', message: 'Demasiadas peticiones desde esta IP, por favor intente nuevamente en 15 minutos' }
 });
 
 // Apply rate limiting to all requests
 app.use('/api', limiter);
 
-// Request Logging Middleware â€” redact sensitive query params
+// Request Logging & Correlation ID Middleware — redact sensitive query params
 app.use((req, res, next) => {
     const requestId = req.headers['x-request-id'] || crypto.randomUUID();
     const startedAt = process.hrtime.bigint();
+    req.id = requestId;
     req.requestId = requestId;
+    res.setHeader('X-Request-Id', requestId);
     res.setHeader('X-Request-ID', requestId);
     const host = req.headers.host || 'localhost';
     const url = new URL(req.originalUrl, `http://${host}`);
@@ -125,9 +129,19 @@ app.get('/api/live', (req, res) => {
 });
 
 app.get('/api/health', async (req, res) => {
+    const startDb = process.hrtime.bigint();
     try {
         await pool.query('SELECT 1');
-        res.json({ status: 'ok', database: 'connected' });
+        const dbLatencyMs = Number(process.hrtime.bigint() - startDb) / 1_000_000;
+        const memoryUsage = process.memoryUsage();
+        res.json({
+            status: 'ok',
+            database: 'connected',
+            db_latency_ms: Math.round(dbLatencyMs * 100) / 100,
+            uptime_seconds: Math.floor(process.uptime()),
+            memory_rss_mb: Math.round((memoryUsage.rss / 1024 / 1024) * 100) / 100,
+            memory_heap_mb: Math.round((memoryUsage.heapUsed / 1024 / 1024) * 100) / 100
+        });
     } catch (err) {
         res.status(503).json({
             status: 'error',
@@ -181,6 +195,19 @@ app.use('/api/accounting', authenticateToken, accountingRouter);
 // The authorize endpoint requires our JWT
 app.use('/api/integrations', integrationRouter);
 
+// Serve static client bundle if built (staging/production container)
+const clientDistPath = path.resolve(__dirname, '../client/dist');
+if (fs.existsSync(clientDistPath)) {
+    app.use(express.static(clientDistPath));
+    app.use((req, res, next) => {
+        if (req.method !== 'GET') return next();
+        if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
+            return next();
+        }
+        res.sendFile(path.join(clientDistPath, 'index.html'));
+    });
+}
+
 // Global Error Handler (Must be last)
 app.use(globalErrorHandler);
 
@@ -214,6 +241,7 @@ Health Check: http://localhost:${port}/api/health
             }, 60 * 1000);
             webhookInterval.unref();
         });
+        return httpServer;
     } catch (err) {
         console.error("Critical Database Initialization Failure:", err);
         process.exit(1);
@@ -242,4 +270,10 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     });
 }
 
-void startServer();
+const isDirectRun = Boolean(process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]));
+if (isDirectRun) {
+    void startServer();
+}
+
+export { app, startServer, shutdown };
+

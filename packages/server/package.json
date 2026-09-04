@@ -11,6 +11,7 @@
         "smoke:rbac": "node scripts/rbac-validation-smoke.js",
         "smoke:integrity": "node scripts/integrity-validation-smoke.js",
         "preflight:integrity": "node scripts/preflight-referential-integrity.js",
+        "preflight:env": "node scripts/preflight-env.js",
         "migrate": "node scripts/run-migrations.js",
         "seed:bulk": "node scripts/seed-bulk.js"
     },
