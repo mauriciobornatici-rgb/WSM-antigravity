@@ -8,10 +8,15 @@ import accountingService from './accounting.service.js';
 import afipService from './afip.service.js';
 import invoiceAuthorizationUseCase from '../domains/sales/InvoiceAuthorizationUseCase.js';
 import createOrderUseCase from '../domains/sales/CreateOrderUseCase.js';
+import dispatchOrderUseCase from '../domains/sales/DispatchOrderUseCase.js';
+import deliverOrderUseCase from '../domains/sales/DeliverOrderUseCase.js';
 
 class SalesService extends BaseService {
     constructor() {
         super('orders');
+        dispatchOrderUseCase.normalizeOrderStatus = this._normalizeOrderStatus.bind(this);
+        dispatchOrderUseCase.assertOrderTransition = this._assertOrderTransition.bind(this);
+        deliverOrderUseCase.assertOrderTransition = this._assertOrderTransition.bind(this);
     }
 
     _sanitizeOrdersSortColumn(columnName) {
@@ -530,101 +535,11 @@ class SalesService extends BaseService {
     }
 
     async dispatchOrder(orderId, data, userId) {
-        const connection = await pool.getConnection();
-        try {
-            await connection.beginTransaction();
-
-            const [orders] = await connection.query('SELECT * FROM orders WHERE id = ? FOR UPDATE', [orderId]);
-            if (orders.length === 0) throw new Error('Order not found');
-            const currentStatus = this._normalizeOrderStatus(orders[0].status);
-
-            const isPickup = data.shipping_method === 'pickup';
-            const requestedNextStatus = isPickup ? 'delivered' : 'dispatched';
-            const nextStatus = this._assertOrderTransition(currentStatus, requestedNextStatus);
-
-            await connection.query(`
-                UPDATE orders
-                SET
-                    status = ?,
-                    shipping_method = ?,
-                    tracking_number = ?,
-                    estimated_delivery = ?,
-                    shipping_address = ?,
-                    recipient_name = ?,
-                    recipient_dni = ?,
-                    dispatched_at = NOW(),
-                    delivered_at = CASE WHEN ? = 1 THEN NOW() ELSE delivered_at END
-                WHERE id = ?
-            `, [
-                nextStatus,
-                data.shipping_method || null,
-                data.tracking_number || null,
-                data.estimated_delivery || null,
-                data.shipping_address || null,
-                data.recipient_name || null,
-                data.recipient_dni || null,
-                isPickup ? 1 : 0,
-                orderId
-            ]);
-
-            await auditService.log({
-                user_id: userId,
-                action: 'DISPATCH_ORDER',
-                entity_type: 'order',
-                entity_id: orderId,
-                new_values: { status: nextStatus, ...data }
-            }, connection);
-
-            await connection.commit();
-            const [updated] = await connection.query('SELECT * FROM orders WHERE id = ?', [orderId]);
-            return updated[0];
-        } catch (err) {
-            await connection.rollback();
-            throw err;
-        } finally {
-            connection.release();
-        }
+        return dispatchOrderUseCase.execute(orderId, data, userId);
     }
 
     async deliverOrder(orderId, data, userId) {
-        const connection = await pool.getConnection();
-        try {
-            await connection.beginTransaction();
-            const [orders] = await connection.query(
-                'SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
-                [orderId]
-            );
-            if (orders.length === 0) throw new Error('Order not found');
-            this._assertOrderTransition(orders[0].status, 'delivered');
-
-            await connection.query(`
-                UPDATE orders
-                SET status = 'delivered',
-                    recipient_name = ?,
-                    recipient_dni = ?,
-                    delivery_notes = ?,
-                    delivered_at = NOW()
-                WHERE id = ?
-            `, [data.recipient_name || null, data.recipient_dni || null, data.delivery_notes || null, orderId]);
-
-            await auditService.log({
-                user_id: userId,
-                action: 'DELIVER_ORDER',
-                entity_type: 'order',
-                entity_id: orderId,
-                old_values: { status: orders[0].status },
-                new_values: { status: 'delivered', ...data }
-            }, connection);
-
-            const [updated] = await connection.query('SELECT * FROM orders WHERE id = ?', [orderId]);
-            await connection.commit();
-            return updated[0];
-        } catch (error) {
-            await connection.rollback();
-            throw error;
-        } finally {
-            connection.release();
-        }
+        return deliverOrderUseCase.execute(orderId, data, userId);
     }
 
     async pickOrderItem(itemId, pickedQuantity, userId) {

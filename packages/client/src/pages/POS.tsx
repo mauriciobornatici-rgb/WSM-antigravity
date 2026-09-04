@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, History, Moon, PauseCircle, RefreshCw, Sun, Wifi, WifiOff } from "lucide-react";
+import { POSHeader } from "@/components/pos/POSHeader";
 import { toast } from "sonner";
 import { useTheme } from "@/hooks/useTheme";
 import { api } from "@/services/api";
@@ -17,7 +17,6 @@ import { QuickClientDialog } from "@/components/pos/QuickClientDialog";
 import { POSHistoryDialog } from "@/components/pos/POSHistoryDialog";
 import { ParkedCartsDialog } from "@/components/pos/ParkedCartsDialog";
 import type { InvoiceType, NewClientForm, PaymentSplit, POSProduct } from "@/components/pos/types";
-import { Button } from "@/components/ui/button";
 import { PrintableInvoiceArea } from "@/components/invoices/PrintableInvoiceArea";
 import { PrintableThermalTicket } from "@/components/invoices/PrintableThermalTicket";
 import { usePOSCart } from "@/hooks/usePOSCart";
@@ -520,93 +519,19 @@ export default function POSPage() {
 
     return (
         <div className="space-y-4">
-            {/* Barra superior de control & estado */}
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between bg-card/60 p-3 rounded-lg border">
-                <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        onClick={() => navigate("/")}
-                    >
-                        <ArrowLeft className="h-4 w-4" />
-                        <span className="hidden sm:inline">Volver</span>
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5 border-blue-800/30 bg-blue-950/20 text-blue-400 hover:bg-blue-950/40 hover:text-blue-300"
-                        onClick={() => setHistoryDialogOpen(true)}
-                    >
-                        <History className="h-4 w-4" />
-                        <span>Historial</span>
-                        <kbd className="hidden md:inline-block text-[9px] bg-muted/40 px-1 rounded font-mono">F3</kbd>
-                    </Button>
+            <POSHeader
+                onBack={() => navigate("/")}
+                onOpenHistory={() => setHistoryDialogOpen(true)}
+                parkedCartsCount={parkedCarts.length}
+                onOpenParkedCarts={() => setParkedDialogOpen(true)}
+                offlineQueueCount={offlineQueueCount}
+                syncingOffline={syncingOffline}
+                onSyncOffline={() => void handleSyncOffline()}
+                theme={theme}
+                onToggleTheme={toggleTheme}
+                isOnline={isOnline}
+            />
 
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className={`gap-1.5 ${parkedCarts.length > 0 ? "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold" : ""}`}
-                        onClick={() => setParkedDialogOpen(true)}
-                        title="Ventas en espera"
-                    >
-                        <PauseCircle className="h-4 w-4" />
-                        <span>En Espera ({parkedCarts.length})</span>
-                    </Button>
-
-                    {offlineQueueCount > 0 && (
-                        <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            className="gap-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
-                            onClick={() => void handleSyncOffline()}
-                            disabled={syncingOffline}
-                        >
-                            <RefreshCw className={`h-3.5 w-3.5 ${syncingOffline ? "animate-spin" : ""}`} />
-                            <span>Sincronizar Offline ({offlineQueueCount})</span>
-                        </Button>
-                    )}
-
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={toggleTheme}
-                        title={theme === "dark" ? "Cambiar a Modo Día" : "Cambiar a Modo Noche"}
-                    >
-                        {theme === "dark" ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-indigo-500" />}
-                    </Button>
-                </div>
-
-                <div className="flex items-center gap-3 text-xs">
-                    {/* Indicador de red */}
-                    <div className="flex items-center gap-1.5 font-medium">
-                        {isOnline ? (
-                            <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                                <Wifi className="h-3 w-3" /> Online
-                            </span>
-                        ) : (
-                            <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
-                                <WifiOff className="h-3 w-3" /> Modo Contingencia Offline
-                            </span>
-                        )}
-                    </div>
-
-                    {/* Atajos de ayuda */}
-                    <div className="hidden lg:flex items-center gap-2 text-muted-foreground bg-muted/30 px-2.5 py-1 rounded border text-[11px] font-mono">
-                        <span><kbd className="bg-background px-1 py-0.5 rounded border">F2</kbd> Buscar</span>
-                        <span><kbd className="bg-background px-1 py-0.5 rounded border">F4</kbd> Cobrar</span>
-                        <span><kbd className="bg-background px-1 py-0.5 rounded border">F8</kbd> Comprobante</span>
-                        <span><kbd className="bg-background px-1 py-0.5 rounded border">F9</kbd> Vaciar</span>
-                        <span><kbd className="bg-background px-1 py-0.5 rounded border">Esc</kbd> Salir</span>
-                    </div>
-                </div>
-            </div>
 
             <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2fr)_380px]">
                 <div className="space-y-4">

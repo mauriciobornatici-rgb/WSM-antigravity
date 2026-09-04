@@ -36,17 +36,30 @@ Normalización y gobierno del workspace bajo las mejores prácticas de Google An
 - La arquitectura de picking ahora cuenta con trazabilidad a nivel de ubicación física por ítem de pedido.
 - Toda la suite de 379 tests en Node.js y 50 tests en Vitest pasa al 100%.
 
-## Siguientes Acciones (Bloque P2)
-1. Descomposición de páginas monolíticas frontend (`POS.tsx`, `Inventory.tsx`, `Picking.tsx`, `Collections.tsx`) en componentes y hooks modulares más testeables.
-2. Modularización de servicios backend densos (`sales.service.js`, `tiendanube.service.js`) siguiendo el patrón UseCase ya iniciado con `CreateOrderUseCase`.
-3. Preparación de ensayos en entornos externos de homologación (ARCA y sandbox Tiendanube).
+- Bloque P2 (Completado):
+  - Descomposición modular de páginas frontend:
+    - `Picking.tsx` modularizado en `components/picking/` (`PickingHeader`, `PickingScannerCard`, `PickingItemsGrid`, `PickingOrdersTable`), reduciendo la página principal a 365 líneas.
+    - `Collections.tsx` modularizado en `components/collections/` (`CollectionsFiscalSalesCard`, `CollectionsChecksPortfolioCard`, `CollectionsPendingInvoicesCard`, `CollectionsPaymentFormCard`, `types.ts`), reduciendo la página a 295 líneas.
+    - `POS.tsx` modularizado extrayendo `components/pos/POSHeader.tsx`.
+  - Extracción de casos de uso en el dominio de ventas (`packages/server/domains/sales/`):
+    - Creados `DispatchOrderUseCase.js` y `DeliverOrderUseCase.js`.
+    - `SalesService` refactorizado para delegar despacho y entrega a casos de uso desacoplados.
+  - Validación de Calidad: `npm run validate` (exit 0) y `npm run preflight:integrity` (exit 0).
+
+## Hallazgos y Datos Relevantes
+- Las interfaces de usuario de alta densidad (`Picking`, `Collections`, `POS`) ahora tienen responsabilidades separadas y componentes reusables.
+- El dominio backend avanza hacia DDD/Clean Architecture preservando 100% de compatibilidad y 379 tests pasando.
+
+## Siguientes Acciones (Bloque P3 / Ensayos Externos)
+1. Preparación de credenciales y runbook para ensayo controlado en homologación ARCA (AFIP WSFE/WSAA) y sandbox de Tiendanube.
+2. Buffer de contingencia offline con IndexedDB para resiliencia en POS sin conexión prolongada.
 
 ## Bloqueos o Aprobaciones Requeridas
-- Ninguno.
+- La ejecución con credenciales reales de AFIP y Tiendanube requiere las claves proporcionadas por el usuario.
 
 ## Último Checkpoint
-- **Fecha/Hora:** 2026-09-03T00:19 (Hito P1 Completado y Verificado)
-- **Archivos Modificados:** `sales.service.js`, `CreateOrderUseCase.js`, `initDb.js`, `preflight-referential-integrity.js`, `api.ts`, `types/index.ts`, `STATE.md`.
+- **Fecha/Hora:** 2026-09-03T22:27 (Hito P2 Completado y Verificado)
+- **Archivos Modificados:** `Picking.tsx`, `Collections.tsx`, `POS.tsx`, `sales.service.js`, `STATE.md`, nuevos componentes en `components/picking/`, `components/collections/`, `components/pos/`, y nuevos UseCases en `domains/sales/`.
 - **Chequeos Ejecutados:** `npm run validate` (exit 0), `npm run preflight:integrity` (exit 0).
 
 

@@ -5,6 +5,19 @@ Current continuity source: `docs/execution/BITACORA_INTEGRAL.md` y `.agents/cont
 Current score estimate: 100/100 en calidad de código local; listo para preproducción, gobernanza Antigravity activa.
 Immediate priority: completar los gates externos de `docs/execution/PRODUCTION_READINESS_2026-08-20.md`; ARCA y Tiendanube quedan deliberadamente para el final.
 
+## 2026-09-03 Descomposición Modular Frontend y Casos de Uso Backend (Bloque P2)
+
+- Descomposición de páginas monolíticas en el frontend (`@wsm/client`):
+  - `Picking.tsx`: Reducido de 808 a 365 líneas mediante la extracción de `PickingHeader`, `PickingScannerCard`, `PickingItemsGrid` y `PickingOrdersTable` en `components/picking/`.
+  - `Collections.tsx`: Reducido de 779 a 295 líneas desacoplando `CollectionsFiscalSalesCard`, `CollectionsChecksPortfolioCard`, `CollectionsPendingInvoicesCard` y `CollectionsPaymentFormCard` en `components/collections/`.
+  - `POS.tsx`: Extracción de la barra superior y atajos a `components/pos/POSHeader.tsx`.
+- Desacoplamiento de servicios densos en backend (`@wsm/server`):
+  - Extracción de casos de uso `DispatchOrderUseCase.js` y `DeliverOrderUseCase.js` en `domains/sales/` con inyección de dependencias.
+  - `SalesService` ahora delega las operaciones de despacho y entrega a casos de uso limpios y testeables.
+- Determinismo y Calidad:
+  - `npm run validate`: Exit code 0 (build `@wsm/common`, 379 tests backend, 50 tests frontend, typecheck y linter limpios, Vite build exitoso).
+  - `npm run preflight:integrity`: 40 relaciones validadas sin huérfanos.
+
 ## 2026-09-03 Endurecimiento WMS: Migración 044 (order_item_allocations) y Picking Concurrente
 
 - Aplicación exitosa de la migración `044_harden_order_picking.sql` en base de datos: creación de tabla `order_item_allocations`, columnas de concurrencia en `picking_sessions` (`version`, `claim_idempotency_key`, `completed_with_shortage`, `released_at`), e instrumentación de eventos granulares en `picking_session_events`.
