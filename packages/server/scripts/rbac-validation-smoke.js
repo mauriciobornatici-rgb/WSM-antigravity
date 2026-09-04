@@ -2,14 +2,16 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { closeSmokeAuth, tokensForRoles } from './smoke-auth.js';
+import { ensureSmokeServer } from './smoke-runner-helper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootEnvPath = path.resolve(__dirname, '../../../.env');
 dotenv.config({ path: rootEnvPath });
 
-const baseUrl = process.env.SMOKE_API_URL || `http://localhost:${process.env.PORT || 3001}`;
+let baseUrl = process.env.SMOKE_API_URL || `http://localhost:${process.env.PORT || 3001}`;
 const jwtSecret = process.env.JWT_SECRET;
+let serverCleanup = null;
 
 if (!jwtSecret) {
     console.error('SMOKE ERROR: JWT_SECRET is not configured.');
@@ -60,6 +62,10 @@ async function ensureHealth() {
 }
 
 async function run() {
+    const serverInstance = await ensureSmokeServer(baseUrl);
+    baseUrl = serverInstance.baseUrl;
+    serverCleanup = serverInstance.cleanup;
+
     await ensureHealth();
 
     const {
@@ -195,4 +201,7 @@ run()
         console.error('Smoke execution error:', err.message);
         process.exitCode = 1;
     })
-    .finally(closeSmokeAuth);
+    .finally(async () => {
+        if (serverCleanup) await serverCleanup();
+        await closeSmokeAuth();
+    });

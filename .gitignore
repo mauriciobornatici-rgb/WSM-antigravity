@@ -34,3 +34,5 @@ dist-ssr
 packages/server/uploads/
 playwright-report/
 test-results/
+backups/
+*.sql.gz

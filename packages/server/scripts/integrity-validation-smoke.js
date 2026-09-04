@@ -3,14 +3,16 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { closeSmokeAuth, tokensForRoles } from './smoke-auth.js';
+import { ensureSmokeServer } from './smoke-runner-helper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootEnvPath = path.resolve(__dirname, '../../../.env');
 dotenv.config({ path: rootEnvPath });
 
-const baseUrl = process.env.SMOKE_API_URL || `http://localhost:${process.env.PORT || 3001}`;
+let baseUrl = process.env.SMOKE_API_URL || `http://localhost:${process.env.PORT || 3001}`;
 const jwtSecret = process.env.JWT_SECRET;
+let serverCleanup = null;
 const runMutation = process.env.SMOKE_MUTATION === '1';
 const runReceptionFlow = process.env.SMOKE_RECEPTION_FLOW === '1';
 const runCashFlow = process.env.SMOKE_CASH_FLOW === '1';
@@ -357,6 +359,10 @@ async function runCashFlowChecks(cashierToken) {
 }
 
 async function run() {
+    const serverInstance = await ensureSmokeServer(baseUrl);
+    baseUrl = serverInstance.baseUrl;
+    serverCleanup = serverInstance.cleanup;
+
     await ensureHealth();
     const { admin: adminToken, cashier: cashierToken } = await tokensForRoles(
         ['admin', 'cashier'],
@@ -395,4 +401,7 @@ run()
         console.error('Integrity smoke execution error:', err.message);
         process.exitCode = 1;
     })
-    .finally(closeSmokeAuth);
+    .finally(async () => {
+        if (serverCleanup) await serverCleanup();
+        await closeSmokeAuth();
+    });

@@ -72,11 +72,28 @@ Normalización y gobierno del workspace bajo las mejores prácticas de Google An
     - Fallback SPA compatible con Express 5 para servir el cliente compilado estáticamente desde el backend en contenedores.
     - Suite de pruebas automatizadas `packages/server/test/health-and-correlation.test.js` pasando al 100%.
 
+- Bloque P5 (Completado):
+  - Autosuficiencia y Auto-Runner de Smoke Tests:
+    - Creado `packages/server/scripts/smoke-runner-helper.js`: auto-detección de servidor y auto-spawn de servidor efímero en puerto dinámico con limpieza automática de sockets y pool.
+    - Actualizados `rbac-validation-smoke.js` e `integrity-validation-smoke.js` para ejecución autónoma sin requerir terminal secundaria.
+  - Resiliencia de Datos & Backup Nativo (Gate 2):
+    - Creado `packages/server/scripts/backup-database.js`: herramienta nativa en Node.js puro para dump y restore de 62 tablas relacionales con compresión gzip y checksum SHA-256.
+    - Verificado dump exitoso (332.7 KB SQL, comprimido a 61.6 KB, 1024 filas en 6.1s).
+    - Excluido directorio `backups/` y `*.sql.gz` de git en `.gitignore`.
+    - Registrados scripts `npm run db:backup` y `npm run db:restore`.
+  - Operación Controlada E2E (Gate 5):
+    - Creado `packages/server/scripts/commercial-lifecycle-smoke.js` (`npm run smoke:commercial`).
+    - Validación completa de 8 etapas comerciales y logísticas: verificación de salud \(\to\) login multi-rol \(\to\) clientes \(\to\) selección de producto con stock disponible \(\to\) creación de pedido con reservas atómicas en `order_item_allocations` \(\to\) verificación de summary \(\to\) transición a picking \(\to\) confirmación de pick \(\to\) empaquetado (`packed`) con deducción física de stock \(\to\) despacho con tracking y método de envío \(\to\) entrega confirmada \(\to\) emisión de factura comercial.
+  - Gate Determinista Completo:
+    - `npm run preflight:staging` superado al 100% en un solo comando: validación determinista + integridad referencial + smoke RBAC + smoke de integridad + smoke de ciclo comercial E2E.
+
 ## Hallazgos y Datos Relevantes
 - La contingencia offline del POS ahora está respaldada contra fallas de almacenamiento o pérdida de sesión mediante IndexedDB.
 - La guía de homologación contiene los comandos exactos de OpenSSL, WSASS, puntos de venta y credenciales de Tiendanube.
 - El preflight de variables previene arranques inválidos en staging/producción (rechaza orígenes locales, exige HTTPS, JWT >= 32 caracteres y DB_SSL).
 - El sistema cuenta con trazabilidad por request ID extremo a extremo en todas las peticiones HTTP.
+- Los smoke tests ahora son autosuficientes y pueden ejecutarse directamente en CI/CD sin procesos manuales en segundo plano.
+- El ciclo de ventas y logística WMS opera de forma completamente auditada y predecible de extremo a extremo.
 
 ## Siguientes Acciones
 1. Ejecutar las pruebas de homologación siguiendo `GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.pdf` cuando el usuario disponga de los certificados y claves de prueba en AFIP (WSASS) y Tiendanube Partners.
@@ -86,8 +103,8 @@ Normalización y gobierno del workspace bajo las mejores prácticas de Google An
 - Carga de certificados de testing por parte del usuario para iniciar las pruebas de red con AFIP / Tiendanube.
 
 ## Último Checkpoint
-- **Fecha/Hora:** 2026-09-04T18:22 (Hito P4 Completado y Verificado)
-- **Archivos Modificados/Creados:** `.env.example`, `.github/workflows/ci.yml`, `Dockerfile`, `docker-compose.staging.yml`, `.dockerignore`, `packages/server/scripts/preflight-env.js`, `packages/server/test/health-and-correlation.test.js`, `packages/server/index.js`, `package.json`, `packages/server/package.json`.
-- **Chequeos Ejecutados:** `npm run preflight:env` (exit 0), `npm run validate` (exit 0 - 383 tests backend + 52 tests frontend + lint + typecheck + build Vite), `npm run preflight:integrity` (exit 0 - 40/40 relaciones), `npm run audit` (exit 0 - 0 vulnerabilidades).
+- **Fecha/Hora:** 2026-09-04T18:34 (Hito P5 Completado y Verificado)
+- **Archivos Modificados/Creados:** `backup-database.js`, `commercial-lifecycle-smoke.js`, `smoke-runner-helper.js`, `rbac-validation-smoke.js`, `integrity-validation-smoke.js`, `.gitignore`, `package.json`, `packages/server/package.json`, `STATE.md`.
+- **Chequeos Ejecutados:** `npm run preflight:staging` (exit 0 - validate + preflight:integrity + smoke:rbac + smoke:integrity + smoke:commercial), `npm run audit` (exit 0 - 0 vulnerabilidades).
 
 

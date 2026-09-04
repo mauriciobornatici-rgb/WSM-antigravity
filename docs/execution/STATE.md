@@ -5,6 +5,23 @@ Current continuity source: `docs/execution/BITACORA_INTEGRAL.md` y `.agents/cont
 Current score estimate: 100/100 en calidad de código local; listo para preproducción, gobernanza Antigravity activa.
 Immediate priority: completar los gates externos de `docs/execution/PRODUCTION_READINESS_2026-08-20.md`; ARCA y Tiendanube quedan deliberadamente para el final.
 
+## 2026-09-04 Operación Controlada E2E, Auto-Runner Smoke y Backup Nativo (Bloque P5)
+
+- Autosuficiencia y Auto-Runner de Smoke Tests:
+  - Creado `smoke-runner-helper.js`: verifica conectividad del backend y, de no existir proceso en ejecución, inicia un servidor efímero en memoria en un puerto libre, cerrándolo limpiamente al terminar las pruebas.
+  - Actualizados `rbac-validation-smoke.js` e `integrity-validation-smoke.js` para ser 100% autosuficientes y ejecutables en un solo comando sin terminales secundarias.
+- Resiliencia de Datos y Backup Nativo (Gate 2):
+  - Creada herramienta nativa `backup-database.js` en Node.js puro sin dependencias de `mysqldump`.
+  - Capaz de volcar y restaurar esquemas DDL y datos en lotes de 62 tablas con compresión gzip y checksums SHA-256 en el directorio `backups/`.
+  - Verificado dump real: 332.7 KB SQL (comprimido a 61.6 KB, 1024 registros en 6.1s).
+  - Scripts registrados: `npm run db:backup` y `npm run db:restore`.
+- Operación Controlada E2E (Gate 5):
+  - Creado `commercial-lifecycle-smoke.js` (`npm run smoke:commercial`).
+  - Verificación determinista de 8 pasos del ciclo comercial y logístico: salud y latencia \(\to\) tokens de rol \(\to\) clientes \(\to\) selección de producto con stock disponible \(\to\) creación de pedido con reservas atómicas en `order_item_allocations` \(\to\) verificación de summary \(\to\) transición a picking \(\to\) confirmación de pick \(\to\) empaquetado (`packed`) con deducción física \(\to\) despacho con tracking y método de envío \(\to\) entrega \(\to\) emisión de factura comercial.
+- Determinismo y Preflight Staging Completo:
+  - `npm run preflight:staging`: Exit code 0 (ejecutando en cadena: validate + preflight:integrity + smoke:rbac + smoke:integrity + smoke:commercial).
+  - `npm run audit`: Exit code 0 (0 vulnerabilidades).
+
 ## 2026-09-04 Infraestructura Preproducción, CI/CD, Containerización y Observabilidad (Bloque P4)
 
 - Configuración y Gobernanza de Entorno:

@@ -21,9 +21,12 @@
     "validate": "npm -w @wsm/common run build && npm -w @wsm/server run test && npm -w @wsm/client run lint && npm -w @wsm/client run typecheck && npm -w @wsm/client run test && npm -w @wsm/client run build",
     "smoke:rbac": "npm -w @wsm/server run smoke:rbac",
     "smoke:integrity": "npm -w @wsm/server run smoke:integrity",
+    "smoke:commercial": "npm -w @wsm/server run smoke:commercial",
+    "db:backup": "npm -w @wsm/server run db:backup --",
+    "db:restore": "npm -w @wsm/server run db:restore --",
     "preflight:integrity": "npm -w @wsm/server run preflight:integrity",
     "preflight:env": "npm -w @wsm/server run preflight:env --",
-    "preflight:staging": "npm run validate && npm run preflight:integrity && npm run smoke:rbac && npm run smoke:integrity",
+    "preflight:staging": "npm run validate && npm run preflight:integrity && npm run smoke:rbac && npm run smoke:integrity && npm run smoke:commercial",
     "audit": "npm audit --workspaces"
   },
   "devDependencies": {
