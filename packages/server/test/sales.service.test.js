@@ -219,7 +219,9 @@ test('createOrder persists external source and id for imported marketplace order
         assert.ok(orderInsertCall.params.includes('tiendanube'));
         assert.ok(orderInsertCall.params.includes('987654'));
         assert.equal(orderInsertCall.params[5], 85);
-        assert.equal(orderInsertCall.params[6], 'paid');
+        // Marketplace orders keep the reservation flow: they start pending until picked.
+        assert.equal(orderInsertCall.params[6], 'pending');
+        assert.equal(orderInsertCall.params[7], 'paid');
         assert.equal(orderItemInsertCall.params[4], 90);
     } finally {
         pool.getConnection = originalGetConnection;

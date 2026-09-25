@@ -80,6 +80,12 @@ test('QA mode is explicit and the runner keeps the existing coverage thresholds'
     ]);
 });
 
+test('integration tests run serially and only against the QA database', () => {
+    const integration = commandFor('integration');
+    assert.equal(integration.environment, 'qa');
+    assert.deepEqual(integration.args, ['--test', '--test-concurrency=1', 'integration/**/*.integration.js']);
+});
+
 test('QA smoke helper never reuses a reachable target server', async () => {
     let targetRequests = 0;
     const targetServer = http.createServer((_request, response) => {

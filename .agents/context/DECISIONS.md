@@ -70,7 +70,11 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 ### ADR-008 — Decisiones de negocio del usuario
 - **Fecha:** 2026-09-25
 - **Precio POS:** el servidor usa el precio de catálogo; solo un permiso nuevo `ORDERS_PRICE_OVERRIDE` permite cambiarlo, con auditoría de cada cambio.
-- **IVA:** `sale_price` es precio final con IVA incluido; el neto se obtiene dividiendo por (1 + alícuota).
+- **IVA (corregido tras verificar el POS):** `sale_price` es **neto**; el POS cobra neto + IVA y eso es correcto. Se unifica el mismo cálculo en cliente, servidor y ARCA (`afip.service` hoy lo trata como final). La primera respuesta ("incluye IVA") quedó sin efecto.
+- **Venta offline:** al sincronizar se respeta el precio capturado y, si el turno se cerró, se asigna al turno abierto actual; todo con auditoría.
+- **Reparación, pedidos POS sin factura ni pago:** solo se listan; `--cancel-unpaid` libera su reserva a pedido.
+- **Tiendanube entregado/cerrado sin picking local:** se consume la reserva y queda movimiento `sale`.
+- **Permiso `ORDERS_PRICE_OVERRIDE`:** admin y manager; no cajero ni depósito.
 - **Stock histórico:** las ventas POS nunca descontaron stock físico. Se corrige el código y se entregan scripts de diagnóstico y reparación (dry-run, probados en QA); el usuario decide si y cuándo correrlos en producción.
 - **Asiento de compras:** solo la factura del proveedor genera el asiento (Mercadería + IVA CF / Proveedores); la aprobación de la recepción mueve stock sin asentar.
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.

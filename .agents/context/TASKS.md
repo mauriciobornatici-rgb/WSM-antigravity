@@ -1,45 +1,35 @@
 # Tarea actual — WSM SportsERP
 
-## Objetivo y estado
+## Objetivo
 
-Continuación autorizada del análisis y adaptación de Base Codex: corregir retiro
-mostrador y preparar QA reproducible. El coordinador leyó, planificó y revisó
-personalmente; dos implementadores Luna con esfuerzo max ejecutaron los cambios.
+Endurecer la app (seguridad, confiabilidad, mantenibilidad, UX) con la capa
+Claude adaptada de `C:\Dev\Base claude` (ADR-007). Coordinador: Claude; agentes
+con modelo por riesgo. Decisiones de negocio del usuario en ADR-008.
 
-- [x] Plantilla adaptada y diagnóstico conservados.
-- [x] Retiro pickup validado bajo bloqueo, turno abierto, respuesta antes de commit.
-- [x] Tests de retiro, caja, autenticación y cliente HTTP; warning del POS corregido.
-- [x] Comandos backend aislados por defecto y CI con cobertura, E2E y MySQL.
-- [x] MySQL QA desde cero y bootstrap repetido; 42 SQL históricos preservados.
-- [x] Revisión personal, feedback y verificaciones finales documentados.
-- [ ] Alcanzar 90 % de cobertura en líneas, ramas y funciones.
-- [ ] Demostrar circuitos operativos completos y CI remoto.
+## Hecho — 2026-09-25 (rama codex/hardening-100)
 
-## Evidencia actual — 2026-09-06
+- [x] `4221d26` línea base: commit del trabajo QA del 2026-09-06.
+- [x] Auditorías independientes: seguridad y datos (opus), UX y mantenibilidad (sonnet). Hallazgos clave verificados en código por el coordinador.
+- [x] `b201f2e` Ola A: guarda DB remota en dev, secretos de ejemplo rechazados, webhooks/callback Tiendanube alcanzables (antes 401), JWT HS256, login sin fuga por tiempo, IP de auditoría confiable, actores de caja/recepción = usuario autenticado, X-Request-Id validado, health con timeout, jsx-a11y + etiquetas, Node 24, capa `.claude/`.
+- [x] `f51fe90` ErrorBoundary por ruta (reintento, aviso de versión nueva).
+- [x] Evidencia: `npm run validate` exit 0 (7 guards, 436 backend, 62 cliente, lint, tipos, build).
 
-validate exit 0: 7 guards + 431 backend + 62 frontend; lint sin warnings, tipos y build.
-Cobertura exit 1: 81,23 % líneas / 88,82 % ramas / 73,98 % funciones.
-Preflight QA: 40 relaciones sin huérfanos; RBAC HTTP 12/12; E2E login 2/2 (API simulada).
-Smoke integridad: 4/4; tres circuitos opcionales omitidos. MySQL 8.0.46: bootstrap
-limpio y repetido correctos, numeración y catálogo probados con rollback.
+## Ola B — integridad de stock y dinero (en planificación)
 
-Detalle: [AUDIT](AUDIT.md), [mejoras](../../docs/execution/MEJORAS_QA_2026-09-06.md)
-y [comandos QA](../../docs/development/QA.md).
+Defectos confirmados: C1 ventas POS nunca descuentan stock físico ni escriben
+movimiento (solo reservan; factura pasa a `completed`); H1 sin guarda DB y
+`GREATEST(...,0)` oculta faltantes; H3 NC sin lock; H4 precio del cliente;
+H5 compras asentadas dos veces; M3 pagos divididos perdidos en caja;
+M8 transferencia borra filas referenciadas. H2 (numeración ARCA) aparte.
 
-## Límites preservados
+## Próximos pasos
 
-Sin mutaciones sobre la DB remota, SQL históricos editados, cambios de reglas
-constitucionales, despliegue ni llamadas productivas ARCA/Tiendanube.
-El usuario autorizó expresamente migraciones solo en wsm_qa, 127.0.0.1:33308.
-Los cambios funcionales anteriores se conservaron fuera del alcance de esta tarea.
-El job de cobertura incorporado a CI sigue bloqueando; no hay aprobación de producción.
+1. Revisar plan del planificador y ejecutar primer incremento (checkout POS atómico) con tests MySQL en `wsm_qa` (127.0.0.1:33308, `docker-compose.test.yml`).
+2. Scripts de diagnóstico/reparación de stock histórico (dry-run) — el usuario los corre en prod.
+3. Luego: ESLint del servidor, extracción de SQL de controladores, E2E de checkout.
 
-## Tres próximos pasos
+## Límites
 
-1. Cerrar cobertura por dominio (controladores de inventario/integraciones/usuarios,
-   compras y dashboard), con escenarios de negocio y sin excluir módulos.
-2. Añadir fixtures/circuitos MySQL para caja, recepción y retiro concurrente;
-   completar validación de impresión, picking y hardware.
-3. Ejecutar el workflow remoto y gates de staging/readiness antes de publicar.
-
-Pendientes operativos previos: [historial](../../docs/execution/archive/base-codex-2026-09-06/TASKS.previous.md).
+Sin mutaciones en la DB remota (el `.env` apunta a producción). Migraciones
+nuevas solo en QA. Sin push ni despliegue. Test flaky conocido:
+`health-and-correlation.test.js` bajo carga (pasa aislado; health ahora acotado a 2 s).

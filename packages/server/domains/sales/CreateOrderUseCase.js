@@ -1,8 +1,29 @@
 import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
+import defaultStockLedger from '../inventory/StockLedger.js';
+
+// A POS checkout without shipping is a counter sale: the customer leaves with the
+// goods, so stock is deducted now instead of being reserved for picking.
+export function isCounterSale(orderData) {
+    return orderData.external_source === 'pos' && !orderData.shipping_method;
+}
+
+async function syncOnlineStock(productIds) {
+    const { default: inventoryService } = await import('../../services/inventory.service.js');
+    const { default: tiendanubeService } = await import('../../services/tiendanube.service.js');
+    for (const productId of productIds) {
+        const totalStock = await inventoryService.getProductStock(productId);
+        await tiendanubeService.syncStock(productId, totalStock);
+    }
+}
 
 export class CreateOrderUseCase {
+    constructor({ stockLedger = defaultStockLedger, onStockChanged = syncOnlineStock } = {}) {
+        this.stockLedger = stockLedger;
+        this.onStockChanged = onStockChanged;
+    }
+
     _buildStockError(productId, productName, requestedQty, availableQty) {
         const name = productName || productId;
         const err = new Error(`Stock insuficiente para ${name}. Disponible: ${availableQty}, solicitado: ${requestedQty}`);
@@ -77,6 +98,7 @@ export class CreateOrderUseCase {
 
     async execute(orderData, userId) {
         const orderId = crypto.randomUUID();
+        const counterSale = isCounterSale(orderData);
         const connection = await pool.getConnection();
 
         try {
@@ -248,7 +270,7 @@ export class CreateOrderUseCase {
                     shipping_method, shipping_address, estimated_delivery,
                     recipient_name, recipient_dni, delivery_notes, notes,
                     external_source, external_id
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     orderId,
                     orderData.client_id || null,
@@ -256,6 +278,7 @@ export class CreateOrderUseCase {
                     orderData.customer_name || null,
                     resolvedCounterName,
                     resolvedTotal,
+                    counterSale ? 'completed' : 'pending',
                     resolvedPaymentStatus,
                     resolvedPaymentMethod,
                     orderData.shipping_method || null,
@@ -270,12 +293,36 @@ export class CreateOrderUseCase {
                 ]
             );
 
-            for (const item of orderData.items) {
+            // Stock rows are locked in product-id order in every path so that two
+            // concurrent carts with the same products cannot deadlock each other.
+            const lockedRows = counterSale
+                ? await this.stockLedger.lockSellableRows(connection, productIds)
+                : null;
+            const itemsInLockOrder = [...orderData.items].sort((a, b) => String(a.product_id).localeCompare(String(b.product_id)));
+
+            for (const item of itemsInLockOrder) {
                 const itemId = crypto.randomUUID();
                 const requestedPrice = Number(item.unit_price);
                 const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
                     ? requestedPrice
                     : priceByProduct.get(item.product_id);
+
+                if (counterSale) {
+                    await connection.query(
+                        'INSERT INTO order_items (id, order_id, product_id, quantity, picked_quantity, unit_price) VALUES (?, ?, ?, ?, ?, ?)',
+                        [itemId, orderId, item.product_id, item.quantity, item.quantity, unitPrice]
+                    );
+                    await this.stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
+                        productId: item.product_id,
+                        productName: nameByProduct.get(item.product_id),
+                        quantity: item.quantity,
+                        orderId,
+                        userId,
+                        reason: 'Venta mostrador POS'
+                    });
+                    continue;
+                }
+
                 await connection.query(
                     'INSERT INTO order_items (id, order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?, ?)',
                     [itemId, orderId, item.product_id, item.quantity, unitPrice]
@@ -340,6 +387,15 @@ export class CreateOrderUseCase {
             }, connection);
 
             await connection.commit();
+
+            if (counterSale) {
+                // Online stock follows physical stock; a sync failure must not undo the sale.
+                setImmediate(() => {
+                    this.onStockChanged([...new Set(productIds)]).catch((err) => {
+                        console.error('[TiendaNube Sync] Error syncing stock after counter sale:', err);
+                    });
+                });
+            }
             return { id: orderId, total_amount: finalTotal, points_earned: pointsEarned, points_redeemed: pointsRedeemed };
         } catch (err) {
             await connection.rollback();

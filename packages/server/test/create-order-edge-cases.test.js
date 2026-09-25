@@ -168,14 +168,17 @@ test('order creation with VAT and payments matches full gross total (POS checkou
         const statement = String(sql);
         calls.push({ sql: statement, params });
         if (statement.includes('SELECT id, sale_price, name FROM products')) return [[{ id: 'p', sale_price: 1200000, name: 'Monitor' }]];
-        if (statement.startsWith('SELECT id, location')) return [[{ id: 'inv', available_quantity: 10 }]];
+        if (statement.startsWith('SELECT id, product_id, location')) {
+            return [[{ id: 'inv', product_id: 'p', location: 'A-01', quantity: 10, reserved_quantity: 0 }]];
+        }
+        if (statement.includes('SET quantity = quantity - ?')) return [{ affectedRows: 1 }];
         return [[]];
     });
     const originalAudit = auditService.log;
     auditService.log = async () => {};
     t.after(() => { auditService.log = originalAudit; });
 
-    const result = await new CreateOrderUseCase().execute({
+    const result = await new CreateOrderUseCase({ onStockChanged: async () => {} }).execute({
         external_source: 'pos',
         external_id: '0a252ca9-9af2-455d-89d7-87150716f8ae',
         total_amount: 1452000,
@@ -188,3 +191,83 @@ test('order creation with VAT and payments matches full gross total (POS checkou
     assert.ok(orderInsert.params.includes(1452000));
 });
 
+test('a POS counter sale deducts physical stock and records sale movements instead of reserving (C1)', async (t) => {
+    const calls = [];
+    const synced = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT id, sale_price, name FROM products')) {
+            return [[{ id: 'b', sale_price: 100, name: 'Botin' }, { id: 'a', sale_price: 50, name: 'Media' }]];
+        }
+        if (statement.startsWith('SELECT id, product_id, location')) {
+            return [[
+                { id: 'inv-a', product_id: 'a', location: 'A-01', quantity: 5, reserved_quantity: 0 },
+                { id: 'inv-b1', product_id: 'b', location: 'B-01', quantity: 1, reserved_quantity: 0 },
+                { id: 'inv-b2', product_id: 'b', location: 'B-02', quantity: 4, reserved_quantity: 1 },
+            ]];
+        }
+        if (statement.includes('SET quantity = quantity - ?')) return [{ affectedRows: 1 }];
+        return [[]];
+    });
+    const originalAudit = auditService.log;
+    auditService.log = async () => {};
+    t.after(() => { auditService.log = originalAudit; });
+
+    await new CreateOrderUseCase({ onStockChanged: async (ids) => { synced.push(...ids); } }).execute({
+        external_source: 'pos',
+        external_id: 'b5b8f1c4-4a8e-4e0c-9d5e-2f1f1f1f1f1f',
+        items: [{ product_id: 'b', quantity: 4 }, { product_id: 'a', quantity: 2 }],
+    }, 'cashier-1');
+
+    const lockCall = calls.find((call) => call.sql.startsWith('SELECT id, product_id, location'));
+    assert.match(lockCall.sql, /FOR UPDATE/);
+    assert.deepEqual(lockCall.params[0], ['a', 'b'], 'products are locked in a stable order');
+
+    const orderInsert = calls.find((call) => call.sql.includes('INSERT INTO orders'));
+    assert.equal(orderInsert.params[6], 'completed');
+
+    const deductions = calls.filter((call) => call.sql.includes('SET quantity = quantity - ?'));
+    assert.deepEqual(deductions.map((call) => call.params), [
+        [2, 'inv-a', 2],
+        [3, 'inv-b2', 3],
+        [1, 'inv-b1', 1],
+    ]);
+    const movements = calls.filter((call) => call.sql.includes('INSERT INTO inventory_movements'));
+    assert.equal(movements.length, 3);
+    assert.ok(movements.every((call) => call.sql.includes("'sale'") && call.params.at(-1) === 'cashier-1'));
+    assert.equal(movements.reduce((sum, call) => sum + call.params[3], 0), 6);
+
+    assert.equal(calls.some((call) => call.sql.includes('reserved_quantity = reserved_quantity +')), false);
+    assert.equal(calls.some((call) => call.sql.includes('order_item_allocations')), false);
+    const itemInserts = calls.filter((call) => call.sql.includes('INSERT INTO order_items'));
+    assert.ok(itemInserts.every((call) => call.sql.includes('picked_quantity') && call.params[3] === call.params[4]));
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(synced.sort(), ['a', 'b']);
+});
+
+test('a POS order with shipping keeps the reservation flow', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT id, sale_price, name FROM products')) return [[{ id: 'p', sale_price: 100, name: 'P' }]];
+        if (statement.startsWith('SELECT id, location')) return [[{ id: 'inv', location: 'A', available_quantity: 3 }]];
+        return [[]];
+    });
+    const originalAudit = auditService.log;
+    auditService.log = async () => {};
+    t.after(() => { auditService.log = originalAudit; });
+
+    await new CreateOrderUseCase({ onStockChanged: async () => { throw new Error('must not sync'); } }).execute({
+        external_source: 'pos',
+        external_id: 'c5b8f1c4-4a8e-4e0c-9d5e-2f1f1f1f1f1f',
+        shipping_method: 'delivery',
+        items: [{ product_id: 'p', quantity: 1 }],
+    }, 'u');
+
+    assert.equal(calls.find((call) => call.sql.includes('INSERT INTO orders')).params[6], 'pending');
+    assert.ok(calls.some((call) => call.sql.includes('reserved_quantity = reserved_quantity +')));
+    assert.equal(calls.some((call) => call.sql.includes('SET quantity = quantity - ?')), false);
+});

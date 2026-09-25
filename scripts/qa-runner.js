@@ -33,6 +33,13 @@ const COMMANDS = Object.freeze({
         environment: 'isolated',
         description: 'backend coverage with the existing 90% line/branch/function gates',
     },
+    integration: {
+        cwd: serverDirectory,
+        // Serial: the suites share one database and assert on real locks and constraints.
+        args: ['--test', '--test-concurrency=1', 'integration/**/*.integration.js'],
+        environment: 'qa',
+        description: 'real-MySQL integration tests (locks, constraints, concurrency) against the loopback QA database',
+    },
     rbac: {
         cwd: serverDirectory,
         args: ['scripts/rbac-validation-smoke.js'],

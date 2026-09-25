@@ -33,6 +33,7 @@
     "preflight:integrity": "npm -w @wsm/server run preflight:integrity",
     "preflight:env": "npm -w @wsm/server run preflight:env --",
     "qa:bootstrap": "node scripts/qa-bootstrap.js",
+    "qa:integration": "node scripts/qa-runner.js integration",
     "qa:smoke:rbac": "node scripts/qa-runner.js rbac",
     "qa:smoke:integrity": "node scripts/qa-runner.js integrity",
     "qa:preflight:integrity": "node scripts/qa-runner.js preflight",
