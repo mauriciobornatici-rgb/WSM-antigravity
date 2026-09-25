@@ -2,6 +2,7 @@ import { useAuth } from "@/context/AuthContext"
 import { clearSessionStorage } from "@/lib/authSession"
 import { Navigate, useLocation } from "react-router-dom"
 import { hasPermission, type Permission } from "@wsm/common"
+import ErrorBoundary from "@/components/common/ErrorBoundary"
 
 interface ProtectedRouteProps {
     children: React.ReactNode
@@ -35,5 +36,10 @@ export function ProtectedRoute({ children, permission }: ProtectedRouteProps) {
         )
     }
 
-    return <>{children}</>
+    // A failing page must not take down the layout, the navigation or other screens.
+    return (
+        <ErrorBoundary scope="route" resetKey={location.pathname}>
+            {children}
+        </ErrorBoundary>
+    )
 }
