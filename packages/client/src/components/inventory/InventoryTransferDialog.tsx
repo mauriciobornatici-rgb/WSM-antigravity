@@ -71,7 +71,7 @@ export function InventoryTransferDialog({
                 <div className="space-y-4 py-2">
                     {/* Product Selector */}
                     <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] uppercase font-bold text-muted-foreground">Seleccionar Producto</label>
+                        <label htmlFor="transfer-product" className="text-[10px] uppercase font-bold text-muted-foreground">Seleccionar Producto</label>
                         <Select
                             value={selectedProductId}
                             onValueChange={(val) => {
@@ -80,7 +80,7 @@ export function InventoryTransferDialog({
                                 onTransferQtyChange(1);
                             }}
                         >
-                            <SelectTrigger>
+                            <SelectTrigger id="transfer-product">
                                 <SelectValue placeholder="Selecciona un producto..." />
                             </SelectTrigger>
                             <SelectContent>
@@ -97,9 +97,9 @@ export function InventoryTransferDialog({
                         <>
                             {/* From Location Selector */}
                             <div className="flex flex-col gap-1.5">
-                                <label className="text-[10px] uppercase font-bold text-muted-foreground">Ubicación Origen</label>
+                                <label htmlFor="transfer-from-location" className="text-[10px] uppercase font-bold text-muted-foreground">Ubicación Origen</label>
                                 <Select value={fromLocation} onValueChange={onFromLocationChange}>
-                                    <SelectTrigger>
+                                    <SelectTrigger id="transfer-from-location">
                                         <SelectValue placeholder="Selecciona estante origen..." />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -117,9 +117,9 @@ export function InventoryTransferDialog({
 
                             {/* Target Location Selector */}
                             <div className="flex flex-col gap-1.5">
-                                <label className="text-[10px] uppercase font-bold text-muted-foreground">Ubicación Destino</label>
+                                <label htmlFor="transfer-to-location" className="text-[10px] uppercase font-bold text-muted-foreground">Ubicación Destino</label>
                                 <Select value={toLocation} onValueChange={onToLocationChange}>
-                                    <SelectTrigger>
+                                    <SelectTrigger id="transfer-to-location">
                                         <SelectValue placeholder="Selecciona una ubicación creada..." />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -134,7 +134,7 @@ export function InventoryTransferDialog({
                             {/* Transfer Quantity */}
                             <div className="flex flex-col gap-1.5">
                                 <div className="flex justify-between items-center">
-                                    <label className="text-[10px] uppercase font-bold text-muted-foreground">Cantidad a Trasladar</label>
+                                    <label htmlFor="transfer-qty" className="text-[10px] uppercase font-bold text-muted-foreground">Cantidad a Trasladar</label>
                                     {fromLocation && (
                                         <span className="text-[10px] text-muted-foreground font-semibold">
                                             Máximo disponible: {maxTransferQty} u
@@ -142,6 +142,7 @@ export function InventoryTransferDialog({
                                     )}
                                 </div>
                                 <Input
+                                    id="transfer-qty"
                                     type="number"
                                     min={1}
                                     max={maxTransferQty || 1}

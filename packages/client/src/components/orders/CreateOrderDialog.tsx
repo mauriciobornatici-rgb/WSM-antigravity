@@ -569,6 +569,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                             type="button"
                                             variant="ghost"
                                             size="icon"
+                                            aria-label="Eliminar medio de pago"
                                             disabled={createPaymentLines.length === 1}
                                             onClick={() => setCreatePaymentLines((current) => current.filter((item) => item.id !== line.id))}
                                         >

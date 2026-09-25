@@ -16,6 +16,9 @@ const getPool = () => {
             waitForConnections: true,
             connectionLimit: 10,
             queueLimit: 0,
+            connectTimeout: 5000,
+            // Un objeto recibido del cliente nunca se expande a `col` = valor en un placeholder.
+            stringifyObjects: true,
             ...(env.dbSsl ? { ssl: { rejectUnauthorized: env.dbSslRejectUnauthorized } } : {})
         });
     }

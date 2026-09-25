@@ -33,6 +33,8 @@ import tiendaNubeService from './services/tiendanube.service.js';
 import salesService from './services/sales.service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REQUEST_ID_PATTERN = /^[\w.-]{1,64}$/;
+const HEALTH_DB_TIMEOUT_MS = 2000;
 
 const app = express();
 const env = getEnvConfig();
@@ -95,7 +97,10 @@ app.use('/api', limiter);
 
 // Request Logging & Correlation ID Middleware — redact sensitive query params
 app.use((req, res, next) => {
-    const requestId = req.headers['x-request-id'] || crypto.randomUUID();
+    const incomingRequestId = req.headers['x-request-id'];
+    const requestId = typeof incomingRequestId === 'string' && REQUEST_ID_PATTERN.test(incomingRequestId)
+        ? incomingRequestId
+        : crypto.randomUUID();
     const startedAt = process.hrtime.bigint();
     req.id = requestId;
     req.requestId = requestId;
@@ -130,8 +135,15 @@ app.get('/api/live', (req, res) => {
 
 app.get('/api/health', async (req, res) => {
     const startDb = process.hrtime.bigint();
+    let timeoutId;
     try {
-        await pool.query('SELECT 1');
+        // A health probe must answer promptly even when the database hangs.
+        await Promise.race([
+            pool.query('SELECT 1'),
+            new Promise((_, reject) => {
+                timeoutId = setTimeout(() => reject(new Error('database ping timed out')), HEALTH_DB_TIMEOUT_MS);
+            })
+        ]);
         const dbLatencyMs = Number(process.hrtime.bigint() - startDb) / 1_000_000;
         const memoryUsage = process.memoryUsage();
         res.json({
@@ -148,6 +160,8 @@ app.get('/api/health', async (req, res) => {
             database: 'disconnected',
             ...(env.isDevelopment ? { error: err.message } : {})
         });
+    } finally {
+        clearTimeout(timeoutId);
     }
 });
 
@@ -178,6 +192,11 @@ app.post('/api/login', loginLimiter, validateZod(zodSchemas.login), userControll
 app.get('/api/session', authenticateToken, userController.getSession);
 app.post('/api/logout', userController.logout);
 
+// Integration routes must be mounted before the '/api'-wide routers below: those run
+// authenticateToken for every /api/* path, which would reject Tiendanube's webhooks and
+// OAuth callback. Every non-public route in integrationRouter authenticates itself.
+app.use('/api/integrations', integrationRouter);
+
 // Mount Modular Routes - authentication at mount, RBAC inside each router
 app.use('/api/users', authenticateToken, authorizePermission(PERMISSIONS.USERS_MANAGE), userRouter);
 app.use('/api/settings', authenticateToken, settingsRouter);
@@ -190,10 +209,6 @@ app.use('/api', authenticateToken, warrantiesRouter);
 app.use('/api', authenticateToken, dashboardRouter);
 app.use('/api', authenticateToken, traceabilityRouter);
 app.use('/api/accounting', authenticateToken, accountingRouter);
-
-// Integration routes (auth callbacks and webhooks are PUBLIC so TiendaNube can reach them without our JWT)
-// The authorize endpoint requires our JWT
-app.use('/api/integrations', integrationRouter);
 
 // Serve static client bundle if built (staging/production container)
 const clientDistPath = path.resolve(__dirname, '../client/dist');

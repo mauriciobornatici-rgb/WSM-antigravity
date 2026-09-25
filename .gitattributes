@@ -1,0 +1,22 @@
+# Normaliza finales de línea: LF en el repositorio y en el árbol de trabajo,
+# también en Windows (evita diffs de CRLF y avisos en cada commit).
+* text=auto eol=lf
+
+# Scripts de Windows que se ejecutan con cmd.exe necesitan CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binarios
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.p12 binary
+*.pfx binary
+*.woff binary
+*.woff2 binary

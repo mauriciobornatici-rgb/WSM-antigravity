@@ -425,8 +425,9 @@ export default function AccountingPage() {
                     <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Auditar Período Fiscal:</span>
                     <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                         <div className="flex flex-col gap-1 w-full sm:w-36">
-                            <label className="text-[10px] uppercase font-bold text-slate-500">Desde</label>
+                            <label htmlFor="accounting-audit-from" className="text-[10px] uppercase font-bold text-slate-500">Desde</label>
                             <ArgentinaDateInput
+                                id="accounting-audit-from"
                                 value={startDate}
                                 onChange={setStartDate}
                                 ariaLabel="Auditar desde"
@@ -434,8 +435,9 @@ export default function AccountingPage() {
                             />
                         </div>
                         <div className="flex flex-col gap-1 w-full sm:w-36">
-                            <label className="text-[10px] uppercase font-bold text-slate-500">Hasta</label>
+                            <label htmlFor="accounting-audit-to" className="text-[10px] uppercase font-bold text-slate-500">Hasta</label>
                             <ArgentinaDateInput
+                                id="accounting-audit-to"
                                 value={endDate}
                                 onChange={setEndDate}
                                 ariaLabel="Auditar hasta"

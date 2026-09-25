@@ -154,10 +154,10 @@ export default function PresentationPage() {
                     </Button>
                     <div className="flex gap-1">
                         <div className="flex gap-2">
-                            <Button variant="outline" size="icon" onClick={prevSlide} className="h-10 w-10 rounded-full border-2 hover:bg-slate-100 transition-colors shadow-sm" title="Anterior (Flecha Izquierda)">
+                            <Button variant="outline" size="icon" onClick={prevSlide} className="h-10 w-10 rounded-full border-2 hover:bg-slate-100 transition-colors shadow-sm" title="Anterior (Flecha Izquierda)" aria-label="Diapositiva anterior">
                                 <ChevronLeft className="h-6 w-6 text-slate-700" />
                             </Button>
-                            <Button variant="outline" size="icon" onClick={nextSlide} className="h-10 w-10 rounded-full border-2 hover:bg-blue-50 hover:border-blue-200 transition-colors shadow-sm" title="Siguiente (Flecha Derecha / Espacio)">
+                            <Button variant="outline" size="icon" onClick={nextSlide} className="h-10 w-10 rounded-full border-2 hover:bg-blue-50 hover:border-blue-200 transition-colors shadow-sm" title="Siguiente (Flecha Derecha / Espacio)" aria-label="Diapositiva siguiente">
                                 <ChevronRight className="h-6 w-6 text-blue-600" />
                             </Button>
                         </div>
@@ -173,6 +173,7 @@ export default function PresentationPage() {
                         variant="secondary"
                         size="icon"
                         onClick={prevSlide}
+                        aria-label="Diapositiva anterior"
                         className="h-14 w-14 rounded-full shadow-2xl bg-white/80 backdrop-blur-sm border border-slate-200 hover:bg-white text-slate-800 transition-all hover:scale-110 active:scale-95"
                     >
                         <ChevronLeft className="h-8 w-8" />
@@ -183,6 +184,7 @@ export default function PresentationPage() {
                         variant="secondary"
                         size="icon"
                         onClick={nextSlide}
+                        aria-label="Diapositiva siguiente"
                         className="h-14 w-14 rounded-full shadow-2xl bg-blue-600/90 backdrop-blur-sm border border-blue-500 hover:bg-blue-600 text-white transition-all hover:scale-110 active:scale-95 animate-in fade-in slide-in-from-right-4"
                     >
                         <ChevronRight className="h-8 w-8" />

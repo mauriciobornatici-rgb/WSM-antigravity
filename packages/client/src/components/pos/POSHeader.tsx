@@ -106,6 +106,7 @@ export function POSHeader({
                     className="h-8 w-8"
                     onClick={onToggleTheme}
                     title={theme === "dark" ? "Cambiar a Modo Día" : "Cambiar a Modo Noche"}
+                    aria-label={theme === "dark" ? "Activar tema claro" : "Activar tema oscuro"}
                 >
                     {theme === "dark" ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-indigo-500" />}
                 </Button>

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import mysql from 'mysql2/promise';
-import { buildEnvConfig } from '../config/env.js';
+import { assertSafeDatabaseTarget, buildEnvConfig, isLocalDatabaseHost } from '../config/env.js';
 import { loadEnvironment } from '../config/loadEnv.js';
 
 const ENV_KEYS = [
@@ -258,6 +258,46 @@ test('production validation requires origins/base URL and rejects disabled SSL v
     t.after(() => {});
 });
 
+test('development refuses a non-local database unless explicitly allowed', () => {
+    const base = { NODE_ENV: 'development', JWT_SECRET: 'dev-secret', ENCRYPTION_KEY: 'key' };
+    const configFor = (extra) => buildEnvConfig({ ...base, ...extra }, () => {});
+
+    assert.throws(() => assertSafeDatabaseTarget(configFor({ DB_HOST: '193.203.175.56' })), /Refusing to start in development/);
+    assert.throws(() => assertSafeDatabaseTarget(configFor({ DB_HOST: 'mysql.example.com' })), /ALLOW_REMOTE_DB/);
+    assert.doesNotThrow(() => assertSafeDatabaseTarget(configFor({ DB_HOST: '193.203.175.56', ALLOW_REMOTE_DB: 'true' })));
+    for (const host of ['127.0.0.1', 'localhost', '127.0.0.2', '::1', 'db', 'host.docker.internal']) {
+        assert.doesNotThrow(() => assertSafeDatabaseTarget(configFor({ DB_HOST: host })), host);
+    }
+    assert.doesNotThrow(() => assertSafeDatabaseTarget(configFor({})));
+    assert.equal(isLocalDatabaseHost('10.0.0.5'), false);
+});
+
+test('non-development environments reject published example secrets', () => {
+    const secure = {
+        NODE_ENV: 'production',
+        JWT_SECRET: 'a-real-production-secret-with-more-than-32-characters',
+        ENCRYPTION_KEY: 'f'.repeat(64),
+        DB_PASSWORD: 'a-real-db-password',
+        DB_SSL: 'true',
+        CORS_ORIGINS: 'https://erp.example.com',
+        APP_BASE_URL: 'https://erp.example.com',
+        TRUST_PROXY: '1',
+    };
+    assert.doesNotThrow(() => buildEnvConfig(secure, () => {}));
+    assert.throws(
+        () => buildEnvConfig({ ...secure, ENCRYPTION_KEY: '0123456789abcdef'.repeat(4) }, () => {}),
+        /ENCRYPTION_KEY reuse a published example value/
+    );
+    assert.throws(
+        () => buildEnvConfig({ ...secure, ALLOW_INSECURE_NON_DEV: 'true', JWT_SECRET: 'wsm_staging_secret_jwt_key_at_least_32_chars_long_2026' }, () => {}),
+        /JWT_SECRET reuse a published example value/
+    );
+    // The local staging simulation opts into insecure values explicitly.
+    assert.doesNotThrow(() => buildEnvConfig({
+        ...secure, NODE_ENV: 'staging', ALLOW_INSECURE_NON_DEV: 'true', DB_PASSWORD: 'wsm_staging_password_2026',
+    }, () => {}));
+});
+
 test('database pool is lazy, applies SSL/options, binds methods and can be reopened', async (t) => {
     const restore = replaceEnvironment({
         NODE_ENV: 'development',
@@ -297,6 +337,7 @@ test('database pool is lazy, applies SSL/options, binds methods and can be reope
     assert.deepEqual(options[0], {
         host: 'db.internal', port: 3310, user: 'erp', password: 'password', database: 'erp_test',
         waitForConnections: true, connectionLimit: 10, queueLimit: 0,
+        connectTimeout: 5000, stringifyObjects: true,
         ssl: { rejectUnauthorized: false },
     });
 

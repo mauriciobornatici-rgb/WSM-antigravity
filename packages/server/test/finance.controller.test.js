@@ -300,7 +300,8 @@ test('closeShift calculates the expected balance, records the difference, audits
         body: { success: true, expected_balance: 145, actual_balance: 140, difference: -5 }
     });
     const closeUpdate = tracked.calls.find(({ statement }) => statement.startsWith("UPDATE cash_shifts SET status = 'closed'"));
-    assert.deepEqual(closeUpdate?.params, ['operator-1', 145, 140, -5, 'cierre', 'shift-1']);
+    // A client-supplied closed_by must not attribute the close to another user.
+    assert.deepEqual(closeUpdate?.params, ['user-1', 145, 140, -5, 'cierre', 'shift-1']);
     assert.equal(auditCall.executor, tracked.connection);
     assert.equal(auditCall.data.action, 'CLOSE_SHIFT');
     assert.equal(auditCall.data.new_values.difference, -5);

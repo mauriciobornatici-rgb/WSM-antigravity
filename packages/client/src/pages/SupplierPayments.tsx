@@ -515,7 +515,7 @@ export default function SupplierPaymentsPage() {
                                                         <Input type="number" value={line.amount} onChange={(e) => updatePaymentLine(line.id, { amount: e.target.value })} placeholder="0.00" className="h-10 bg-background text-right font-mono" />
                                                     </div>
                                                     {paymentLines.length > 1 && (
-                                                        <Button variant="ghost" size="icon" onClick={() => setPaymentLines(prev => prev.filter(p => p.id !== line.id))} className="h-10 w-10 shrink-0 text-destructive hover:bg-destructive/10">
+                                                        <Button variant="ghost" size="icon" aria-label="Eliminar medio de pago" onClick={() => setPaymentLines(prev => prev.filter(p => p.id !== line.id))} className="h-10 w-10 shrink-0 text-destructive hover:bg-destructive/10">
                                                             <Trash2 className="h-4 w-4" />
                                                         </Button>
                                                     )}

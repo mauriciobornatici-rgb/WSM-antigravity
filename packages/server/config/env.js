@@ -69,6 +69,24 @@ function isValidHttpUrl(value, { requireHttps = false } = {}) {
     }
 }
 
+// Valores publicados en .env.example / docker-compose.staging.yml. Cualquiera que
+// los copie a un despliegue real permite forjar JWT o descifrar credenciales.
+const KNOWN_EXAMPLE_SECRETS = new Set([
+    'super_secret_jwt_key_at_least_32_characters_long_for_security',
+    'wsm_staging_secret_jwt_key_at_least_32_chars_long_2026',
+    '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    'wsm_secure_password_here',
+    'wsm_staging_password_2026',
+]);
+
+// Loopback o nombre de servicio sin dominio (p. ej. "db" en docker compose).
+export function isLocalDatabaseHost(host) {
+    const normalized = String(host || '127.0.0.1').trim().toLowerCase();
+    if (['localhost', '127.0.0.1', '::1', 'host.docker.internal'].includes(normalized)) return true;
+    if (normalized.startsWith('127.')) return true;
+    return !normalized.includes('.') && !normalized.includes(':');
+}
+
 let cachedConfig = null;
 
 export function buildEnvConfig(environment = process.env, warn = console.warn) {
@@ -90,6 +108,8 @@ export function buildEnvConfig(environment = process.env, warn = console.warn) {
         isNonDevelopment,
         port: parsePortEnv(environment, 'PORT', 3001),
         dbPort: parsePortEnv(environment, 'DB_PORT', 3306),
+        dbHost: String(environment.DB_HOST || '127.0.0.1').trim(),
+        allowRemoteDb: parseBooleanEnv(environment, 'ALLOW_REMOTE_DB', false),
         jwtSecret: environment.JWT_SECRET || '',
         jwtExpiresIn: String(environment.JWT_EXPIRES_IN || '8h').trim(),
         corsOrigins: parseCorsOrigins(environment.CORS_ORIGINS, isDevelopment ? ['http://localhost:5173'] : []),
@@ -157,6 +177,14 @@ export function buildEnvConfig(environment = process.env, warn = console.warn) {
             }
         }
 
+        if (config.isProduction || !config.allowInsecureNonDev) {
+            const exampleSecrets = ['JWT_SECRET', 'ENCRYPTION_KEY', 'DB_PASSWORD']
+                .filter((name) => KNOWN_EXAMPLE_SECRETS.has(String(environment[name] || '').trim()));
+            if (exampleSecrets.length > 0) {
+                errors.push(`${exampleSecrets.join(', ')} reuse a published example value; generate new secrets`);
+            }
+        }
+
         if (config.corsOrigins.some((origin) => isLocalhostOrigin(origin))) {
             warnings.push('CORS_ORIGINS includes localhost in non-development environment');
         }
@@ -175,6 +203,17 @@ export function buildEnvConfig(environment = process.env, warn = console.warn) {
     }
 
     return config;
+}
+
+// Arrancar el servidor ejecuta migraciones. En desarrollo solo se permite una DB
+// local salvo opt-in explicito, para que un .env apuntando a produccion no la migre.
+export function assertSafeDatabaseTarget(config) {
+    if (config.isDevelopment && !config.allowRemoteDb && !isLocalDatabaseHost(config.dbHost)) {
+        throw new Error(
+            `Refusing to start in development against non-local DB_HOST '${config.dbHost}': ` +
+            'startup runs migrations. Use a local database (ENV_FILE=.env.local) or set ALLOW_REMOTE_DB=true explicitly.'
+        );
+    }
 }
 
 export function getEnvConfig() {

@@ -99,10 +99,10 @@ test('pagination headers only emit for enabled pagination', () => {
     assert.equal(headers['X-Total-Pages'], '1');
 });
 
-test('request IP prioritizes the first forwarded address', () => {
-    assert.equal(getRequestIp({ headers: { 'x-forwarded-for': '203.0.113.5, 10.0.0.2' }, ip: '127.0.0.1' }), '203.0.113.5');
+test('request IP uses req.ip and ignores a client-forged X-Forwarded-For', () => {
+    // Express resolves req.ip from X-Forwarded-For only when TRUST_PROXY allows it.
+    assert.equal(getRequestIp({ headers: { 'x-forwarded-for': '203.0.113.5, 10.0.0.2' }, ip: '127.0.0.1' }), '127.0.0.1');
     assert.equal(getRequestIp({ headers: {}, ip: '127.0.0.1' }), '127.0.0.1');
-    assert.equal(getRequestIp({ headers: { 'x-forwarded-for': [] }, ip: '::1' }), '::1');
 });
 
 test('image policy covers empty, malformed, oversized and supported payloads', () => {

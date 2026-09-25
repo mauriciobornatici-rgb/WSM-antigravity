@@ -29,7 +29,7 @@ export const authenticateToken = async (req, res, next) => {
 
     let user;
     try {
-        user = jwt.verify(token, JWT_SECRET);
+        user = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
     } catch (err) {
         const isExpired = err.name === 'TokenExpiredError';
         return res.status(401).json({

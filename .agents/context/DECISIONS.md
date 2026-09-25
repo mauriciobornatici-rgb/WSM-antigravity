@@ -58,3 +58,25 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **Consecuencias:** Menos duplicación del estado activo; el modelo/esfuerzo de agentes se hereda. No se modifica la autoridad de las reglas existentes ni se exige delegación automática.
 - **Reversión:** [Copias previas](../../docs/execution/archive/base-codex-2026-09-06/README.md); restaurar solo documentos de esta adaptación, preservando cambios funcionales previos.
 - **Sustituye a:** Ninguna decisión de dominio; complementa ADR-005 para compatibilidad con Codex.
+
+---
+
+### ADR-007 — Capa de control Claude Code adaptada de Base Claude
+- **Fecha:** 2026-09-25
+- **Estado:** accepted (pedido explícito del usuario)
+- **Decisión:** Instalar `.claude/` (settings, hooks, 8 agentes, 5 skills) apuntando a `.agents/context/` como único estado; no crear un `.ai/ESTADO.md` paralelo. `CLAUDE.md` importa `TASKS.md`. Modelo por agente según riesgo: haiku (explorador), sonnet (implementador, verificador, revisor-ux), opus (planificador, auditor-externo, revisor-seguridad, guardian-integridad).
+- **Consecuencias:** Bitácora local (`.agents/context/BITACORA.md`, gitignored) escrita por hook; la puerta Stop exige checkpoint; los scripts que tocan la DB configurada quedan en `ask`.
+
+### ADR-008 — Decisiones de negocio del usuario
+- **Fecha:** 2026-09-25
+- **Precio POS:** el servidor usa el precio de catálogo; solo un permiso nuevo `ORDERS_PRICE_OVERRIDE` permite cambiarlo, con auditoría de cada cambio.
+- **IVA:** `sale_price` es precio final con IVA incluido; el neto se obtiene dividiendo por (1 + alícuota).
+- **Stock histórico:** las ventas POS nunca descontaron stock físico. Se corrige el código y se entregan scripts de diagnóstico y reparación (dry-run, probados en QA); el usuario decide si y cuándo correrlos en producción.
+- **Asiento de compras:** solo la factura del proveedor genera el asiento (Mercadería + IVA CF / Proveedores); la aprobación de la recepción mueve stock sin asentar.
+- **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
+- **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
+
+### ADR-009 — Riesgos aceptados en la ola de endurecimiento
+- **Fecha:** 2026-09-25
+- `Bearer` sigue aceptado porque lo usan los smokes RBAC/integridad/comercial; la UI usa solo cookie.
+- El logout no incrementa `token_version`: revocaría la sesión del usuario en todas sus terminales. La cookie es HttpOnly + SameSite=Strict.

@@ -58,12 +58,12 @@ export function UsersManagementTab({
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-2">
-                                                <Button variant="ghost" size="icon" onClick={() => onOpenEditUserForm(user)}>
+                                                <Button variant="ghost" size="icon" aria-label={`Editar ${user.name || 'usuario'}`} onClick={() => onOpenEditUserForm(user)}>
                                                     <Pencil className="h-4 w-4" />
                                                 </Button>
 
                                                 {currentUser?.id !== user.id && (
-                                                    <Button variant="ghost" size="icon" className="text-red-500 hover:text-red-600 hover:bg-red-100" onClick={() => onDeleteUser(user.id)}>
+                                                    <Button variant="ghost" size="icon" aria-label={`Eliminar ${user.name || 'usuario'}`} className="text-red-500 hover:text-red-600 hover:bg-red-100" onClick={() => onDeleteUser(user.id)}>
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
                                                 )}

@@ -353,8 +353,8 @@ export const createReception = catchAsync(async (req, res) => {
 
 export const approveReception = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const { approved_by } = req.body || {};
-    const approverId = approved_by || req.user?.id || null;
+    // The approver is always the authenticated user; a client-supplied approved_by is ignored.
+    const approverId = req.user?.id || null;
 
     try {
         await inventoryService.processReceptionApproval(id, {

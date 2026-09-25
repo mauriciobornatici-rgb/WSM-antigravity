@@ -3,7 +3,7 @@
 # ==============================================================================
 
 # Stage 1: Build Workspace & Artifacts
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
@@ -25,7 +25,7 @@ RUN npm -w @wsm/common run build
 RUN npm -w @wsm/client run build
 
 # Stage 2: Minimal Production Runtime
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 
 WORKDIR /app
 

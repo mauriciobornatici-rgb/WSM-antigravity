@@ -83,6 +83,7 @@ export function CollectionsPaymentFormCard({
                                         type="button"
                                         variant="ghost"
                                         size="icon"
+                                        aria-label="Eliminar medio de pago"
                                         className="h-9 w-9 text-muted-foreground hover:text-destructive"
                                         onClick={() => onRemovePaymentLine(line.id)}
                                         disabled={paymentLines.length <= 1}

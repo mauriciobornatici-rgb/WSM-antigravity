@@ -2,6 +2,7 @@ import pool from './db.js';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { runMigrations } from './migrations_manager.js';
+import { assertSafeDatabaseTarget, getEnvConfig } from './env.js';
 import { isStrongPassword, getPasswordPolicyMessage } from '../utils/passwordPolicy.js';
 
 const SALT_ROUNDS = 10;
@@ -92,6 +93,7 @@ async function seedCompanySettings() {
 }
 
 export const initDatabase = async () => {
+    assertSafeDatabaseTarget(getEnvConfig());
     try {
         console.log('Checking for migrations...');
         await runMigrations();

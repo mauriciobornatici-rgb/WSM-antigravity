@@ -32,6 +32,7 @@ const CardTitle = React.forwardRef<
     HTMLParagraphElement,
     React.HTMLAttributes<HTMLHeadingElement>
 >(({ className, ...props }, ref) => (
+    // eslint-disable-next-line jsx-a11y/heading-has-content -- componente primitivo reutilizable: el contenido llega vía props.children en cada uso, no es analizable estáticamente aquí
     <h3
         ref={ref}
         className={cn(

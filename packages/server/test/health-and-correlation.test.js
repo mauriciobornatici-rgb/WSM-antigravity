@@ -46,6 +46,25 @@ test('Observability & Correlation ID Integration Suite', async (t) => {
         assert.equal(res.headers.get('x-request-id'), clientRequestId);
     });
 
+    await t.test('A malformed client request id is replaced by a generated UUID', async () => {
+        const res = await fetch(`${baseUrl}/api/live`, {
+            headers: { 'x-request-id': `forged ${'x'.repeat(100)}` }
+        });
+        assert.equal(res.status, 200);
+        assert.match(res.headers.get('x-request-id'), /^[0-9a-f-]{36}$/i);
+    });
+
+    await t.test('Tiendanube OAuth callback is reachable without an ERP session cookie', async () => {
+        // It used to be rejected with 401 by the '/api'-wide authentication middleware.
+        const res = await fetch(`${baseUrl}/api/integrations/tiendanube/callback`);
+        assert.equal(res.status, 400);
+    });
+
+    await t.test('Authenticated integration routes still require a session', async () => {
+        const res = await fetch(`${baseUrl}/api/integrations/tiendanube/status`);
+        assert.equal(res.status, 401);
+    });
+
     await t.test('GET /api/health returns database connectivity and runtime metrics', async () => {
         const res = await fetch(`${baseUrl}/api/health`);
         // If DB is reachable it returns 200; if temporarily offline in isolated testing it returns 503

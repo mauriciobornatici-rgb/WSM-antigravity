@@ -126,8 +126,8 @@ export function ProductCatalogMastersTab({ options, onOptionsChanged }: ProductC
                                     <TableCell>{option.usage_count ?? 0} producto(s)</TableCell>
                                     <TableCell><Badge variant={option.active ? "default" : "secondary"}>{option.active ? "Activo" : "Archivado"}</Badge></TableCell>
                                     <TableCell className="text-right">
-                                        <Button variant="ghost" size="icon" onClick={() => openDialog(option)} title="Editar"><Pencil className="h-4 w-4" /></Button>
-                                        <Button variant="ghost" size="icon" onClick={() => void toggleOption(option)} title={option.active ? "Archivar" : "Reactivar"}><Power className="h-4 w-4" /></Button>
+                                        <Button variant="ghost" size="icon" onClick={() => openDialog(option)} title="Editar" aria-label={`Editar ${option.name}`}><Pencil className="h-4 w-4" /></Button>
+                                        <Button variant="ghost" size="icon" onClick={() => void toggleOption(option)} title={option.active ? "Archivar" : "Reactivar"} aria-label={`${option.active ? "Archivar" : "Reactivar"} ${option.name}`}><Power className="h-4 w-4" /></Button>
                                     </TableCell>
                                 </TableRow>
                             ))}

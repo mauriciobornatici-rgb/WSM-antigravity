@@ -40,20 +40,21 @@ async function capture() {
 
     const page = await browser.newPage();
 
-    // Login via API to get auth token
+    // Login via API; the session travels in the HttpOnly cookie. Credentials come from
+    // the environment so none are committed: CAPTURE_EMAIL / CAPTURE_PASSWORD.
+    const { CAPTURE_EMAIL, CAPTURE_PASSWORD } = process.env;
+    if (!CAPTURE_EMAIL || !CAPTURE_PASSWORD) {
+        throw new Error('Definí CAPTURE_EMAIL y CAPTURE_PASSWORD para capturar pantallas.');
+    }
     await page.goto('http://localhost:5173/login');
-    await page.evaluate(async () => {
-        const res = await fetch('http://localhost:3001/api/login', {
+    await page.evaluate(async (email, password) => {
+        await fetch('http://localhost:3001/api/login', {
             method: 'POST',
+            credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: 'admin@sports.store', password: 'Password123!' })
+            body: JSON.stringify({ email, password })
         });
-        const data = await res.json();
-        if (data.token) {
-            localStorage.setItem('sports_erp_auth', JSON.stringify({ token: data.token }));
-            localStorage.setItem('sports_erp_user', JSON.stringify(data.user));
-        }
-    });
+    }, CAPTURE_EMAIL, CAPTURE_PASSWORD);
 
     for (const r of routes) {
         console.log(`Capturando ${r.name}...`);

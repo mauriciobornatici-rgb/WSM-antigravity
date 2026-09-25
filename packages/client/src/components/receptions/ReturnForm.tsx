@@ -249,6 +249,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                                         variant="ghost"
                                         size="icon"
                                         type="button"
+                                        aria-label={`Eliminar ${item.product_name}`}
                                         onClick={() => handleRemoveItem(index)}
                                         className="h-8 w-8 text-red-500 hover:bg-red-50 hover:text-red-700"
                                     >

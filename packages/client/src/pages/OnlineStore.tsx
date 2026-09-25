@@ -154,7 +154,7 @@ function ProductDialog({ open, connected, saving, onClose, onSave }: {
                         </fieldset>
                     ))}
                 </div>
-                <label className={`flex items-start gap-3 rounded-lg border p-3 ${connected ? "cursor-pointer" : "opacity-60"}`}><input type="checkbox" className="mt-1" checked={draft.publish} disabled={!connected} onChange={(e) => setDraft({ ...draft, publish: e.target.checked })} /><span><span className="block text-sm font-medium">Publicar en Tiendanube al guardar</span><span className="block text-xs text-muted-foreground">Si queda desmarcado se conserva como borrador local. {connected ? "" : "Conectá la tienda para habilitar la publicación."}</span></span></label>
+                <label htmlFor="online-publish" aria-label="Publicar en Tiendanube al guardar" className={`flex items-start gap-3 rounded-lg border p-3 ${connected ? "cursor-pointer" : "opacity-60"}`}><input type="checkbox" id="online-publish" className="mt-1" checked={draft.publish} disabled={!connected} onChange={(e) => setDraft({ ...draft, publish: e.target.checked })} /><span><span className="block text-sm font-medium">Publicar en Tiendanube al guardar</span><span className="block text-xs text-muted-foreground">Si queda desmarcado se conserva como borrador local. {connected ? "" : "Conectá la tienda para habilitar la publicación."}</span></span></label>
                 <DialogFooter><Button variant="outline" onClick={close}>Cancelar</Button><Button disabled={!valid || saving} onClick={() => onSave(draft)}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Guardar producto</Button></DialogFooter>
             </DialogContent>
         </Dialog>

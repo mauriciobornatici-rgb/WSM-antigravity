@@ -14,6 +14,12 @@ const env = getEnvConfig();
 const JWT_SECRET = env.jwtSecret;
 const JWT_EXPIRES_IN = env.jwtExpiresIn;
 
+let dummyPasswordHashPromise = null;
+const getDummyPasswordHash = () => {
+    dummyPasswordHashPromise ??= bcrypt.hash(crypto.randomUUID(), SALT_ROUNDS);
+    return dummyPasswordHashPromise;
+};
+
 // Unified login handler with full audit logging
 export const login = catchAsync(async (req, res) => {
     const { email, password } = req.body;
@@ -21,6 +27,8 @@ export const login = catchAsync(async (req, res) => {
     const [users] = await pool.query('SELECT * FROM users WHERE email = ? AND status = "active" AND deleted_at IS NULL', [email]);
 
     if (users.length === 0) {
+        // Same bcrypt cost as a real user, so response time does not reveal which emails exist.
+        await bcrypt.compare(password, await getDummyPasswordHash());
         return res.status(401).json({ error: 'invalid_credentials', message: 'Credenciales inválidas' });
     }
 
@@ -41,7 +49,7 @@ export const login = catchAsync(async (req, res) => {
     const token = jwt.sign(
         { id: user.id, email: user.email, role: user.role, token_version: Number(user.token_version || 0) },
         JWT_SECRET,
-        { expiresIn: JWT_EXPIRES_IN }
+        { expiresIn: JWT_EXPIRES_IN, algorithm: 'HS256' }
     );
 
     const connection = await pool.getConnection();

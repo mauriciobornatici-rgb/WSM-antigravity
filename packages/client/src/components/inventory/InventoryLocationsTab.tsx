@@ -114,10 +114,10 @@ export function InventoryLocationsTab({
                                         <p className="font-mono text-[11px] text-muted-foreground">{location.code}</p>
                                     </div>
                                     <div className="flex gap-1">
-                                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openLocationDialog(location)} title="Editar ubicación">
+                                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openLocationDialog(location)} title="Editar ubicación" aria-label={`Editar ubicación ${location.name}`}>
                                             <Pencil className="h-3.5 w-3.5" />
                                         </Button>
-                                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => void toggleLocation(location)} title={location.active ? "Archivar" : "Reactivar"}>
+                                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => void toggleLocation(location)} title={location.active ? "Archivar" : "Reactivar"} aria-label={`${location.active ? "Archivar" : "Reactivar"} ubicación ${location.name}`}>
                                             <Power className="h-3.5 w-3.5" />
                                         </Button>
                                     </div>
@@ -216,6 +216,7 @@ export function InventoryLocationsTab({
                                                                 className="h-7 w-7 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
                                                                 onClick={() => onStartTransfer(item.product_id, item.location)}
                                                                 title="Reubicar este stock"
+                                                                aria-label={`Reubicar stock en ${item.location}`}
                                                             >
                                                                 <Move className="h-3.5 w-3.5" />
                                                             </Button>

@@ -84,7 +84,7 @@ export function AuditLogTab({
                                             <TableCell className="text-right">
                                                 <Dialog>
                                                     <DialogTrigger asChild>
-                                                        <Button variant="ghost" size="icon">
+                                                        <Button variant="ghost" size="icon" aria-label={`Ver detalle de ${log.action.replace(/_/g, ' ')}`}>
                                                             <Eye className="h-4 w-4" />
                                                         </Button>
                                                     </DialogTrigger>

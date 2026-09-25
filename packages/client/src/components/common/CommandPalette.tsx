@@ -111,6 +111,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="p-0 max-w-2xl overflow-hidden border border-border shadow-2xl rounded-xl">
+                {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- el keydown navega la lista de resultados y llega por burbujeo desde el Input enfocable de más abajo, no requiere interacción directa sobre el div */}
                 <div className="flex items-center px-4 border-b border-border bg-muted/20" onKeyDown={handleKeyDownInDialog}>
                     <Search className="h-5 w-5 text-muted-foreground shrink-0 mr-3" />
                     <Input

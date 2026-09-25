@@ -264,6 +264,7 @@ export function ClientPaymentDialog({
                                         type="button"
                                         variant="ghost"
                                         size="icon"
+                                        aria-label="Eliminar medio de pago"
                                         onClick={() =>
                                             setPaymentLines((prev) => (prev.length <= 1 ? prev : prev.filter((entry) => entry.id !== line.id)))
                                         }

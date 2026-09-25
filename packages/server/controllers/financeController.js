@@ -94,7 +94,9 @@ export const getOpenShift = catchAsync(async (req, res) => {
 
 export const openShift = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const { opening_balance, opened_by } = req.body;
+    const { opening_balance } = req.body;
+    // The actor is always the authenticated user; a client-supplied opened_by is ignored.
+    const opened_by = req.user?.id || null;
     const connection = await pool.getConnection();
 
     try {
@@ -115,7 +117,7 @@ export const openShift = catchAsync(async (req, res) => {
         await connection.query(`
             INSERT INTO cash_shifts (id, cash_register_id, opened_by, opening_balance, expected_balance, status)
             VALUES (?, ?, ?, ?, ?, 'open')
-        `, [shiftId, id, opened_by || req.user?.id || null, opening_balance || 0, opening_balance || 0]);
+        `, [shiftId, id, opened_by, opening_balance || 0, opening_balance || 0]);
 
         await connection.query(
             'UPDATE cash_registers SET status = "open", current_shift_id = ? WHERE id = ?',
@@ -123,14 +125,14 @@ export const openShift = catchAsync(async (req, res) => {
         );
 
         await auditService.log({
-            user_id: req.user?.id || opened_by || null,
+            user_id: opened_by,
             action: 'OPEN_SHIFT',
             entity_type: 'cash_shift',
             entity_id: shiftId,
             new_values: {
                 cash_register_id: id,
                 opening_balance: opening_balance || 0,
-                opened_by: opened_by || req.user?.id || null,
+                opened_by,
                 status: 'open'
             },
             ip_address: getRequestIp(req)
@@ -147,7 +149,9 @@ export const openShift = catchAsync(async (req, res) => {
 
 export const closeShift = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const { actual_balance, notes, closed_by } = req.body;
+    const { actual_balance, notes } = req.body;
+    // The actor is always the authenticated user; a client-supplied closed_by is ignored.
+    const closed_by = req.user?.id || null;
     const connection = await pool.getConnection();
 
     try {
@@ -180,7 +184,7 @@ export const closeShift = catchAsync(async (req, res) => {
                 difference = ?,
                 notes = ?
             WHERE id = ?
-        `, [closed_by || req.user?.id || null, expectedBalance, actualBalance, difference, notes || null, id]);
+        `, [closed_by, expectedBalance, actualBalance, difference, notes || null, id]);
 
         await connection.query(
             'UPDATE cash_registers SET status = "closed", current_shift_id = NULL WHERE id = ?',
@@ -188,7 +192,7 @@ export const closeShift = catchAsync(async (req, res) => {
         );
 
         await auditService.log({
-            user_id: req.user?.id || closed_by || null,
+            user_id: closed_by,
             action: 'CLOSE_SHIFT',
             entity_type: 'cash_shift',
             entity_id: id,
@@ -202,7 +206,7 @@ export const closeShift = catchAsync(async (req, res) => {
                 expected_balance: expectedBalance,
                 actual_balance: actualBalance,
                 difference,
-                closed_by: closed_by || req.user?.id || null,
+                closed_by,
                 notes: notes || null
             },
             ip_address: getRequestIp(req)
