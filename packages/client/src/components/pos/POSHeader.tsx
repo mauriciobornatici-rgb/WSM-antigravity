@@ -1,4 +1,4 @@
-import { ArrowLeft, History, Moon, PauseCircle, RefreshCw, Sun, Wifi, WifiOff } from "lucide-react";
+import { ArrowLeft, History, Moon, Package, PauseCircle, RefreshCw, Sun, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface POSHeaderProps {
@@ -6,6 +6,8 @@ interface POSHeaderProps {
     onOpenHistory: () => void;
     parkedCartsCount: number;
     onOpenParkedCarts: () => void;
+    pickupOrdersCount?: number;
+    onOpenPickupOrders?: () => void;
     offlineQueueCount: number;
     syncingOffline: boolean;
     onSyncOffline: () => void;
@@ -19,6 +21,8 @@ export function POSHeader({
     onOpenHistory,
     parkedCartsCount,
     onOpenParkedCarts,
+    pickupOrdersCount = 0,
+    onOpenPickupOrders,
     offlineQueueCount,
     syncingOffline,
     onSyncOffline,
@@ -50,6 +54,24 @@ export function POSHeader({
                     <span>Historial</span>
                     <kbd className="hidden md:inline-block text-[9px] bg-muted/40 px-1 rounded font-mono">F3</kbd>
                 </Button>
+
+                {onOpenPickupOrders && (
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className={`gap-1.5 ${
+                            pickupOrdersCount > 0
+                                ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-semibold hover:bg-emerald-500/20"
+                                : ""
+                        }`}
+                        onClick={onOpenPickupOrders}
+                        title="Pedidos listos para retiro en mostrador"
+                    >
+                        <Package className="h-4 w-4 text-emerald-500" />
+                        <span>Retiro Mostrador ({pickupOrdersCount})</span>
+                    </Button>
+                )}
 
                 <Button
                     type="button"

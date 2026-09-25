@@ -26,10 +26,280 @@ function splitStatements(sql) {
     return sql.split(';').map((statement) => statement.trim()).filter(Boolean);
 }
 
+const DOCUMENT_SEQUENCE_MIGRATION = '002_create_document_sequences.sql';
+const DOCUMENT_SEQUENCE_CREATE_SIGNATURE = /^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+document_sequences\s+\(\s+scope\s+VARCHAR\(120\)\s+PRIMARY\s+KEY,\s+last_value\s+BIGINT\s+NOT\s+NULL\s+DEFAULT\s+0,\s+updated_at\s+TIMESTAMP\s+DEFAULT\s+CURRENT_TIMESTAMP\s+ON\s+UPDATE\s+CURRENT_TIMESTAMP\s+\)$/i;
+const PRODUCT_CATALOG_OPTIONS_MIGRATION = '039_create_product_catalog_options.sql';
+
+const PRODUCT_CATALOG_OPTION_SEEDS = Object.freeze([
+    ['group', 'category'],
+    ['brand', 'brand'],
+    ['size', 'size'],
+    ['color', 'color'],
+].map(([type, column]) => Object.freeze({
+    original: `INSERT INTO product_catalog_options (id, option_key, type, name, normalized_name) SELECT UUID(), SHA2(CONCAT('${type}||', LOWER(TRIM(${column}))), 256), '${type}', MIN(TRIM(${column})), LOWER(TRIM(${column})) FROM products WHERE deleted_at IS NULL AND NULLIF(TRIM(${column}), '') IS NOT NULL GROUP BY LOWER(TRIM(${column})) ON DUPLICATE KEY UPDATE name = VALUES(name)`,
+    prepared: `INSERT INTO product_catalog_options (id, option_key, type, name, normalized_name) SELECT UUID(), SHA2(CONCAT('${type}||', LOWER(MIN(TRIM(${column})))), 256), '${type}', MIN(TRIM(${column})), LOWER(MIN(TRIM(${column}))) FROM products WHERE deleted_at IS NULL AND NULLIF(TRIM(${column}), '') IS NOT NULL GROUP BY LOWER(TRIM(${column})) ON DUPLICATE KEY UPDATE name = VALUES(name)`,
+})));
+
+function normalizeMigrationStatement(statement) {
+    return statement.replace(/\s+/g, ' ').trim();
+}
+
+function prepareMigrationStatement(file, statement) {
+    const normalizedStatement = normalizeMigrationStatement(statement);
+
+    if (file === DOCUMENT_SEQUENCE_MIGRATION && DOCUMENT_SEQUENCE_CREATE_SIGNATURE.test(normalizedStatement)) {
+        return statement.replace(
+            /(\bscope\s+VARCHAR\(120\)\s+PRIMARY\s+KEY\s*,\s*)(last_value)(\s+BIGINT\s+NOT\s+NULL\s+DEFAULT\s+0\b)/i,
+            (_match, prefix, columnName, suffix) => `${prefix}\`${columnName}\`${suffix}`
+        );
+    }
+
+    if (file !== PRODUCT_CATALOG_OPTIONS_MIGRATION) return statement;
+    return PRODUCT_CATALOG_OPTION_SEEDS.find(({ original }) => original === normalizedStatement)?.prepared ?? statement;
+}
+
+function skipSqlTrivia(sql, start = 0) {
+    let index = start;
+
+    while (index < sql.length) {
+        while (index < sql.length && /\s/.test(sql[index])) index += 1;
+
+        if (sql.startsWith('--', index) || sql[index] === '#') {
+            const lineEnd = sql.indexOf('\n', index + (sql[index] === '#' ? 1 : 2));
+            index = lineEnd === -1 ? sql.length : lineEnd + 1;
+            continue;
+        }
+
+        if (sql.startsWith('/*', index)) {
+            const commentEnd = sql.indexOf('*/', index + 2);
+            index = commentEnd === -1 ? sql.length : commentEnd + 2;
+            continue;
+        }
+
+        break;
+    }
+
+    return index;
+}
+
+function readSqlIdentifier(sql, start = 0) {
+    let index = skipSqlTrivia(sql, start);
+    if (index >= sql.length) return null;
+
+    const tokenStart = index;
+    let quote = null;
+    while (index < sql.length) {
+        const character = sql[index];
+        if (quote) {
+            if (character === '\\') {
+                index += 2;
+                continue;
+            }
+            if (character === quote) {
+                if (sql[index + 1] === quote) {
+                    index += 2;
+                    continue;
+                }
+                quote = null;
+            }
+            index += 1;
+            continue;
+        }
+
+        if (character === '`' || character === '"') {
+            quote = character;
+            index += 1;
+            continue;
+        }
+        if (/\s/.test(character)) break;
+        index += 1;
+    }
+
+    const token = sql.slice(tokenStart, index);
+    if (!token) return null;
+
+    let lastSegmentStart = 0;
+    quote = null;
+    for (let position = 0; position < token.length; position += 1) {
+        const character = token[position];
+        if (quote) {
+            if (character === quote && token[position + 1] === quote) {
+                position += 1;
+                continue;
+            }
+            if (character === quote) quote = null;
+            continue;
+        }
+        if (character === '`' || character === '"') {
+            quote = character;
+        } else if (character === '.') {
+            lastSegmentStart = position + 1;
+        }
+    }
+
+    let name = token.slice(lastSegmentStart).trim();
+    if ((name.startsWith('`') && name.endsWith('`')) || (name.startsWith('"') && name.endsWith('"'))) {
+        name = name.slice(1, -1).replaceAll(name[0] + name[0], name[0]);
+    }
+
+    return { token, name, end: index, qualified: lastSegmentStart > 0 };
+}
+
+function splitTopLevelComma(sql) {
+    const actions = [];
+    let actionStart = 0;
+    let depth = 0;
+    let quote = null;
+    let index = 0;
+
+    while (index < sql.length) {
+        const character = sql[index];
+
+        if (quote) {
+            if (character === '\\') {
+                index += 2;
+                continue;
+            }
+            if (character === quote) {
+                if (sql[index + 1] === quote) {
+                    index += 2;
+                    continue;
+                }
+                quote = null;
+            }
+            index += 1;
+            continue;
+        }
+
+        if (sql.startsWith('/*', index)) {
+            const commentEnd = sql.indexOf('*/', index + 2);
+            index = commentEnd === -1 ? sql.length : commentEnd + 2;
+            continue;
+        }
+        if (sql.startsWith('--', index) || character === '#') {
+            const lineEnd = sql.indexOf('\n', index + (character === '#' ? 1 : 2));
+            index = lineEnd === -1 ? sql.length : lineEnd + 1;
+            continue;
+        }
+        if (character === '`' || character === '\'' || character === '"') {
+            quote = character;
+            index += 1;
+            continue;
+        }
+        if (character === '(') {
+            depth += 1;
+        } else if (character === ')') {
+            depth = Math.max(0, depth - 1);
+        } else if (character === ',' && depth === 0) {
+            const action = sql.slice(actionStart, index).trim();
+            if (action) actions.push(action);
+            actionStart = index + 1;
+        }
+        index += 1;
+    }
+
+    const finalAction = sql.slice(actionStart).trim();
+    if (finalAction) actions.push(finalAction);
+    return actions;
+}
+
+function parseAlterTableStatement(statement) {
+    const statementStart = skipSqlTrivia(statement);
+    const alterMatch = /^ALTER\s+TABLE\b/i.exec(statement.slice(statementStart));
+    if (!alterMatch) return null;
+
+    const table = readSqlIdentifier(statement, statementStart + alterMatch[0].length);
+    if (!table) return null;
+    const actionStart = skipSqlTrivia(statement, table.end);
+    const actionSql = statement.slice(actionStart);
+    if (!actionSql.trim()) return null;
+
+    return {
+        tableToken: table.token,
+        tableName: table.name,
+        tableQualified: table.qualified,
+        actions: splitTopLevelComma(actionSql),
+    };
+}
+
+function parseConditionalAddColumn(action) {
+    const actionStart = skipSqlTrivia(action);
+    const body = action.slice(actionStart);
+    const match = /^ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/i.exec(body);
+    if (!match) return null;
+
+    const column = readSqlIdentifier(body, match[0].length);
+    if (!column) return null;
+    return {
+        columnName: column.name,
+        actionStart,
+        clauseLength: match[0].length,
+    };
+}
+
+function removeConditionalClause(action, parsedAction) {
+    const body = action.slice(parsedAction.actionStart);
+    const addColumnPrefix = /^ADD\s+COLUMN/i.exec(body)?.[0];
+    if (!addColumnPrefix) return action;
+    return `${action.slice(0, parsedAction.actionStart)}${addColumnPrefix}${body.slice(parsedAction.clauseLength)}`;
+}
+
+async function findExistingColumns(connection, tableName, columns) {
+    const placeholders = columns.map(() => '?').join(', ');
+    const [rows] = await connection.query(
+        `SELECT COLUMN_NAME
+         FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE()
+           AND TABLE_NAME = ?
+           AND COLUMN_NAME IN (${placeholders})`,
+        [tableName, ...columns]
+    );
+    return new Set(rows.map((row) => String(row.COLUMN_NAME ?? row.column_name).toLowerCase()));
+}
+
+async function prepareAlterTableStatement(connection, statement) {
+    const parsed = parseAlterTableStatement(statement);
+    if (!parsed) return { sql: statement, transformed: false };
+
+    const conditionalActions = parsed.actions.map((action) => ({
+        action,
+        parsedAction: parseConditionalAddColumn(action),
+    })).filter(({ parsedAction }) => parsedAction);
+    if (conditionalActions.length === 0) return { sql: statement, transformed: false };
+    if (parsed.tableQualified) {
+        throw new Error(
+            `Conditional ALTER TABLE requires an unqualified table name; received ${parsed.tableToken}`
+        );
+    }
+
+    const existingColumns = await findExistingColumns(
+        connection,
+        parsed.tableName,
+        conditionalActions.map(({ parsedAction }) => parsedAction.columnName)
+    );
+    const transformedActions = parsed.actions
+        .filter((action) => {
+            const parsedAction = parseConditionalAddColumn(action);
+            return !parsedAction || !existingColumns.has(parsedAction.columnName.toLowerCase());
+        })
+        .map((action) => {
+            const parsedAction = parseConditionalAddColumn(action);
+            return parsedAction ? removeConditionalClause(action, parsedAction) : action;
+        });
+
+    if (transformedActions.length === 0) {
+        return { sql: null, transformed: true, skipped: true };
+    }
+
+    return {
+        sql: `ALTER TABLE ${parsed.tableToken} ${transformedActions.join(',\n')}`,
+        transformed: true,
+        skipped: false,
+    };
+}
+
 function isDdlStatement(statement) {
-    const withoutLeadingComments = statement
-        .replace(/^(?:\s*--[^\r\n]*(?:\r?\n|$))+/g, '')
-        .trim();
+    const withoutLeadingComments = statement.slice(skipSqlTrivia(statement)).trim();
     return /^(CREATE|ALTER|DROP|TRUNCATE|RENAME)\b/i.test(withoutLeadingComments);
 }
 
@@ -47,6 +317,11 @@ function isRecoverableAlreadyAppliedDdl(error, statement) {
 export const migrationInternals = Object.freeze({
     checksum,
     splitStatements,
+    prepareMigrationStatement,
+    splitAlterTableActions: splitTopLevelComma,
+    parseAlterTableStatement,
+    parseConditionalAddColumn,
+    prepareAlterTableStatement,
     isDdlStatement,
     isRecoverableAlreadyAppliedDdl,
     isAcceptedHistoricalChecksum
@@ -70,7 +345,13 @@ export const runMigrations = async () => {
                 executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
-        await connection.query('ALTER TABLE _migrations ADD COLUMN IF NOT EXISTS checksum CHAR(64) NULL AFTER name');
+        const migrationsChecksumStatement = await prepareAlterTableStatement(
+            connection,
+            'ALTER TABLE _migrations ADD COLUMN IF NOT EXISTS checksum CHAR(64) NULL AFTER name'
+        );
+        if (migrationsChecksumStatement.sql) {
+            await connection.query(migrationsChecksumStatement.sql);
+        }
         await connection.query(`
             CREATE TABLE IF NOT EXISTS _migration_steps (
                 migration_name VARCHAR(255) NOT NULL,
@@ -130,11 +411,21 @@ export const runMigrations = async () => {
                 const transactional = !isDdlStatement(statement);
                 if (transactional) await connection.beginTransaction();
                 try {
-                    try {
-                        await connection.query(statement);
-                    } catch (error) {
-                        if (!isRecoverableAlreadyAppliedDdl(error, statement)) throw error;
-                        console.warn(`Statement ${index + 1} of ${file} was already applied; recording recovery state.`);
+                    const migrationStatement = prepareMigrationStatement(file, statement);
+                    const preparedStatement = await prepareAlterTableStatement(connection, migrationStatement);
+                    if (preparedStatement.sql) {
+                        try {
+                            await connection.query(preparedStatement.sql);
+                        } catch (error) {
+                            // A transformed ALTER was already checked against
+                            // INFORMATION_SCHEMA. A failure must remain fatal;
+                            // do not reinterpret it as a broad duplicate-DDL
+                            // recovery case.
+                            if (preparedStatement.transformed || !isRecoverableAlreadyAppliedDdl(error, statement)) {
+                                throw error;
+                            }
+                            console.warn(`Statement ${index + 1} of ${file} was already applied; recording recovery state.`);
+                        }
                     }
 
                     await connection.query(

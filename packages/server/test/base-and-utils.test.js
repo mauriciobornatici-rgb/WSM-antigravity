@@ -136,14 +136,22 @@ test('document sequences advance from persisted, minimum and safe fallback value
         const calls = [];
         const connection = { query: async (sql, params) => {
             calls.push({ sql: String(sql), params });
-            if (String(sql).startsWith('SELECT last_value')) return [row ? [row] : []];
+            if (String(sql).startsWith('SELECT `last_value`')) return [row ? [row] : []];
             return [{ affectedRows: 1 }];
         } };
         const value = await nextDocumentSequence(connection, 'invoice:B:1', minimum);
         return { value, calls };
     };
 
-    assert.equal((await run({ last_value: 8 }, 3)).value, 9);
+    const persisted = await run({ last_value: 8 }, 3);
+    assert.equal(persisted.value, 9);
+    assert.match(persisted.calls[0].sql, /document_sequences \(scope, `last_value`\)/);
+    assert.deepEqual(persisted.calls[0].params, ['invoice:B:1']);
+    assert.match(persisted.calls[1].sql, /^SELECT `last_value` FROM document_sequences/);
+    assert.deepEqual(persisted.calls[1].params, ['invoice:B:1']);
+    assert.match(persisted.calls[2].sql, /SET `last_value` = \?/);
+    assert.deepEqual(persisted.calls[2].params, [9, 'invoice:B:1']);
+
     const minimum = await run({ last_value: 2 }, 10);
     assert.equal(minimum.value, 11);
     assert.deepEqual(minimum.calls.at(-1).params, [11, 'invoice:B:1']);

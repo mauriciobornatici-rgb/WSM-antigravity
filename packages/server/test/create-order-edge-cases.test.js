@@ -161,3 +161,30 @@ test('invoice authorization handles missing, replay, success and AFIP rollback',
     afipService.authorizeVoucher = async () => { throw new Error('AFIP offline'); };
     await assert.rejects(() => useCase.execute('i', 'u'), /AFIP offline/);
 });
+
+test('order creation with VAT and payments matches full gross total (POS checkout)', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT id, sale_price, name FROM products')) return [[{ id: 'p', sale_price: 1200000, name: 'Monitor' }]];
+        if (statement.startsWith('SELECT id, location')) return [[{ id: 'inv', available_quantity: 10 }]];
+        return [[]];
+    });
+    const originalAudit = auditService.log;
+    auditService.log = async () => {};
+    t.after(() => { auditService.log = originalAudit; });
+
+    const result = await new CreateOrderUseCase().execute({
+        external_source: 'pos',
+        external_id: '0a252ca9-9af2-455d-89d7-87150716f8ae',
+        total_amount: 1452000,
+        items: [{ product_id: 'p', quantity: 1, unit_price: 1200000, vat_rate: 21.00 }],
+        payments: [{ method: 'cash', amount: 1452000 }]
+    }, 'u');
+
+    assert.equal(result.total_amount, 1452000);
+    const orderInsert = calls.find((call) => call.sql.includes('INSERT INTO orders'));
+    assert.ok(orderInsert.params.includes(1452000));
+});
+

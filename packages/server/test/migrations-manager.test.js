@@ -34,6 +34,170 @@ test('migration statement splitter ignores empty trailing statements', () => {
     );
 });
 
+test('legacy document sequence quoting is scoped to migration 002 and preserves the original statement', async () => {
+    const manifest = await getMigrationManifest();
+    const target = manifest.find(({ name }) => name === '002_create_document_sequences.sql');
+    const originalStatement = migrationInternals.splitStatements(target.content)[0];
+    const preparedStatement = migrationInternals.prepareMigrationStatement(target.name, originalStatement);
+
+    assert.match(preparedStatement, /CREATE TABLE IF NOT EXISTS document_sequences/);
+    assert.match(preparedStatement, /`last_value` BIGINT NOT NULL DEFAULT 0/);
+    assert.notEqual(preparedStatement, originalStatement);
+    assert.equal(
+        migrationInternals.prepareMigrationStatement('003_add_user_token_version.sql', originalStatement),
+        originalStatement
+    );
+    assert.equal(
+        migrationInternals.prepareMigrationStatement(target.name, 'CREATE TABLE IF NOT EXISTS other_table (last_value BIGINT)'),
+        'CREATE TABLE IF NOT EXISTS other_table (last_value BIGINT)'
+    );
+});
+
+test('migration 039 catalog seeds use deterministic aggregate representatives under strict grouping', async () => {
+    const manifest = await getMigrationManifest();
+    const target = manifest.find(({ name }) => name === '039_create_product_catalog_options.sql');
+    const seedStatements = migrationInternals.splitStatements(target.content)
+        .filter((statement) => statement.startsWith('INSERT INTO product_catalog_options'));
+    const expectedSeeds = [
+        ['group', 'category'],
+        ['brand', 'brand'],
+        ['size', 'size'],
+        ['color', 'color'],
+    ];
+
+    assert.equal(seedStatements.length, expectedSeeds.length);
+    for (const [index, [type, column]] of expectedSeeds.entries()) {
+        const originalStatement = seedStatements[index];
+        const preparedStatement = migrationInternals.prepareMigrationStatement(target.name, originalStatement);
+        assert.match(preparedStatement, new RegExp(
+            `SHA2\\(CONCAT\\('${type}\\|\\|', LOWER\\(MIN\\(TRIM\\(${column}\\)\\)\\)\\), 256\\)`
+        ));
+        assert.match(preparedStatement, new RegExp(
+            `'${type}', MIN\\(TRIM\\(${column}\\)\\), LOWER\\(MIN\\(TRIM\\(${column}\\)\\)\\)`
+        ));
+        assert.match(preparedStatement, new RegExp(`GROUP BY LOWER\\(TRIM\\(${column}\\)\\)`));
+        assert.doesNotMatch(preparedStatement, new RegExp(
+            `SHA2\\(CONCAT\\('${type}\\|\\|', LOWER\\(TRIM\\(${column}\\)\\)\\), 256\\)`
+        ));
+        assert.equal(
+            migrationInternals.prepareMigrationStatement('038_create_product_families.sql', originalStatement),
+            originalStatement
+        );
+        assert.equal(
+            migrationInternals.prepareMigrationStatement(target.name, originalStatement.replaceAll('product_catalog_options', 'other_table')),
+            originalStatement.replaceAll('product_catalog_options', 'other_table')
+        );
+        assert.notEqual(preparedStatement, originalStatement);
+    }
+
+    const updateStatement = migrationInternals.splitStatements(target.content)
+        .find((statement) => statement.startsWith('UPDATE products'));
+    assert.equal(migrationInternals.prepareMigrationStatement(target.name, updateStatement), updateStatement);
+});
+
+test('ALTER action splitter keeps commas inside types, strings, backticks and comments', () => {
+    const tick = String.fromCharCode(96);
+    const parsed = migrationInternals.parseAlterTableStatement(`
+        ALTER TABLE ${tick}quoted_table${tick}
+            MODIFY COLUMN amount DECIMAL(12,2) NOT NULL,
+            ADD COLUMN IF NOT EXISTS ${tick}state,code${tick} ENUM('a,b','c') NULL,
+            /* comment, with a comma */ ADD COLUMN IF NOT EXISTS notes TEXT NULL;
+    `);
+
+    assert.equal(parsed.tableName, 'quoted_table');
+    assert.equal(parsed.actions.length, 3);
+    assert.match(parsed.actions[0], /DECIMAL\(12,2\)/);
+    assert.match(parsed.actions[1], /ENUM\('a,b','c'\)/);
+    assert.match(parsed.actions[2], /comment, with a comma/);
+});
+
+test('conditional ALTER preparation skips present columns and removes only the conditional clause', async () => {
+    const calls = [];
+    const connection = {
+        async query(sql, params) {
+            calls.push({ sql: String(sql), params });
+            return [[{ COLUMN_NAME: 'already_there' }]];
+        },
+    };
+
+    const skipped = await migrationInternals.prepareAlterTableStatement(
+        connection,
+        'ALTER TABLE example ADD COLUMN IF NOT EXISTS already_there VARCHAR(30) NULL'
+    );
+    assert.equal(skipped.sql, null);
+    assert.equal(skipped.transformed, true);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].sql, /INFORMATION_SCHEMA\.COLUMNS/);
+    assert.deepEqual(calls[0].params, ['example', 'already_there']);
+
+    calls.length = 0;
+    const added = await migrationInternals.prepareAlterTableStatement(
+        connection,
+        'ALTER TABLE example ADD COLUMN IF NOT EXISTS new_column VARCHAR(30) NULL'
+    );
+    assert.equal(added.transformed, true);
+    assert.match(added.sql, /ADD COLUMN new_column VARCHAR\(30\) NULL/);
+    assert.doesNotMatch(added.sql, /IF NOT EXISTS/);
+});
+
+test('conditional ALTER preparation preserves MODIFY order and filters mixed actions', async () => {
+    const tick = String.fromCharCode(96);
+    const connection = {
+        async query() {
+            return [[{ COLUMN_NAME: 'state,code' }]];
+        },
+    };
+    const prepared = await migrationInternals.prepareAlterTableStatement(
+        connection,
+        `ALTER TABLE ${tick}widgets${tick}
+            MODIFY COLUMN amount DECIMAL(12,2) NOT NULL,
+            ADD COLUMN IF NOT EXISTS ${tick}state,code${tick} ENUM('a,b','c') NULL,
+            ADD COLUMN IF NOT EXISTS notes TEXT NULL`
+    );
+
+    assert.equal(prepared.transformed, true);
+    assert.match(prepared.sql, new RegExp(`^ALTER TABLE ${tick}widgets${tick} MODIFY COLUMN amount DECIMAL\\(12,2\\) NOT NULL,`));
+    assert.doesNotMatch(prepared.sql, /state,code/);
+    assert.match(prepared.sql, /ADD COLUMN notes TEXT NULL/);
+    assert.doesNotMatch(prepared.sql, /IF NOT EXISTS/);
+});
+
+test('conditional ALTER metadata failures remain fatal', async () => {
+    const failure = new Error('metadata unavailable');
+    const connection = {
+        async query() {
+            throw failure;
+        },
+    };
+
+    await assert.rejects(
+        () => migrationInternals.prepareAlterTableStatement(
+            connection,
+            'ALTER TABLE example ADD COLUMN IF NOT EXISTS new_column VARCHAR(30) NULL'
+        ),
+        failure
+    );
+});
+
+test('conditional ALTER rejects qualified table names before metadata lookup', async () => {
+    let metadataLookups = 0;
+    const connection = {
+        async query() {
+            metadataLookups += 1;
+            return [[]];
+        },
+    };
+
+    await assert.rejects(
+        () => migrationInternals.prepareAlterTableStatement(
+            connection,
+            'ALTER TABLE other_schema.example ADD COLUMN IF NOT EXISTS new_column VARCHAR(30) NULL'
+        ),
+        /requires an unqualified table name/
+    );
+    assert.equal(metadataLookups, 0);
+});
+
 test('migration runner distinguishes implicit-commit DDL from transactional data changes', () => {
     assert.equal(migrationInternals.isDdlStatement('ALTER TABLE x ADD COLUMN y INT'), true);
     assert.equal(migrationInternals.isDdlStatement('-- schema\nCREATE TABLE x (id INT)'), true);
@@ -105,6 +269,7 @@ test('runMigrations executes every pending migration and releases its advisory l
     let began = 0;
     let committed = 0;
     let released = false;
+    const recordedSteps = [];
     const connection = {
         async query(sql, params) {
             const statement = String(sql);
@@ -112,6 +277,7 @@ test('runMigrations executes every pending migration and releases its advisory l
             if (statement.includes('GET_LOCK')) return [[{ acquired: 1 }]];
             if (statement === 'SELECT name, checksum FROM _migrations') return [[]];
             if (statement.includes('SELECT statement_index')) return [[]];
+            if (statement.startsWith('INSERT INTO _migration_steps')) recordedSteps.push(params);
             return [[]];
         },
         async beginTransaction() { began += 1; },
@@ -134,6 +300,40 @@ test('runMigrations executes every pending migration and releases its advisory l
     assert.ok(calls.some((call) => call.sql.includes('INSERT INTO _migrations')));
     assert.ok(calls.some((call) => call.sql.includes('RELEASE_LOCK')));
     assert.equal(began, committed);
+    const target = (await getMigrationManifest()).find(({ name }) => name === '004_add_products_barcode.sql');
+    const targetStatement = migrationInternals.splitStatements(target.content)[0];
+    assert.ok(recordedSteps.some(([name, index, statementChecksum]) => (
+        name === target.name
+        && index === 0
+        && statementChecksum === migrationInternals.checksum(targetStatement)
+    )));
+
+    const sequenceTarget = (await getMigrationManifest()).find(({ name }) => name === '002_create_document_sequences.sql');
+    const sequenceStatement = migrationInternals.splitStatements(sequenceTarget.content)[0];
+    const sequenceQuery = calls.find(({ sql }) => sql.startsWith('CREATE TABLE IF NOT EXISTS document_sequences'));
+    assert.ok(sequenceQuery);
+    assert.match(sequenceQuery.sql, /`last_value` BIGINT NOT NULL DEFAULT 0/);
+    assert.ok(recordedSteps.some(([name, index, statementChecksum]) => (
+        name === sequenceTarget.name
+        && index === 0
+        && statementChecksum === migrationInternals.checksum(sequenceStatement)
+    )));
+
+    const optionTarget = (await getMigrationManifest()).find(({ name }) => name === '039_create_product_catalog_options.sql');
+    const optionEntries = migrationInternals.splitStatements(optionTarget.content)
+        .map((statement, index) => ({ statement, index }))
+        .filter(({ statement }) => statement.startsWith('INSERT INTO product_catalog_options'));
+    const optionQueries = calls.filter(({ sql }) => sql.startsWith('INSERT INTO product_catalog_options'));
+    assert.equal(optionQueries.length, 4);
+    assert.equal(optionQueries.filter(({ sql }) => sql.includes('LOWER(MIN')).length, 4);
+    assert.equal(optionQueries.filter(({ sql }) => sql.includes('GROUP BY LOWER')).length, 4);
+    for (const { statement, index } of optionEntries) {
+        assert.ok(recordedSteps.some(([name, statementIndex, statementChecksum]) => (
+            name === optionTarget.name
+            && statementIndex === index
+            && statementChecksum === migrationInternals.checksum(statement)
+        )));
+    }
 });
 
 test('runMigrations rejects lock contention and still releases the connection', async (t) => {
@@ -258,6 +458,37 @@ test('runMigrations records a recoverable already-applied DDL statement', async 
     await runMigrations();
     assert.equal(recordedSteps.length, 1);
     assert.equal(recordedSteps[0][0], target.name);
+});
+
+test('runMigrations does not recover a transformed ALTER failure as duplicate DDL', async (t) => {
+    const manifest = await getMigrationManifest();
+    const target = manifest.find(({ name }) => name === '004_add_products_barcode.sql');
+    const originalGetConnection = pool.getConnection;
+    const recordedSteps = [];
+    silenceMigrationLogs(t);
+    pool.getConnection = async () => ({
+        async query(sql, params) {
+            const statement = String(sql);
+            if (statement.includes('GET_LOCK')) return [[{ acquired: 1 }]];
+            if (statement === 'SELECT name, checksum FROM _migrations') {
+                return [manifest.filter(({ name }) => name !== target.name).map(({ name, checksum }) => ({ name, checksum }))];
+            }
+            if (statement.includes('SELECT statement_index')) return [[]];
+            if (statement.includes('INFORMATION_SCHEMA.COLUMNS')) return [[]];
+            if (statement.trim().startsWith('ALTER TABLE products ADD COLUMN barcode')) {
+                const error = new Error('duplicate column after metadata check');
+                error.code = 'ER_DUP_FIELDNAME';
+                throw error;
+            }
+            if (statement.startsWith('INSERT INTO _migration_steps')) recordedSteps.push(params);
+            return [[]];
+        },
+        release() {},
+    });
+    t.after(() => { pool.getConnection = originalGetConnection; });
+
+    await assert.rejects(() => runMigrations(), /duplicate column after metadata check/);
+    assert.equal(recordedSteps.length, 0);
 });
 
 test('runMigrations rolls back failed transactional statements and tolerates lock-release errors', async (t) => {

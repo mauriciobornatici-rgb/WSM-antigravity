@@ -877,10 +877,11 @@ class SalesService extends BaseService {
 
 
 
-    async createInvoice(orderId, invoiceData, userId) {
-        const connection = await pool.getConnection();
+    async createInvoice(orderId, invoiceData, userId, existingConnection = null) {
+        const connection = existingConnection || await pool.getConnection();
+        const isExternalTx = Boolean(existingConnection);
         try {
-            await connection.beginTransaction();
+            if (!isExternalTx) await connection.beginTransaction();
 
             const [orders] = await connection.query('SELECT * FROM orders WHERE id = ? FOR UPDATE', [orderId]);
             if (orders.length === 0) throw new Error('Order not found');
@@ -1081,21 +1082,36 @@ class SalesService extends BaseService {
                 }
             }, connection);
 
-            await connection.commit();
+            if (!isExternalTx) await connection.commit();
             return {
                 id: invoiceId,
+                order_id: order.id,
+                client_id: client.client_id,
+                client_name: client.client_name || order.customer_name,
+                client_tax_id: client.client_tax_id,
+                client_address: client.client_address,
+                client_tax_condition: client.client_tax_condition,
                 invoice_type: invoiceType,
                 point_of_sale: pointOfSale,
                 invoice_number: invoiceNumber,
+                net_amount: netAmount,
+                vat_amount: vatAmount,
+                exempt_amount: 0,
                 total_amount: totalAmount,
+                subtotal: netAmount,
+                tax_amount: vatAmount,
+                status: 'issued',
+                issue_date: new Date().toISOString(),
+                payment_method: paymentMethod,
                 paid_amount: totalPaidAmount,
-                payment_status: resolvedPaymentStatus
+                payment_status: resolvedPaymentStatus,
+                items: invoiceItems
             };
         } catch (err) {
-            await connection.rollback();
+            if (!isExternalTx) await connection.rollback();
             throw err;
         } finally {
-            connection.release();
+            if (!isExternalTx) connection.release();
         }
     }
 
@@ -1292,15 +1308,27 @@ class SalesService extends BaseService {
             await connection.commit();
             return {
                 id: invoiceId,
+                order_id: invoiceData.order_id || null,
+                client_id: client.client_id,
+                client_name: client.client_name || invoiceData.customer_name,
+                client_tax_id: client.client_tax_id,
+                client_address: client.client_address,
+                client_tax_condition: client.client_tax_condition,
                 invoice_type: invoiceType,
                 point_of_sale: pointOfSale,
                 invoice_number: invoiceNumber,
+                net_amount: netAmount,
+                vat_amount: vatAmount,
+                exempt_amount: 0,
                 total_amount: totalAmount,
+                subtotal: netAmount,
+                tax_amount: vatAmount,
                 issue_date: new Date().toISOString(),
                 status: 'issued',
-                client_name: client.client_name,
+                payment_method: paymentData.primaryMethod,
                 paid_amount: totalPaidAmount,
-                payment_status: resolvedPaymentStatus
+                payment_status: resolvedPaymentStatus,
+                items: parsedItems
             };
         } catch (err) {
             await connection.rollback();
@@ -1349,6 +1377,22 @@ class SalesService extends BaseService {
             ...row,
             client_name: row.client_name || row.customer_name
         }));
+    }
+
+    async getInvoiceById(invoiceId) {
+        const [rows] = await pool.query(`
+            SELECT i.*, c.tax_id AS client_tax_id, c.address AS client_address
+            FROM invoices i
+            LEFT JOIN clients c ON i.client_id = c.id
+            WHERE i.id = ? AND (i.deleted_at IS NULL)
+        `, [invoiceId]);
+        if (rows.length === 0) return null;
+        const invoice = {
+            ...rows[0],
+            client_name: rows[0].client_name || rows[0].customer_name
+        };
+        invoice.items = await this.getInvoiceItems(invoiceId);
+        return invoice;
     }
 
     async getInvoiceItems(invoiceId) {

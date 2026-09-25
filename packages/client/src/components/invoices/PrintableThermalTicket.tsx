@@ -3,6 +3,7 @@ import type { CompanySettings } from "@/types"
 import { formatInvoiceNumber } from "./invoiceUtils"
 import { buildAfipQrUrlFromInvoice } from "./afipQr"
 import { AfipQrImage } from "./AfipQrImage"
+import { PrintPortal } from "@/components/common/PrintPortal"
 
 // Calculado en cada render: si se calcula al cargar el módulo queda vencido
 // cuando la app permanece abierta varios días.
@@ -45,7 +46,8 @@ export function PrintableThermalTicket({
     const barcodeValue = `${emisorCuit}${compTypeNum}${String(invoice.point_of_sale || 1).padStart(4, "0")}${invoice.cae || ""}${expDateStr}`
 
     return (
-        <div id="printable-ticket" className="fixed inset-0 z-[9999] m-0 hidden bg-white p-4 text-black print:block font-mono text-xs w-[80mm] leading-tight">
+        <PrintPortal>
+            <div id="printable-ticket" className="m-0 hidden bg-white px-5 py-4 text-black print:block font-mono text-xs w-[80mm] max-w-[80mm] mx-auto leading-tight box-border">
             {/* Header */}
             <div className="text-center space-y-1 pb-2 border-b border-dashed border-slate-400">
                 <h2 className="text-sm font-black uppercase tracking-wider">{companyName}</h2>
@@ -76,26 +78,39 @@ export function PrintableThermalTicket({
             {/* Items Table */}
             <div className="py-2 border-b border-dashed border-slate-400">
                 <div className="flex justify-between text-[10px] font-bold pb-1">
-                    <span>Item / Descripción</span>
+                    <span>Producto / Detalle</span>
                     <span>Total</span>
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-1.5 pt-1">
                     {invoice.items && invoice.items.length > 0 ? (
-                        invoice.items.map((item, index) => (
-                            <div key={index} className="text-[10px] space-y-0.5 border-b border-dotted border-slate-200 pb-1 last:border-b-0">
-                                <div className="flex justify-between">
-                                    <span className="truncate max-w-[200px]">{item.product_name || item.description || "Producto"}</span>
-                                    <span>${(Number(item.quantity) * Number(item.unit_price)).toFixed(2)}</span>
+                        invoice.items.map((item, index) => {
+                            const qty = Number(item.quantity || 1);
+                            const unitPrice = Number(item.unit_price || 0);
+                            const totalLine = Number(item.total_line != null ? item.total_line : qty * unitPrice);
+                            return (
+                                <div key={index} className="text-[10px] space-y-0.5 border-b border-dotted border-slate-200 pb-1.5 last:border-b-0">
+                                    <div className="flex justify-between items-start gap-2">
+                                        <span className="font-bold break-words flex-1 text-slate-900">
+                                            {item.product_name || item.description || "Producto"}
+                                        </span>
+                                        <span className="font-bold shrink-0 text-slate-900">
+                                            ${totalLine.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                    <div className="text-[9px] text-slate-600 flex justify-between">
+                                        <span>
+                                            {qty} un. x ${unitPrice.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            {item.vat_rate != null ? ` (IVA ${item.vat_rate}%)` : ""}
+                                        </span>
+                                        {item.sku && <span className="font-mono text-slate-400">SKU: {item.sku}</span>}
+                                    </div>
                                 </div>
-                                <div className="text-[9px] text-slate-500">
-                                    {item.quantity} x ${Number(item.unit_price).toFixed(2)} (IVA {item.vat_rate || 21}%)
-                                </div>
-                            </div>
-                        ))
+                            );
+                        })
                     ) : (
-                        <div className="flex justify-between text-[10px]">
+                        <div className="flex justify-between text-[10px] text-slate-500 italic py-1">
                             <span>Comprobante sin ítems asociados</span>
-                            <span>${Number(invoice.total_amount).toFixed(2)}</span>
+                            <span>${Number(invoice.total_amount || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                     )}
                 </div>
@@ -105,15 +120,15 @@ export function PrintableThermalTicket({
             <div className="py-2 space-y-1 text-right text-[10px]">
                 <div className="flex justify-between">
                     <span>Neto Gravado:</span>
-                    <span>${Number(invoice.net_amount || 0).toFixed(2)}</span>
+                    <span>${Number(invoice.net_amount || invoice.subtotal || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">
                     <span>IVA ({taxRateLabel}):</span>
-                    <span>${Number(invoice.vat_amount || 0).toFixed(2)}</span>
+                    <span>${Number(invoice.vat_amount || invoice.tax_amount || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between text-sm font-black border-t border-dashed border-slate-400 pt-1.5 mt-1">
                     <span>TOTAL FACTURADO:</span>
-                    <span>${Number(invoice.total_amount || 0).toFixed(2)}</span>
+                    <span>${Number(invoice.total_amount || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
             </div>
 
@@ -172,5 +187,6 @@ export function PrintableThermalTicket({
                 ¡Gracias por su compra en WSM Sports!
             </div>
         </div>
+        </PrintPortal>
     )
 }

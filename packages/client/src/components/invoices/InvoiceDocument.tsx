@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Mail, Printer, AlertTriangle, ShieldCheck, Loader2 } from "lucide-react"
+import { Mail, Printer, AlertTriangle, ShieldCheck, Loader2, ReceiptText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { formatInvoiceNumber } from "./invoiceUtils"
 import { buildAfipQrUrlFromInvoice } from "./afipQr"
@@ -20,6 +20,8 @@ type InvoiceDocumentProps = {
     onClose?: (() => void) | undefined
     onAuthorize?: ((invoice: InvoiceView) => void | Promise<void>) | undefined
     companySettings?: CompanySettings | undefined
+    onPrint?: ((invoice: InvoiceView) => void) | undefined
+    onPrintThermal?: ((invoice: InvoiceView) => void) | undefined
 }
 
 export function InvoiceDocument({
@@ -33,6 +35,8 @@ export function InvoiceDocument({
     onClose,
     onAuthorize,
     companySettings,
+    onPrint,
+    onPrintThermal,
 }: InvoiceDocumentProps) {
     const isTicket = invoice.invoice_type === "TK"
     const [authorizing, setAuthorizing] = useState(false)
@@ -145,20 +149,26 @@ export function InvoiceDocument({
                     </thead>
                     <tbody>
                         {invoice.items && invoice.items.length > 0 ? (
-                            invoice.items.map((item: InvoiceItem, index: number) => (
-                                <tr key={index} className="border-b border-slate-200">
-                                    <td className="border-r border-slate-200 p-2 text-left">
-                                        {item.product_name || item.description || "Producto"}
-                                    </td>
-                                    <td className="border-r border-slate-200 p-2 text-center">{item.quantity}</td>
-                                    <td className="border-r border-slate-200 p-2 text-right">
-                                        ${Number(item.unit_price || 0).toLocaleString("es-AR")}
-                                    </td>
-                                    <td className="p-2 text-right font-semibold">
-                                        ${(Number(item.quantity || 1) * Number(item.unit_price || 0)).toLocaleString("es-AR")}
-                                    </td>
-                                </tr>
-                            ))
+                            invoice.items.map((item: InvoiceItem, index: number) => {
+                                const qty = Number(item.quantity || 1);
+                                const unitPrice = Number(item.unit_price || 0);
+                                const lineTotal = Number(item.total_line != null ? item.total_line : qty * unitPrice);
+                                return (
+                                    <tr key={index} className="border-b border-slate-200">
+                                        <td className="border-r border-slate-200 p-2 text-left">
+                                            <div className="font-semibold text-slate-900">{item.product_name || item.description || "Producto"}</div>
+                                            {item.sku && <div className="text-[11px] text-slate-500 font-mono">SKU: {item.sku}</div>}
+                                        </td>
+                                        <td className="border-r border-slate-200 p-2 text-center font-mono">{qty}</td>
+                                        <td className="border-r border-slate-200 p-2 text-right font-mono">
+                                            ${unitPrice.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="p-2 text-right font-semibold font-mono">
+                                            ${lineTotal.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                    </tr>
+                                );
+                            })
                         ) : (
                             <tr className="border-b border-slate-200">
                                 <td className="border-r border-slate-200 p-2 text-left">Comprobante sin ítems asociados</td>
@@ -277,9 +287,22 @@ export function InvoiceDocument({
                             Enviar por email
                         </Button>
                     ) : null}
-                    <Button className="h-12 bg-slate-900 text-white hover:bg-slate-800" onClick={() => window.print()}>
+                    {onPrintThermal && (
+                        <Button
+                            variant="outline"
+                            className="h-12 border-slate-300 text-slate-700 hover:bg-slate-100"
+                            onClick={() => onPrintThermal(invoice)}
+                        >
+                            <ReceiptText className="mr-2 h-4 w-4 text-slate-500" />
+                            Imprimir Ticket (80mm)
+                        </Button>
+                    )}
+                    <Button 
+                        className="h-12 bg-slate-900 text-white hover:bg-slate-800" 
+                        onClick={() => onPrint ? onPrint(invoice) : window.print()}
+                    >
                         <Printer className="mr-2 h-4 w-4" />
-                        Imprimir comprobante
+                        Imprimir Factura A4
                     </Button>
                     <Button
                         variant="ghost"

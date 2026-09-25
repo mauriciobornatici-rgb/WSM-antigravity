@@ -114,20 +114,73 @@ export class CreateOrderUseCase {
                 }
             }
 
-            const computedTotal = orderData.items.reduce(
+            const computedNet = orderData.items.reduce(
                 (sum, item) => {
                     const requestedPrice = Number(item.unit_price);
                     const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
                         ? requestedPrice
                         : priceByProduct.get(item.product_id);
-                    return sum + Number(item.quantity) * unitPrice;
+                    return sum + Math.round(Number(item.quantity) * unitPrice * 100) / 100;
                 },
                 0
             );
-            const externalTotal = Number(orderData.external_total_amount);
-            const resolvedTotal = orderData.external_source && Number.isFinite(externalTotal) && externalTotal >= 0
-                ? externalTotal
-                : computedTotal;
+
+            const computedWithVat = orderData.items.reduce(
+                (sum, item) => {
+                    const requestedPrice = Number(item.unit_price);
+                    const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
+                        ? requestedPrice
+                        : priceByProduct.get(item.product_id);
+                    const vatRate = item.vat_rate != null && Number.isFinite(Number(item.vat_rate))
+                        ? Number(item.vat_rate)
+                        : null;
+                    const lineNet = Math.round(Number(item.quantity) * unitPrice * 100) / 100;
+                    const lineVat = vatRate != null ? Math.round(lineNet * (vatRate / 100) * 100) / 100 : 0;
+                    return sum + lineNet + lineVat;
+                },
+                0
+            );
+
+            const externalTotal = Number(orderData.external_total_amount ?? orderData.total_amount);
+            let resolvedTotal = computedNet;
+
+            if (orderData.external_source === 'pos') {
+                if (Number.isFinite(externalTotal) && externalTotal >= 0) {
+                    if (Math.abs(externalTotal - computedWithVat) <= 0.05) {
+                        resolvedTotal = Math.round(computedWithVat * 100) / 100;
+                    } else if (Math.abs(externalTotal - computedNet) <= 0.05) {
+                        resolvedTotal = Math.round(computedNet * 100) / 100;
+                    } else {
+                        resolvedTotal = Math.abs(computedWithVat - computedNet) > 0.01 ? computedWithVat : computedNet;
+                    }
+                } else if (Array.isArray(orderData.payments) && orderData.payments.length > 0) {
+                    const allocated = Math.round(orderData.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0) * 100) / 100;
+                    if (Math.abs(allocated - computedWithVat) <= 0.05) {
+                        resolvedTotal = Math.round(computedWithVat * 100) / 100;
+                    } else {
+                        resolvedTotal = Math.round(computedNet * 100) / 100;
+                    }
+                } else {
+                    resolvedTotal = Math.abs(computedWithVat - computedNet) > 0.01 ? computedWithVat : computedNet;
+                }
+            } else if (orderData.external_source && Number.isFinite(externalTotal) && externalTotal >= 0) {
+                resolvedTotal = externalTotal;
+            } else if (Number.isFinite(externalTotal) && externalTotal >= 0) {
+                if (Math.abs(externalTotal - computedWithVat) <= 0.05) {
+                    resolvedTotal = Math.round(computedWithVat * 100) / 100;
+                } else if (Math.abs(externalTotal - computedNet) <= 0.05) {
+                    resolvedTotal = Math.round(computedNet * 100) / 100;
+                } else {
+                    resolvedTotal = externalTotal;
+                }
+            } else if (Array.isArray(orderData.payments) && orderData.payments.length > 0) {
+                const allocated = Math.round(orderData.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0) * 100) / 100;
+                if (Math.abs(allocated - computedWithVat) <= 0.05) {
+                    resolvedTotal = Math.round(computedWithVat * 100) / 100;
+                } else {
+                    resolvedTotal = Math.round(computedNet * 100) / 100;
+                }
+            }
             const allowedPaymentStatuses = new Set(['pending', 'paid', 'refunded', 'voided']);
             const resolvedPaymentStatus = orderData.external_source && allowedPaymentStatuses.has(orderData.payment_status)
                 ? orderData.payment_status

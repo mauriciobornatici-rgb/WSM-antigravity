@@ -49,6 +49,8 @@ export const createOrderSchema = z.object({
     z.object({
       product_id: uuidSchema,
       quantity: z.coerce.number().int().min(1),
+      unit_price: z.coerce.number().min(0).optional(),
+      vat_rate: z.coerce.number().min(0).max(100).optional(),
     })
   ).min(1),
 });
@@ -67,9 +69,28 @@ export const orderFiltersSchema = z.object({
     'cancelled',
     'returned',
   ]).optional(),
+  shipping_method: z.enum(['pickup', 'delivery']).optional(),
 }).merge(paginationQuerySchema);
 
 export const invoicePaymentSchema = z.object({
   payments: z.array(orderPaymentLineSchema).min(1),
+  notes: z.string().nullable().optional(),
+});
+
+export const pickupOrderCheckoutSchema = z.object({
+  recipient_name: z.string().nullable().optional(),
+  recipient_dni: z.string().nullable().optional(),
+  delivery_notes: z.string().nullable().optional(),
+  shift_id: optionalUuidSchema,
+  invoice_type: z.enum(['A', 'B', 'C', 'TK']).optional(),
+  point_of_sale: z.coerce.number().int().positive().optional(),
+  payments: z.array(orderPaymentLineSchema).optional(),
+  extra_items: z.array(
+    z.object({
+      product_id: uuidSchema,
+      quantity: z.coerce.number().int().min(1),
+      unit_price: z.coerce.number().min(0).optional(),
+    })
+  ).optional(),
   notes: z.string().nullable().optional(),
 });

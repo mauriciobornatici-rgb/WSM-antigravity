@@ -1,13 +1,6 @@
-import path from 'path';
-import dotenv from 'dotenv';
-import { fileURLToPath } from 'url';
+import '../config/loadEnv.js';
 import { closeSmokeAuth, tokensForRoles } from './smoke-auth.js';
 import { ensureSmokeServer } from './smoke-runner-helper.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootEnvPath = path.resolve(__dirname, '../../../.env');
-dotenv.config({ path: rootEnvPath });
 
 let baseUrl = process.env.SMOKE_API_URL || `http://localhost:${process.env.PORT || 3001}`;
 const jwtSecret = process.env.JWT_SECRET;

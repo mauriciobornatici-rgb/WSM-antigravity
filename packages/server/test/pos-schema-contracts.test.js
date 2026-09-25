@@ -85,3 +85,24 @@ test('cheque payment contract requires instrument details only for cheques', () 
     });
     assert.equal(parsed.check?.check_number, '1');
 });
+
+test('POS order contract preserves total_amount, item unit_price and vat_rate', () => {
+    const parsed = createOrderSchema.parse({
+        idempotency_key: '0a252ca9-9af2-455d-89d7-87150716f8ae',
+        customer_name: 'Consumidor final',
+        payment_method: 'cash',
+        total_amount: 1452000,
+        payments: [{ method: 'cash', amount: 1452000 }],
+        items: [{
+            product_id: '15f5fb57-8da7-4ce1-bd88-c7fc9da7a638',
+            quantity: 1,
+            unit_price: 1200000,
+            vat_rate: 21.00
+        }]
+    });
+
+    assert.equal(parsed.total_amount, 1452000);
+    assert.equal(parsed.items[0].unit_price, 1200000);
+    assert.equal(parsed.items[0].vat_rate, 21.00);
+    assert.equal(parsed.payments?.[0].amount, 1452000);
+});

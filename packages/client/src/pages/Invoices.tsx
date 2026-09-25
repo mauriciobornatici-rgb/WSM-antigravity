@@ -139,6 +139,12 @@ export default function InvoicesPage() {
             setActivePrintLayout(layout)
             await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
             window.print()
+            const cleanup = () => {
+                setActivePrintLayout(null)
+                window.removeEventListener("afterprint", cleanup)
+            }
+            window.addEventListener("afterprint", cleanup)
+            setTimeout(cleanup, 1000)
         } catch (error) {
             showErrorToast("No se pudo preparar el comprobante para imprimir", error)
         }
@@ -247,7 +253,7 @@ export default function InvoicesPage() {
     const companyAddress = getCompanyAddressLine(companySettings)
 
     return (
-        <div className="space-y-6 p-6 print:hidden">
+        <div className="space-y-6 p-6">
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Historial de ventas</h1>
@@ -308,6 +314,8 @@ export default function InvoicesPage() {
                 onClose={() => setIsPreviewOpen(false)}
                 onAuthorize={handleAuthorizeInvoice}
                 companySettings={companySettings}
+                onPrint={handlePrintInvoice}
+                onPrintThermal={handlePrintThermal}
             />
 
             {activePrintLayout === "a4" && selectedInvoice && (

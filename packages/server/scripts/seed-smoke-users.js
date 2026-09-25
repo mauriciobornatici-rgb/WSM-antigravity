@@ -1,4 +1,7 @@
-import pool from '../config/db.js';
+import {
+    assertQaDatabaseEnvironment,
+    QA_BOOTSTRAP_FLAG,
+} from '../../../scripts/qa-env.js';
 
 const smokeUsers = [
     {
@@ -32,6 +35,17 @@ const smokeUsers = [
 ];
 
 async function run() {
+    if (!process.argv.includes('--allow-qa-bootstrap')) {
+        throw new Error(
+            `Smoke-user seed requires --allow-qa-bootstrap and ${QA_BOOTSTRAP_FLAG}=1; refusing to touch a non-QA database.`
+        );
+    }
+
+    // Validate the complete target before importing config/db.js. This prevents
+    // an inherited remote .env or DB_HOST from creating a pool accidentally.
+    assertQaDatabaseEnvironment(process.env, { requireBootstrapFlag: true });
+
+    const { default: pool, closePool } = await import('../config/db.js');
     try {
         console.log('Seeding smoke test users into DB...');
         for (const user of smokeUsers) {
@@ -51,9 +65,15 @@ async function run() {
         console.log('Smoke test users seeded successfully.');
     } catch (err) {
         console.error('Error seeding smoke users:', err);
+        throw err;
     } finally {
-        await pool.end();
+        await closePool();
     }
 }
 
-run();
+try {
+    await run();
+} catch (error) {
+    console.error(`[QA] Smoke-user seed failed: ${error.message}`);
+    process.exitCode = 1;
+}

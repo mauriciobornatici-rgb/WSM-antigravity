@@ -25,13 +25,10 @@ test.describe('Autenticación y Login', () => {
     // Submit the form
     await page.click('button[type="submit"]');
 
-    // Wait for the error toast (sonner) or UI to react
-    // In our app, sonner toasts usually have role="status" or we can look for specific text
-    // Assuming backend returns 401 and UI shows "Credenciales incorrectas"
-    // Since we don't know the exact text, we just verify we don't navigate away
+    // Assert the message returned by the mocked API is rendered by the real
+    // AuthContext error path; URL stability alone would miss a broken toast.
+    await expect(page.getByText('Credenciales inválidas', { exact: true })).toBeVisible();
     await expect(page).toHaveURL(/\/login/);
-    
-    // Check if the submit button becomes active again
     const button = page.locator('button[type="submit"]');
     await expect(button).toBeEnabled();
   });

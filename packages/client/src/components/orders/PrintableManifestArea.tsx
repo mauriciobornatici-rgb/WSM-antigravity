@@ -1,4 +1,5 @@
 import type { Order } from "@/types";
+import { PrintPortal } from "@/components/common/PrintPortal";
 
 type PrintableManifestAreaProps = {
     orders: Order[];
@@ -23,7 +24,8 @@ export function PrintableManifestArea({ orders, driver, plate, carrier, notes }:
     }, 0);
 
     return (
-        <div id="printable-manifest" className="fixed inset-0 z-[9999] m-0 hidden bg-white p-8 text-black print:block font-sans">
+        <PrintPortal>
+            <div id="printable-manifest" className="m-0 hidden bg-white p-8 text-black print:block font-sans w-full max-w-[210mm] mx-auto">
             {/* Header */}
             <div className="flex justify-between border-b-2 border-black pb-4">
                 <div>
@@ -140,5 +142,6 @@ export function PrintableManifestArea({ orders, driver, plate, carrier, notes }:
                 </div>
             </div>
         </div>
+        </PrintPortal>
     );
 }

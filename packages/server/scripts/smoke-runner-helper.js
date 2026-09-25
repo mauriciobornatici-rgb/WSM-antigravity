@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { app } from '../index.js';
+import { assertQaDatabaseEnvironment, qaModeEnabled } from '../../../scripts/qa-env.js';
 
 /**
  * Ensures a live backend server is available for smoke tests.
@@ -9,23 +9,31 @@ import { app } from '../index.js';
  * @param {string} targetUrl - Default URL to probe (e.g. http://localhost:3001)
  * @returns {Promise<{ baseUrl: string, cleanup: () => Promise<void> }>}
  */
-export async function ensureSmokeServer(targetUrl) {
-    try {
-        const probeUrl = `${targetUrl}/api/live`;
-        const res = await fetch(probeUrl, {
-            signal: AbortSignal.timeout(1200)
-        });
-        if (res.ok) {
-            return {
-                baseUrl: targetUrl,
-                cleanup: async () => {}
-            };
+export async function ensureSmokeServer(targetUrl, { application, environment = process.env } = {}) {
+    // A QA run is only allowed to create its own local server. In particular,
+    // never probe or reuse SMOKE_API_URL/localhost:3001 when the QA flag is set.
+    const qaMode = qaModeEnabled(environment);
+    if (qaMode) {
+        assertQaDatabaseEnvironment(environment);
+    } else {
+        try {
+            const probeUrl = `${targetUrl}/api/live`;
+            const res = await fetch(probeUrl, {
+                signal: AbortSignal.timeout(1200)
+            });
+            if (res.ok) {
+                return {
+                    baseUrl: targetUrl,
+                    cleanup: async () => {}
+                };
+            }
+        } catch {
+            // Target server is not answering, spin up ephemeral instance
         }
-    } catch {
-        // Target server is not answering, spin up ephemeral instance
     }
 
-    const server = http.createServer(app);
+    const smokeApp = application ?? (await import('../index.js')).app;
+    const server = http.createServer(smokeApp);
     await new Promise((resolve, reject) => {
         server.listen(0, '127.0.0.1', () => resolve());
         server.on('error', reject);

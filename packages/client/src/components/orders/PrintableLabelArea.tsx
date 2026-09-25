@@ -1,4 +1,5 @@
 import type { Order } from "@/types";
+import { PrintPortal } from "@/components/common/PrintPortal";
 
 type PrintableLabelAreaProps = {
     order: Order | null;
@@ -8,7 +9,8 @@ export function PrintableLabelArea({ order }: PrintableLabelAreaProps) {
     if (!order) return null;
 
     return (
-        <div id="printable-label" className="fixed inset-0 z-[9999] m-0 hidden bg-white p-6 text-black print:block font-sans">
+        <PrintPortal>
+            <div id="printable-label" className="m-0 hidden bg-white p-6 text-black print:block font-sans w-full max-w-[210mm] mx-auto">
             {/* Box container formatted exactly for 10x15cm thermal label standard */}
             <div className="border-4 border-black p-4 h-[calc(100vh-3rem)] flex flex-col justify-between text-sm">
                 <div>
@@ -70,5 +72,6 @@ export function PrintableLabelArea({ order }: PrintableLabelAreaProps) {
                 </div>
             </div>
         </div>
+        </PrintPortal>
     );
 }

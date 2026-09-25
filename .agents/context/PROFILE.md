@@ -4,7 +4,7 @@
 `software` (con especialización en ERP comercial, logística WMS y contabilidad)
 
 ## Justificación del Perfil
-WSM SportsERP es un sistema de gestión empresarial en producción/preproducción implementado como monorepo TypeScript (React frontend + Express backend + MySQL). Requiere control riguroso de tipos, integridad de transacciones contables y validación continua mediante suites automatizadas.
+WSM SportsERP es un sistema de gestión empresarial en desarrollo con gates de preproducción pendientes, implementado como monorepo mixto (React/TypeScript frontend + Express/JavaScript backend + MySQL). Requiere control riguroso de tipos, integridad de transacciones contables y validación continua mediante suites automatizadas.
 
 ## Reglas Obligatorias del Perfil
 - Inspeccionar la estructura de monorepo y types antes de cualquier modificación.

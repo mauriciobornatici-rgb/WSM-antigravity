@@ -1,0 +1,5 @@
+# Adaptado de Base Codex 2.0.0 para WSM SportsERP.
+# No fija modelo, esfuerzo, confianza ni permisos del coordinador.
+# El limite configura capacidad; no obliga a usar subagentes.
+[agents]
+max_concurrent_threads_per_session = 2

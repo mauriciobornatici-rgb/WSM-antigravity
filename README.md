@@ -23,6 +23,8 @@ Monorepo con frontend React/Vite y backend Node/Express para gestión comercial,
 
 Para retomar tareas sin reanalizar todo el proyecto:
 
+- Guía de desarrollo y contexto canónico: [docs/development/README.md](docs/development/README.md)
+- Análisis y adaptación de Base Codex: [informe del 2026-09-06](docs/execution/ANALISIS_APP_Y_BASE_CODEX_2026-09-06.md)
 - Estado vivo: `docs/execution/STATE.md`
 - Plan maestro: `docs/execution/MASTER_PLAN.md`
 - Historial de ejecucion: `docs/execution/CHANGELOG_EXECUTION.md`

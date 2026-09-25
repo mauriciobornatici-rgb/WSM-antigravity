@@ -145,7 +145,9 @@ export interface POSApiClient {
         customer_name: string;
         payment_method: string;
         client_id?: string;
-        items: Array<{ product_id: string; quantity: number }>;
+        total_amount?: number;
+        payments?: Array<{ method: string; amount: number }>;
+        items: Array<{ product_id: string; quantity: number; unit_price?: number; vat_rate?: number }>;
     }) => Promise<{ id: string }>;
     createInvoice?: (payload: Record<string, unknown>) => Promise<Invoice>;
     addShiftPayment?: (shiftId: string, payload: {
@@ -183,14 +185,19 @@ async function performOfflineSync(apiClient: POSApiClient): Promise<SyncResult> 
     for (const sale of queue) {
         try {
             const consolidatedPayments = consolidatePayments(sale.payments);
+            const totalAmount = consolidatedPayments.reduce((sum, p) => sum + p.amount, 0);
             const order = await apiClient.createOrder({
                 idempotency_key: sale.idempotency_key,
                 customer_name: sale.customer_name,
                 payment_method: sale.payment_method,
+                total_amount: totalAmount,
+                payments: consolidatedPayments,
                 ...(sale.client_id ? { client_id: sale.client_id } : {}),
                 items: sale.items.map((i) => ({
                     product_id: i.product_id,
                     quantity: i.quantity,
+                    unit_price: Number(i.sale_price),
+                    vat_rate: i.vat_rate != null ? Number(i.vat_rate) : 21.00,
                 })),
             });
 

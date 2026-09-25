@@ -5,8 +5,8 @@ import { toast } from "sonner";
 import { useTheme } from "@/hooks/useTheme";
 import { api } from "@/services/api";
 import { isApiError } from "@/services/httpClient";
-import type { Client, CompanySettings } from "@/types";
-import type { CashRegister, CashShiftSummary, Invoice } from "@/types/api";
+import type { Client, CompanySettings, Order } from "@/types";
+import type { CashRegister, CashShiftSummary, Invoice, InvoiceItem } from "@/types/api";
 import { showErrorToast } from "@/lib/errorHandling";
 import { DEFAULT_COMPANY_SETTINGS, fetchCompanySettingsSafe, getTaxRatePercentage } from "@/lib/companySettings";
 import { CartPanelCard } from "@/components/pos/CartPanelCard";
@@ -16,7 +16,8 @@ import { ProductCatalogCard } from "@/components/pos/ProductCatalogCard";
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog";
 import { POSHistoryDialog } from "@/components/pos/POSHistoryDialog";
 import { ParkedCartsDialog } from "@/components/pos/ParkedCartsDialog";
-import type { InvoiceType, NewClientForm, PaymentSplit, POSProduct } from "@/components/pos/types";
+import { POSPickupOrdersDialog } from "@/components/pos/POSPickupOrdersDialog";
+import type { CartItem, InvoiceType, NewClientForm, PaymentSplit, POSProduct } from "@/components/pos/types";
 import { PrintableInvoiceArea } from "@/components/invoices/PrintableInvoiceArea";
 import { PrintableThermalTicket } from "@/components/invoices/PrintableThermalTicket";
 import { usePOSCart } from "@/hooks/usePOSCart";
@@ -85,6 +86,21 @@ export default function POSPage() {
     const [lastInvoice, setLastInvoice] = useState<Invoice | null>(null);
     const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
     const [parkedDialogOpen, setParkedDialogOpen] = useState(false);
+    const [activePickupOrder, setActivePickupOrder] = useState<Order | null>(null);
+    const [pickupDialogOpen, setPickupDialogOpen] = useState(false);
+    const [pickupOrdersCount, setPickupOrdersCount] = useState(0);
+
+    const loadPickupCount = useCallback(async () => {
+        try {
+            const packed = await api.getOrders({ shipping_method: "pickup", status: "packed" });
+            const dispatched = await api.getOrders({ shipping_method: "pickup", status: "dispatched" });
+            const uninvoiced = [...(packed || []), ...(dispatched || [])].filter((o) => !o.invoice_id);
+            const uniqueIds = new Set(uninvoiced.map((o) => o.id));
+            setPickupOrdersCount(uniqueIds.size);
+        } catch {
+            // Ignore background check failure
+        }
+    }, []);
 
     const [companySettings, setCompanySettings] = useState<CompanySettings>(DEFAULT_COMPANY_SETTINGS);
     const [currentRegister, setCurrentRegister] = useState<CashRegister | null>(null);
@@ -165,6 +181,7 @@ export default function POSPage() {
             setClientDialogOpen(false);
             setHistoryDialogOpen(false);
             setParkedDialogOpen(false);
+            setPickupDialogOpen(false);
         },
         onToggleInvoice: () => {
             setEmitInvoice((prev) => {
@@ -176,6 +193,7 @@ export default function POSPage() {
         onClearCart: () => {
             if (cart.length > 0) {
                 setCart([]);
+                setActivePickupOrder(null);
                 toast.info("Carrito vaciado");
             }
         },
@@ -184,51 +202,129 @@ export default function POSPage() {
         },
     });
 
-    const handlePrint = (layout: "a4" | "thermal", invoice: Invoice) => {
-        setActivePrintLayout(layout);
-        setSelectedInvoice(invoice);
-        setTimeout(() => {
+    const handlePrint = async (layout: "a4" | "thermal", invoice: Invoice) => {
+        try {
+            let fullInvoice: Invoice = { ...invoice };
+            if (!fullInvoice.items || fullInvoice.items.length === 0) {
+                try {
+                    const items = await api.getInvoiceItems(invoice.id);
+                    if (items && items.length > 0) {
+                        fullInvoice = { ...fullInvoice, items: items as InvoiceItem[] };
+                    }
+                } catch (e) {
+                    console.warn("No se pudieron cargar los ítems desde la API:", e);
+                }
+            }
+            if (!fullInvoice.client_name && selectedClient) {
+                fullInvoice.client_name = selectedClient.name;
+                fullInvoice.client_tax_id = selectedClient.tax_id;
+                fullInvoice.client_address = selectedClient.address;
+                fullInvoice.client_tax_condition = "Consumidor Final";
+            }
+            setSelectedInvoice(fullInvoice);
+            setActivePrintLayout(layout);
+            await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
             window.print();
-        }, 300);
+            const cleanup = () => {
+                setActivePrintLayout(null);
+                window.removeEventListener("afterprint", cleanup);
+            };
+            window.addEventListener("afterprint", cleanup);
+            setTimeout(cleanup, 1000);
+        } catch (error) {
+            showErrorToast("Error al preparar la impresión", error);
+        }
     };
 
     useEffect(() => {
+        async function loadData() {
+            try {
+                setLoading(true);
+                const [clientsResponse, productsResponse, registersResponse, settingsResponse] = await Promise.all([
+                    api.getClients(),
+                    api.getProducts(),
+                    api.getCashRegisters(),
+                    fetchCompanySettingsSafe(),
+                ]);
+
+                setClients(clientsResponse);
+                setCompanySettings(settingsResponse);
+                setProducts(productsResponse.map((product) => ({ ...product, stock: Number(product.stock_current ?? 0) })));
+
+                const primaryRegister = registersResponse[0] ?? null;
+                setCurrentRegister(primaryRegister);
+                if (primaryRegister) {
+                    const shift = await api.getOpenShift(primaryRegister.id);
+                    setCurrentShift(shift);
+                } else {
+                    setCurrentShift(null);
+                }
+                void loadPickupCount();
+            } catch (error) {
+                showErrorToast("Error al cargar POS", error);
+            } finally {
+                setLoading(false);
+            }
+        }
+
         void loadData();
         void restoreOfflineQueueFromIndexedDb().then((queue) => {
             if (queue.length > 0) {
                 setOfflineQueueCount(queue.length);
             }
         });
-    }, []);
+    }, [loadPickupCount]);
 
-    async function loadData() {
+    const handleSelectPickupOrder = async (order: Order) => {
         try {
-            setLoading(true);
-            const [clientsResponse, productsResponse, registersResponse, settingsResponse] = await Promise.all([
-                api.getClients(),
-                api.getProducts(),
-                api.getCashRegisters(),
-                fetchCompanySettingsSafe(),
-            ]);
+            const summary = await api.getOrderSummary(order.id);
+            const orderItems = summary.items || [];
 
-            setClients(clientsResponse);
-            setCompanySettings(settingsResponse);
-            setProducts(productsResponse.map((product) => ({ ...product, stock: Number(product.stock_current ?? 0) })));
+            const newCartItems: CartItem[] = orderItems.map((item) => {
+                const product = products.find((p) => p.id === item.product_id);
+                const fallbackProduct: POSProduct = {
+                    id: item.product_id,
+                    sku: item.sku || "SKU-PROD",
+                    name: item.product_name || "Producto",
+                    description: "",
+                    category: "General",
+                    sale_price: Number(item.unit_price || 0),
+                    purchase_price: 0,
+                    created_at: new Date().toISOString(),
+                    stock: 0,
+                };
+                const base = product || fallbackProduct;
+                return {
+                    ...base,
+                    id: item.product_id,
+                    name: item.product_name || base.name,
+                    sku: item.sku || base.sku,
+                    sale_price: Number(item.unit_price || base.sale_price),
+                    quantity: Number(item.picked_quantity || item.quantity || 1),
+                    isPrepared: true,
+                };
+            });
 
-            const primaryRegister = registersResponse[0] ?? null;
-            setCurrentRegister(primaryRegister);
-            if (primaryRegister) {
-                const shift = await api.getOpenShift(primaryRegister.id);
-                setCurrentShift(shift);
+            setCart(newCartItems);
+            setActivePickupOrder(order);
+            if (order.client_id) {
+                setSelectedClientId(order.client_id);
             } else {
-                setCurrentShift(null);
+                setSelectedClientId("");
             }
-        } catch (error) {
-            showErrorToast("Error al cargar POS", error);
-        } finally {
-            setLoading(false);
+            setEmitInvoice(true);
+            toast.info(`Pedido #${order.id.slice(0, 8)} cargado en mostrador. Puedes cobrarlo o sumar productos adicionales.`);
+        } catch (err) {
+            showErrorToast("Error al cargar ítems del pedido", err);
         }
-    }
+    };
+
+    const handleCancelPickup = () => {
+        setActivePickupOrder(null);
+        setCart([]);
+        setSelectedClientId("");
+        toast.info("Retiro de pedido cancelado. Carrito restablecido.");
+    };
 
     const taxLabel = `IVA ${getTaxRatePercentage(companySettings)}%`;
 
@@ -441,6 +537,49 @@ export default function POSPage() {
 
         setSuccessDialogOpen(true);
 
+        if (activePickupOrder) {
+            try {
+                setProcessing(true);
+                setLastInvoice(null);
+
+                const extraItems = previousCart
+                    .filter((item) => !item.isPrepared)
+                    .map((item) => ({
+                        product_id: item.id,
+                        quantity: item.quantity,
+                        unit_price: Number(item.sale_price),
+                    }));
+
+                const pickupResult = await api.checkoutPickupOrder(activePickupOrder.id, {
+                    recipient_name: selectedClient?.name || activePickupOrder.customer_name || "Cliente Mostrador",
+                    recipient_dni: selectedClient?.tax_id || undefined,
+                    delivery_notes: "Retiro y cobro en mostrador POS",
+                    shift_id: currentShift.id,
+                    invoice_type: invoiceType,
+                    point_of_sale: 1,
+                    payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
+                    extra_items: extraItems.length > 0 ? extraItems : undefined,
+                });
+
+                orderCommitted = true;
+                setLastOrderId(activePickupOrder.id);
+                if (pickupResult.invoice) {
+                    setLastInvoice(pickupResult.invoice);
+                }
+                const completedOrderId = activePickupOrder.id;
+                setActivePickupOrder(null);
+                void loadPickupCount();
+
+                toast.success(`Retiro y cobro de pedido #${completedOrderId.slice(0, 8)} registrado con éxito`);
+            } catch (error) {
+                restoreCheckout();
+                showErrorToast("Error al procesar el retiro y cobro del pedido", error);
+            } finally {
+                setProcessing(false);
+            }
+            return;
+        }
+
         try {
             setProcessing(true);
             setLastInvoice(null);
@@ -449,10 +588,13 @@ export default function POSPage() {
                 idempotency_key: checkoutIdempotencyKey,
                 customer_name: selectedClient?.name || "Consumidor final",
                 payment_method: primaryPaymentMethod,
+                total_amount: grandTotal,
                 payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
                 items: previousCart.map((item) => ({
                     product_id: item.id,
                     quantity: item.quantity,
+                    unit_price: Number(item.sale_price),
+                    vat_rate: item.vat_rate != null ? Number(item.vat_rate) : 21.00,
                 })),
             };
             if (previousClientId) orderPayload.client_id = previousClientId;
@@ -530,6 +672,8 @@ export default function POSPage() {
                 onOpenHistory={() => setHistoryDialogOpen(true)}
                 parkedCartsCount={parkedCarts.length}
                 onOpenParkedCarts={() => setParkedDialogOpen(true)}
+                pickupOrdersCount={pickupOrdersCount}
+                onOpenPickupOrders={() => setPickupDialogOpen(true)}
                 offlineQueueCount={offlineQueueCount}
                 syncingOffline={syncingOffline}
                 onSyncOffline={() => void handleSyncOffline()}
@@ -551,6 +695,7 @@ export default function POSPage() {
                         filteredProducts={filteredProducts}
                         onAddToCart={addToCart}
                         onScanSubmit={handleCatalogScan}
+                        cart={cart}
                     />
                 </div>
 
@@ -569,6 +714,8 @@ export default function POSPage() {
                         taxLabel={taxLabel}
                         taxAmount={taxAmount}
                         grandTotal={grandTotal}
+                        activePickupOrder={activePickupOrder}
+                        onCancelPickup={handleCancelPickup}
                         onOpenPaymentDialog={() => {
                             setPaymentSplits((current) => {
                                 const currentTotal = roundMoney(current.reduce((sum, line) => sum + Number(line.amount || 0), 0));
@@ -645,6 +792,12 @@ export default function POSPage() {
                     }
                 }}
                 onDeleteCart={deleteParkedCart}
+            />
+
+            <POSPickupOrdersDialog
+                open={pickupDialogOpen}
+                onOpenChange={setPickupDialogOpen}
+                onSelectOrder={handleSelectPickupOrder}
             />
 
             {activePrintLayout === "a4" && selectedInvoice && (

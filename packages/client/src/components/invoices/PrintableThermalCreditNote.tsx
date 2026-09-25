@@ -2,6 +2,7 @@ import type { CompanySettings } from "@/types"
 import type { ClientReturnRow, CreditNoteRow, ClientReturnItemRow } from "@/types/returns"
 import { buildAfipQrUrl } from "./afipQr"
 import { AfipQrImage } from "./AfipQrImage"
+import { PrintPortal } from "@/components/common/PrintPortal"
 
 function defaultCaeExpirationDate(): string {
     return new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
@@ -49,7 +50,8 @@ export function PrintableThermalCreditNote({
     const barcodeValue = `${emisorCuit}${compTypeNum}${String(creditNote.point_of_sale || 1).padStart(4, "0")}${creditNote.cae || ""}${expDateStr}`
 
     return (
-        <div id="printable-ticket" className="fixed inset-0 z-[9999] m-0 hidden bg-white p-4 text-black print:block font-mono text-xs w-[80mm] leading-tight">
+        <PrintPortal>
+            <div id="printable-ticket" className="m-0 hidden bg-white p-4 text-black print:block font-mono text-xs w-[80mm] max-w-[80mm] mx-auto leading-tight box-border">
             {/* Header */}
             <div className="text-center space-y-1 pb-2 border-b border-dashed border-slate-400">
                 <h2 className="text-sm font-black uppercase tracking-wider">{companyName}</h2>
@@ -174,5 +176,6 @@ export function PrintableThermalCreditNote({
                 ¡Nota de Crédito procesada con éxito!
             </div>
         </div>
+        </PrintPortal>
     )
 }

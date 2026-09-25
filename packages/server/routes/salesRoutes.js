@@ -17,6 +17,7 @@ router.post('/orders', canSell, validateZod(zodSchemas.order), salesController.c
 router.put('/orders/:id/status', canSell, validate(schemas.orderStatus), salesController.updateOrderStatus);
 router.put('/orders/:id/dispatch', canDispatch, validate(schemas.orderDispatch), salesController.dispatchOrder);
 router.put('/orders/:id/deliver', canDispatch, validate(schemas.orderDeliver), salesController.deliverOrder);
+router.post('/orders/:id/pickup-checkout', canSell, validate(schemas.pickupOrderCheckout), salesController.checkoutPickupOrder);
 router.post('/orders/:id/invoice', canInvoice, validate(schemas.orderInvoice), salesController.createInvoice);
 router.get('/orders/:id/summary', canReadOrders, validate(schemas.idParam), salesController.getOrderSummary);
 router.post('/orders/:id/picking-event', canPick, salesController.recordPickingEvent);
@@ -26,6 +27,7 @@ router.put('/order-items/:id/pick', canPick, validate(schemas.orderItemPick), sa
 
 // Invoices
 router.get('/invoices', canInvoice, validate(schemas.invoiceFilters), salesController.getInvoices);
+router.get('/invoices/:id', canInvoice, validate(schemas.idParam), salesController.getInvoiceById);
 router.post('/invoices', canInvoice, validate(schemas.manualInvoice), salesController.createManualInvoice);
 router.post('/invoices/:id/authorize', canInvoice, validate(schemas.idParam), salesController.authorizeInvoice);
 router.post('/invoices/:id/payments', canInvoice, validateZod(zodSchemas.invoicePayment), salesController.registerInvoicePayments);

@@ -1,0 +1,1281 @@
+# Execution State Snapshot
+
+Last reviewed: 2026-09-05
+Current continuity source: `docs/execution/BITACORA_INTEGRAL.md` y `.agents/context/TASKS.md`
+Current score estimate: 100/100 en calidad de código local; listo para preproducción, gobernanza Antigravity activa.
+Immediate priority: completar los gates externos de `docs/execution/PRODUCTION_READINESS_2026-08-20.md`; ARCA y Tiendanube quedan deliberadamente para el final.
+
+## 2026-09-05 Aislamiento Estricto de Impresión: Supresión de Modales Radix UI y Overlays en Comprobantes
+
+- Diagnóstico del Defecto Visual:
+  - Al completar una venta en el POS e imprimir el ticket térmico o la factura A4 desde el modal de confirmación (`CheckoutSuccessDialog.tsx`), el modal "Venta Registrada con Éxito" y su fondo oscurecido (`DialogOverlay` con `bg-black/80`) aparecían superpuestos en el centro de la vista previa de impresión.
+  - La causa raíz residía en que Radix UI inyecta el portal del diálogo como hijo directo de `document.body` sin el atributo hipotético `[data-radix-portal]`. Al no ser hijo de `#root`, las reglas previas de `@media print` no lo ocultaban, dejando el modal visible y tiñendo toda la hoja con el backdrop semitransparente.
+- Solución Multicapa Implementada:
+  - **Regla Estricta en Hoja de Estilos Global (`index.css`)**:
+    - Se incorporó la regla `body > *:not(#print-portal) { display: none !important; visibility: hidden !important; opacity: 0 !important; }`, garantizando que absolutamente ningún elemento inyectado en `<body>` se imprima excepto el contenedor `#print-portal`.
+    - Se agregaron selectores explícitos para modales y componentes emergentes: `[role="dialog"]`, `[role="alertdialog"]`, `[data-radix-focus-guard]`, `[data-radix-popper-content-wrapper]`, `[data-sonner-toaster]`, `.no-print`.
+    - Se forzó `[data-state="open"], [data-state="closed"] { background: transparent !important; backdrop-filter: none !important; }` para neutralizar cualquier residuo de overlay.
+  - **Clases en Primitivas de UI (`dialog.tsx` y `CheckoutSuccessDialog.tsx`)**:
+    - Se añadió la clase utilitaria `print:hidden` a nivel componente tanto en `DialogOverlay` como en `DialogContent`, blindando de forma nativa todos los diálogos de la aplicación contra impresiones indeseadas.
+  - **Aislamiento en Otros Reportes Imprimibles**:
+    - `CurrentAccountsPrintStatement.tsx`, `ZReportDialog.tsx` y `PrintableBarcodeLabelsDialog.tsx` refactorizados para montar su documento imprimible exclusivamente mediante `<PrintPortal>` en `#print-portal`.
+- Verificación Determinista:
+  - `npm -w @wsm/client run typecheck`: Exit code 0.
+  - `npm -w @wsm/client run lint`: 0 errores.
+  - `npm -w @wsm/client run test`: 16 archivos, 61 tests en Vitest pasando (exit code 0).
+  - `npm run validate`: Exit code 0 (392 tests backend + 61 Vitest tests + build Vite producción en 5.8s).
+  - `npm run preflight:integrity`: Exit code 0 (40 relaciones referenciales validadas, 0 huérfanos).
+
+## 2026-09-05 Selección Ágil de Variantes en POS: Modal Persistente con Botón Listo (Opción A) y Expansión Inline en Lista (Opción B)
+
+- Diagnóstico y Requerimiento de Operatoria:
+  - En el Punto de Venta (`/pos` - `ProductCatalogCard.tsx`), al seleccionar una variante de un producto (ej. Talle M), el diálogo modal se cerraba inmediatamente de forma abrupta, obligando al cajero a volver a buscar el producto para cargar otro talle (ej. Talle L).
+  - Además, no existía indicación de cuántas unidades de cada variante ya estaban en el carrito de compras ni una forma ágil de seleccionar variantes directamente sin abrir ventanas emergentes.
+- Solución Implementada (Opción A + Opción B):
+  - **Opción A (Modal Persistente con Botón de Cierre y Contador)**:
+    - Al presionar `Agregar`, la variante se suma al carrito inmediatamente mediante `onAddToCart` con notificación toast, pero **el modal permanece abierto**.
+    - Cada fila de variante exhibe una nueva columna y badge **`En Carrito: X`** en tiempo real.
+    - El botón se adapta dinámicamente: `Agregar` si está en 0 o `Sumar (+1)` si ya fue agregado.
+    - Encabezado con contador total de unidades del producto cargadas en el carrito.
+    - Pie del modal con botón explícito destacado: **`[✓ Listo / Volver al catálogo]`** para cerrarlo únicamente cuando el cajero termine.
+  - **Opción B (Expansión Directa Inline en la Vista Lista)**:
+    - En la vista de tabla/lista, los productos con múltiples variantes ahora cuentan con un botón/chevron desplegable en la fila y en el botón de acción (`Elegir` / `Plegar`).
+    - Al hacer clic en la fila o botón, se despliega una sub-fila elegante tipo acordeón directamente debajo del producto con tarjetas compactas por variante (talle, color, SKU, stock, precio, badge de carrito y botón rápido `+ Agregar` / `Sumar`).
+    - 0 ventanas emergentes y 0 clics innecesarios para operaciones ultra-rápidas en el mostrador.
+    - Enlace a "Ver en ventana detallada" dentro de la sub-fila para acceder al modal amplio cuando sea necesario.
+    - En la vista de tarjetas (grid), las tarjetas también muestran badge de unidades en carrito acumuladas.
+  - Verificación Determinista:
+    - `npm -w @wsm/client run test`: 61 tests pasando.
+    - `npm -w @wsm/client run lint`: 0 errores.
+    - `npm -w @wsm/client run typecheck`: Exit code 0.
+    - `npm run validate`: Exit code 0 (common build + 392 backend tests + 61 Vitest tests + build de producción Vite).
+    - `npm run preflight:integrity`: Exit code 0 (40 relaciones foráneas, 0 huérfanos).
+
+## 2026-09-05 Rediseño de Tarjetas de Picking y Optimización de Recorrido WMS (Ruta Secuencial A → Z)
+
+- Diagnóstico y Requerimiento Operativo:
+  - En la lista de pedidos de picking (`PickingOrdersTable.tsx`), el código UUID aparecía sobredimensionado dominando la tarjeta, el nombre del cliente estaba relegado y no se visualizaba con claridad la fecha comprometida de entrega/preparación ni se ordenaban los pedidos cronológicamente por urgencia.
+  - En la vista de control y ejecución de picking (`PickingHeader.tsx`, `PickingItemsGrid.tsx`), el recorrido por defecto estaba invertido (de mayor a menor) y no contemplaba el formato alfanumérico de racks WMS (`A1-02` antes de `A1-10`), dejando las ubicaciones genéricas ("General" / sin ubicar) mezcladas a mitad del trayecto en lugar de agruparlas al final del almacén.
+- Solución Implementada:
+  - Tarjetas de Pedidos en Picking (`PickingOrdersTable.tsx`):
+    - Título principal con el nombre del cliente (`customer_name` o `client_name`).
+    - Código de orden secundario reducido en fuente monoespaciada sutil (`#A1B2C3D4`).
+    - Fecha necesaria de entrega / preparación (`estimated_delivery` o `created_at`) con formato en español e insignia de urgencia ("Urgente") si vence hoy o está retrasado.
+    - Ordenamiento cronológico estricto: pedidos con fecha de entrega más próxima o urgente al inicio.
+    - Badges de método de envío ("Retiro en mostrador" / "Envío a domicilio"), métricas de ítems/unidades y buscador reactivo por cliente, código o SKU.
+    - Botones claros de acción: "Iniciar picking" / "Continuar picking" con barra de progreso visual.
+  - Cabecera de Picking (`PickingHeader.tsx`):
+    - Título principal con el nombre del cliente y metadatos secundarios (código `#ID`, tipo de despacho y fecha de entrega).
+    - Selector de ruta WMS intuitivo con opción predeterminada: "Zona A → Z (Ruta estándar)".
+  - Optimización de Recorrido WMS y Ergonomía (`pickingUtils.ts`, `PickingItemsGrid.tsx`, `Picking.tsx`):
+    - Función de comparación de ubicaciones `compareLocations`: utiliza ordenamiento natural alfanumérico numérico (`localeCompare` con `numeric: true`) y posiciona automáticamente ubicaciones genéricas o vacías ("General", "Sin ubicación") al final de la ruta de recolección.
+    - Grilla de ítems enriquecida: badge de secuencia de parada (`Parada #1`, `Parada #2`), ubicación física destacada con ícono `MapPin`, barra de progreso y botón de acción interactivo `[Recolectar ítem]`.
+    - Auto-avance inteligente en `Picking.tsx` seleccionando de inmediato el siguiente ítem incompleto a lo largo de la ruta ordenada.
+  - Verificación Determinista:
+    - Tests de `pickingUtils.test.ts` ampliados (6/6 tests pasando).
+    - Suite de cliente: 61 tests en Vitest pasando.
+    - `npm run validate`: Exit code 0 (build common + 392 backend tests + 61 Vitest tests + lint + typecheck + build Vite).
+    - `npm run preflight:integrity`: Exit code 0 (40 relaciones foráneas, 0 huérfanos).
+
+## 2026-09-04 Aislamiento de Impresión (#print-portal), Desbloqueo en Facturación y Hoja Única de Ticket
+
+- Diagnóstico y Hallazgos:
+  - En la vista de impresión del ticket térmico (PDF 1), aparecía la pantalla de fondo del POS y el modal "Venta Registrada con Éxito" se repetía en 2 hojas, debido a que `#root` y los portales de Radix (`[data-radix-portal]`) no estaban aislados en `@media print`.
+  - En la página de Facturación (PDF 2), al presionar el ícono de impresora o ticket de la tabla, la impresión salía 100% en blanco porque el contenedor padre `Invoices.tsx` tenía la clase `print:hidden`, ocultando los componentes de impresión en el DOM.
+- Solución Implementada:
+  - Contenedor Dedicado `#print-portal` y Componente `PrintPortal.tsx`:
+    - Incorporado `<div id="print-portal"></div>` en `index.html`.
+    - Creado `packages/client/src/components/common/PrintPortal.tsx` para proyectar comprobantes fuera del árbol de la app (`#root`) directamente a `#print-portal`.
+    - Conectado `PrintPortal` en `PrintableThermalTicket`, `PrintableInvoiceArea`, `PrintableThermalCreditNote`, `PrintableCreditNoteArea`, `PrintableOrderArea`, `PrintableLabelArea`, `PrintableManifestArea` y `ClientDetail`.
+  - Reglas `@media print` en `index.css`:
+    - Ocultamiento estricto de `#root`, `[data-radix-portal]`, `[data-sonner-toaster]` y `.no-print`.
+    - Visualización exclusiva de `#print-portal` (`display: block !important`).
+    - Propiedades `page-break-inside: avoid !important;` y `break-inside: avoid !important;` en `#printable-ticket` para asegurar una única tira/hoja térmica continua.
+  - Facturación (`Invoices.tsx`, `InvoicePreviewDialog.tsx`, `InvoiceDocument.tsx`):
+    - Removido `print:hidden` de `Invoices.tsx`.
+    - Agregada limpieza automática de layout post-impresión (`afterprint`).
+    - Conectados botones para imprimir Factura A4 y Ticket 80mm tanto desde la tabla como desde el modal de previsualización (el ícono del "ojo").
+- Verificación Determinista:
+  - `npm run validate`: Exit code 0 (392 tests backend + 60 tests frontend Vitest + lint + typecheck + build Vite).
+  - `npm run preflight:integrity`: Exit code 0 (40 relaciones foráneas, 0 huérfanos).
+
+## 2026-09-04 Detalle de Venta en Facturas/Tickets y Márgenes Laterales del Ticket Térmico
+
+- Diagnóstico y Requerimiento de Operador:
+  - Al emitir comprobantes desde el POS o reimprimirlos desde el historial, tanto la Factura A4 como el Ticket Térmico mostraban "Comprobante sin ítems asociados", careciendo del desglose por producto, cantidad, precio unitario y total de línea.
+  - Además, el ticket térmico en vista de impresión se estiraba al ancho de la hoja y carecía de márgenes laterales (padding), pegando los caracteres directamente al borde izquierdo.
+- Solución Implementada:
+  - Backend (`sales.service.js`, `PickupOrderCheckoutUseCase.js`, `InvoiceAuthorizationUseCase.js`, `salesController.js`, `salesRoutes.js`):
+    - `createInvoice` y `createManualInvoice` retornan el objeto íntegro de la factura incluyendo sus datos de cliente y el array de `items` persistidos.
+    - Creado `getInvoiceById(invoiceId)` y expuesto el endpoint `GET /api/invoices/:id` protegido con `canInvoice`.
+    - `PickupOrderCheckoutUseCase` y `InvoiceAuthorizationUseCase` aseguran la presencia de `items` en todo momento.
+    - Cobertura de tests ampliada a 392 tests en backend.
+  - Frontend (`index.css`, `PrintableThermalTicket.tsx`, `InvoiceDocument.tsx`, `POS.tsx`, `CheckoutSuccessDialog.tsx`, `api.ts`):
+    - `@media print`: `#printable-ticket` configurado a `width: 80mm !important; max-width: 80mm !important; margin: 0 auto !important; padding: 4mm 6mm !important; box-sizing: border-box !important;`, garantizando márgenes laterales cómodos de 6mm y ancho delimitado.
+    - `PrintableThermalTicket.tsx`: tabla de productos enriquecida mostrando nombre del ítem, SKU, cantidad (`X un.`), precio unitario, IVA discriminado y total de línea formateado.
+    - `InvoiceDocument.tsx`: tabla A4 con descripción de producto, SKU, cantidad, precio unitario y total de línea.
+    - `POS.tsx`: `handlePrint` transformado a asincrónico para consultar preventivamente `api.getInvoiceItems(invoice.id)` si los ítems vinieran ausentes antes de invocar `window.print()`.
+    - `CheckoutSuccessDialog.tsx`: carga asincrónica de ítems al abrir y preservación de ítems tras la autorización fiscal con CAE.
+  - Verificación Determinista:
+    - `npm run validate`: Exit code 0 (392 tests backend + 60 tests frontend Vitest + lint + typecheck + build Vite).
+    - `npm run preflight:integrity`: Exit code 0 (40 relaciones foráneas, 0 huérfanos).
+
+## 2026-09-04 Retiro y Cobro de Pedidos en Mostrador desde POS (BOPIS / Click & Collect)
+
+- Diagnóstico y Requerimiento Operativo:
+  - Cuando un pedido con retiro en local (`shipping_method: 'pickup'`) era preparado por el almacén (`packed`), no existía una forma ágil de seleccionarlo y cobrarlo en la caja registradora del mostrador (`/pos`). Además, si el cliente al momento de retirar decidía sumar productos adicionales de mostrador (*cross-selling*), no se podían unificar en un solo ticket/factura ni conciliar los medios de pago con el turno de caja activo.
+- Solución Implementada:
+  - Caso de Uso Atómico Backend (`PickupOrderCheckoutUseCase.js`):
+    - Validación rigurosa de estado de origen (`packed` o `dispatched` con retiro en local).
+    - Descuento y control de stock físico para ítems adicionales (`extra_items`) con inserción trazable en `inventory_movements` y consolidación en `order_items` (`picked_quantity = quantity`).
+    - Marcado de entrega de la orden (`status: 'delivered'`).
+    - Facturación fiscal delegada a `salesService.createInvoice` en la misma conexión transaccional sin commits prematuros (`isExternalTx`).
+    - Asiento de pagos en el turno de caja activo del cajero (`shift_payments`), recálculo del saldo esperado de caja y compleción del pedido (`status: 'completed'`).
+  - Endpoint y Seguridad:
+    - `POST /api/orders/:id/pickup-checkout` protegido con `canSell` (`PERMISSIONS.ORDERS_SELL`) y validado con Zod schema `pickupOrderCheckoutSchema`.
+  - Frontend y Experiencia de Usuario POS (`/pos`):
+    - Botón `[📦 Retiro Mostrador ({count})]` con badge dinámico en `POSHeader.tsx`.
+    - Diálogo modal `POSPickupOrdersDialog.tsx` para búsqueda y selección instantánea de pedidos listos para retiro.
+    - Carga automática en el carrito de compras con banner distintivo de retiro (`Retiro de Pedido #...`) y badges por ítem (`Preparado` para almacén vs `Mostrador (+)` para ítems agregados).
+    - Preservación de cobro atómico con múltiples medios de pago, arqueo de caja e impresión de comprobante fiscal.
+  - Cobertura de Pruebas y Determinismo:
+    - Creado `packages/server/test/pickup-order-checkout.test.js` (5 tests unitarios). Suite backend: 390/390 tests.
+    - Creado `packages/client/src/components/pos/posPickupCheckout.test.ts` (3 tests unitarios). Suite frontend: 60/60 tests en Vitest.
+    - Gates deterministas: `npm run validate` (exit code 0) y `npm run preflight:integrity` (exit code 0).
+
+## 2026-09-04 Visualizadores de Totales y Conciliación de Pagos en Crear Pedido (`CreateOrderDialog`)
+
+- Diagnóstico y Requerimiento de UX:
+  - En el diálogo de creación de pedidos (`CreateOrderDialog.tsx`), no existía un visor destacado de la suma de productos agregados accesible sin desplazarse, y al definir medios de pago no se indicaba visualmente cuánto faltaba por cubrir para alcanzar el balance cero, permitiendo además presionar "Crear" con desajustes que provocaban errores de validación.
+- Solución Implementada:
+  - Visualizador de Suma Total de Productos:
+    - Cabecera: badge con cantidad de ítems y unidades, acompañado de caja destacada con el total acumulado en tiempo real (`$ ${createOrderTotal}`).
+    - Pie de lista: barra de resumen (`Calculator`) con el detalle consolidado de unidades, líneas y total del pedido.
+  - Monitor Dinámico de Medios de Pago:
+    - Indicador en tiempo real de fondos pendientes (`remainingToAssign` = total pedido - total asignado).
+    - Si falta dinero (`remainingToAssign > 0`): recuadro ámbar con aviso `"Falta asignar: $ X"` y botones de atajo para autocompletar la diferencia restante o el total.
+    - Si se excede (`remainingToAssign < 0`): alerta en rojo advirtiendo el excedente.
+    - Si es cero (`remainingToAssign === 0`): recuadro verde de éxito indicando `"Monto completamente asignado ($0 pendiente). Listo para crear"`.
+  - Bloqueo y Validación:
+    - El botón "Crear" se deshabilita condicionalmente mientras no haya productos o el saldo pendiente sea distinto de cero, con leyendas de ayuda explicativas al operador.
+  - Cobertura de Pruebas:
+    - Creado `packages/client/src/components/orders/createOrderBalance.test.ts` (5 tests pasando).
+    - Suite de cliente ampliada a 57 tests en Vitest.
+    - `npm run validate` y `npm run preflight:integrity` pasando al 100%.
+
+## 2026-09-04 Corrección de Cobro POS y Consistencia Impositiva en Pedidos (Hotfix POS Checkout)
+
+- Diagnóstico y Causa Raíz:
+  - En `/pos`, al registrar una venta de un producto gravado (ej. Monitor LED 24" $ 1.200.000 + 21% IVA = $ 1.452.000), el cajero ingresaba el medio de pago por el total con IVA ($ 1.452.000), pero `CreateOrderUseCase` calculaba `computedTotal` sumando exclusivamente `quantity * sale_price` (neto $ 1.200.000) sin contemplar el impuesto gravado ni el total esperado, produciendo el error `Los medios de pago deben sumar el total del pedido (1200000)`.
+- Solución Implementada:
+  - Contrato `@wsm/common` (`createOrderSchema`): añadido soporte para `unit_price` y `vat_rate` opcionales en los ítems del pedido, compilado con `npm run build:common`.
+  - Backend (`CreateOrderUseCase`): cálculo de `computedNet` y `computedWithVat` para conciliar tanto pedidos con impuestos discriminados (como POS / mostrador comercial) como órdenes administrativas netas, garantizando que `resolvedTotal` y la validación de `normalizedPayments` acepten montos íntegros con IVA sin discrepancias de centavos.
+  - Controlador (`salesController.createOrder`): reenvío transparente de `total_amount` recibido del POS como `external_total_amount` al operar con clave idempotente.
+  - Frontend (`POS.tsx` y `offlineSalesQueue.ts`): inclusión de `total_amount: grandTotal`, `unit_price: item.sale_price` y `vat_rate: item.vat_rate` en la creación del pedido.
+  - Cobertura de Pruebas:
+    - Agregado test en `pos-schema-contracts.test.js` para validar el esquema completo con IVA y pagos divididos.
+    - Agregado test en `create-order-edge-cases.test.js` para simular la creación de órdenes con IVA y validación de cobro.
+    - Verificación HTTP en vivo: venta y emisión de factura autorizada de $ 1.452.000 generada con éxito (HTTP 200, status `paid`).
+
+## 2026-09-04 Operación Controlada E2E, Auto-Runner Smoke y Backup Nativo (Bloque P5)
+
+- Autosuficiencia y Auto-Runner de Smoke Tests:
+  - Creado `smoke-runner-helper.js`: verifica conectividad del backend y, de no existir proceso en ejecución, inicia un servidor efímero en memoria en un puerto libre, cerrándolo limpiamente al terminar las pruebas.
+  - Actualizados `rbac-validation-smoke.js` e `integrity-validation-smoke.js` para ser 100% autosuficientes y ejecutables en un solo comando sin terminales secundarias.
+- Resiliencia de Datos y Backup Nativo (Gate 2):
+  - Creada herramienta nativa `backup-database.js` en Node.js puro sin dependencias de `mysqldump`.
+  - Capaz de volcar y restaurar esquemas DDL y datos en lotes de 62 tablas con compresión gzip y checksums SHA-256 en el directorio `backups/`.
+  - Verificado dump real: 332.7 KB SQL (comprimido a 61.6 KB, 1024 registros en 6.1s).
+  - Scripts registrados: `npm run db:backup` y `npm run db:restore`.
+- Operación Controlada E2E (Gate 5):
+  - Creado `commercial-lifecycle-smoke.js` (`npm run smoke:commercial`).
+  - Verificación determinista de 8 pasos del ciclo comercial y logístico: salud y latencia \(\to\) tokens de rol \(\to\) clientes \(\to\) selección de producto con stock disponible \(\to\) creación de pedido con reservas atómicas en `order_item_allocations` \(\to\) verificación de summary \(\to\) transición a picking \(\to\) confirmación de pick \(\to\) empaquetado (`packed`) con deducción física \(\to\) despacho con tracking y método de envío \(\to\) entrega \(\to\) emisión de factura comercial.
+- Determinismo y Preflight Staging Completo:
+  - `npm run preflight:staging`: Exit code 0 (ejecutando en cadena: validate + preflight:integrity + smoke:rbac + smoke:integrity + smoke:commercial).
+  - `npm run audit`: Exit code 0 (0 vulnerabilidades).
+
+## 2026-09-04 Infraestructura Preproducción, CI/CD, Containerización y Observabilidad (Bloque P4)
+
+- Configuración y Gobernanza de Entorno:
+  - Creada plantilla canónica `.env.example` en raíz documentando exhaustivamente `development`, `staging` y `production` (exigencias de HTTPS, claves simétricas de cifrado AES-256-GCM, SSL en base de datos y longitud mínima de JWT).
+  - Script CLI determinista `packages/server/scripts/preflight-env.js` y script npm `preflight:env` en server y raíz con soporte de flags (`--target`, `--file`) para validar el entorno previo al arranque o build.
+- Integración Continua (CI/CD):
+  - Workflow de GitHub Actions `.github/workflows/ci.yml` configurado con Node 20 LTS, caché de npm y ejecución determinista de los gates: validación de entorno, build de `@wsm/common`, tests backend, linting, typecheck, tests frontend Vitest, build Vite y `npm audit --audit-level=high`.
+- Containerización para Staging:
+  - `Dockerfile` multi-stage: etapa de compilación limpia y etapa runtime mínima sobre Alpine con usuario no privilegiado `node`, healthcheck nativo `/api/live` y empaquetado del SPA frontend.
+  - `docker-compose.staging.yml` con servicio MySQL 8.0, healthcheck de base de datos (`mysqladmin ping`), redes bridge dedicadas y volúmenes persistentes.
+  - `.dockerignore` exhaustivo para builds eficientes y seguros.
+- Observabilidad y Trazabilidad Avanzada:
+  - Middleware de Correlation ID en Express: inyecta y preserva `X-Request-Id` y `X-Request-ID` (UUID v4), correlacionándolo en los logs JSON de acceso estructurados.
+  - Endpoint `/api/health` enriquecido: incluye métricas de latencia de BD (`db_latency_ms`), `uptime_seconds`, memoria RSS y Heap (`memory_rss_mb`, `memory_heap_mb`) preservando 100% de compatibilidad con smoke tests.
+  - Fallback SPA compatible con Express 5 para servir el cliente compilado estáticamente.
+  - Nueva suite automatizada `packages/server/test/health-and-correlation.test.js` pasando al 100% (4/4 tests).
+- Determinismo y Verificación:
+  - `npm run preflight:env`: Exit code 0.
+  - `npm run validate`: Exit code 0 (383 tests backend + 52 tests frontend + lint + typecheck + build Vite).
+  - `npm run preflight:integrity`: Exit code 0 (40 relaciones foráneas, 0 huérfanos).
+  - `npm run audit`: Exit code 0 (0 vulnerabilidades).
+
+## 2026-09-03 Buffer Offline IndexedDB en POS y Guía PDF de Homologación Externa (Bloque P3)
+
+- Buffer de contingencia offline avanzado en POS:
+  - Implementación de `offlineIndexedDb.ts` para persistencia transaccional en IndexedDB (`wsm_pos_offline_db` con store `offline_sales`).
+  - Dual-write en `offlineSalesQueue.ts`: respaldo asincrónico inmediato en IndexedDB al encolar ventas offline, previniendo pérdida de datos por descarte de memoria o cuota de localStorage.
+  - Recuperación automática (`restoreOfflineQueueFromIndexedDb`): POS restaura la cola desde IndexedDB al iniciar si el almacenamiento local fue vaciado.
+  - Tests unitarios ampliados a 52 casos pasando.
+- Documentación y Guía de Homologación Externa:
+  - Publicada la guía paso a paso en Markdown: `docs/execution/GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.md`.
+  - Generado el documento oficial en formato PDF listo para impresión/ejecución: `docs/execution/GUIA_HOMOLOGACION_ARCA_Y_TIENDANUBE.pdf` (162 KB).
+  - Script CLI automatizado de compilación PDF: `packages/server/scripts/generate-homologation-pdf.js`.
+- Determinismo y Calidad:
+  - `npm run validate`: Exit code 0 (build `@wsm/common`, 379 tests backend, 52 tests frontend, typecheck y linter limpios, Vite build exitoso).
+  - `npm run preflight:integrity`: 40 relaciones validadas sin huérfanos.
+
+## 2026-09-03 Descomposición Modular Frontend y Casos de Uso Backend (Bloque P2)
+
+- Descomposición de páginas monolíticas en el frontend (`@wsm/client`):
+  - `Picking.tsx`: Reducido de 808 a 365 líneas mediante la extracción de `PickingHeader`, `PickingScannerCard`, `PickingItemsGrid` y `PickingOrdersTable` en `components/picking/`.
+  - `Collections.tsx`: Reducido de 779 a 295 líneas desacoplando `CollectionsFiscalSalesCard`, `CollectionsChecksPortfolioCard`, `CollectionsPendingInvoicesCard` y `CollectionsPaymentFormCard` en `components/collections/`.
+  - `POS.tsx`: Extracción de la barra superior y atajos a `components/pos/POSHeader.tsx`.
+- Desacoplamiento de servicios densos en backend (`@wsm/server`):
+  - Extracción de casos de uso `DispatchOrderUseCase.js` y `DeliverOrderUseCase.js` en `domains/sales/` con inyección de dependencias.
+  - `SalesService` ahora delega las operaciones de despacho y entrega a casos de uso limpios y testeables.
+- Determinismo y Calidad:
+  - `npm run validate`: Exit code 0 (build `@wsm/common`, 379 tests backend, 50 tests frontend, typecheck y linter limpios, Vite build exitoso).
+  - `npm run preflight:integrity`: 40 relaciones validadas sin huérfanos.
+
+## 2026-09-03 Endurecimiento WMS: Migración 044 (order_item_allocations) y Picking Concurrente
+
+- Aplicación exitosa de la migración `044_harden_order_picking.sql` en base de datos: creación de tabla `order_item_allocations`, columnas de concurrencia en `picking_sessions` (`version`, `claim_idempotency_key`, `completed_with_shortage`, `released_at`), e instrumentación de eventos granulares en `picking_session_events`.
+- Integración en `CreateOrderUseCase`: ahora cada ítem de pedido reserva y persiste registros atómicos en `order_item_allocations` vinculando ítem, ubicación de inventario y cantidades reservadas.
+- Actualización de `sales.service.js`:
+  - Cancelación de pedidos: liberación exacta de reservas por ubicación desde `order_item_allocations` con estado `cancelled`.
+  - Transición a `packed`: deducción física del inventario basada en las ubicaciones asignadas y marcado de faltantes (`shortage_quantity`).
+  - `pickOrderItem`: registro de eventos con `allocation_id`, `order_item_id` y `picker_id`.
+  - `getOrderSummary`: incluye la lista de `allocations` con ubicaciones físicas.
+- Extensión del contrato TypeScript en cliente: interfaces `OrderItemAllocation` y actualización de `getOrderSummary`.
+- Preflight de integridad actualizado: 40 relaciones relacionales verificadas, 0 registros huérfanos.
+- Validación determinista completa: `npm run validate` superado (379 tests backend, 50 tests frontend, typecheck, lint y build limpios).
+
+## 2026-09-02 Integración de Gobernanza Oficial Antigravity y Template Base
+
+- Creación de la plantilla maestra reutilizable en `C:\Dev\Base antigravity` a partir de la adaptación profunda de `AI_Project_Starter_Kit_v1.1.zip` a lineamientos de Antigravity.
+- Despliegue de reglas de gobierno en la raíz de WSM SportsERP (`GEMINI.md`, `AGENTS.md`, `CLAUDE.md`) blindando las invariantes no negociables de WMS, contabilidad y RBAC.
+- Implementación de la capa de contexto `.agents/context/` (`PROJECT.md`, `TASKS.md`, `QUALITY.md`, `BUDGET.yaml`, `PROFILE.md`, `DECISIONS.md`) y sincronización con `.ai/`.
+- Normalización del plugin de ingeniería a estándar Antigravity (`plugins/wsm-erp-engineering/plugin.json`).
+- Instalación de skills genéricos de preflight y verificación determinista en `.agents/skills/`.
+- Validación determinista completa: `npm run validate` en verde (build common, 375 tests server, 50 tests client, lint, typecheck y build client); `npm run preflight:integrity` con 36/36 relaciones sin huérfanos.
+
+## 2026-08-22 Control de stock móvil y acceso directo a Picking
+
+- Nuevo módulo `Control de stock` para conteos cíclicos desde teléfono, con verificación de ubicación, lectura por cámara/lector/teclado, cantidad física y observaciones.
+- Conteo ciego real: el backend no expone cantidad teórica, diferencia ni fidelidad mientras la sesión está en curso.
+- Alcance por Pareto ABC de valor inmovilizado: clase A (80%, cadencia semanal sugerida), B (hasta 95%, mensual) y C (resto, trimestral), además de alcance total.
+- Sesiones persistentes con snapshot, productos pendientes, productos físicos no previstos, reconteos trazados como eventos, historial acotado y métricas de fidelidad globales y por clase.
+- Separación de funciones: depósito puede contar; sólo administración/gerencia puede aprobar ajustes. El ajuste se bloquea ante stock posterior o reservas incompatibles y genera movimientos trazables por SKU.
+- Una auditoría en curso o pendiente de aprobación puede descartarse sin tocar existencias; conserva el evento y queda excluida de las métricas válidas.
+- `Picking` quedó como acceso directo del menú móvil y su escáner admite cámara, lector Bluetooth/USB e ingreso manual.
+- Migración `042_create_stock_audits.sql` aplicada en la base de prueba. Ensayo real completado sobre `General`, luego descartado sin aplicar diferencias; no se alteró el stock ni las métricas válidas.
+- Verificación móvil a 319 px: sin desbordamiento, overlay ni errores capturados; encabezado global compactado para operación en teléfono.
+- Validación final: servidor 375/375, cobertura 99,43% líneas / 90,67% ramas / 98,23% funciones; cliente 47/47, typecheck, lint y build verdes; RBAC 12/12 y preflight 36 relaciones sin huérfanos.
+- Cámara móvil: el navegador exige origen HTTPS. En la red local HTTP permanecen disponibles lector externo e ingreso manual; el despliegue HTTPS habilita la cámara.
+
+## 2026-08-22 Cobertura superior al 90% y cierre técnico
+
+- Servidor: 357/357 pruebas; cobertura 99,40% líneas / 90,71% ramas / 98,08% funciones en la ejecución final.
+- El piso bloqueante de CI quedó elevado a 90% para líneas, ramas y funciones.
+- Cliente: 45/45 pruebas; typecheck, lint y build de producción verdes.
+- Smoke RBAC/validaciones: 12/12; preflight de integridad: 27/27 relaciones sin huérfanos.
+- Se añadieron variantes de regresión para ventas, cancelaciones, cobros, cheques, garantías, secuencias, cookies y operaciones Tiendanube.
+- Mejora funcional detectada por las pruebas: las referencias bancarias de pagos a proveedor ahora se preservan normalizadas para su trazabilidad.
+- Las cancelaciones de pedidos ya no generan movimientos de reposición con cantidad cero.
+- Pendiente externo deliberado: cargar/probar credenciales reales de ARCA y Tiendanube y ejecutar el ensayo controlado de staging indicado en los runbooks.
+
+## 2026-08-20 Cierre de preproducción sin credenciales externas
+
+- La aprobación de recepciones exige en backend un control de calidad completo por producto; faltantes, cantidades inconsistentes y líneas duplicadas bloquean el stock.
+- El inspector se obtiene de la sesión autenticada y el alta de QC es transaccional e idempotente mientras la recepción está pendiente.
+- La acción simulada de envío de facturas por email quedó oculta hasta disponer de un proveedor real; no se muestra una operación ficticia al usuario.
+- Smokes corregidos para respetar `token_version` vigente y cerrar correctamente sus conexiones.
+- Validación final: servidor 118/118 y cobertura 61,64%/55,61%/68,17%; cliente 42/42, lint, typecheck y build verdes; RBAC 12/12, integridad HTTP 4/4 y preflight 20/20 relaciones sin huérfanos.
+- Ensayo QA de recepción aprobado: bloqueo sin QC (409), alta de QC, aprobación con actualización de stock y bloqueo de doble aprobación.
+- Altas/bajas lógicas QA aprobadas. El smoke de caja se omitió porque no había una caja abierta; debe ejecutarse con turno controlado en staging.
+- Playwright CLI local no está disponible por ausencia de `npx`; el pipeline CI instala Chromium y mantiene este gate como obligatorio.
+- Runbook de salida: `docs/execution/PRODUCTION_READINESS_2026-08-20.md`.
+
+## 2026-08-20 Centro operativo Tiendanube
+
+- Nuevo módulo superior `Tienda online`: resumen, catálogo paginado y multivariante, pedidos/compradores, múltiples envíos y tracking, clientes, sincronización y análisis.
+- Tiendanube eliminada de Configuración general; credenciales, OAuth, Location ID, webhooks, diagnóstico y desconexión quedaron en `Tienda online > Configuración` mediante endpoints dedicados.
+- API `2025-03`, limitador de dos solicitudes por segundo, retry 429, 22 webhooks, HMAC, idempotencia, ciclo de conexión y RBAC operativo separado de secretos.
+- Migraciones `033`-`036` aplicadas; `034` permite eventos repetidos del mismo recurso y `035`/`036` corrigen deriva del catálogo en bases históricas.
+- Prueba operativa: alta de familia con dos SKU y stock total 5, baja recuperable de un borrador por ID y las ocho pestañas/estados desconectados sin errores de consola.
+- Validación del módulo: servidor 113/113, cliente 42/42, typecheck, lint, build y preflight referencial (0 huérfanos) verdes; supersedida por el cierre 118/118 anterior.
+- Guía de conexión y ensayo real: `docs/TIENDANUBE_OPERATIONS.md`.
+
+## 2026-08-19 Hardening 100/100
+
+- JWT movido de `localStorage` a cookie HttpOnly/SameSite/secure.
+- Matriz única de capacidades RBAC compartida entre backend y frontend.
+- Contabilidad y auditoría inmutables con contra-asientos y triggers.
+- Auditoría transaccional en operaciones críticas.
+- Migraciones serializadas, con checksum y recuperación por sentencia; integridad referencial del núcleo.
+- Secretos ARCA/Tiendanube redactados permanentemente y prueba ARCA real.
+- CI ampliado con typecheck, E2E y auditoría; 95 tests servidor + 20 cliente verdes, lint y build verdes.
+- Runbook y evidencia: `docs/execution/HARDENING_100_2026-08-19.md`.
+
+## 2026-08-16 Execution Snapshot (Auditoría integral + remediación)
+
+Resolved on 2026-08-16 (detalle completo en `CHANGELOG_EXECUTION.md`):
+- **Auditoría integral** de arquitectura, backend, frontend, seguridad/datos y calidad de ingeniería (sin modificar código). Hallazgos críticos remediados en el mismo día.
+- **Seguridad**: `ENCRYPTION_KEY` obligatoria sin fallback silencioso (con descifrado legacy para datos pre-rotación); scripts admin sin contraseñas hardcodeadas (validan política y revocan sesiones); `.env` con `DB_SSL=true` + claves rotadas; `ENCRYPTION_KEY` validada en arranque.
+- **Transaccionalidad**: autorización AFIP con `FOR UPDATE` (sin doble llamada concurrente a ARCA); audit log transaccional (commitea con la operación).
+- **Tienda Nube**: webhook procesa antes de responder (500 → re-entrega del proveedor), raw body estricto, callback sin `id=1` hardcodeado, syncs manuales solo admin.
+- **Fix fiscal**: los 4 documentos impresos usan `afipQr.ts` (RG 4892, campo `ctz`) y generan el QR localmente (`qrcode`) — antes imprimían QR inválido (`cotiz`) vía api.qrserver.com y las notas de crédito tenían QR decorativo falso.
+- **BD/perf**: migración `026` con índices de consultas frecuentes (aplicada a remota); backup con `--single-transaction`, `MYSQL_PWD` y retención.
+- **Dependencias**: axios declarado, `npm audit fix` → 0 vulnerabilidades, puppeteer a devDependencies.
+- **Git**: 2 meses de trabajo sin commitear ahora versionados en grupos lógicos; artefactos generados des-trackeados.
+- **Validación**: server 82/82, client 20/20, lint 0/0, build OK.
+
+Open decisions / pendientes humanos:
+- Rotar `DB_PASSWORD` de la BD remota desde el panel de Hostinger y separar credenciales dev/prod (el `.env` local aún apunta a la BD real).
+- Re-guardar credenciales de Tiendanube desde `Tienda online > Configuración` y las de ARCA desde Configuración para re-cifrarlas con la nueva `ENCRYPTION_KEY` (el descifrado legacy funciona mientras tanto).
+- Asientos contables aún editables/borrables físicamente: pendiente modelo de inmutabilidad con contrasientos.
+- `deliverOrder`/`pickOrderItem` sin TX (riesgo de estado a medias en picking/despacho).
+- Cobertura frontend: sin tests de componentes; E2E con un solo spec fuera de CI.
+
+## 2026-08-04 Execution Snapshot (Refactorización Modular & Seguridad)
+
+Resolved on 2026-08-04:
+- **Seguridad en Memoria ARCA (AFIP)**: Modificado `afip.service.js` para inyectar `.crt` y `.key` PEM directamente en memoria al SDK de ARCA, eliminando la escritura de credenciales en la carpeta `/tmp` del sistema operativo.
+- **Preservación de Secretos Encubiertos**: Modificado `settingsController.js` para evitar borrado/sobrescritura accidental de tokens de Tienda Nube y ARCA en peticiones de configuración parciales.
+- **Arnés de Pruebas**:
+  - Creado `packages/server/test/crypto.test.js` para probar cifrado AES-256-GCM.
+  - Creado `packages/client/src/lib/pickingUtils.test.ts` con 5 pruebas unitarias en Vitest.
+  - Corregidos errores estrictos de TypeScript en `afipQr.ts` y `pickingUtils.test.ts`.
+- **Descomposición Modular Backend (Clean Architecture)**:
+  - Creado dominio `packages/server/domains/sales/` con `CreateOrderUseCase.js` e `InvoiceAuthorizationUseCase.js`.
+  - Creado dominio `packages/server/domains/procurement/` con `GoodsReceptionService.js`, `PurchaseOrderService.js`, `SupplierReturnService.js` y `SupplierPaymentService.js`.
+  - Servidores y controladores refactorizados como fachadas delegadas limpias.
+- **Mejoras Operativas Internas (100/100 UX & Agilidad)**:
+  - **Reporte Consolidado Cierre Z de Caja**: Creado `ZReportDialog.tsx` e integrado en `CashManagement.tsx` con soporte de previsualización e impresión directa de comprobante de Cierre Z de turno.
+  - **Buscador Universal y Paleta de Comandos (`Ctrl + K`)**: Creado `CommandPalette.tsx` e integrado en `AppLayout.tsx` permitiendo navegación instantánea a todos los módulos y búsqueda en vivo de productos por SKU/nombre con precios y stock.
+  - **Exportador de Datos CSV**: Creado `exportUtils.ts` (con BOM UTF-8 para compatibilidad perfecta con Microsoft Excel) y agregada exportación CSV en **Inventario WMS** y **Proveedores**.
+  - **Nuevas Pruebas Unitarias**: Creado `exportUtils.test.ts` con 2 pruebas en Vitest.
+- **Soporte Completo de Temas & Corrección de Contraste (Modo Noche & Modo Día)**:
+  - Agregada directiva `@variant dark (&:where(.dark, .dark *));` en `index.css` para forzar que las clases utilitarias `dark:` responda exclusivamente a la clase `.dark` de HTML y no a la preferencia de SO del navegador en Modo Día.
+  - Refactorizados componentes UI base (`select.tsx`, `dropdown-menu.tsx`, `dialog.tsx`) eliminando fondos oscuros estáticos (`bg-slate-950`/`bg-slate-900`) por tokens de diseño dinámicos (`bg-popover`, `bg-background`, `text-popover-foreground`).
+  - Rediseñada la tarjeta de proveedores en `Suppliers.tsx` (encabezado `bg-muted/40` y texto `text-foreground` de alto contraste en 100% de la tarjeta).
+  - Ajustada la barra lateral (`AppLayout.tsx`) con contraste tipográfico mejorado en encabezados de sección (`text-slate-400 font-extrabold`) e ítems de navegación.
+- **Validación Canónica**: `npm run validate` 100% verde (66/66 backend, 17/17 Vitest client, 0 errores TS/ESLint, build Vite OK).
+
+## 2026-06-15 Execution Snapshot
+
+Resolved on 2026-06-15:
+- Implemented Tienda Nube stock sync retry queue (A2) with `failed_syncs` table and automatic interval retries.
+- Added failed syncs listing and manual retry trigger in settings e-commerce panel.
+- Expanded backend test suite with queueing and retry verification.
+
+Resolved on 2026-06-14:
+- Fixed `authorizeInvoice` audit payload variable in `packages/server/services/sales.service.js`.
+- Added regression coverage in `packages/server/test/sales.service.test.js`.
+- Aligned TiendaNube bulk update route between client and server.
+- Added client contract coverage in `packages/client/src/services/api.test.ts`.
+- Restored frontend build by aliasing `@wsm/common` for client tooling.
+- Separated Vitest unit tests from Playwright e2e specs.
+- Backend tests pass, frontend unit tests pass, frontend build passes.
+- Frontend lint passes with warnings only.
+- Frontend lint now passes with 0 errors and 0 warnings.
+- Backend sales unit tests no longer attempt the detected real audit DB write.
+- Root `npm run validate` now defines the canonical local validation sequence.
+- `npm run validate` could not be executed in this Codex environment because `npm` is absent from PATH; the same sequence was verified with the embedded Node runtime and local binaries.
+- Facturacion/postventa frontend types were tightened: credit note print/preview components, returns analytics, client return items, supplier return items.
+- Frontend lint is now clean with 0 errors and 0 warnings.
+- Tightened frontend contracts across API, POS, products, suppliers, inventory, orders, receptions, dashboard and accounting.
+- Added first traceability timeline slice:
+  - backend `TraceabilityService`
+  - `GET /api/traceability/timeline`
+  - client `api.traceability.getTimeline`
+  - regression tests for service normalization and client route contract.
+- Added business logic/UX review for purchases, receptions, POS, orders, current accounts and post-sale flows.
+- Improved operator clarity:
+  - parent navigation stays active on nested routes
+  - purchase order action copy now says `Enviar` when moving to `sent`
+  - visible POS/reception/purchase texts cleaned up.
+- Added first visible frontend traceability slice in `Inventario -> Trazabilidad`:
+  - search by SKU, barcode or product id
+  - timeline states for initial, loading, no results and error
+  - focused helper tests for filter construction and event formatting.
+- Extended backend traceability timeline with commercial/post-sale sources:
+  - orders
+  - invoices
+  - client returns
+  - warranty claims
+  - supplier returns
+- Stabilized `authorizeInvoice` CAE expiration regression test by fixing the test clock.
+- Prepared Tiendanube integration for real connection:
+  - settings validation preserves integration credentials
+  - API client uses Tiendanube `2025-03`
+  - stock sync uses official variant stock endpoint
+  - OAuth state is signed/verified
+  - webhooks verify HMAC and process by order id
+  - imported orders persist external source/id
+  - public company profile redacts Tiendanube secrets
+
+See `docs/execution/BITACORA_INTEGRAL.md` for the detailed roadmap, priorities, product vision, current percentages, and no-repeat continuity rules.
+
+---
+
+Last updated: 2026-06-15
+Status: IN_PROGRESS
+Current block: P1 - Business Consistency / Integrations
+Current task: Implementar generación de código QR en facturas AFIP (RG 4892) e integración de Padrón AFIP (autocompletar CUIT).
+Branch: `main`
+Head: `7f92656`
+
+## Resume From Here
+1. Diseñar e implementar generación de código QR para facturas electrónicas de AFIP (cumplimiento RG 4892).
+2. Diseñar e implementar integración con el Padrón de AFIP (A/B) para autocompletar la condición fiscal y datos del cliente al ingresar CUIT.
+3. Ejecutar validaciones en cada paso:
+   - `npm -w @wsm/server run test`
+   - `npm -w @wsm/client run lint`
+   - `npm -w @wsm/client run build`
+
+## Completed
+- 2026-02-22 checkpoint (operacion comercial):
+  - Picking hardening:
+    - cantidad por SKU mediante combo de confirmacion antes de persistir
+    - estados visuales por item:
+      - verde = completo
+      - naranja = faltante/parcial
+    - cierre explicito con botones:
+      - `Finalizar picking` (faltante 0)
+      - `Cerrar con faltantes` (faltante > 0)
+    - cierre basado en estado real de backend (`getOrderSummary`) con transicion segura:
+      - `pending -> picking -> packed`
+  - Pedidos:
+    - estado `packed` traducido operativamente a:
+      - `Listo para retiro` (pickup)
+      - `Listo para envio` (delivery)
+    - etiqueta especial para faltantes: `... c/faltante`
+  - Facturacion de pedidos alineada al proceso contable:
+    - eliminada captura de pago dentro de `Emitir factura` desde pedidos
+    - factura se emite con deuda pendiente (sin cobro automatico)
+    - cobro se posterga a cuenta corriente para pagos parciales/mixtos
+  - Commit set clave:
+    - `9af7871`, `fa94e29`, `5143d0c`, `4d3eeff`, `f54fddb`, `7f92656`
+- P2/P3 partial progress (responsive dialogs hardening + inventory product UX):
+  - Standardized mobile-first dialog footer actions across client dialogs:
+    - `packages/client/src/components/invoices/InvoiceCreateDialog.tsx`
+    - `packages/client/src/components/returns/UpdateStatusDialog.tsx`
+    - `packages/client/src/components/users/UserForm.tsx`
+    - `packages/client/src/pages/CashManagement.tsx`
+    - `packages/client/src/pages/Clients.tsx`
+    - `packages/client/src/pages/Suppliers.tsx`
+  - Improved product form layout to avoid cramped controls in narrow modal widths:
+    - scanner controls (barcode/location) reorganized to stable vertical+2-action layout
+    - image preview height reduced for better visual balance
+    - container-aware grids via `auto-fit/minmax` to prevent forced crowded columns
+  - Files:
+    - `packages/client/src/components/products/ProductForm.tsx`
+  - Validation:
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run build`
+- P2.7 partial progress (backend repository hygiene):
+  - Moved legacy debug/one-off migration scripts out of server root into:
+    - `packages/server/scripts/legacy/`
+  - Added operational note:
+    - `packages/server/scripts/legacy/README.md`
+  - Validation:
+    - `npm -w @wsm/server run test` (12/12)
+- P3.3 partial progress (UI polish product form):
+  - Applied visual/functional polish focused on operator clarity:
+    - section headers now include helper context labels
+    - barcode/location scanner controls with consistent height and spacing
+    - image block improved with explicit upload/remove actions
+    - proportional preview canvas (`4:3`) and better empty-state guidance
+    - action footer reorganized for mobile-first ergonomics
+  - Files:
+    - `packages/client/src/components/products/ProductForm.tsx`
+  - Validation:
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
+- P3.3 partial progress (UI/UX product form):
+  - Fixed inventory product dialog responsiveness and visual density issues:
+    - product modal now uses viewport-aware width and internal vertical scroll
+    - form grid breakpoints adjusted to avoid forced 2-column layout in narrow modal widths
+    - barcode/location scanner controls now stack correctly on small/medium widths
+    - image preview area reduced to avoid oversized block and improve section balance
+  - Files:
+    - `packages/client/src/pages/Inventory.tsx`
+    - `packages/client/src/components/products/ProductForm.tsx`
+  - Validation:
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
+- P3.4 implemented:
+  - Defined and enforced final product image storage policy:
+    - `products.image_url` now accepts only `http(s)` URLs.
+    - direct `data:image/...` payloads are rejected in create/update product flows.
+  - Added secure upload endpoint for product images:
+    - `POST /api/products/image-upload` (auth + inventory write roles)
+    - accepts base64 data URL payload
+    - validates type/size (max 1.5MB)
+    - stores files under `packages/server/uploads/products`
+    - returns canonical `image_url` for product persistence
+  - Kept strict JSON limits while supporting image upload:
+    - default API parser remains `10kb`
+    - route-specific parser (`2mb`) only for product image upload endpoint
+  - Frontend product onboarding aligned:
+    - local file selection now uploads to backend and stores returned URL
+    - form blocks invalid formats/oversize images and reports actionable errors
+    - fixed create flow that overwrote `image_url` to empty string
+  - Files:
+    - `packages/server/utils/imagePolicy.js`
+    - `packages/server/controllers/inventoryController.js`
+    - `packages/server/routes/inventoryRoutes.js`
+    - `packages/server/middleware/validationMiddleware.js`
+    - `packages/server/services/inventory.service.js`
+    - `packages/server/index.js`
+    - `packages/server/test/imagePolicy.test.js`
+    - `packages/server/test/inventory.service.test.js`
+    - `packages/client/src/services/api.ts`
+    - `packages/client/src/components/products/ProductForm.tsx`
+    - `packages/client/src/pages/Inventory.tsx`
+    - `.gitignore`
+  - Validation:
+    - `npm -w @wsm/server run test` (12/12)
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
+- P3.2 implemented:
+  - Added focused backend business tests for critical integrity paths:
+    - duplicate barcode guard (`409 DUPLICATE_BARCODE`)
+    - product creation with `stock_initial` creating inventory + movement records
+    - transactional stock deduction per order with insufficient/sufficient stock scenarios
+  - Files:
+    - `packages/server/test/inventory.service.test.js`
+    - `packages/server/test/sales.service.test.js`
+  - Validation:
+    - `npm -w @wsm/server run test` (8/8)
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
+- P3.1 implemented:
+  - Added GitHub Actions baseline CI workflow:
+    - trigger on `push`/`pull_request` to `main` and `workflow_dispatch`
+    - quality gate job with:
+      - `npm ci`
+      - `npm -w @wsm/server run test`
+      - `npm -w @wsm/client run lint`
+      - `npm -w @wsm/client run test`
+      - `npm -w @wsm/client run build`
+    - concurrency cancellation enabled for redundant runs.
+  - File:
+    - `.github/workflows/ci.yml`
+- P2.10 implemented:
+  - Backend hardening for product codes:
+    - normalized barcode/location on write paths
+    - enforced unique barcode validation in service layer (`409 DUPLICATE_BARCODE`)
+    - guarded update path with unique barcode validation before persistence
+  - POS scanner upgrade:
+    - camera scanner modal now functional in POS catalog
+    - fallback manual apply integrated
+    - scanner submit wired to exact add-to-cart flow
+  - Files:
+    - `packages/server/services/inventory.service.js`
+    - `packages/server/controllers/inventoryController.js`
+    - `packages/client/src/components/pos/ProductCatalogCard.tsx`
+- P2.9 implemented:
+  - Product model/backend:
+    - Added `barcode` support in validation and dynamic allowlists.
+    - Added migration `004_add_products_barcode.sql`.
+    - Product creation now accepts `stock_initial` and writes initial records in:
+      - `inventory`
+      - `inventory_movements` (`type='initial_stock'`)
+  - Inventory UI:
+    - Redesigned product form with assisted onboarding:
+      - barcode scan (camera + optical reader mode)
+      - location scan (camera + optical reader mode)
+      - image URL + local upload preview
+      - stock initial on create only
+    - Inventory listing now shows `barcode` and product image thumbnail.
+  - POS UI:
+    - Upgraded to visual catalog cards with product image, SKU/barcode/location and stock badge.
+    - Added scanner-assisted add flow from search input (exact SKU/barcode + Enter).
+    - Preserved existing checkout/payment/invoice/cash-shift logic.
+  - Files:
+    - `packages/server/migrations/004_add_products_barcode.sql`
+    - `packages/server/middleware/validationMiddleware.js`
+    - `packages/server/services/base.service.js`
+    - `packages/server/services/inventory.service.js`
+    - `packages/server/controllers/inventoryController.js`
+    - `packages/client/src/types/index.ts`
+    - `packages/client/src/services/api.ts`
+    - `packages/client/src/components/products/ProductForm.tsx`
+    - `packages/client/src/components/products/InventoryTable.tsx`
+    - `packages/client/src/pages/Inventory.tsx`
+    - `packages/client/src/components/pos/ProductCatalogCard.tsx`
+    - `packages/client/src/components/pos/CartPanelCard.tsx`
+    - `packages/client/src/pages/POS.tsx`
+- Consolidated gap list and priority order.
+- Created persistent execution docs:
+  - `docs/execution/MASTER_PLAN.md`
+  - `docs/execution/STATE.md`
+  - `docs/execution/CHANGELOG_EXECUTION.md`
+- P0.1 completed:
+  - Removed vulnerable `window.open + document.write` print flow in:
+    - `packages/client/src/pages/ReturnsAndWarranties.tsx`
+  - Replaced with safe JSX-rendered printable area + `window.print`.
+  - Verified no `document.write`/`window.open` usage remains in frontend.
+- P0.2 completed:
+  - Implemented atomic stock check and deduction during order creation in:
+    - `packages/server/services/sales.service.js`
+  - Added row-level lock (`FOR UPDATE`) and transactional inventory decrement.
+  - Added inventory movement logging for sales deductions.
+  - Aligned frontend messages with backend stock behavior in:
+    - `packages/client/src/pages/Orders.tsx`
+- P0.3 partial progress:
+  - `GET /api/products` now returns `stock_current` derived from `inventory` (canonical read path):
+    - `packages/server/services/inventory.service.js`
+    - `packages/server/controllers/inventoryController.js`
+- P0.3 completed:
+  - Frontend stock reads aligned with canonical `stock_current` from `/api/products`:
+    - `packages/client/src/pages/POS.tsx`
+    - `packages/client/src/pages/Inventory.tsx`
+  - Product type updated to reflect backend contract:
+    - `packages/client/src/types/index.ts`
+  - Inventory service response normalized to avoid leaking helper fields:
+    - `packages/server/services/inventory.service.js`
+- P0.5 completed:
+  - Server startup now waits for DB initialization before listening:
+    - `packages/server/index.js`
+- P0.7 completed:
+  - MySQL TLS toggle added (`DB_SSL`, `DB_SSL_REJECT_UNAUTHORIZED`):
+    - `packages/server/config/db.js`
+    - `.env.example`
+- P0.4 completed:
+  - Added deterministic base migration covering runtime-required tables:
+    - `packages/server/migrations/000_create_core_schema.sql`
+  - Refactored DB init to migration-first bootstrap + deterministic seeding only:
+    - `packages/server/config/initDb.js`
+  - Converted schema reference to migrations-first policy:
+    - `packages/server/db/schema/schema.sql`
+  - Staging runtime validation:
+    - backend startup completed with migration `000_create_core_schema.sql` applied successfully.
+- P0.6 completed:
+  - Added centralized environment policy + validation:
+    - `packages/server/config/env.js`
+  - Enforced startup config in runtime:
+    - `packages/server/index.js`
+    - `packages/server/config/db.js`
+  - Hardened production/staging error responses:
+    - `packages/server/middleware/errorMiddleware.js`
+  - Documented explicit non-dev override and env profiles:
+    - `.env.example`
+- P0.8 completed:
+  - Enforced invoice payment invariants in sales service:
+    - `payment_status` now derived from effective payments (`pending|partial|paid`).
+    - rejects overpayment (`PAYMENTS_EXCEED_TOTAL`).
+    - prevents invalid payment lines.
+  - Added accounting trace for invoice collections:
+    - each payment line writes to `transactions` (`type='sale'`).
+  - Synced order payment state with invoice state:
+    - `orders.payment_status` no longer hardcoded to `paid`.
+    - `orders.status` only escalates to `completed` when payment is fully paid.
+  - Files:
+    - `packages/server/services/sales.service.js`
+- P1.1 completed:
+  - `approveClientReturn` moved from placeholder to transactional, idempotent flow.
+  - Approval now performs:
+    - stock impact (`inventory` + `inventory_movements`) according to item condition.
+    - automatic credit note issuance linked to return.
+    - accounting trace in `transactions`.
+    - client balance update for issued credit.
+  - Added domain error mapping + audit logging for approval action.
+  - Files:
+    - `packages/server/services/warranties.service.js`
+    - `packages/server/controllers/warrantiesController.js`
+- P1.2 completed:
+  - Added backend order state machine and invalid transition blocking.
+  - `updateOrderStatus` now uses transition validation instead of blind updates.
+  - `dispatchOrder` and `deliverOrder` now validate allowed transition path.
+  - Compatibility aliases preserved for legacy statuses (`confirmed` -> `picking`, `paid` -> `packed`).
+  - Files:
+    - `packages/server/services/sales.service.js`
+    - `packages/server/controllers/salesController.js`
+- P1.3 completed:
+  - Added transactional sequence allocator:
+    - `packages/server/utils/documentSequence.js`
+  - Added migration:
+    - `packages/server/migrations/002_create_document_sequences.sql`
+  - Migrated numbering to concurrency-safe sequences:
+    - invoices (`sales.service`)
+    - purchase orders, receptions, supplier returns (`procurementController`)
+    - credit notes (`warranties.service` and manual credit note controller flow)
+  - Manual credit note creation now runs in explicit transaction with audit trace.
+  - Staging validation:
+    - migration `002_create_document_sequences.sql` executed successfully at boot.
+- P1.4 completed:
+  - Removed remaining dynamic `ORDER BY` surface in sales listing.
+  - Added strict allowlist sanitization for `getOrders(..., options.orderBy)` in backend service.
+  - File:
+    - `packages/server/services/sales.service.js`
+- P1.5 completed:
+  - Fiscal/company config now centralized and consumable for all authenticated roles.
+  - Backend:
+    - Added authenticated public profile endpoint for company settings:
+      - `GET /api/settings/company/public`
+    - Extended `company_settings` payload/updates with operational fields:
+      - `operation.tax_rate`
+      - `operation.default_currency`
+    - Preserved existing values when `operation` is omitted in updates.
+    - Files:
+      - `packages/server/controllers/settingsController.js`
+      - `packages/server/routes/settingsRoutes.js`
+      - `packages/server/middleware/validationMiddleware.js`
+  - Frontend:
+    - Added centralized settings helper with defaults/fallback/formatters:
+      - `packages/client/src/lib/companySettings.ts`
+    - Replaced hardcoded legal/fiscal constants in print flows:
+      - `packages/client/src/pages/Invoices.tsx`
+      - `packages/client/src/pages/POS.tsx`
+      - `packages/client/src/pages/Orders.tsx`
+    - Added API method for public company profile:
+      - `packages/client/src/services/api.ts`
+    - Extended company settings type with operation fields:
+      - `packages/client/src/types/index.ts`
+    - Settings page now syncs tax/currency with backend company settings:
+      - `packages/client/src/pages/Settings.tsx`
+  - Validation:
+    - Backend syntax checks passed (`node --check`).
+    - Frontend lint passed on touched files.
+    - Frontend typecheck passed (`tsc --noEmit`).
+- P2.1 partial progress:
+  - Improved contrast and interaction accessibility in receptions tables/tabs:
+    - stronger table header/body contrast classes
+    - higher-contrast status badges with ring outlines
+    - focus-visible rings on action and filter controls
+  - File:
+    - `packages/client/src/pages/Receptions.tsx`
+  - Validation:
+    - Frontend lint/typecheck passed for touched files (one non-blocking hooks warning in `Receptions.tsx`).
+- P2.1 partial progress (continued):
+  - Reinforced POS checkout flow and operator UX:
+    - quick client creation in-place
+    - expanded payment/invoice variants (`credit_card`, `transfer`, invoice type selector)
+    - success confirmation dialog with order/invoice trace
+    - category filter in products grid
+  - File:
+    - `packages/client/src/pages/POS.tsx`
+  - Validation:
+    - Frontend typecheck and build passed.
+- P2.1 partial progress (continued):
+  - Improved contrast/accessibility in purchase orders table and controls:
+    - stronger status badge contrast with ring outlines
+    - unified table typography classes for dense data
+    - focus-visible rings and aria-label on row actions
+    - fixed hooks warning by stabilizing `loadOrders` with `useCallback`
+  - File:
+    - `packages/client/src/pages/PurchaseOrders.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
+- P2.2 partial progress:
+  - Dashboard switched from static demo values to real operational data.
+  - Metrics now computed from API data with role-aware fallback:
+    - sales totals (transactions when available, orders fallback)
+    - pending warehouse orders
+    - low stock alerts
+    - completion rate
+  - Replaced placeholder sections with:
+    - 7-day sales panel
+    - recent activity feed from live data
+  - File:
+    - `packages/client/src/pages/Dashboard.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
+- P2.2 partial progress (continued):
+  - Invoices email action no longer reports false "success" as if it were real.
+  - Added explicit simulation messaging and feature flag gate:
+    - `VITE_ENABLE_INVOICE_EMAIL` controls behavior
+    - without integration, UI now informs user that email is simulated/pending
+  - Normalized remaining English label in manual invoice item adder (`Agregar`).
+  - File:
+    - `packages/client/src/pages/Invoices.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
+- P2.3 partial progress:
+  - Accounting page now uses robust async handling:
+    - replaced promise chain without catch by `try/catch/finally`
+    - standardized user-facing error feedback via `showErrorToast`
+    - added explicit fallback UI state when accounting data cannot be loaded
+  - Locale consistency:
+    - day labels switched to `es-AR`
+  - File:
+    - `packages/client/src/pages/Accounting.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
+- P2.3 partial progress (continued):
+  - Picking page:
+    - stabilized async loading with `useCallback` + safe `useEffect` dependency
+    - added visible error state with retry action for initial load failures
+  - Suppliers page:
+    - added explicit loading state for provider catalog
+    - added visible error state + retry action
+    - added filtered empty-state message
+    - stabilized supplier detail loading effect with awaited async call
+    - normalized key labels to AR terminology (`CUIT/DNI`)
+  - Clients page:
+    - stabilized async loading with `useCallback` + safe `useEffect` dependency
+    - added visible error banner + retry action
+    - normalized fiscal labels to AR terminology (`CUIT/DNI`)
+    - normalized monetary formatting to `es-AR` / `ARS`
+  - Files:
+    - `packages/client/src/pages/Picking.tsx`
+    - `packages/client/src/pages/Suppliers.tsx`
+    - `packages/client/src/pages/Clients.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
+- P2.3 partial progress (inventory reliability):
+  - Inventory page hardened against duplicate load bursts (notably in dev StrictMode):
+    - request deduplication via shared in-flight promise
+    - short-lived cache to prevent immediate duplicated fetches on remount
+    - inline load error + retry action instead of repeated toast spam
+    - cache invalidation on create/update/delete to keep data fresh
+  - File:
+    - `packages/client/src/pages/Inventory.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
+- P2.3 partial progress (terminology consistency):
+  - Settings page fiscal label normalized to AR wording (`CUIT / DNI`).
+  - File:
+    - `packages/client/src/pages/Settings.tsx`
+  - Validation:
+    - Frontend lint/typecheck/build passed.
+- P2.4 partial progress:
+  - Orders page migrated from manual fetch lifecycle to React Query:
+    - data queries for `orders`, `products`, and `clients`
+    - mutations for create/status/dispatch/deliver/invoice actions
+    - cache invalidation strategy after successful mutations
+  - Added explicit visible error banner with retry action for initial data load failures.
+  - Removed manual `loadData()` refresh cycle and local submit/loading flags now derived from query/mutation state.
+  - File:
+    - `packages/client/src/pages/Orders.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Orders.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.4 partial progress (continued):
+  - Purchase Orders page migrated to React Query with filter-aware query key:
+    - query by `status` filter (`all|draft|sent|partial|received`)
+    - mutations for create and approve with cache invalidation
+  - Added explicit load-error banner with retry action.
+  - Removed manual `useEffect/useCallback` reload cycle.
+  - File:
+    - `packages/client/src/pages/PurchaseOrders.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.4 partial progress (continued):
+  - Receptions page migrated to React Query with tab-aware conditional queries (`enabled`):
+    - pending purchase orders for reception
+    - receptions history with status filter
+    - supplier returns list
+  - Mutations migrated with cache invalidation:
+    - create reception, approve reception
+    - create return, approve return
+  - Added visible error state with retry bound to the active tab/query.
+  - File:
+    - `packages/client/src/pages/Receptions.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/pages/Orders.tsx src/pages/PurchaseOrders.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.4 partial progress (shared infrastructure):
+  - Added centralized client query-key registry:
+    - `packages/client/src/lib/queryKeys.ts`
+  - Refactored migrated pages to consume shared keys:
+    - `packages/client/src/pages/Orders.tsx`
+    - `packages/client/src/pages/PurchaseOrders.tsx`
+    - `packages/client/src/pages/Receptions.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/lib/queryKeys.ts src/pages/Orders.tsx src/pages/PurchaseOrders.tsx src/pages/Receptions.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.5 partial progress:
+  - Inventory page decomposed into dedicated data/helper and table rendering modules:
+    - extracted inventory snapshot/cache logic to:
+      - `packages/client/src/lib/inventorySnapshot.ts`
+    - extracted table rendering/actions to:
+      - `packages/client/src/components/products/InventoryTable.tsx`
+    - simplified page orchestration to state + dialogs + search:
+      - `packages/client/src/pages/Inventory.tsx`
+  - Behavior preserved (same CRUD, same retry, same stock derivation and cache invalidation flow).
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/components/products/InventoryTable.tsx src/lib/inventorySnapshot.ts`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.5 partial progress (continued):
+  - Receptions page decomposed into modular sections while preserving existing behavior and React Query integration:
+    - shared types:
+      - `packages/client/src/components/receptions/types.ts`
+    - shared status helpers:
+      - `packages/client/src/components/receptions/receptionStatus.ts`
+    - tab sections:
+      - `packages/client/src/components/receptions/PendingOrdersSection.tsx`
+      - `packages/client/src/components/receptions/SupplierReturnsSection.tsx`
+      - `packages/client/src/components/receptions/ReceptionsHistorySection.tsx`
+    - page orchestration simplified:
+      - `packages/client/src/pages/Receptions.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Receptions.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/SupplierReturnsSection.tsx src/components/receptions/ReceptionsHistorySection.tsx src/components/receptions/receptionStatus.ts src/components/receptions/types.ts`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.6 partial progress:
+  - Wording/locale normalization pass (Spanish AR) in operational modules:
+    - `packages/client/src/pages/Inventory.tsx`
+    - `packages/client/src/pages/Orders.tsx`
+    - `packages/client/src/pages/Receptions.tsx`
+    - `packages/client/src/components/products/InventoryTable.tsx`
+    - `packages/client/src/components/receptions/PendingOrdersSection.tsx`
+    - `packages/client/src/components/receptions/ReceptionForm.tsx`
+    - `packages/client/src/components/receptions/ReturnForm.tsx`
+  - Normalized accents and terminology in user-visible labels/messages (e.g. `Gestión`, `Recepción`, `Devolución`, `Método`, `Dirección`, `Categoría`).
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Inventory.tsx src/pages/Orders.tsx src/pages/Receptions.tsx src/components/products/InventoryTable.tsx src/components/receptions/PendingOrdersSection.tsx src/components/receptions/ReceptionForm.tsx src/components/receptions/ReturnForm.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.5 partial progress (continued):
+  - POS page decomposed into focused operational modules while preserving behavior and API contracts.
+  - New modular components/types:
+    - `packages/client/src/components/pos/types.ts`
+    - `packages/client/src/components/pos/ProductCatalogCard.tsx`
+    - `packages/client/src/components/pos/CartPanelCard.tsx`
+    - `packages/client/src/components/pos/PaymentDialog.tsx`
+    - `packages/client/src/components/pos/QuickClientDialog.tsx`
+    - `packages/client/src/components/pos/CheckoutSuccessDialog.tsx`
+  - Page orchestration simplified:
+    - `packages/client/src/pages/POS.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/POS.tsx src/components/pos/types.ts src/components/pos/ProductCatalogCard.tsx src/components/pos/CartPanelCard.tsx src/components/pos/PaymentDialog.tsx src/components/pos/QuickClientDialog.tsx src/components/pos/CheckoutSuccessDialog.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.5 partial progress (continued):
+  - Invoices page decomposed into focused modules preserving behavior and current API contracts.
+  - New modules:
+    - `packages/client/src/components/invoices/types.ts`
+    - `packages/client/src/components/invoices/invoiceUtils.tsx`
+    - `packages/client/src/components/invoices/InvoiceCreateDialog.tsx`
+    - `packages/client/src/components/invoices/InvoicesTable.tsx`
+    - `packages/client/src/components/invoices/InvoiceDocument.tsx`
+    - `packages/client/src/components/invoices/InvoicePreviewDialog.tsx`
+    - `packages/client/src/components/invoices/PrintableInvoiceArea.tsx`
+  - Orchestration page simplified:
+    - `packages/client/src/pages/Invoices.tsx`
+  - Locale pass included in touched module (`ítems`, `envío`, `integración`, `previsualización`, etc.).
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/Invoices.tsx src/components/invoices/types.ts src/components/invoices/invoiceUtils.tsx src/components/invoices/InvoiceCreateDialog.tsx src/components/invoices/InvoicesTable.tsx src/components/invoices/InvoiceDocument.tsx src/components/invoices/InvoicePreviewDialog.tsx src/components/invoices/PrintableInvoiceArea.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.6 partial progress:
+  - Added centralized toast deduplication strategy for async errors (global React Query + local handlers):
+    - avoids duplicate notifications for the same error object
+    - adds short signature window guard to reduce repeated bursts
+  - App now routes React Query global errors through shared `showErrorToast`.
+  - Files:
+    - `packages/client/src/lib/errorHandling.ts`
+    - `packages/client/src/App.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/App.tsx src/lib/errorHandling.ts`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.6 partial progress (continued):
+  - UI language normalization pass (Spanish AR) in navigation/auth/core labels:
+    - sidebar labels (`Órdenes`, `Facturación`, `Configuración`, `Depósito`, etc.)
+    - auth/session user messages
+    - operational headings/messages (`garantías`, `crédito`, `recepción`, `descripción`, etc.)
+  - Files:
+    - `packages/client/src/layout/AppLayout.tsx`
+    - `packages/client/src/context/AuthContext.tsx`
+    - `packages/client/src/pages/Dashboard.tsx`
+    - `packages/client/src/pages/Login.tsx`
+    - `packages/client/src/pages/Picking.tsx`
+    - `packages/client/src/pages/ReturnsAndWarranties.tsx`
+    - `packages/client/src/pages/PurchaseOrders.tsx`
+    - `packages/client/src/pages/Settings.tsx`
+    - `packages/client/src/pages/ClientDetail.tsx`
+    - `packages/client/src/components/users/UserForm.tsx`
+    - `packages/client/src/components/pos/QuickClientDialog.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+  - Lint note:
+    - targeted lint run reveals pre-existing errors unrelated to this pass in:
+      - `packages/client/src/context/AuthContext.tsx`
+      - `packages/client/src/components/users/UserForm.tsx`
+      - `packages/client/src/pages/ReturnsAndWarranties.tsx`
+- P2.6 partial progress (lint stabilization):
+  - Cleared remaining blocking lint findings in active modules:
+    - `Login`: removed unused `catch` variable
+    - `ClientDetail`: stabilized `loadClientData` with `useCallback` + safe effect dependency
+    - `AuthContext`: explicit Fast Refresh lint bypass for mixed provider/hook exports
+    - `UserForm`: switched local form state to reducer-based replacement flow
+    - `ReturnsAndWarranties`: removed hook ordering warnings and documented temporary `set-state-in-effect` lint bypass pending React Query migration
+  - Files:
+    - `packages/client/src/pages/Login.tsx`
+    - `packages/client/src/pages/ClientDetail.tsx`
+    - `packages/client/src/context/AuthContext.tsx`
+    - `packages/client/src/components/users/UserForm.tsx`
+    - `packages/client/src/pages/ReturnsAndWarranties.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/context/AuthContext.tsx src/components/users/UserForm.tsx src/pages/Login.tsx src/pages/ReturnsAndWarranties.tsx src/pages/ClientDetail.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.6 partial progress (continued):
+  - Migrated `ReturnsAndWarranties` from manual `useEffect + loadData` flow to React Query:
+    - query-driven data loading per tab
+    - mutation-driven writes with cache invalidation
+    - explicit loading and retry states per section
+    - removed temporary lint bypass from the module
+  - Added shared query keys for this domain:
+    - `warranties`
+    - `client-returns`
+    - `credit-notes`
+  - Files:
+    - `packages/client/src/pages/ReturnsAndWarranties.tsx`
+    - `packages/client/src/lib/queryKeys.ts`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/pages/ReturnsAndWarranties.tsx src/lib/queryKeys.ts`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.6 partial progress (backend hardening):
+  - Enforced strong password policy for user create/update in backend (min length + complexity).
+  - Centralized JWT runtime settings usage in auth/controller layer:
+    - use validated env config (`jwtSecret`, `jwtExpiresIn`) instead of direct `process.env` checks.
+  - Added explicit env setting for token expiration:
+    - `JWT_EXPIRES_IN` in `.env.example`.
+  - Files:
+    - `packages/server/utils/passwordPolicy.js`
+    - `packages/server/middleware/validationMiddleware.js`
+    - `packages/server/controllers/userController.js`
+    - `packages/server/middleware/authMiddleware.js`
+    - `packages/server/config/env.js`
+    - `.env.example`
+  - Validation:
+    - `node --check packages/server/controllers/userController.js`
+    - `node --check packages/server/middleware/authMiddleware.js`
+    - `node --check packages/server/middleware/validationMiddleware.js`
+    - `node --check packages/server/config/env.js`
+    - `node --check packages/server/utils/passwordPolicy.js`
+    - `npm -w @wsm/server run test`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.6 validation checkpoint:
+  - Backend smoke scripts executed successfully against current staging runtime.
+  - Results:
+    - `npm -w @wsm/server run smoke:rbac` -> PASS
+    - `npm -w @wsm/server run smoke:integrity` -> PASS (mutation/reception/cash optional flows skipped by env flags)
+- P2.6 partial progress (backend session hardening):
+  - Added token revocation by server-side `token_version`:
+    - JWT now includes `token_version` claim at login.
+    - `authenticateToken` now checks current user status and token_version in DB.
+    - password change and user deactivation rotate token version to revoke active sessions.
+  - Added migration:
+    - `packages/server/migrations/003_add_user_token_version.sql`
+  - Files:
+    - `packages/server/controllers/userController.js`
+    - `packages/server/middleware/authMiddleware.js`
+    - `packages/server/migrations/003_add_user_token_version.sql`
+  - Validation:
+    - `node --check packages/server/controllers/userController.js`
+    - `node --check packages/server/middleware/authMiddleware.js`
+    - `npm -w @wsm/server run test`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- Incident hotfix (staging availability):
+  - Root cause:
+    - global `/api` rate-limit too aggressive for real navigation in staging (`100` req/15m),
+      causing broad `429 too_many_requests` and empty screens.
+  - Mitigation:
+    - rate limits now configurable via env
+    - safer defaults by environment (dev/staging higher, production controlled)
+    - `/api/health` excluded from limiter
+    - login limiter preserved separately and configurable
+  - Files:
+    - `packages/server/index.js`
+    - `packages/server/config/env.js`
+    - `.env.example`
+  - Validation:
+    - server syntax checks + frontend typecheck/build passed.
+- P2.6 partial progress (frontend credential hardening):
+  - Politica de contrasena fuerte alineada en frontend con backend.
+  - Se agrego helper reutilizable de politica de contrasena para evitar duplicacion.
+  - `UserForm` ahora valida complejidad desde cliente con:
+    - `minLength=8`, `maxLength=128`
+    - `pattern` de mayuscula/minuscula/numero/simbolo
+    - texto de ayuda consistente para usuario operador
+  - Files:
+    - `packages/client/src/lib/passwordPolicy.ts`
+    - `packages/client/src/components/users/UserForm.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/components/users/UserForm.tsx src/lib/passwordPolicy.ts`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.6 validation checkpoint (smoke backend full):
+  - Re-run smoke validation completed in staging with previous rate-limit blocker resolved.
+  - Results:
+    - `npm -w @wsm/server run smoke:rbac` -> PASS
+    - `npm -w @wsm/server run smoke:integrity` -> PASS
+    - `SMOKE_MUTATION=1 SMOKE_RECEPTION_FLOW=1 SMOKE_CASH_FLOW=1 npm -w @wsm/server run smoke:integrity` -> PASS
+  - Notes:
+    - Full integrity run validated soft-delete, reception approval idempotency and cash balance invariants.
+- P2.6 partial progress (UX language consistency):
+  - Normalized visible labels to Spanish AR in key operational screens.
+  - Updated terms:
+    - `Manager` -> `Gerencia`
+    - `Close` (screen reader) -> `Cerrar`
+    - `Email` labels/headers/actions -> `Correo` / `Correo electronico`
+  - Files:
+    - `packages/client/src/components/users/UserForm.tsx`
+    - `packages/client/src/components/ui/dialog.tsx`
+    - `packages/client/src/pages/Clients.tsx`
+    - `packages/client/src/pages/Suppliers.tsx`
+    - `packages/client/src/pages/Settings.tsx`
+  - Validation:
+    - `npm -w @wsm/client exec eslint src/components/users/UserForm.tsx src/components/ui/dialog.tsx src/pages/Clients.tsx src/pages/Suppliers.tsx src/pages/Settings.tsx`
+    - `npm -w @wsm/client exec -- tsc --noEmit`
+    - `npm -w @wsm/client run build`
+- P2.7 partial progress (combined hardening batch):
+  - Backend data integrity and auth hardening:
+    - `transitionOrderStatus` ahora opera en transaccion y restaura stock al cancelar ordenes.
+    - endurecimiento RBAC para notas de credito manuales (`admin|manager`).
+    - bootstrap de admin sin password por defecto ni log de credenciales; exige `ADMIN_DEFAULT_PASSWORD` robusta.
+  - Backend maintainability:
+    - `getRequestIp` centralizado en util unico y removida duplicacion en 8 controllers.
+  - Frontend UX/navigation:
+    - ruta 404 agregada con pagina dedicada.
+    - normalizado import alias de `Receptions` en `App.tsx`.
+  - Frontend lint stabilization:
+    - `PurchaseOrderDetails` con `useCallback`/deps estables.
+    - ajustes lint en componentes UI (`badge`, `button`, `form`, `input`, `textarea`).
+  - Files:
+    - `packages/server/services/sales.service.js`
+    - `packages/server/routes/warrantiesRoutes.js`
+    - `packages/server/config/initDb.js`
+    - `packages/server/utils/requestIp.js`
+    - `packages/server/controllers/inventoryController.js`
+    - `packages/server/controllers/salesController.js`
+    - `packages/server/controllers/procurementController.js`
+    - `packages/server/controllers/financeController.js`
+    - `packages/server/controllers/settingsController.js`
+    - `packages/server/controllers/supplierController.js`
+    - `packages/server/controllers/userController.js`
+    - `packages/server/controllers/warrantiesController.js`
+    - `packages/client/src/App.tsx`
+    - `packages/client/src/pages/NotFound.tsx`
+    - `packages/client/src/components/purchase-orders/PurchaseOrderDetails.tsx`
+    - `packages/client/src/components/ui/badge.tsx`
+    - `packages/client/src/components/ui/button.tsx`
+    - `packages/client/src/components/ui/form.tsx`
+    - `packages/client/src/components/ui/input.tsx`
+    - `packages/client/src/components/ui/textarea.tsx`
+  - Validation:
+    - `npm -w @wsm/server run test`
+    - `npm -w @wsm/server run smoke:rbac`
+    - `npm -w @wsm/server run smoke:integrity`
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
+- P2.7 partial progress (repository hygiene):
+  - Removed tracked recovery artifacts `*.corrupt.bak` from active frontend source tree.
+  - Added guardrail in `.gitignore` to prevent re-committing `*.corrupt.bak` files.
+  - Validation:
+    - `npm -w @wsm/client run build`
+- P2.7 partial progress (scalability pagination baseline):
+  - Added backward-compatible pagination support (`page`, `limit`, `offset`) in high-volume endpoints:
+    - `GET /api/orders`
+    - `GET /api/products`
+    - `GET /api/settings/audit-logs`
+  - Response body contract remains backward-compatible (still arrays).
+  - When pagination params are present, API now emits metadata headers:
+    - `X-Total-Count`, `X-Page`, `X-Limit`, `X-Total-Pages`
+  - Backend shared utility added:
+    - `packages/server/utils/pagination.js`
+  - Validation schema updated for paginated filters:
+    - `orderFilters`, `productFilters`, `auditLogsFilters`
+  - Services extended with optional `includeTotal` + `limit/offset`:
+    - `packages/server/services/sales.service.js`
+    - `packages/server/services/inventory.service.js`
+    - `packages/server/services/audit.service.js`
+  - Controllers wired for pagination and headers:
+    - `packages/server/controllers/salesController.js`
+    - `packages/server/controllers/inventoryController.js`
+    - `packages/server/controllers/settingsController.js`
+  - Client API typings expanded (no contract break):
+    - `packages/client/src/services/api.ts`
+  - Validation:
+    - `npm -w @wsm/server run test` (PASS)
+    - `npm -w @wsm/client run lint` (PASS)
+    - `npm -w @wsm/client run test` (PASS)
+    - `npm -w @wsm/client run build` (PASS)
+  - Environment limitation:
+    - `smoke:rbac` / `smoke:integrity` cannot complete in current Codex runtime due local fetch restrictions (`fetch failed` from Node process), despite `api/health` reachable from host shell.
+- P2.8 partial progress (frontend pagination adoption):
+  - Added client-side pagination metadata contract:
+    - `PaginationMeta` / `PaginatedResponse` in shared API types.
+  - Extended HTTP layer to read backend pagination headers:
+    - `httpClient.getWithMeta(...)` parses `X-Total-Count`, `X-Page`, `X-Limit`, `X-Total-Pages`.
+  - Added reusable UI controls:
+    - `packages/client/src/components/common/PaginationControls.tsx`.
+  - Orders page now uses server pagination (`20` rows/page) with filter-aware query keys:
+    - `packages/client/src/pages/Orders.tsx`
+    - `packages/client/src/lib/queryKeys.ts`
+  - Inventory page now consumes paginated products snapshot with preserved stock immobilization logic:
+    - `packages/client/src/lib/inventorySnapshot.ts`
+    - `packages/client/src/pages/Inventory.tsx`
+  - Settings page audit tab now loads paginated logs (`20` rows/page) with dedicated loading state:
+    - `packages/client/src/pages/Settings.tsx`
+  - API service expanded with explicit paged methods (backward compatible):
+    - `getOrdersPage`, `getProductsPage`, `getAuditLogsPage` in `packages/client/src/services/api.ts`
+  - Validation:
+    - `npm -w @wsm/server run test`
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
+- P2.8 partial progress (language consistency pass):
+  - Normalized residual user-facing wording to Spanish in core auth/http/settings flows:
+    - translated fallback/validation messages in auth context (`login`/`useAuth`).
+    - translated generic HTTP fallback from `HTTP Error` to `Error HTTP`.
+    - replaced `Website` label by `Sitio web` in settings company form.
+  - Files:
+    - `packages/client/src/context/AuthContext.tsx`
+    - `packages/client/src/services/httpClient.ts`
+    - `packages/client/src/pages/Settings.tsx`
+  - Validation:
+    - `npm -w @wsm/server run test`
+    - `npm -w @wsm/client run lint`
+    - `npm -w @wsm/client run test`
+    - `npm -w @wsm/client run build`
+
+## Next After Current Task
+Tiendanube staging validation - publish backend through HTTPS, configure Tiendanube app callback/webhook URLs, load Client ID/Secret in `Tienda online > Configuración`, run OAuth, publish one product variant, then create one controlled Tiendanube order and verify local order import + stock sync.
+
+## Preproduction closure 2026-08-19
+- POS checkout and offline recovery are idempotent across orders, invoices and cash-shift payments.
+- Cash expected balance now represents physical cash only.
+- Inventory ABC/profitability analysis and parked carts are complete.
+- Local automated gates pass; database preflight still requires valid environment credentials.
+- Next operational gate: backup/restore rehearsal, `npm run preflight:integrity`, migrations through `032`, then controlled Tiendanube/POS staging transactions.
+
+## Open Decisions (Need confirmation for upcoming blocks)
+1. Stock policy (implemented assumption):
+   - Applied Option A: deduct at order creation.
+   - If business prefers reservation model, refactor in a dedicated pass.
+2. Stock source of truth (resolved):
+   - Canonical source: `inventory` table.
+   - Compatibility contract: `/api/products` exposes derived `stock_current`.
+3. Non-dev exception policy:
+   - `ALLOW_INSECURE_NON_DEV=true` remains available as explicit break-glass override.
+   - Default policy is strict fail-fast in staging/production.

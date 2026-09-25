@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Button } from "@/components/ui/button";
 import type { CashShiftSummary } from "@/types/api";
 import { formatMoney } from "@/lib/formatters";
+import { PrintPortal } from "@/components/common/PrintPortal";
 
 interface ZReportDialogProps {
     open: boolean;
@@ -37,8 +38,9 @@ export function ZReportDialog({
     };
 
     return (
+        <>
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-xl p-6">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-xl p-6 print:hidden">
                 <DialogHeader className="border-b border-border pb-4">
                     <div className="flex items-center gap-2 text-primary font-bold text-lg">
                         <Landmark className="h-5 w-5" />
@@ -50,8 +52,8 @@ export function ZReportDialog({
                     </DialogDescription>
                 </DialogHeader>
 
-                {/* Printable Document Container */}
-                <div id="printable-z-report" className="space-y-4 bg-white py-4 text-black font-sans text-sm print:p-6">
+                {/* Screen Preview Container */}
+                <div className="space-y-4 bg-white py-4 text-black font-sans text-sm">
                     {/* Header Info */}
                     <div className="grid grid-cols-2 gap-3 p-3 bg-white rounded-lg border border-slate-300 text-xs text-black">
                         <div className="flex items-center gap-2">
@@ -132,5 +134,86 @@ export function ZReportDialog({
                 </DialogFooter>
             </DialogContent>
         </Dialog>
+
+        {open && (
+            <PrintPortal>
+                <div id="printable-z-report" className="hidden print:block space-y-4 bg-white p-8 text-black font-sans text-sm max-w-[210mm] mx-auto">
+                    <div className="flex items-center gap-2 text-slate-900 font-bold text-lg border-b-2 border-slate-900 pb-3 mb-4">
+                        <Landmark className="h-5 w-5" />
+                        <span>REPORTE COMPROBANTE CIERRE Z DE CAJA — {registerName}</span>
+                    </div>
+
+                    {/* Header Info */}
+                    <div className="grid grid-cols-2 gap-3 p-3 bg-white rounded-lg border border-slate-300 text-xs text-black">
+                        <div className="flex items-center gap-2">
+                            <Calendar className="h-4 w-4 text-muted-foreground" />
+                            <span><strong>Fecha/Hora:</strong> {dateStr}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <User className="h-4 w-4 text-muted-foreground" />
+                            <span><strong>Cajero:</strong> {cashierName || "Sistema / Operador"}</span>
+                        </div>
+                        <div className="flex items-center gap-2 col-span-2">
+                            <FileText className="h-4 w-4 text-muted-foreground" />
+                            <span><strong>Caja:</strong> {registerName}</span>
+                        </div>
+                    </div>
+
+                    {/* Sales Summary Breakdown */}
+                    <div className="space-y-2 border border-slate-300 rounded-lg p-4 bg-white text-black">
+                        <h4 className="font-bold text-xs uppercase tracking-wider text-muted-foreground border-b border-border pb-1.5">
+                            Movimientos del Turno
+                        </h4>
+                        <div className="space-y-1.5 pt-1 text-xs">
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Fondo de Caja Inicial:</span>
+                                <span className="font-mono font-bold">{formatMoney(openingBalance)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Ingresos Efectivo en Turno:</span>
+                                <span className="font-mono font-bold text-green-600 dark:text-green-400">
+                                    +{formatMoney(shiftSummary.inflow || 0)}
+                                </span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Retiros / Egresos Directos:</span>
+                                <span className="font-mono font-bold text-red-600 dark:text-red-400">
+                                    -{formatMoney(shiftSummary.outflow || 0)}
+                                </span>
+                            </div>
+                            <div className="border-t border-dashed border-border pt-1.5 flex justify-between font-bold">
+                                <span>Saldo Sistema Esperado:</span>
+                                <span className="font-mono text-sm">{formatMoney(expectedBalance)}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Audit Arqueo Breakdown */}
+                    <div className="space-y-2 border border-slate-300 rounded-lg p-4 bg-white text-black">
+                        <h4 className="font-bold text-xs uppercase tracking-wider text-muted-foreground border-b border-border pb-1.5">
+                            Arqueo de Efectivo Físico
+                        </h4>
+                        <div className="grid grid-cols-2 gap-3 pt-1 text-xs">
+                            <div className="p-2.5 rounded bg-muted/30 border border-border text-center">
+                                <span className="text-muted-foreground block text-[11px]">Efectivo Declarado</span>
+                                <span className="font-mono font-black text-base text-foreground">{formatMoney(actualBalance)}</span>
+                            </div>
+                            <div className="p-2.5 rounded bg-muted/30 border border-border text-center">
+                                <span className="text-muted-foreground block text-[11px]">Diferencia de Caja</span>
+                                <span className={`font-mono font-black text-base ${difference === 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                                    {formatMoney(difference)}
+                                </span>
+                            </div>
+                        </div>
+                        {notes && (
+                            <p className="text-xs italic text-muted-foreground pt-1">
+                                <strong>Observaciones:</strong> {notes}
+                            </p>
+                        )}
+                    </div>
+                </div>
+            </PrintPortal>
+        )}
+        </>
     );
 }

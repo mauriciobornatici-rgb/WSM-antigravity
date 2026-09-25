@@ -16,6 +16,7 @@ import type { WarrantySummary } from "@/components/clients/ClientOrdersAndWarran
 import { ClientDocumentsCards } from "@/components/clients/ClientDocumentsCards";
 import type { InvoiceSummary, CreditNoteSummary, ReturnSummary, PaymentSummary } from "@/components/clients/ClientDocumentsCards";
 import { ClientPaymentDialog } from "@/components/clients/ClientPaymentDialog";
+import { PrintPortal } from "@/components/common/PrintPortal";
 
 function readText(value: unknown, fallback = "-"): string {
     return typeof value === "string" && value.trim().length > 0 ? value : fallback;
@@ -331,44 +332,46 @@ export default function ClientDetailPage() {
             />
         </div>
 
-        <div id="printable-client-document" className="hidden print:block">
-            {printMovement ? (
-                <div className="mx-auto max-w-[800px] p-8 text-black">
-                    <div className="mb-6 border-b border-black pb-4">
-                        <h1 className="text-2xl font-bold">{movementPrintTitle(printMovement)}</h1>
-                        <p className="text-sm">Emitido: {new Date(printMovement.date).toLocaleDateString("es-AR")}</p>
-                    </div>
-
-                    <div className="mb-6 grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                            <p className="font-semibold">Cliente</p>
-                            <p>{client.name}</p>
-                            <p>CUIT/DNI: {client.tax_id || "-"}</p>
-                            <p>Telefono: {client.phone || "-"}</p>
+        <PrintPortal>
+            <div id="printable-client-document" className="hidden print:block w-full max-w-[210mm] mx-auto">
+                {printMovement ? (
+                    <div className="mx-auto max-w-[800px] p-8 text-black bg-white">
+                        <div className="mb-6 border-b border-black pb-4">
+                            <h1 className="text-2xl font-bold">{movementPrintTitle(printMovement)}</h1>
+                            <p className="text-sm">Emitido: {new Date(printMovement.date).toLocaleDateString("es-AR")}</p>
                         </div>
-                        <div>
-                            <p className="font-semibold">Referencia</p>
-                            <p>ID mov.: {printMovement.id}</p>
-                            <p>Documento: {printMovement.document_id || "-"}</p>
-                            <p>Factura ref.: {printMovement.related_invoice_id || "-"}</p>
+
+                        <div className="mb-6 grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                                <p className="font-semibold">Cliente</p>
+                                <p>{client.name}</p>
+                                <p>CUIT/DNI: {client.tax_id || "-"}</p>
+                                <p>Telefono: {client.phone || "-"}</p>
+                            </div>
+                            <div>
+                                <p className="font-semibold">Referencia</p>
+                                <p>ID mov.: {printMovement.id}</p>
+                                <p>Documento: {printMovement.document_id || "-"}</p>
+                                <p>Factura ref.: {printMovement.related_invoice_id || "-"}</p>
+                            </div>
+                        </div>
+
+                        <div className="rounded border border-black p-4">
+                            <p className="mb-2 text-sm font-semibold">Detalle</p>
+                            <p className="mb-4 text-sm">{printMovement.description}</p>
+                            <div className="flex items-center justify-between border-t border-black pt-3">
+                                <span className="text-sm font-semibold">Importe</span>
+                                <span className="text-lg font-bold">{formatMoney(printMovement.amount)}</span>
+                            </div>
+                        </div>
+
+                        <div className="mt-8 text-xs">
+                            <p>Este comprobante fue generado por WSM SportsERP.</p>
                         </div>
                     </div>
-
-                    <div className="rounded border border-black p-4">
-                        <p className="mb-2 text-sm font-semibold">Detalle</p>
-                        <p className="mb-4 text-sm">{printMovement.description}</p>
-                        <div className="flex items-center justify-between border-t border-black pt-3">
-                            <span className="text-sm font-semibold">Importe</span>
-                            <span className="text-lg font-bold">{formatMoney(printMovement.amount)}</span>
-                        </div>
-                    </div>
-
-                    <div className="mt-8 text-xs">
-                        <p>Este comprobante fue generado por WSM SportsERP.</p>
-                    </div>
-                </div>
-            ) : null}
-        </div>
+                ) : null}
+            </div>
+        </PrintPortal>
         </>
     );
 }

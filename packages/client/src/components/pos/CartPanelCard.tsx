@@ -1,8 +1,9 @@
-import { CreditCard, Plus, Trash2, UserPlus, RotateCcw } from "lucide-react";
+import { CreditCard, Plus, Trash2, UserPlus, RotateCcw, Package } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { CartPanelProps } from "@/components/pos/types";
 import { formatMoney } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -24,6 +25,8 @@ export function CartPanelCard({
     onOpenPaymentDialog,
     currentShift,
     currentRegister,
+    activePickupOrder,
+    onCancelPickup,
 }: CartPanelProps) {
     return (
         <Card className="border-blue-900/30 bg-gradient-to-b from-blue-950/30 to-background xl:sticky xl:top-4 shadow-sm">
@@ -50,6 +53,31 @@ export function CartPanelCard({
                         </Button>
                     )}
                 </div>
+
+                {activePickupOrder && (
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-700 dark:text-emerald-300 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                            <Package className="h-4 w-4 shrink-0 text-emerald-500" />
+                            <div className="min-w-0">
+                                <div className="font-bold truncate">Retiro de Pedido #{activePickupOrder.id.slice(0, 8)}</div>
+                                <div className="text-[11px] text-muted-foreground truncate">
+                                    {activePickupOrder.customer_name || activePickupOrder.client_name || "Cliente Mostrador"}
+                                </div>
+                            </div>
+                        </div>
+                        {onCancelPickup && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 text-[11px] text-destructive hover:text-destructive px-2 shrink-0"
+                                onClick={onCancelPickup}
+                            >
+                                Cancelar
+                            </Button>
+                        )}
+                    </div>
+                )}
+
                 <div className="space-y-2">
                     <Label className="text-xs font-semibold">Cliente</Label>
                     <div className="flex gap-2">
@@ -110,8 +138,19 @@ export function CartPanelCard({
                                         )}
                                         <div className="min-w-0">
                                             <div className="truncate font-medium text-sm">{item.name}</div>
-                                            <div className="truncate text-[11px] font-medium text-primary">
-                                                {[item.size ? `Talle ${item.size}` : "", item.color || ""].filter(Boolean).join(" · ") || "Producto sin variante"}
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                <div className="truncate text-[11px] font-medium text-primary">
+                                                    {[item.size ? `Talle ${item.size}` : "", item.color || ""].filter(Boolean).join(" · ") || "Producto sin variante"}
+                                                </div>
+                                                {item.isPrepared ? (
+                                                    <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 py-0 px-1 font-semibold">
+                                                        Preparado
+                                                    </Badge>
+                                                ) : activePickupOrder ? (
+                                                    <Badge variant="outline" className="text-[9px] bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30 py-0 px-1 font-semibold">
+                                                        Mostrador (+)
+                                                    </Badge>
+                                                ) : null}
                                             </div>
                                             <div className="truncate font-mono text-[10px] text-muted-foreground">SKU: {item.sku}</div>
                                             <div className="text-xs text-muted-foreground">

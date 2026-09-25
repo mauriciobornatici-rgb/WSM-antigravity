@@ -26,10 +26,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20 LTS
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: 'npm'
 
       - name: Install dependencies
@@ -40,9 +40,6 @@ jobs:
 
       - name: Build Shared Contracts (@wsm/common)
         run: npm run build:common
-
-      - name: Run Backend Tests (Node Test Runner)
-        run: npm run test:server
 
       - name: Lint Frontend (@wsm/client)
         run: npm run lint
@@ -58,3 +55,97 @@ jobs:
 
       - name: Security Vulnerability Audit
         run: npm audit --audit-level=high
+
+  isolated-tests:
+    name: Isolated Backend Tests and Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared contracts
+        run: npm run build:common
+
+      - name: Verify QA wrapper guards
+        run: npm run test:qa-guards
+
+      - name: Run isolated backend coverage gate
+        run: npm run test:coverage:isolated
+
+  e2e:
+    name: Playwright Chromium E2E
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared contracts
+        run: npm run build:common
+
+      - name: Build frontend bundle
+        run: npm run build
+
+      - name: Install official Playwright Chromium
+        run: npm -w @wsm/client exec -- playwright install --with-deps chromium
+
+      - name: Run authentication E2E
+        run: npm -w @wsm/client run test:e2e
+
+  mysql-qa:
+    name: Ephemeral MySQL QA Smokes
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared contracts
+        run: npm run build:common
+
+      - name: Start dedicated ephemeral QA MySQL
+        run: docker compose -f docker-compose.test.yml up -d --wait mysql
+
+      - name: Bootstrap QA schema and smoke users
+        run: npm run qa:bootstrap -- --allow-qa-bootstrap
+
+      - name: Run referential integrity preflight
+        run: npm run qa:preflight:integrity
+
+      - name: Run integrity smoke
+        run: npm run qa:smoke:integrity
+
+      - name: Run RBAC smoke
+        run: npm run qa:smoke:rbac
+
+      - name: Remove ephemeral QA database
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v --remove-orphans

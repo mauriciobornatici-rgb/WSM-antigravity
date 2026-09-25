@@ -1,75 +1,48 @@
-# Contrato de Calidad y Verificación — WSM SportsERP
+# Calidad y verificación — WSM SportsERP
 
-Este archivo define los comandos y criterios deterministas de verificación para el monorepo de WSM SportsERP.
+Adaptación Base Codex actualizada el 2026-09-06. Las obligaciones de AGENTS/GEMINI
+y los umbrales existentes se conservan. Ver [QA local](../../docs/development/QA.md).
 
----
+## Comandos desde la raíz
 
-## 1. Validaciones Rápidas (Fast Checks)
+| Comando | Alcance y límite |
+|---|---|
+| npm run build:common | Contratos compartidos; obligatorio tras DTO/RBAC |
+| npm run typecheck | common + cliente; no tipado estático del backend JS |
+| npm run lint | ESLint del cliente |
+| npm run test:server | Runner aislado: node --test con DB127.0.0.1:1 y claves ficticias |
+| npm run test:qa-guards | Guardas de entorno y servidor HTTP de pruebas |
+| npm run test:client | Vitest del cliente |
+| npm run validate | common, guards, backend aislado, lint/tipos/tests/build cliente |
+| npm run test:coverage | Backend aislado con gate90 en líneas/ramas/funciones |
+| npm run qa:bootstrap -- --allow-qa-bootstrap | Migraciones/fixtures solo en wsm_qa local; exige autorización de migraciones |
+| npm run qa:preflight:integrity | El mismo preflight referencial con destino QA fijo |
+| npm run qa:smoke:rbac | 12 casos HTTP en app efímera y MySQL QA |
+| npm run qa:smoke:integrity | Smoke básico; no activa los tres circuitos opcionales |
+| npm -w @wsm/client run test:e2e | Login con API simulada, Chromium y preview propio; requiere build |
 
-Ejecutar durante la iteración y antes de cada commit o paso:
+test:isolated/test:coverage:isolated son alias explícitos de los wrappers.
+Los comandos directos del workspace server, preflight:integrity y smoke:* sin
+prefijo qa conservan la configuración de su entorno: revisar destino antes de usarlos.
+El wrapper elimina secretos heredados y aplica NODE_ENV=development únicamente
+al backend; no exportar ese valor globalmente para construir el cliente.
 
-### Frontend (`@wsm/client`):
-```bash
-npm -w @wsm/client run lint
-npm -w @wsm/client run typecheck
-npm -w @wsm/client run test
-```
+## Ciclo y cierre
 
-### Backend (`@wsm/server`):
-```bash
-npm -w @wsm/server run test
-```
+Durante cambios: test dirigido. Al cierre: validate y preflight:integrity sobre
+destino revisado (el alias qa:preflight:integrity ejecuta el mismo script), más
+smokes aplicables. Para cierre integral usar cobertura y E2E; no reducir umbrales.
+Registrar comando, entorno, resultado y límites en [AUDIT](AUDIT.md).
 
-### Tipos compartidos (`@wsm/common`):
-```bash
-npm run build:common
-```
+MySQL QA: docker-compose.test.yml, puerto127.0.0.1:33308, tmpfs, sin binlog ni
+replicación. No sustituye pruebas de backups/PITR ni staging.
+Los 42 SQL históricos mantienen sus checksums. El ejecutor adapta únicamente
+sintaxis legacy reconocida; nuevas migraciones deben usar sintaxis MySQL válida.
 
----
+## Resultado actual y pendientes
 
-## 2. Validaciones Integrales (Full Checks)
-
-Ejecutar obligatoriamente antes de dar por completada una tarea o realizar entrega:
-
-```bash
-# Validación completa del monorepo (build common + test server + lint client + typecheck + test client + build client)
-npm run validate
-
-# Verificación de integridad relacional en BD (comprueba que no existan registros huérfanos)
-npm run preflight:integrity
-
-# Comprobación de matriz RBAC e inyección de datos
-npm run smoke:rbac
-```
-
----
-
-## 3. Matriz de Evidencia de Aceptación
-
-| Requerimiento | Comando de Verificación | Criterio de Éxito |
-| :--- | :--- | :--- |
-| Tipado estricto TypeScript | `npm run typecheck` | Salida limpia `exit 0` en common y client |
-| Linter y estilo | `npm run lint` | 0 errores en frontend y backend |
-| Tests unitarios del backend | `npm run test:server` | 375+ tests pasando |
-| Cobertura de backend | `npm run test:coverage` | >90% líneas, ramas y funciones |
-| Tests del cliente | `npm run test:client` | 47+ tests pasando |
-| Integridad de claves foráneas | `npm run preflight:integrity` | 36 relaciones sin huérfanos |
-| Matriz de roles y permisos | `npm run smoke:rbac` | 12/12 verificaciones aprobadas |
-| Build de producción | `npm run build` | Bundle generado en `dist` sin warnings críticos |
-
----
-
-## 4. Verificaciones que Requieren Revisión Humana
-
-- Comprobación visual de responsividad móvil en interfaces a 320 px (p.ej. picking y conteo de stock).
-- Pruebas con hardware físico (escáner Bluetooth / USB o cámara del móvil vía HTTPS).
-- Validación de certificados y credenciales de producción para ARCA/AFIP y Tiendanube.
-
----
-
-## 5. Preflight Rápido de Sesión
-
-Comando estándar que el agente puede ejecutar al inicio de la sesión para validar la salud del workspace:
-```bash
-npm run typecheck
-```
+validate pasa (7 guards,431 backend,62 cliente); cobertura falla
+81,23/88,82/73,98 %. MySQL bootstrap limpio/repetido, preflight, RBAC y E2E pasan.
+CI incorpora esos gates, pero no se ejecutó remotamente; cobertura sigue bloqueante.
+Pendientes: circuito completo POS→DB→contabilidad, concurrencia, caja/recepción,
+impresión A4/80mm, escáner/cámara, backups, homologación ARCA y Tiendanube.

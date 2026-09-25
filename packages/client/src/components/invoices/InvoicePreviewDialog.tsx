@@ -15,6 +15,8 @@ type InvoicePreviewDialogProps = {
     onClose: () => void
     onAuthorize?: (invoice: InvoiceView) => void | Promise<void>
     companySettings?: CompanySettings
+    onPrint?: (invoice: InvoiceView) => void
+    onPrintThermal?: (invoice: InvoiceView) => void
 }
 
 export function InvoicePreviewDialog({
@@ -29,6 +31,8 @@ export function InvoicePreviewDialog({
     onClose,
     onAuthorize,
     companySettings,
+    onPrint,
+    onPrintThermal,
 }: InvoicePreviewDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -47,6 +51,8 @@ export function InvoicePreviewDialog({
                         onClose={onClose}
                         onAuthorize={onAuthorize}
                         companySettings={companySettings}
+                        {...(onPrint ? { onPrint } : {})}
+                        {...(onPrintThermal ? { onPrintThermal } : {})}
                     />
                 ) : (
                     <div className="flex h-64 items-center justify-center">

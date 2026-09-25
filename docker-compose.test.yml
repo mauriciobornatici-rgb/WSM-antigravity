@@ -1,0 +1,35 @@
+# Ephemeral MySQL used only by the QA bootstrap and smoke commands.
+# The host bind is loopback-only and /var/lib/mysql is tmpfs, so no test data
+# is persisted by this compose file.
+name: wsm-qa
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: wsm_qa
+    restart: "no"
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-log-bin
+    environment:
+      MYSQL_ROOT_PASSWORD: wsm_qa_root_password_2026
+      MYSQL_DATABASE: wsm_qa
+      MYSQL_USER: wsm_qa
+      MYSQL_PASSWORD: wsm_qa_password_2026
+    ports:
+      - "127.0.0.1:33308:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mysql --protocol=TCP --host=127.0.0.1 --user=wsm_qa
+          --password=wsm_qa_password_2026 --database=wsm_qa
+          --connect-timeout=2 --execute="SELECT 1" >/dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s

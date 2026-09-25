@@ -1,14 +1,46 @@
 import type { Order } from "@/types";
 
-export function sortItemsByLocation(order: Order, descending: boolean = true): Order {
+export function isGenericOrEmptyLocation(loc?: string | null): boolean {
+    if (!loc) return true;
+    const clean = loc.trim().toLowerCase();
+    return (
+        clean === "" ||
+        clean === "general" ||
+        clean.startsWith("sin ubicaci") ||
+        clean === "ninguna" ||
+        clean === "recepcion" ||
+        clean === "recepción" ||
+        clean === "deposito general" ||
+        clean === "depósito general"
+    );
+}
+
+export function compareLocations(locA?: string | null, locB?: string | null, descending: boolean = false): number {
+    const isGenericA = isGenericOrEmptyLocation(locA);
+    const isGenericB = isGenericOrEmptyLocation(locB);
+
+    // Generic or empty locations always sort to the end of the route
+    if (isGenericA && !isGenericB) return 1;
+    if (!isGenericA && isGenericB) return -1;
+    if (isGenericA && isGenericB) {
+        return (locA || "").localeCompare(locB || "", "es", { sensitivity: "base" });
+    }
+
+    const cleanA = (locA || "").trim();
+    const cleanB = (locB || "").trim();
+
+    const comparison = cleanA.localeCompare(cleanB, "es", {
+        numeric: true,
+        sensitivity: "base",
+    });
+
+    return descending ? -comparison : comparison;
+}
+
+export function sortItemsByLocation(order: Order, descending: boolean = false): Order {
     const items = order.items || [];
     const sortedItems = [...items].sort((left, right) => {
-        const locA = left.location || "";
-        const locB = right.location || "";
-        if (locA === locB) return 0;
-        if (!locA) return 1;
-        if (!locB) return -1;
-        return descending ? locB.localeCompare(locA) : locA.localeCompare(locB);
+        return compareLocations(left.location, right.location, descending);
     });
     return {
         ...order,

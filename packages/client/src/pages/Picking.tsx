@@ -42,7 +42,7 @@ export default function PickingPage() {
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [cameraScannerOpen, setCameraScannerOpen] = useState(false);
 
-    const [routeDirection, setRouteDirection] = useState<'desc' | 'asc'>('desc');
+    const [routeDirection, setRouteDirection] = useState<'desc' | 'asc'>('asc');
     const [pickingStep, setPickingStep] = useState<'location' | 'barcode' | 'quantity'>('location');
     const [isLocationVerified, setIsLocationVerified] = useState(false);
     const [isBarcodeVerified, setIsBarcodeVerified] = useState(false);
@@ -68,7 +68,7 @@ export default function PickingPage() {
             setLoading(true);
             setErrorMessage(null);
             const response = await api.getOrders();
-            const normalized = response.map((order) => toPickedFlag(sortItemsByLocation(order)));
+            const normalized = response.map((order) => toPickedFlag(sortItemsByLocation(order, false)));
             setOrders(normalized);
             if (id) {
                 const found = normalized.find((order) => order.id === id);
@@ -96,14 +96,7 @@ export default function PickingPage() {
 
     const sortedItems = useMemo(() => {
         if (!selectedOrder) return [];
-        return [...selectedOrder.items].sort((left, right) => {
-            const locA = left.location || "";
-            const locB = right.location || "";
-            if (locA === locB) return 0;
-            if (!locA) return 1;
-            if (!locB) return -1;
-            return routeDirection === "desc" ? locB.localeCompare(locA) : locA.localeCompare(locB);
-        });
+        return sortItemsByLocation(selectedOrder, routeDirection === "desc").items;
     }, [selectedOrder, routeDirection]);
 
     const pendingScanItem = useMemo(() => {
@@ -278,16 +271,9 @@ export default function PickingPage() {
         });
 
         // Auto-advance to the next incomplete item along the sorted route!
-        const nextIncompleteItem = [...nextItems]
-            .sort((left, right) => {
-                const locA = left.location || "";
-                const locB = right.location || "";
-                if (locA === locB) return 0;
-                if (!locA) return 1;
-                if (!locB) return -1;
-                return routeDirection === "desc" ? locB.localeCompare(locA) : locA.localeCompare(locB);
-            })
-            .find((item) => Number(item.picked_quantity || 0) < Number(item.quantity || 0));
+        const nextIncompleteItem = sortItemsByLocation(nextOrder, routeDirection === "desc").items.find(
+            (item) => Number(item.picked_quantity || 0) < Number(item.quantity || 0),
+        );
 
         if (nextIncompleteItem) {
             selectItemForPicking(nextIncompleteItem);
@@ -471,7 +457,7 @@ export default function PickingPage() {
         <PickingOrdersTable
             orders={orders}
             onSelectOrder={(order) => {
-                setSelectedOrder(toPickedFlag(sortItemsByLocation(order)));
+                setSelectedOrder(toPickedFlag(sortItemsByLocation(order, false)));
             }}
         />
     );

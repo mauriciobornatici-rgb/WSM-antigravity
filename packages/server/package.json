@@ -16,7 +16,8 @@
         "db:backup": "node scripts/backup-database.js",
         "db:restore": "node scripts/backup-database.js --restore",
         "migrate": "node scripts/run-migrations.js",
-        "seed:bulk": "node scripts/seed-bulk.js"
+        "seed:bulk": "node scripts/seed-bulk.js",
+        "seed:smoke": "node scripts/seed-smoke-users.js"
     },
     "dependencies": {
         "@afipsdk/afip.js": "^1.2.3",

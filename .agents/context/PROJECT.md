@@ -11,9 +11,9 @@ Sistema ERP integral y omnicanal para tiendas de deportes (WSM SportsERP), que c
 
 ## Entregables Principales
 1. Frontend SPA React/Vite con TypeScript (`packages/client`).
-2. Backend API RESTful Node/Express con TypeScript y MySQL (`packages/server`).
+2. Backend API RESTful Node/Express con JavaScript ESM y MySQL (`packages/server`).
 3. Biblioteca de contratos, DTOs y matriz RBAC compartida (`packages/common`).
-4. Scripts de migración de base de datos (`packages/server/src/db/migrations/`).
+4. Scripts de migración de base de datos (`packages/server/migrations/`).
 5. Suites de pruebas y verificación continua (Unitarias, integración, RBAC smoke, preflight referencial de base de datos).
 
 ## Dentro del Alcance (In Scope)
@@ -47,3 +47,9 @@ Sistema ERP integral y omnicanal para tiendas de deportes (WSM SportsERP), que c
 - `docs/execution/STATE.md`
 - `docs/execution/MASTER_PLAN.md`
 - `docs/execution/PRODUCTION_READINESS_2026-08-20.md`
+
+## Evidencia actual
+
+Los objetivos de cobertura/tipado anteriores son criterios, no resultados medidos.
+El backend actual es JavaScript y no tiene lint/typecheck configurados.
+Consultar [QUALITY](QUALITY.md) y [AUDIT](AUDIT.md) para el alcance real y los gates pendientes.

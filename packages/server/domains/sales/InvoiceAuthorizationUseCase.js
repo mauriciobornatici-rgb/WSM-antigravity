@@ -43,7 +43,8 @@ export class InvoiceAuthorizationUseCase {
             );
 
             const [updatedInvoiceRows] = await connection.query('SELECT * FROM invoices WHERE id = ?', [invoiceId]);
-            const invoice = updatedInvoiceRows[0];
+            const invoice = updatedInvoiceRows[0] || {};
+            invoice.items = invoiceItems;
 
             await accountingService.postInvoiceAccountingEntries(connection, invoiceId);
 

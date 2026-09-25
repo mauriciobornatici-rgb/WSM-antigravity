@@ -96,6 +96,12 @@ export const zodSchemas = {
         }),
         body: commonSchemas.orderInvoiceSchema
     }),
+    pickupOrderCheckout: z.object({
+        params: z.object({
+            id: commonSchemas.uuidSchema
+        }),
+        body: commonSchemas.pickupOrderCheckoutSchema
+    }),
     invoicePayment: z.object({
         params: z.object({
             id: commonSchemas.uuidSchema

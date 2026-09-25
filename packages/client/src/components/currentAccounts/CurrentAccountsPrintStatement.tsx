@@ -1,6 +1,7 @@
 import { formatMoney } from "@/lib/formatters";
 import type { Client, Supplier } from "@/types";
 import type { UnifiedMovement } from "./CurrentAccountsLedgerTable";
+import { PrintPortal } from "@/components/common/PrintPortal";
 
 interface CurrentAccountsPrintStatementProps {
     accountType: "client" | "supplier";
@@ -27,7 +28,8 @@ export function CurrentAccountsPrintStatement({
     if (!entity) return null;
 
     return (
-        <div className="hidden print:block p-8 bg-white text-black font-sans max-w-4xl mx-auto">
+        <PrintPortal>
+            <div id="printable-client-document" className="hidden print:block p-8 bg-white text-black font-sans max-w-4xl mx-auto">
             {/* Header del Reporte */}
             <div className="flex justify-between items-start border-b-2 border-slate-900 pb-4 mb-6">
                 <div>
@@ -108,6 +110,7 @@ export function CurrentAccountsPrintStatement({
                     <p className="font-semibold text-slate-700">Firma y Sello de Conformidad</p>
                 </div>
             </div>
-        </div>
+            </div>
+        </PrintPortal>
     );
 }

@@ -94,8 +94,37 @@ test('createInvoice successfully creates invoice from order', async (t) => {
     assert.ok(result.id);
     assert.equal(result.payment_status, 'pending');
     assert.equal(result.total_amount, 242.00); // 200 + 42
+    assert.ok(result.items);
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].product_name, 'Zapatilla');
     assert.ok(logged);
 
     const inserts = queryCalls.filter(c => c.sql.includes('INSERT INTO invoices'));
     assert.equal(inserts.length, 1);
 });
+
+test('getInvoiceById returns invoice with items', async (t) => {
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('FROM invoices i')) {
+            return [[{ id: 'inv-1', invoice_number: 10, total_amount: 100, client_name: 'Ana' }]];
+        }
+        if (statement.includes('SELECT * FROM invoice_items')) {
+            return [[{ id: 'item-1', invoice_id: 'inv-1', product_name: 'Pelota', quantity: 1, unit_price: 100 }]];
+        }
+        return [[]];
+    });
+
+    const invoice = await salesService.getInvoiceById('inv-1');
+    assert.ok(invoice);
+    assert.equal(invoice.id, 'inv-1');
+    assert.equal(invoice.items.length, 1);
+    assert.equal(invoice.items[0].product_name, 'Pelota');
+});
+
+test('getInvoiceById returns null when not found', async (t) => {
+    mockPool(t, async () => [[]]);
+    const invoice = await salesService.getInvoiceById('non-existent');
+    assert.equal(invoice, null);
+});
+

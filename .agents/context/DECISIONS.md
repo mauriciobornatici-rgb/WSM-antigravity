@@ -46,3 +46,15 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **Contexto:** Estandarizar la interacción de agentes de IA con el monorepo para evitar pérdidas de contexto, regresiones y consumo desmedido de tokens.
 - **Decisión:** Adoptar la arquitectura oficial de Antigravity con `GEMINI.md` en la raíz, capa `.agents/context/`, contrato de calidad determinista en `QUALITY.md` y normalización de plugins/skills de ingeniería.
 - **Consecuencias:** Trabajo continuo, verificable y compatible con las herramientas avanzadas de Antigravity.
+
+---
+
+### ADR-006 — Adaptación selectiva de Base Codex a la memoria existente
+- **Fecha:** 2026-09-06
+- **Estado:** accepted (documentación dentro del alcance solicitado)
+- **Contexto:** Dos memorias divergentes y snapshots extensos dificultaban retomar el trabajo.
+- **Decisión:** Conservar AGENTS/GEMINI y .agents/context como fuentes vigentes; usar .ai como referencias de compatibilidad; archivar el historial antes de resumirlo. Incorporar mapas de arquitectura/riesgos/evidencia y perfiles de lectura adaptados de Base Codex.
+- **Evidencia:** [Informe](../../docs/execution/ANALISIS_APP_Y_BASE_CODEX_2026-09-06.md), scripts reales y gates ejecutados.
+- **Consecuencias:** Menos duplicación del estado activo; el modelo/esfuerzo de agentes se hereda. No se modifica la autoridad de las reglas existentes ni se exige delegación automática.
+- **Reversión:** [Copias previas](../../docs/execution/archive/base-codex-2026-09-06/README.md); restaurar solo documentos de esta adaptación, preservando cambios funcionales previos.
+- **Sustituye a:** Ninguna decisión de dominio; complementa ADR-005 para compatibilidad con Codex.

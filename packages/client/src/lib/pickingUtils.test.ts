@@ -82,5 +82,33 @@ describe("pickingUtils", () => {
         const sortedAsc = sortItemsByLocation(sampleOrder, false);
         expect(sortedAsc.items[0]?.location).toBe("A-01");
         expect(sortedAsc.items[1]?.location).toBe("B-05");
+
+        // Defaults to ascending (standard A -> Z route)
+        const sortedDefault = sortItemsByLocation(sampleOrder);
+        expect(sortedDefault.items[0]?.location).toBe("A-01");
+        expect(sortedDefault.items[1]?.location).toBe("B-05");
+    });
+
+    it("sorts warehouse locations with natural numeric order and puts generic locations at the end", () => {
+        const warehouseOrder: Order = {
+            ...sampleOrder,
+            items: [
+                { id: "i1", product_id: "p1", product_name: "Item General", sku: "GEN-1", quantity: 1, location: "General", unit_price: 10 },
+                { id: "i2", product_id: "p2", product_name: "Item A1-10", sku: "A-10", quantity: 1, location: "A1-10-01", unit_price: 10 },
+                { id: "i3", product_id: "p3", product_name: "Item Sin Ubicacion", sku: "SIN-1", quantity: 1, location: "Sin ubicación", unit_price: 10 },
+                { id: "i4", product_id: "p4", product_name: "Item A1-02", sku: "A-02", quantity: 1, location: "A1-02-01", unit_price: 10 },
+                { id: "i5", product_id: "p5", product_name: "Item B2-01", sku: "B-01", quantity: 1, location: "B2-01-01", unit_price: 10 },
+            ],
+        };
+
+        const sorted = sortItemsByLocation(warehouseOrder, false);
+        const locations = sorted.items.map((i) => i.location);
+
+        // A1-02 should be before A1-10 (natural numeric comparison), then B2-01, then General and Sin ubicación at the end
+        expect(locations[0]).toBe("A1-02-01");
+        expect(locations[1]).toBe("A1-10-01");
+        expect(locations[2]).toBe("B2-01-01");
+        expect(locations[3]).toBe("General");
+        expect(locations[4]).toBe("Sin ubicación");
     });
 });

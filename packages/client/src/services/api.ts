@@ -269,7 +269,7 @@ type OrderCreateInput = {
     delivery_notes?: string;
     notes?: string;
     total_amount?: number;
-    items: Array<{ product_id: string; quantity: number }>;
+    items: Array<{ product_id: string; quantity: number; unit_price?: number; vat_rate?: number }>;
     [key: string]: unknown;
 };
 
@@ -435,9 +435,9 @@ export const api = {
         httpClient.post<import("@/types").StockAuditSession>(`/api/inventory/audits/${id}/adjust`),
 
     // ==================== ORDERS ====================
-    getOrders: (filters?: { client_id?: string; status?: string; page?: number; limit?: number; offset?: number }) =>
+    getOrders: (filters?: { client_id?: string; status?: string; shipping_method?: string; page?: number; limit?: number; offset?: number }) =>
         httpClient.get<Order[]>(withQuery("/api/orders", filters)),
-    getOrdersPage: (filters?: { client_id?: string; status?: string; page?: number; limit?: number; offset?: number }) =>
+    getOrdersPage: (filters?: { client_id?: string; status?: string; shipping_method?: string; page?: number; limit?: number; offset?: number }) =>
         httpClient.getWithMeta<Order[]>(withQuery("/api/orders", filters)) as Promise<PaginatedResponse<Order[]>>,
 
     createOrder: (data: OrderCreateInput) =>
@@ -490,6 +490,25 @@ export const api = {
             notes?: string;
         }
     ) => httpClient.post<Invoice>(`/api/orders/${orderId}/invoice`, data),
+
+    checkoutPickupOrder: (
+        orderId: string,
+        data: {
+            recipient_name?: string | undefined;
+            recipient_dni?: string | undefined;
+            delivery_notes?: string | undefined;
+            shift_id?: string | undefined;
+            invoice_type?: "A" | "B" | "C" | "TK" | undefined;
+            point_of_sale?: number | undefined;
+            payments?: Array<{ method: string; amount: number }> | undefined;
+            extra_items?: Array<{
+                product_id: string;
+                quantity: number;
+                unit_price?: number;
+            }> | undefined;
+            notes?: string | undefined;
+        }
+    ) => httpClient.post<{ order: Order; invoice: Invoice }>(`/api/orders/${orderId}/pickup-checkout`, data),
 
     getOrderSummary: (id: string) =>
         httpClient.get<{
@@ -812,6 +831,9 @@ export const api = {
 
     getInvoices: (filters?: { client_id?: string; status?: string; start_date?: string; end_date?: string }) =>
         httpClient.get<Invoice[]>(withQuery("/api/invoices", filters)),
+
+    getInvoice: (id: string) =>
+        httpClient.get<Invoice>(`/api/invoices/${id}`),
 
     getInvoiceItems: (invoiceId: string) =>
         httpClient.get<InvoiceItem[]>(withQuery("/api/invoice-items", { invoice_id: invoiceId })),
