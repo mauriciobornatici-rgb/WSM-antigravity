@@ -26,7 +26,9 @@ try {
     if (-not (Test-Path $estado))   { exit 0 }
     if (-not (Test-Path $bitacora)) { exit 0 }
 
-    if ((Get-Item $estado).LastWriteTime -ge (Get-Item $bitacora).LastWriteTime) { exit 0 }
+    # Tolerancia: la edicion del propio checkpoint escribe su linea en la bitacora
+    # un instante despues, y eso no debe contar como "cambio sin checkpoint".
+    if ((Get-Item $estado).LastWriteTime.AddSeconds(10) -ge (Get-Item $bitacora).LastWriteTime) { exit 0 }
 
     $marcador = Join-Path $env:TEMP ("wsm-puerta-$sesion.flag")
     if (Test-Path $marcador) { exit 0 }
