@@ -27,6 +27,7 @@ import {
     Store,
     ScanLine,
     LogOut,
+    ShieldAlert,
 } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
 import { CommandPalette } from "@/components/common/CommandPalette";
@@ -74,6 +75,7 @@ export default function AppLayout() {
         {
             title: "Administración y Finanzas",
             items: [
+                { name: "Excepciones POS", href: "/pos-exceptions", icon: ShieldAlert, permission: PERMISSIONS.ORDERS_PRICE_OVERRIDE },
                 { name: "Facturación", href: "/invoices", icon: Printer, permission: PERMISSIONS.INVOICES_MANAGE },
                 { name: "Gestión de caja", href: "/cash-management", icon: Landmark, permission: PERMISSIONS.CASH_MANAGE },
                 { name: "Cobranzas", href: "/collections", icon: FileText, permission: PERMISSIONS.COLLECTIONS_MANAGE },

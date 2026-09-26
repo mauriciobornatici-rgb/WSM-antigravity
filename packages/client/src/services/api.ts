@@ -253,6 +253,45 @@ type ProductUpsertInput =
         status?: "active" | "inactive";
     };
 
+export type PosExceptionType = "price" | "stock_shortage";
+
+export type PosExceptionPriceDetails = {
+    source: "offline_pos";
+    role?: string;
+    lines: Array<{ product_id: string; catalog_price: number; unit_price: number }>;
+};
+
+export type PosExceptionStockShortageDetails = {
+    offline_captured_at?: string;
+    lines: Array<{ product_id: string; requested: number; shortage: number }>;
+};
+
+export type PosExceptionReview = {
+    decision: "approved" | "rejected";
+    notes: string | null;
+    order_id: string;
+    reviewed_by: string;
+    reviewed_at: string;
+};
+
+export type PosException = {
+    id: number;
+    type: PosExceptionType;
+    order_id: string;
+    customer_name: string | null;
+    total_amount: number | null;
+    user_id: string;
+    user_name: string;
+    created_at: string;
+    details: PosExceptionPriceDetails | PosExceptionStockShortageDetails | Record<string, unknown>;
+    review: PosExceptionReview | null;
+};
+
+export type PosExceptionReviewInput = {
+    decision: "approved" | "rejected";
+    notes?: string;
+};
+
 export type PosCheckoutInput = {
     idempotency_key: string;
     shift_id: string;
@@ -470,6 +509,16 @@ export const api = {
     // Counter sale in one server transaction: sale + stock + optional invoice + cash-shift payments.
     posCheckout: (data: PosCheckoutInput) =>
         httpClient.post<PosCheckoutResult>("/api/pos/checkout", data),
+
+    // Offline POS sales that broke a rule (ADR-010): pending/reviewed exceptions for manager review.
+    getPosExceptions: (status?: "pending" | "reviewed", limit?: number) =>
+        httpClient.get<PosException[]>(withQuery("/api/pos/exceptions", { status, limit })),
+
+    reviewPosException: (id: number, data: PosExceptionReviewInput) =>
+        httpClient.post<{ id: number; decision: "approved" | "rejected"; notes: string | null }>(
+            `/api/pos/exceptions/${id}/review`,
+            data
+        ),
 
     updateOrderStatus: (id: string, status: string) =>
         httpClient.put<Order>(`/api/orders/${id}/status`, { status }),

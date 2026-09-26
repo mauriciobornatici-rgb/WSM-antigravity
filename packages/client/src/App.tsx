@@ -33,6 +33,7 @@ const CashManagementPage = lazy(() => import("@/pages/CashManagement"));
 const CollectionsPage = lazy(() => import("@/pages/Collections"));
 const SupplierPaymentsPage = lazy(() => import("@/pages/SupplierPayments"));
 const CurrentAccountsPage = lazy(() => import("@/pages/CurrentAccounts"));
+const PosExceptionsPage = lazy(() => import("@/pages/PosExceptions"));
 const PresentationPage = lazy(() => import("@/pages/Presentation"));
 const NotFoundPage = lazy(() => import("@/pages/NotFound"));
 
@@ -253,6 +254,14 @@ function App() {
                     element={
                       <ProtectedRoute permission={PERMISSIONS.COLLECTIONS_MANAGE}>
                         <CurrentAccountsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/pos-exceptions"
+                    element={
+                      <ProtectedRoute permission={PERMISSIONS.ORDERS_PRICE_OVERRIDE}>
+                        <PosExceptionsPage />
                       </ProtectedRoute>
                     }
                   />
