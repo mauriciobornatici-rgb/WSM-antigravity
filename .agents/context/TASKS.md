@@ -14,7 +14,13 @@ con modelo por riesgo. Decisiones de negocio del usuario en ADR-008.
 - [x] `f51fe90` ErrorBoundary por ruta (reintento, aviso de versión nueva).
 - [x] Evidencia: `npm run validate` exit 0 (7 guards, 436 backend, 62 cliente, lint, tipos, build).
 
-## Ola B — integridad de stock y dinero (en planificación)
+## Ola B — integridad de stock y dinero (en curso)
+
+Plan: `docs/execution/PLAN_OLA_B_INTEGRIDAD_2026-09-25.md`. Precios de catálogo son NETOS (ADR-008).
+
+- [x] `0f62d53` I1: venta POS de mostrador descuenta stock + movimiento `sale` (`domains/inventory/StockLedger.js`).
+- [x] I2: `npm run qa:integration` (MySQL QA real) 5/5: descuento, replay, reservas, 10 compradores/5 unidades, sin deadlocks.
+- [ ] I7 scripts diagnóstico/reparación · [ ] I6 H3/H5/M8 · [ ] I3 pricing+override · [ ] I4 checkout atómico · [ ] I5 estados · [ ] I8 migración 045 (tras reparar prod)
 
 Defectos confirmados: C1 ventas POS nunca descuentan stock físico ni escriben
 movimiento (solo reservan; factura pasa a `completed`); H1 sin guarda DB y
