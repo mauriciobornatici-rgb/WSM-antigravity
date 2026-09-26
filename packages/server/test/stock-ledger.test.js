@@ -95,3 +95,20 @@ test('consumeAvailable spreads across rows, updates them in place and traces eve
         (err) => /Disponible: 3/.test(err.message)
     );
 });
+
+test('consumeAvailable with allowShortage takes what exists and reports the rest', async () => {
+    const ledger = new StockLedger();
+    const connection = recordingConnection((sql) => (sql.includes('UPDATE inventory') ? [{ affectedRows: 1 }] : [[]]));
+    const rows = [{ id: 'r', location: 'A', quantity: 3, reserved_quantity: 2 }];
+
+    const result = await ledger.consumeAvailable(connection, rows, {
+        productId: 'p', quantity: 4, orderId: 'o', allowShortage: true,
+    });
+
+    assert.deepEqual(result, { consumed: 1, shortage: 3 });
+    assert.deepEqual(connection.calls.filter((call) => call.sql.includes('UPDATE inventory')).map((call) => call.params), [[1, 'r', 1]]);
+    assert.deepEqual(rows.map((row) => row.quantity), [2], 'reserved units are never consumed');
+
+    const empty = await ledger.consumeAvailable(recordingConnection(), [], { productId: 'p', quantity: 2, allowShortage: true });
+    assert.deepEqual(empty, { consumed: 0, shortage: 2 });
+});

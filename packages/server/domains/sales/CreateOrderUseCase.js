@@ -147,6 +147,8 @@ export class CreateOrderUseCase {
     async execute(orderData, userId, actor = null, existingConnection = null) {
         const orderId = crypto.randomUUID();
         const counterSale = isCounterSale(orderData);
+        const offlineReplay = counterSale && isOfflineReplay(orderData);
+        const stockShortages = [];
         const isExternalTx = Boolean(existingConnection);
         const connection = existingConnection || await pool.getConnection();
 
@@ -347,14 +349,19 @@ export class CreateOrderUseCase {
                         'INSERT INTO order_items (id, order_id, product_id, quantity, picked_quantity, unit_price) VALUES (?, ?, ?, ?, ?, ?)',
                         [itemId, orderId, item.product_id, item.quantity, item.quantity, unitPrice]
                     );
-                    await this.stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
+                    const { shortage } = await this.stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
                         productId: item.product_id,
                         productName: nameByProduct.get(item.product_id),
                         quantity: item.quantity,
                         orderId,
                         userId,
-                        reason: 'Venta mostrador POS'
+                        reason: 'Venta mostrador POS',
+                        // An offline sale already happened: record it even without stock (ADR-010).
+                        allowShortage: offlineReplay
                     });
+                    if (shortage > 0) {
+                        stockShortages.push({ product_id: item.product_id, requested: Number(item.quantity), shortage });
+                    }
                     continue;
                 }
 
@@ -420,6 +427,17 @@ export class CreateOrderUseCase {
                     points_earned: pointsEarned
                 }
             }, connection);
+
+            if (stockShortages.length > 0) {
+                // Reviewed by a manager in the POS exceptions list; the stock needs a count.
+                await auditService.log({
+                    user_id: userId,
+                    action: 'OFFLINE_SALE_STOCK_SHORTAGE',
+                    entity_type: 'order',
+                    entity_id: orderId,
+                    new_values: { offline_captured_at: orderData.offline_captured_at, lines: stockShortages }
+                }, connection);
+            }
 
             if (priceOverride.overrides.length > 0) {
                 await auditService.log({

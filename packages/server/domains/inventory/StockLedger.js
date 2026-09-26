@@ -62,15 +62,18 @@ export class StockLedger {
      * `lockedRows` must come from lockSellableRows in the same transaction; they are
      * updated in place so several lines of the same product see the remaining stock.
      */
-    async consumeAvailable(connection, lockedRows, { productId, productName, quantity, orderId, userId, reason }) {
+    async consumeAvailable(connection, lockedRows, { productId, productName, quantity, orderId, userId, reason, allowShortage = false }) {
         const name = productName || productId;
         const requestedQty = parsePositiveQuantity(quantity, name);
         const availableQty = lockedRows.reduce((sum, row) => sum + Math.max(available(row), 0), 0);
-        if (availableQty < requestedQty) {
+        if (availableQty < requestedQty && !allowShortage) {
             throw buildInsufficientStockError(name, requestedQty, availableQty);
         }
+        // allowShortage: the goods already left (an offline sale being synced). Take what
+        // exists, never below zero, and report the rest so the caller can record it.
+        const shortage = Math.max(requestedQty - availableQty, 0);
 
-        let remaining = requestedQty;
+        let remaining = requestedQty - shortage;
         for (const row of lockedRows) {
             if (remaining <= 0) break;
             const consume = Math.min(Math.max(available(row), 0), remaining);
@@ -96,6 +99,7 @@ export class StockLedger {
             );
             remaining -= consume;
         }
+        return { consumed: requestedQty - shortage, shortage };
     }
 }
 

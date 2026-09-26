@@ -56,3 +56,26 @@ test('reviewing something that is not an exception is rejected', async () => {
         (err) => err.errorCode === 'POS_EXCEPTION_NOT_FOUND' && err.statusCode === 404
     );
 });
+
+test('an offline sale without enough stock is recorded, never goes negative and the shortage awaits review', async () => {
+    const productId = await seedProduct({ salePrice: 100, stock: [{ location: 'QA-A', quantity: 2, reserved: 1 }] });
+
+    // Online, the same sale is refused: stock is checked before the customer leaves.
+    await assert.rejects(
+        () => createOrder.execute({
+            external_source: 'pos', external_id: crypto.randomUUID(),
+            items: [{ product_id: productId, quantity: 3, unit_price: 100 }],
+        }, null, { role: 'cashier' }),
+        (err) => err.errorCode === 'INSUFFICIENT_STOCK'
+    );
+
+    const order = await offlineSale(productId, { quantity: 3 });
+
+    assert.deepEqual(await stockOf(productId), { quantity: 1, reserved: 1 }, 'only the unreserved unit was taken');
+    const pending = (await exceptions.list({ status: 'pending' })).filter((item) => item.order_id === order.id);
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].type, EXCEPTION_TYPES.STOCK_SHORTAGE);
+    assert.deepEqual(pending[0].details.lines, [{ product_id: productId, requested: 3, shortage: 2 }]);
+    const [[item]] = await pool.query('SELECT quantity, picked_quantity FROM order_items WHERE order_id = ?', [order.id]);
+    assert.deepEqual([item.quantity, item.picked_quantity], [3, 3], 'the sale records what the customer took');
+});
