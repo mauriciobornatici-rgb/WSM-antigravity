@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import afipService from '../services/afip.service.js';
+import afipService, { buildVoucherAmounts } from '../services/afip.service.js';
 
 const settings = {
     identity: { tax_id: '30-70000000-1' },
@@ -64,10 +64,38 @@ test('createVoucher builds a rounded Factura A payload with grouped VAT', async 
     assert.equal(payload.CbteTipo, 1);
     assert.equal(payload.DocTipo, 80);
     assert.equal(payload.DocNro, 20123456789);
-    assert.equal(payload.ImpTotal, 352.5);
-    assert.equal(payload.ImpNeto, 300);
-    assert.equal(payload.ImpIVA, 52.5);
-    assert.equal(payload.Iva.length, 2);
+    // Catalog prices are net (ADR-008): 2 × 121 + 21 % and 1 × 110.5 + 10.5 %.
+    assert.equal(payload.ImpNeto, 352.5);
+    assert.equal(payload.ImpIVA, 62.42);
+    assert.equal(payload.ImpTotal, 414.92);
+    assert.deepEqual(payload.Iva, [
+        { Id: 5, BaseImp: 242, Importe: 50.82 },
+        { Id: 4, BaseImp: 110.5, Importe: 11.6 },
+    ]);
+});
+
+test('voucher amounts reproduce the stored invoice lines exactly and close to the cent', () => {
+    // mysql2 returns DECIMAL columns as strings.
+    const amounts = buildVoucherAmounts(6, [
+        { quantity: '1.00', unit_price: '10000.00', vat_rate: '21.00', vat_amount: '2100.00', total_line: '12100.00' },
+        { quantity: '3.00', unit_price: '0.33', vat_rate: '21.00', vat_amount: '0.21', total_line: '1.20' },
+    ]);
+    assert.deepEqual(amounts, {
+        roundedTotal: 12101.2,
+        roundedNet: 10000.99,
+        roundedVat: 2100.21,
+        ivaArray: [{ Id: 5, BaseImp: 10000.99, Importe: 2100.21 }],
+    });
+    assert.equal(Math.round((amounts.roundedNet + amounts.roundedVat) * 100), Math.round(amounts.roundedTotal * 100));
+});
+
+test('voucher amounts split a gross-only line and report Factura C without VAT detail', () => {
+    assert.deepEqual(buildVoucherAmounts(8, [{ total_line: 121, vat_rate: 21 }]).ivaArray, [{ Id: 5, BaseImp: 100, Importe: 21 }]);
+    assert.deepEqual(buildVoucherAmounts(11, [{ quantity: 1, unit_price: 100, vat_rate: 21 }]), {
+        roundedTotal: 121, roundedNet: 121, roundedVat: 0, ivaArray: [],
+    });
+    assert.deepEqual(buildVoucherAmounts(6, [{ quantity: 1, unit_price: 50, vat_rate: 0 }]).ivaArray, [{ Id: 3, BaseImp: 50, Importe: 0 }]);
+    assert.throws(() => buildVoucherAmounts(6, [{ quantity: 1, unit_price: 1, vat_rate: 19 }]), /no soportada/);
 });
 
 test('createVoucher supports Factura B and tax-exempt C payloads', async (t) => {
