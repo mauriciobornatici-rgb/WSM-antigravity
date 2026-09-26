@@ -596,6 +596,7 @@ class CreditNotesService extends BaseService {
                             FROM client_return_items ri
                             JOIN products p ON ri.product_id = p.id
                             WHERE ri.return_id = ?
+                              AND LOWER(COALESCE(ri.condition_status, '')) <> 'rejected'
                         `, [cn.reference_id]);
 
                         const invoiceItems = itemsRows.length > 0 ? itemsRows : [

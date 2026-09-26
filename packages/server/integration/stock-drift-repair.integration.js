@@ -87,7 +87,7 @@ test('class A legacy sale without allocations: stock deducted, reservation relea
     assert.equal(order.drift_class, DRIFT_CLASSES.A);
     assert.equal(order.legacy_without_allocations, true);
 
-    await repair(order, 'sale');
+    await repair(order, 'sold');
 
     assert.deepEqual(await stockOf(productId), { quantity: 3, reserved: 0 });
     const movements = await saleMovementsOf(productId);
@@ -103,7 +103,7 @@ test('class A with allocation rows repairs exactly the allocated inventory row',
 
     const order = await affected(orderId);
     assert.equal(order.drift_class, DRIFT_CLASSES.A);
-    await repair(order, 'sale');
+    await repair(order, 'sold');
 
     const [rows] = await pool.query('SELECT location, quantity, reserved_quantity FROM inventory WHERE product_id = ? ORDER BY location', [productId]);
     assert.deepEqual(rows.map((row) => [row.location, row.quantity, row.reserved_quantity]), [['QA-A', 3, 0], ['QA-Z', 9, 0]]);
@@ -121,10 +121,12 @@ test('class B: a later stock count already fixed physical stock, so only the res
 
     const order = await affected(orderId);
     assert.equal(order.drift_class, DRIFT_CLASSES.B);
-    await repair(order, 'release');
+    await repair(order, 'sold');
 
     assert.deepEqual(await stockOf(productId), { quantity: 5, reserved: 0 });
     assert.equal((await saleMovementsOf(productId)).length, 0);
+    const [[row]] = await pool.query('SELECT status FROM orders WHERE id = ?', [orderId]);
+    assert.equal(row.status, 'completed', 'the sale happened: the order is closed, not left pending');
 });
 
 test('class C (no invoice, no payment) is detected and not treated as a sale', async () => {
@@ -141,7 +143,71 @@ test('an order whose reservation disappeared is reported as an anomaly and chang
     const orderId = await seedLegacyPosOrder({ productId, quantity: 2, shiftPaid: true });
 
     const order = await affected(orderId);
-    await assert.rejects(() => repair(order, 'sale'), (error) => error.code === 'STOCK_DRIFT_ANOMALY');
+    await assert.rejects(() => repair(order, 'sold'), (error) => error.code === 'STOCK_DRIFT_ANOMALY');
     assert.deepEqual(await stockOf(productId), { quantity: 3, reserved: 0 });
     assert.ok(await affected(orderId), 'still pending for manual review');
+});
+
+async function addItem(orderId, productId, quantity) {
+    await pool.query(
+        'INSERT INTO order_items (id, order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?, 100)',
+        [crypto.randomUUID(), orderId, productId, quantity]
+    );
+}
+
+test('mixed order: only the item counted after the sale skips the deduction', async () => {
+    const counted = await seedProduct({ stock: [{ location: 'QA-A', quantity: 5, reserved: 1 }] });
+    const notCounted = await seedProduct({ stock: [{ location: 'QA-A', quantity: 5, reserved: 2 }] });
+    const orderId = await seedLegacyPosOrder({ productId: counted, quantity: 1, shiftPaid: true });
+    await addItem(orderId, notCounted, 2);
+    await pool.query(
+        "INSERT INTO inventory_movements (id, type, product_id, quantity, reason) VALUES (?, 'stock_audit', ?, -1, 'conteo QA')",
+        [crypto.randomUUID(), counted]
+    );
+
+    const order = await affected(orderId);
+    assert.equal(order.drift_class, DRIFT_CLASSES.B);
+    await repair(order, 'sold');
+
+    assert.deepEqual(await stockOf(counted), { quantity: 5, reserved: 0 });
+    assert.deepEqual(await stockOf(notCounted), { quantity: 3, reserved: 0 });
+});
+
+test('a legacy repair never takes a reservation that belongs to another order allocation', async () => {
+    const productId = await seedProduct({ stock: [{ location: 'QA-A', quantity: 10, reserved: 3 }] });
+    const other = await seedLegacyPosOrder({ productId, quantity: 2, withAllocation: true, shiftPaid: false });
+    // 3 reserved on the row: 2 are the live allocation of `other`, only 1 is legacy.
+    const legacy = await seedLegacyPosOrder({ productId, quantity: 2, shiftPaid: true });
+
+    const legacyOrder = await affected(legacy);
+    await assert.rejects(() => repair(legacyOrder, 'sold'), (error) => error.code === 'STOCK_DRIFT_ANOMALY');
+    assert.deepEqual(await stockOf(productId), { quantity: 10, reserved: 3 }, 'nothing changed');
+    const [[allocation]] = await pool.query('SELECT status FROM order_item_allocations WHERE order_id = ?', [other]);
+    assert.equal(allocation.status, 'reserved');
+});
+
+test('an order cancelled between diagnosis and repair is not touched', async () => {
+    const productId = await seedProduct({ stock: [{ location: 'QA-A', quantity: 5, reserved: 1 }] });
+    const orderId = await seedLegacyPosOrder({ productId, quantity: 1, shiftPaid: true });
+    const order = await affected(orderId);
+    await pool.query("UPDATE orders SET status = 'cancelled' WHERE id = ?", [orderId]);
+
+    await assert.rejects(() => repair(order, 'sold'), /cambió desde el diagnóstico/);
+    assert.deepEqual(await stockOf(productId), { quantity: 5, reserved: 1 });
+});
+
+test('payment evidence outside the cash shift classifies the order as sold, not unpaid', async () => {
+    const productId = await seedProduct({ stock: [{ location: 'QA-A', quantity: 5, reserved: 1 }] });
+    const orderId = await seedLegacyPosOrder({ productId, quantity: 1 });
+    await pool.query("UPDATE orders SET payment_status = 'paid' WHERE id = ?", [orderId]);
+    assert.equal((await affected(orderId)).drift_class, DRIFT_CLASSES.A);
+});
+
+test('cancelling an unpaid order releases its reservation and only works on pending orders', async () => {
+    const productId = await seedProduct({ stock: [{ location: 'QA-A', quantity: 5, reserved: 1 }] });
+    const orderId = await seedLegacyPosOrder({ productId, quantity: 1 });
+    await repair(await affected(orderId), 'cancel');
+    assert.deepEqual(await stockOf(productId), { quantity: 5, reserved: 0 });
+    const [[row]] = await pool.query('SELECT status FROM orders WHERE id = ?', [orderId]);
+    assert.equal(row.status, 'cancelled');
 });

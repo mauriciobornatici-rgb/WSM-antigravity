@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 
 import { TiendaNubeService } from '../services/tiendanube.service.js';
+import salesService from '../services/sales.service.js';
 
 test('syncStock uses Tiendanube 2025-03 stock endpoint with bearer auth', async () => {
     const httpCalls = [];
@@ -849,21 +850,40 @@ test('fulfillment operations synchronize, update tracking and isolate bulk failu
         return { data: path.includes('fulfillment-orders') && method === 'get' ? [remoteFulfillment] : remoteFulfillment };
     };
 
+    // updateFulfillment dynamically imports the real sales.service.js singleton and calls
+    // applyExternalStatus(localOrderId, mappedStatus) instead of writing orders.status
+    // directly; stub it so the test never touches a real DB connection.
+    const appliedExternalStatuses = [];
+    const originalApplyExternalStatus = salesService.applyExternalStatus;
+    salesService.applyExternalStatus = async (orderId, status) => {
+        appliedExternalStatuses.push([orderId, status]);
+    };
+
     assert.deepEqual(await service.syncFulfillmentsForExternalOrder(null), { synced: 0 });
     assert.deepEqual(await service.syncFulfillmentsForExternalOrder('external-1'), { synced: 1 });
-    const updated = await service.updateFulfillment('fulfillment-1', {
-        status: 'DISPATCHED',
-        tracking_code: 'TRACK-1',
-        tracking_url: 'https://tracking.example/1',
-        notify_customer: true
-    });
-    const event = await service.createTrackingEvent('fulfillment-1', { status: 'IN_TRANSIT' });
+    let updated, event;
+    try {
+        updated = await service.updateFulfillment('fulfillment-1', {
+            status: 'DISPATCHED',
+            tracking_code: 'TRACK-1',
+            tracking_url: 'https://tracking.example/1',
+            notify_customer: true
+        });
+        event = await service.createTrackingEvent('fulfillment-1', { status: 'IN_TRANSIT' });
+    } finally {
+        salesService.applyExternalStatus = originalApplyExternalStatus;
+    }
 
     assert.equal(updated.id, 'fulfillment-1');
     assert.equal(event.id, 'event-1');
     assert.ok(apiCalls.some((call) => call.method === 'patch' && call.data.tracking_info.code === 'TRACK-1'));
     assert.ok(apiCalls.some((call) => call.path.endsWith('/tracking-events')));
     assert.ok(dbCalls.filter((call) => call.statement.includes('INSERT INTO tiendanube_fulfillments')).length >= 3);
+    // The UPDATE only touches tracking/timestamps now, never orders.status directly.
+    const trackingUpdate = dbCalls.find((call) => call.statement.includes('UPDATE orders SET tracking_number'));
+    assert.ok(trackingUpdate);
+    assert.equal(/\bstatus\s*=\s*CASE/i.test(trackingUpdate.statement), false);
+    assert.deepEqual(appliedExternalStatuses, [['order-1', 'dispatched']]);
 
     const bulkService = new TiendaNubeService({
         db: {

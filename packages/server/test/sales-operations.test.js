@@ -731,22 +731,35 @@ test('createInvoice rejects orders with no physically picked quantity', async (t
 });
 
 test('createManualInvoice rejects missing orders, missing items and rolls back', async (t) => {
-    let mode = 'order';
     mockPool(t, async (sql) => {
-        if (String(sql).includes('SELECT id, invoice_id FROM orders')) return mode === 'order' ? [[]] : [[{ id: 'o', invoice_id: null }]];
+        if (String(sql).includes('SELECT id, invoice_id FROM orders')) return [[]];
         return [[]];
     });
+    // order_id present but not found: rejected before ever delegating to createInvoice.
     await assert.rejects(() => salesService.createManualInvoice({ order_id: 'missing', items: [{}] }, 'u'), /Order not found/);
-    mode = 'items';
-    await assert.rejects(() => salesService.createManualInvoice({ order_id: 'o', items: [] }, 'u'), /Invoice must contain items/);
+    // No order_id: the itemless standalone-document path still requires items (H4 only
+    // ignores client-sent items when an order_id is present and delegation happens).
+    await assert.rejects(() => salesService.createManualInvoice({ items: [] }, 'u'), /Invoice must contain items/);
 });
 
 test('createManualInvoice links its order, applies advances and records the outstanding balance', async (t) => {
+    // Since order_id present now delegates entirely to createInvoice (H4: client-sent
+    // items/prices/VAT for an order invoice are ignored), the mock must also satisfy
+    // createInvoice's own query shape (order lookup, order_items, order_payments, billing_pos).
     const calls = [];
     mockPool(t, async (sql, params) => {
         const statement = String(sql);
         calls.push({ sql: statement, params });
         if (statement.includes('SELECT id, invoice_id FROM orders')) return [[{ id: 'o-manual', invoice_id: null }]];
+        if (statement === 'SELECT * FROM orders WHERE id = ? FOR UPDATE') return [[{
+            id: 'o-manual', status: 'packed', client_id: 'client-1', customer_name: 'Ana', payment_method: null
+        }]];
+        if (statement.includes('FROM order_items oi')) return [[{
+            product_id: 'p-1', quantity: 1, picked_quantity: 1, unit_price: 100,
+            vat_rate: 21, product_name: 'Producto', sku: null
+        }]];
+        if (statement.includes('FROM order_payments')) return [[]];
+        if (statement.includes('SELECT billing_pos')) return [[]];
         return [[]];
     });
     const originals = {
@@ -775,9 +788,11 @@ test('createManualInvoice links its order, applies advances and records the outs
         auditService.log = originals.audit;
     });
 
+    // Client-sent items/prices/VAT below are ignored: the order's own items (mocked above,
+    // net 100 + 21% VAT = 121) are what get billed, per H4.
     const result = await salesService.createManualInvoice({
         order_id: 'o-manual', client_id: 'client-1', invoice_type: 'B', point_of_sale: 1,
-        items: [{ product_id: 'p-1', product_name: 'Producto', quantity: 1, unit_price: 100, vat_rate: 21 }],
+        items: [{ product_id: 'p-1', product_name: 'Producto', quantity: 999, unit_price: 1, vat_rate: 0 }],
     }, 'u-1');
     assert.equal(result.total_amount, 121);
     assert.equal(result.paid_amount, 20);
@@ -851,6 +866,26 @@ test('external status walks the real transitions, consumes reservations and neve
     status = 'packed';
     await salesService.applyExternalStatus('o', 'cancelled');
     assert.deepEqual(steps.splice(0), [['cancelled', false]]);
+
+    // Remote 'dispatched' walks pending -> picking -> packed(assumeFullyPicked) -> dispatched.
+    status = 'pending';
+    await salesService.applyExternalStatus('o', 'dispatched');
+    assert.deepEqual(steps.splice(0), [['picking', false], ['packed', true], ['dispatched', false]]);
+
+    status = 'picking';
+    await salesService.applyExternalStatus('o', 'dispatched');
+    assert.deepEqual(steps.splice(0), [['packed', true], ['dispatched', false]]);
+
+    status = 'packed';
+    await salesService.applyExternalStatus('o', 'dispatched');
+    assert.deepEqual(steps.splice(0), [['dispatched', false]]);
+
+    // Never backwards: already dispatched/delivered/completed, remote 'dispatched' is a no-op.
+    for (const current of ['dispatched', 'delivered', 'completed']) {
+        status = current;
+        await salesService.applyExternalStatus('o', 'dispatched');
+        assert.deepEqual(steps, []);
+    }
 
     for (const [current, remote] of [['completed', 'cancelled'], ['delivered', 'cancelled'], ['completed', 'delivered'], ['pending', 'packed']]) {
         status = current;

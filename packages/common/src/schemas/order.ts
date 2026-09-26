@@ -69,6 +69,17 @@ export const posCheckoutSchema = createOrderSchema
     point_of_sale: z.coerce.number().int().positive().optional(),
   });
 
+// Manager review of offline POS sales that broke a rule (price or stock), ADR-010.
+export const posExceptionsQuerySchema = z.object({
+  status: z.enum(['pending', 'reviewed']).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+});
+
+export const posExceptionReviewSchema = z.object({
+  decision: z.enum(['approved', 'rejected']),
+  notes: z.string().trim().max(500).optional(),
+});
+
 export const orderFiltersSchema = z.object({
   client_id: optionalUuidSchema,
   status: z.enum([

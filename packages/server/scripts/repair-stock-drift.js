@@ -6,10 +6,11 @@
 // Opcional: --cancel-unpaid  cancela los pedidos de clase C (sin factura ni pago)
 //           liberando su reserva. Sin esta opción la clase C solo se lista.
 //
-// Clase A (facturado o pagado): descuenta stock, libera la reserva y registra el
-//   movimiento 'sale' con la fecha original de la venta.
-// Clase B (como A, pero un conteo posterior ya corrigió el stock físico): solo
-//   libera la reserva, para no descontar dos veces.
+// Clase A (hay factura, pago en caja, líneas de pago o transacción de venta): cada ítem
+//   descuenta stock, libera su reserva y registra el movimiento 'sale' con la fecha original.
+// Clase B (como A, pero algún producto tuvo un conteo posterior a la venta): ese ítem solo
+//   libera la reserva (el conteo ya corrigió el físico); los demás se descuentan.
+// El pedido pasa a 'completed' en ambos casos. Antes de tocarlo se bloquea y se revalida.
 // Cada pedido va en su propia transacción y deja un registro de auditoría
 // REPAIR_POS_STOCK_C1, que también hace idempotente una segunda corrida.
 // Correr fuera del horario de atención: bloquea brevemente filas de inventario.
@@ -47,8 +48,7 @@ try {
 
 for (const order of orders) {
     let mode = null;
-    if (order.drift_class === DRIFT_CLASSES.A) mode = 'sale';
-    else if (order.drift_class === DRIFT_CLASSES.B) mode = 'release';
+    if (order.drift_class === DRIFT_CLASSES.A || order.drift_class === DRIFT_CLASSES.B) mode = 'sold';
     else if (args['cancel-unpaid'] === true) mode = 'cancel';
 
     if (!mode) {
@@ -59,10 +59,7 @@ for (const order of orders) {
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
-        const changes = await repairOrder(connection, order, { mode: mode === 'cancel' ? 'release' : mode });
-        if (mode === 'cancel') {
-            await connection.query("UPDATE orders SET status = 'cancelled' WHERE id = ? AND status = 'pending'", [order.id]);
-        }
+        const changes = await repairOrder(connection, order, { mode });
         await auditService.log({
             action: REPAIR_AUDIT_ACTION,
             entity_type: 'order',

@@ -407,14 +407,16 @@ export class TiendaNubeService {
 
     // The remote status goes through the local transitions (never a direct UPDATE of
     // orders.status), so cancellations release stock and deliveries deduct it. A failure
-    // here must not lose the imported metadata: it is logged for follow-up.
+    // propagates so the durable webhook queue retries it; metadata is already persisted
+    // and every step is idempotent (it resumes from the order's current status).
     async applyRemoteStatus(orderId, payload, salesService) {
         const remoteStatus = this.mapLocalOrderStatus(payload);
         if (!remoteStatus || !salesService?.applyExternalStatus) return;
         try {
             await salesService.applyExternalStatus(orderId, remoteStatus);
         } catch (error) {
-            console.error(`[TiendaNube] No se pudo aplicar el estado remoto '${remoteStatus}' al pedido ${orderId}: ${error.message}`);
+            error.message = `Estado remoto '${remoteStatus}' no aplicado al pedido ${orderId}: ${error.message}`;
+            throw error;
         }
     }
 
@@ -1752,13 +1754,18 @@ export class TiendaNubeService {
         await this.persistFulfillments(fulfillment.local_order_id, fulfillment.external_order_id, [response.data]);
         await this.db.query(
             `UPDATE orders SET tracking_number = COALESCE(?, tracking_number),
-                status = CASE ? WHEN 'PACKED' THEN 'packed' WHEN 'DISPATCHED' THEN 'dispatched'
-                    WHEN 'DELIVERED' THEN 'delivered' ELSE status END,
                 dispatched_at = CASE WHEN ? = 'DISPATCHED' THEN COALESCE(dispatched_at, CURRENT_TIMESTAMP) ELSE dispatched_at END,
                 delivered_at = CASE WHEN ? = 'DELIVERED' THEN COALESCE(delivered_at, CURRENT_TIMESTAMP) ELSE delivered_at END
              WHERE id = ?`,
-            [data.tracking_code ?? null, data.status || '', data.status || '', data.status || '', fulfillment.local_order_id]
+            [data.tracking_code ?? null, data.status || '', data.status || '', fulfillment.local_order_id]
         );
+        // The local status moves only through the real transitions (stock effects).
+        // PACKED is not applied: packing is recorded by the local picking flow.
+        const localStatus = { DISPATCHED: 'dispatched', DELIVERED: 'delivered' }[data.status];
+        if (localStatus) {
+            const { default: salesService } = await import('./sales.service.js');
+            await salesService.applyExternalStatus(fulfillment.local_order_id, localStatus);
+        }
         return response.data;
     }
 

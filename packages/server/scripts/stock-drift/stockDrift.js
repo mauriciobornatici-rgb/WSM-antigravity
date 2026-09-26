@@ -11,10 +11,33 @@ const COUNT_MOVEMENT_TYPES = ['stock_audit', 'stock_adjustment', 'adjustment'];
 const NON_SELLABLE_LOCATIONS = ['Cuarentena', 'Devoluciones a Proveedores', 'Mermas'];
 
 export const DRIFT_CLASSES = Object.freeze({
-    A: 'A_sold',            // invoiced or paid: deduct stock and release the reservation
-    B: 'B_counted_after',   // like A, but a later count already corrected physical stock: release only
-    C: 'C_unpaid',          // no invoice and no shift payment: list only (optionally cancel)
+    A: 'A_sold',            // paid: every item deducts stock and releases its reservation
+    B: 'B_counted_after',   // paid, and at least one item was counted after the sale: that item only releases
+    C: 'C_unpaid',          // no evidence of payment: list only (optionally cancel)
 });
+
+// Any trace that the customer paid or was billed: invoice, cash-shift payment, order
+// payment lines, a 'sale' transaction or the order's own payment status.
+const PAID_EVIDENCE_SQL = `(
+    o.invoice_id IS NOT NULL
+    OR o.payment_status = 'paid'
+    OR EXISTS (SELECT 1 FROM shift_payments sp WHERE sp.order_id = o.id)
+    OR EXISTS (SELECT 1 FROM order_payments op WHERE op.order_id = o.id)
+    OR EXISTS (SELECT 1 FROM transactions t WHERE t.reference_id = o.id AND t.type = 'sale')
+)`;
+
+const AFFECTED_ORDER_SQL = `
+    o.external_source = 'pos'
+    AND (o.shipping_method IS NULL OR o.shipping_method = '')
+    AND o.status IN ('pending', 'completed')
+    AND NOT EXISTS (
+        SELECT 1 FROM inventory_movements m
+        WHERE m.reference_type = 'order' AND m.reference_id = o.id AND m.type = 'sale'
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM audit_logs a
+        WHERE a.action = ? AND a.entity_type = 'order' AND a.entity_id = o.id
+    )`;
 
 /**
  * POS counter orders affected by C1 and not repaired yet, with their items.
@@ -22,20 +45,9 @@ export const DRIFT_CLASSES = Object.freeze({
  */
 export async function findAffectedOrders(connection) {
     const [orders] = await connection.query(
-        `SELECT o.id, o.status, o.invoice_id, o.created_at,
-                EXISTS (SELECT 1 FROM shift_payments sp WHERE sp.order_id = o.id) AS has_shift_payment
+        `SELECT o.id, o.status, o.invoice_id, o.created_at, ${PAID_EVIDENCE_SQL} AS paid
          FROM orders o
-         WHERE o.external_source = 'pos'
-           AND (o.shipping_method IS NULL OR o.shipping_method = '')
-           AND o.status IN ('pending', 'completed')
-           AND NOT EXISTS (
-               SELECT 1 FROM inventory_movements m
-               WHERE m.reference_type = 'order' AND m.reference_id = o.id AND m.type = 'sale'
-           )
-           AND NOT EXISTS (
-               SELECT 1 FROM audit_logs a
-               WHERE a.action = ? AND a.entity_type = 'order' AND a.entity_id = o.id
-           )
+         WHERE ${AFFECTED_ORDER_SQL}
          ORDER BY o.created_at, o.id`,
         [REPAIR_AUDIT_ACTION]
     );
@@ -77,7 +89,7 @@ export async function findAffectedOrders(connection) {
             allocations: allocations.filter((alloc) => alloc.order_item_id === item.id)
                 .map((alloc) => ({ ...alloc, reserved_quantity: Number(alloc.reserved_quantity) })),
         }));
-        const paid = Boolean(order.invoice_id) || Boolean(Number(order.has_shift_payment));
+        const paid = Boolean(Number(order.paid));
         let driftClass = DRIFT_CLASSES.C;
         if (paid) {
             driftClass = orderItems.some((item) => item.counted_after) ? DRIFT_CLASSES.B : DRIFT_CLASSES.A;
@@ -87,7 +99,7 @@ export async function findAffectedOrders(connection) {
             status: order.status,
             created_at: order.created_at,
             invoice_id: order.invoice_id,
-            has_shift_payment: Boolean(Number(order.has_shift_payment)),
+            paid,
             drift_class: driftClass,
             legacy_without_allocations: orderItems.every((item) => item.allocations.length === 0),
             items: orderItems,
@@ -121,55 +133,83 @@ export function summarize(orders, violations) {
 }
 
 /**
- * Repairs one order inside the caller's transaction. Returns the list of stock
- * changes. Throws on any anomaly so the caller rolls back that order only.
- * mode: 'sale' deducts quantity and releases the reservation, 'release' only
- * releases it (stock already counted, or the sale is being cancelled).
+ * Repairs one order inside the caller's transaction. Returns the stock changes.
+ * Throws on any anomaly so the caller rolls back that order only.
+ *
+ * mode 'sold'   — the sale happened: each item deducts stock and releases its
+ *                 reservation, except items counted after the sale (release only,
+ *                 the count already fixed physical stock). The order becomes completed.
+ * mode 'cancel' — the sale did not happen: every reservation is released and a
+ *                 pending order is cancelled.
  */
 export async function repairOrder(connection, order, { mode, userId = null }) {
+    await assertStillAffected(connection, order.id);
+
     const changes = [];
     for (const item of order.items) {
+        const itemMode = mode === 'sold' && !item.counted_after ? 'sale' : 'release';
         if (item.allocations.length > 0) {
             for (const alloc of item.allocations) {
                 await applyRowChange(connection, {
-                    inventoryId: alloc.inventory_id, quantity: alloc.reserved_quantity, mode, order, item, userId, changes,
+                    inventoryId: alloc.inventory_id, quantity: alloc.reserved_quantity, mode: itemMode, order, item, userId, changes,
                 });
-                await connection.query(
+                const [result] = await connection.query(
                     "UPDATE order_item_allocations SET status = ?, picked_quantity = ? WHERE id = ? AND status = 'reserved'",
-                    [mode === 'sale' ? 'picked' : 'released', mode === 'sale' ? alloc.reserved_quantity : 0, alloc.id]
+                    [itemMode === 'sale' ? 'picked' : 'released', itemMode === 'sale' ? alloc.reserved_quantity : 0, alloc.id]
                 );
+                if (Number(result?.affectedRows) !== 1) throw anomaly(`asignación ${alloc.id} cambió desde el diagnóstico`);
             }
             continue;
         }
 
-        // Legacy order: the reservation is somewhere in the product's rows.
+        // Legacy order: its reservation lives in the product's rows, but only the part
+        // not held by live allocations of other orders can be its own.
         const [rows] = await connection.query(
-            `SELECT id, reserved_quantity FROM inventory
-             WHERE product_id = ? AND reserved_quantity > 0 AND location NOT IN (?)
-             ORDER BY reserved_quantity DESC, id
+            `SELECT i.id,
+                    i.reserved_quantity - COALESCE((
+                        SELECT SUM(a.reserved_quantity) FROM order_item_allocations a
+                        WHERE a.inventory_id = i.id AND a.status = 'reserved'
+                    ), 0) AS unallocated_reserved
+             FROM inventory i
+             WHERE i.product_id = ? AND i.reserved_quantity > 0 AND i.location NOT IN (?)
+             ORDER BY unallocated_reserved DESC, i.id
              FOR UPDATE`,
             [item.product_id, NON_SELLABLE_LOCATIONS]
         );
         let remaining = item.quantity;
         for (const row of rows) {
             if (remaining <= 0) break;
-            const take = Math.min(Number(row.reserved_quantity), remaining);
-            await applyRowChange(connection, { inventoryId: row.id, quantity: take, mode, order, item, userId, changes });
+            const take = Math.min(Math.max(Number(row.unallocated_reserved), 0), remaining);
+            if (take <= 0) continue;
+            await applyRowChange(connection, { inventoryId: row.id, quantity: take, mode: itemMode, order, item, userId, changes });
             remaining -= take;
         }
         if (remaining > 0) {
-            throw anomaly(`producto ${item.product_id}: reserva insuficiente para liberar ${item.quantity} (faltan ${remaining})`);
+            throw anomaly(`producto ${item.product_id}: reserva propia insuficiente para ${item.quantity} (faltan ${remaining})`);
         }
     }
 
-    if (mode === 'sale') {
+    if (mode === 'sold') {
         await connection.query(
             "UPDATE order_items SET picked_quantity = quantity WHERE order_id = ? AND COALESCE(picked_quantity, 0) = 0",
             [order.id]
         );
         await connection.query("UPDATE orders SET status = 'completed' WHERE id = ? AND status = 'pending'", [order.id]);
+    } else if (mode === 'cancel') {
+        const [result] = await connection.query("UPDATE orders SET status = 'cancelled' WHERE id = ? AND status = 'pending'", [order.id]);
+        if (Number(result?.affectedRows) !== 1) throw anomaly('solo se cancela un pedido pendiente');
     }
     return changes;
+}
+
+// The diagnosis is a snapshot: the order may have been repaired, cancelled or sold
+// through another path since. Lock it and re-check before touching stock.
+async function assertStillAffected(connection, orderId) {
+    const [rows] = await connection.query(
+        `SELECT o.id FROM orders o WHERE o.id = ? AND ${AFFECTED_ORDER_SQL} FOR UPDATE`,
+        [orderId, REPAIR_AUDIT_ACTION]
+    );
+    if (rows.length === 0) throw anomaly('el pedido cambió desde el diagnóstico (ya reparado, cancelado o vendido)');
 }
 
 async function applyRowChange(connection, { inventoryId, quantity, mode, order, item, userId, changes }) {

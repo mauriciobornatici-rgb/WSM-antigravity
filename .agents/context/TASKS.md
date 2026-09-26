@@ -2,40 +2,36 @@
 
 ## Objetivo
 
-Endurecer la app (seguridad, confiabilidad, mantenibilidad, UX) con la capa
-Claude adaptada de `C:\Dev\Base claude` (ADR-007). Coordinador: Claude; agentes
-con modelo por riesgo. Decisiones de negocio del usuario en ADR-008.
+Endurecer la app (seguridad, confiabilidad, mantenibilidad, UX) con la capa Claude
+adaptada de `C:\Dev\Base claude` (ADR-007; la plantilla fuente también se mejoró a
+v2.1 por pedido del usuario). Decisiones de negocio en ADR-008 (precios de catálogo NETOS).
 
-## Hecho — 2026-09-25 (rama codex/hardening-100)
+## Hecho — 2026-09-25 (rama codex/hardening-100, sin push)
 
-- [x] `4221d26` línea base: commit del trabajo QA del 2026-09-06.
-- [x] Auditorías independientes: seguridad y datos (opus), UX y mantenibilidad (sonnet). Hallazgos clave verificados en código por el coordinador.
-- [x] `b201f2e` Ola A: guarda DB remota en dev, secretos de ejemplo rechazados, webhooks/callback Tiendanube alcanzables (antes 401), JWT HS256, login sin fuga por tiempo, IP de auditoría confiable, actores de caja/recepción = usuario autenticado, X-Request-Id validado, health con timeout, jsx-a11y + etiquetas, Node 24, capa `.claude/`.
-- [x] `f51fe90` ErrorBoundary por ruta (reintento, aviso de versión nueva).
-- [x] Evidencia: `npm run validate` exit 0 (7 guards, 436 backend, 62 cliente, lint, tipos, build).
+- [x] `4221d26` línea base · `b201f2e` Ola A (seguridad, a11y, Node 24, capa `.claude/`) · `f51fe90` ErrorBoundary por ruta.
+- [x] `0f62d53` C1: venta POS de mostrador descuenta stock + movimiento (`domains/inventory/StockLedger.js`).
+- [x] `fd18df2` scripts `diagnose-stock-drift` / `repair-stock-drift` + runbook `docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`.
+- [x] `d221b12` NC con toma atómica, compras asentadas una vez, transferencias sin borrar filas.
+- [x] `971626e` ARCA: importes = lo cobrado (antes −17 %), alícuotas, Factura C, apagado ordenado.
+- [x] `405373b` permiso `ORDERS_PRICE_OVERRIDE` (admin, manager) + auditoría.
+- [x] `d925dfa` transiciones con efecto de stock, sin clamps; Tiendanube vía transiciones.
+- [x] `ba8391e` checkout POS atómico `POST /api/pos/checkout`; devoluciones con precio vendido e IVA.
+- [x] Auditorías AUD-001 + guardián (ver `AUDIT.md`): hallazgos corregidos en el árbol de trabajo (ver abajo).
 
-## Ola B — integridad de stock y dinero (en curso)
+## En curso
 
-Plan: `docs/execution/PLAN_OLA_B_INTEGRIDAD_2026-09-25.md`. Precios de catálogo son NETOS (ADR-008).
-
-- [x] `0f62d53` I1: venta POS de mostrador descuenta stock + movimiento `sale` (`domains/inventory/StockLedger.js`).
-- [x] I2: `npm run qa:integration` (MySQL QA real) 5/5: descuento, replay, reservas, 10 compradores/5 unidades, sin deadlocks.
-- [ ] I7 scripts diagnóstico/reparación · [ ] I6 H3/H5/M8 · [ ] I3 pricing+override · [ ] I4 checkout atómico · [ ] I5 estados · [ ] I8 migración 045 (tras reparar prod)
-
-Defectos confirmados: C1 ventas POS nunca descuentan stock físico ni escriben
-movimiento (solo reservan; factura pasa a `completed`); H1 sin guarda DB y
-`GREATEST(...,0)` oculta faltantes; H3 NC sin lock; H4 precio del cliente;
-H5 compras asentadas dos veces; M3 pagos divididos perdidos en caja;
-M8 transferencia borra filas referenciadas. H2 (numeración ARCA) aparte.
+- [ ] Commit de las correcciones de auditoría (gemelos de estado, factura manual, retiro con StockLedger, script de reparación reforzado). Evidencia en el árbol: `qa:integration` 29/29; unitarios pendientes del implementador (tests viejos a actualizar + cobertura).
+- [ ] Re-auditoría corta del delta tras commitear.
 
 ## Próximos pasos
 
-1. Revisar plan del planificador y ejecutar primer incremento (checkout POS atómico) con tests MySQL en `wsm_qa` (127.0.0.1:33308, `docker-compose.test.yml`).
-2. Scripts de diagnóstico/reparación de stock histórico (dry-run) — el usuario los corre en prod.
-3. Luego: ESLint del servidor, extracción de SQL de controladores, E2E de checkout.
+1. Pedir decisión al usuario: excepción de precio offline declarada por el cliente (hoy solo auditada).
+2. I8: migración 045 (CHECK de inventario) — solo después de que el usuario corra la reparación en producción (AP2).
+3. Fase H2 (numeración ARCA, recuperación de CAE y de NC en `authorizing`), ESLint del servidor, E2E de checkout.
 
 ## Límites
 
-Sin mutaciones en la DB remota (el `.env` apunta a producción). Migraciones
-nuevas solo en QA. Sin push ni despliegue. Test flaky conocido:
-`health-and-correlation.test.js` bajo carga (pasa aislado; health ahora acotado a 2 s).
+Sin mutaciones en la DB remota (`.env` apunta a producción). Migraciones nuevas solo en
+QA (`wsm_qa` 127.0.0.1:33308, `docker compose -f docker-compose.test.yml up -d`). Sin push
+ni despliegue. Flaky conocido: `health-and-correlation.test.js` bajo carga.
+Verificación: `npm run validate`, `npm run qa:integration`, `node scripts/qa-runner.js coverage`.

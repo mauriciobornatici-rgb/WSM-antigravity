@@ -4,6 +4,7 @@ import auditService from '../../services/audit.service.js';
 import salesService from '../../services/sales.service.js';
 import { calculateShiftExpectedBalance } from '../../services/cashShift.service.js';
 import { resolvePriceOverrides } from './CreateOrderUseCase.js';
+import defaultStockLedger from '../inventory/StockLedger.js';
 
 export class PickupOrderCheckoutUseCase {
     constructor(dependencies = {}) {
@@ -11,6 +12,7 @@ export class PickupOrderCheckoutUseCase {
         this.auditService = dependencies.auditService || auditService;
         this.salesService = dependencies.salesService || salesService;
         this.calculateShiftExpectedBalance = dependencies.calculateShiftExpectedBalance || calculateShiftExpectedBalance;
+        this.stockLedger = dependencies.stockLedger || defaultStockLedger;
     }
 
     _normalizeOrderStatus(status) {
@@ -88,7 +90,11 @@ export class PickupOrderCheckoutUseCase {
             // 1. Process extra items if added at POS counter
             const priceOverrides = [];
             if (Array.isArray(payload.extra_items) && payload.extra_items.length > 0) {
-                for (const item of payload.extra_items) {
+                // Stable lock order (by product) so two counters cannot deadlock each other.
+                const extraItems = [...payload.extra_items]
+                    .sort((a, b) => String(a.product_id).localeCompare(String(b.product_id)));
+                const lockedRows = await this.stockLedger.lockSellableRows(connection, extraItems.map((item) => item.product_id));
+                for (const item of extraItems) {
                     const qty = parseInt(String(item.quantity), 10);
                     if (!Number.isFinite(qty) || qty <= 0) {
                         const err = new Error('Cantidad inválida para producto extra');
@@ -111,59 +117,27 @@ export class PickupOrderCheckoutUseCase {
 
                     const product = products[0];
                     // Same price policy as a counter sale (ADR-008): catalog price unless authorized.
-                    const { overrides } = resolvePriceOverrides(
+                    const { overrides, source: overrideSource } = resolvePriceOverrides(
                         { external_source: 'pos', items: [item] },
                         new Map([[product.id, Number(product.sale_price || 0)]]),
                         new Map([[product.id, product.name]]),
                         actor
                     );
-                    priceOverrides.push(...overrides);
+                    priceOverrides.push(...overrides.map((line) => ({ ...line, source: overrideSource })));
                     const requestedPrice = Number(item.unit_price);
                     const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
                         ? requestedPrice
                         : Number(product.sale_price || 0);
 
-                    // Check physical availability
-                    const [stockRows] = await connection.query(
-                        `SELECT id, location, quantity, reserved_quantity, (quantity - reserved_quantity) AS available_quantity
-                         FROM inventory
-                         WHERE product_id = ? AND (quantity - reserved_quantity) > 0
-                           AND location NOT IN ('Cuarentena', 'Devoluciones a Proveedores', 'Mermas')
-                         ORDER BY (quantity - reserved_quantity) DESC
-                         FOR UPDATE`,
-                        [item.product_id]
-                    );
-
-                    const availableQty = stockRows.reduce((sum, row) => sum + Number(row.available_quantity || 0), 0);
-                    if (availableQty < qty) {
-                        const err = new Error(`Stock insuficiente para ${product.name}. Disponible: ${availableQty}, solicitado: ${qty}`);
-                        err.statusCode = 409;
-                        err.errorCode = 'INSUFFICIENT_STOCK';
-                        throw err;
-                    }
-
-                    // Deduct physical stock
-                    let remaining = qty;
-                    for (const row of stockRows) {
-                        if (remaining <= 0) break;
-                        const avail = Number(row.available_quantity || 0);
-                        const consume = Math.min(avail, remaining);
-                        if (consume <= 0) continue;
-
-                        await connection.query(
-                            'UPDATE inventory SET quantity = GREATEST(quantity - ?, 0) WHERE id = ?',
-                            [consume, row.id]
-                        );
-
-                        await connection.query(
-                            `INSERT INTO inventory_movements (
-                                id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
-                            ) VALUES (?, 'sale', ?, ?, ?, 0, 'Mostrador POS - agregado a pedido', 'order', ?)`,
-                            [crypto.randomUUID(), item.product_id, row.location || 'General', consume, orderId]
-                        );
-
-                        remaining -= consume;
-                    }
+                    // The customer takes it now: deduct unreserved stock, never below zero.
+                    await this.stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
+                        productId: item.product_id,
+                        productName: product.name,
+                        quantity: qty,
+                        orderId,
+                        userId,
+                        reason: 'Mostrador POS - agregado a pedido'
+                    });
 
                     // Record order item as already physically picked
                     const orderItemId = crypto.randomUUID();
@@ -174,10 +148,12 @@ export class PickupOrderCheckoutUseCase {
                         [orderItemId, orderId, item.product_id, qty, qty, unitPrice, subtotal]
                     );
 
-                    // Increment order total
+                    // Order totals are gross: net + catalog VAT (ADR-008).
+                    const vatRate = product.vat_rate == null ? 21 : Number(product.vat_rate);
+                    const grossLine = Math.round((subtotal + Math.round(subtotal * vatRate) / 100) * 100) / 100;
                     await connection.query(
                         'UPDATE orders SET total_amount = total_amount + ? WHERE id = ?',
-                        [subtotal, orderId]
+                        [grossLine, orderId]
                     );
                 }
             }
@@ -218,7 +194,7 @@ export class PickupOrderCheckoutUseCase {
                     action: 'ORDER_PRICE_OVERRIDE',
                     entity_type: 'order',
                     entity_id: orderId,
-                    new_values: { source: 'authorized_user', role: actor?.role || null, lines: priceOverrides }
+                    new_values: { role: actor?.role || null, lines: priceOverrides }
                 }, connection);
             }
 

@@ -99,6 +99,11 @@ test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Fact
             return [[{ ...memoryState.product }]];
         }
 
+        // Conditional stock updates report the row they touched.
+        if (sql.startsWith("UPDATE inventory")) {
+            return [{ affectedRows: 1 }];
+        }
+
         // Inventory queries
         if (sql.includes("FROM inventory")) {
             return [memoryState.inventoryLocations.map(l => ({

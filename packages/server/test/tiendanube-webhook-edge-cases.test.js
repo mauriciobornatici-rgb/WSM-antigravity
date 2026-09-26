@@ -215,15 +215,12 @@ test('remote status is applied through the local transitions and a failure does 
     await service.applyRemoteStatus('o-3', { status: 'open' }, salesStub);
     assert.deepEqual(applied, [['o-1', 'delivered'], ['o-2', 'cancelled']]);
 
-    const originalError = console.error;
-    const logged = [];
-    console.error = (message) => logged.push(message);
-    try {
-        await service.applyRemoteStatus('o-4', { status: 'closed' }, { applyExternalStatus: async () => { throw new Error('sin stock'); } });
-    } finally {
-        console.error = originalError;
-    }
-    assert.match(logged[0], /o-4.*sin stock/);
+    // A failure now rethrows (prefixed with the order/status) instead of being swallowed and
+    // logged, so the durable webhook queue can retry it.
+    await assert.rejects(
+        () => service.applyRemoteStatus('o-4', { status: 'closed' }, { applyExternalStatus: async () => { throw new Error('sin stock'); } }),
+        /o-4.*sin stock/
+    );
 });
 
 test('stock synchronization safely skips disconnected, missing, disabled and unlinked products', async () => {

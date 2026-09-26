@@ -231,7 +231,12 @@ test('bulk invoice collection covers missing, overpaid and successful mixed invo
             }]];
         }
         if (statement.includes('SUM(amount)')) return [[{ paid_amount: mode === 'overpaid' ? 90 : 0 }]];
-        if (statement.includes('SELECT id, status FROM orders')) return [[{ id: 'o', status: mode === 'cancelled' ? 'cancelled' : 'packed' }]];
+        if (statement.includes('SELECT id, status FROM orders')) {
+            // Completion only fires when the order was 'delivered'; other statuses (e.g. still
+            // 'packed') must NOT be auto-completed by payment alone.
+            const status = mode === 'cancelled' ? 'cancelled' : mode === 'success' ? 'delivered' : 'packed';
+            return [[{ id: 'o', status }]];
+        }
         return [[]];
     });
     const payload = { clientId: 'c', allocations: [{ invoiceId: 'i', payments: [{ method: 'cash', amount: 100 }] }] };
@@ -261,6 +266,14 @@ test('bulk invoice collection covers missing, overpaid and successful mixed invo
     const cancelled = await financeService.registerBulkInvoicePayments(payload, 'u');
     assert.equal(cancelled.invoices[0].payment_status, 'paid');
     assert.ok(calls.some((call) => call.params?.[1] === 'cancelled'));
+
+    // A merely 'packed' order (not yet delivered) must NOT be auto-completed by payment.
+    mode = 'packed';
+    calls.length = 0;
+    const packed = await financeService.registerBulkInvoicePayments(payload, 'u');
+    assert.equal(packed.invoices[0].payment_status, 'paid');
+    assert.ok(calls.some((call) => call.sql.includes('UPDATE orders SET payment_status') && call.params?.[1] === 'packed'));
+    assert.ok(!calls.some((call) => call.params?.includes('completed')));
 });
 
 test('order collection rejects overpayments and allocates received cheques before invoicing', async (t) => {

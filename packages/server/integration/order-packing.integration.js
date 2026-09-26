@@ -51,6 +51,40 @@ test('packing fails with 409 and changes nothing when the stock row no longer ho
     assert.equal(order.status, 'picking');
 });
 
+test('an online order delivered remotely without local picking consumes its reservation (ADR-008)', async () => {
+    const productId = await seedProduct({ stock: [{ location: 'QA-A', quantity: 7 }] });
+    const order = await createOrder.execute({
+        shipping_method: 'delivery',
+        external_source: 'tiendanube',
+        external_id: crypto.randomUUID(),
+        items: [{ product_id: productId, quantity: 3 }],
+    }, null);
+    assert.deepEqual(await stockOf(productId), { quantity: 7, reserved: 3 });
+
+    await salesService.applyExternalStatus(order.id, 'delivered');
+    await salesService.applyExternalStatus(order.id, 'delivered'); // webhook retry: no-op
+
+    assert.deepEqual(await stockOf(productId), { quantity: 4, reserved: 0 });
+    assert.deepEqual((await saleMovementsOf(productId)).map((movement) => movement.quantity), [3]);
+    const [[row]] = await pool.query('SELECT status FROM orders WHERE id = ?', [order.id]);
+    assert.equal(row.status, 'delivered');
+});
+
+test('an online order cancelled remotely releases its reservation', async () => {
+    const productId = await seedProduct({ stock: [{ location: 'QA-A', quantity: 4 }] });
+    const order = await createOrder.execute({
+        shipping_method: 'delivery',
+        external_source: 'tiendanube',
+        external_id: crypto.randomUUID(),
+        items: [{ product_id: productId, quantity: 2 }],
+    }, null);
+
+    await salesService.applyExternalStatus(order.id, 'cancelled');
+
+    assert.deepEqual(await stockOf(productId), { quantity: 4, reserved: 0 });
+    assert.equal((await saleMovementsOf(productId)).length, 0);
+});
+
 test('paying an invoice does not close an order that has not been delivered', async () => {
     const productId = await seedProduct({ stock: [{ location: 'QA-A', quantity: 3 }] });
     const order = await createOrder.execute({

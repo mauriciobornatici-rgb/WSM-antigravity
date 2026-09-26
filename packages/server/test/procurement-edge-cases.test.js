@@ -73,13 +73,28 @@ test('supplier return inventory deduction handles no-op, multiple rows and insuf
     const calls = [];
     const connection = { query: async (sql, params) => {
         calls.push({ sql: String(sql), params });
-        if (String(sql).startsWith('SELECT id, quantity')) return [[{ id: 'i1', quantity: 2 }, { id: 'i2', quantity: 3 }]];
+        if (String(sql).startsWith('SELECT id, location, quantity, reserved_quantity')) {
+            // 3 of the 5 units on i2 are reserved for customer orders.
+            return [[
+                { id: 'i1', location: 'Devoluciones a Proveedores', quantity: 2, reserved_quantity: 0 },
+                { id: 'i2', location: 'General', quantity: 5, reserved_quantity: 3 },
+            ]];
+        }
+        if (String(sql).startsWith('UPDATE inventory')) return [{ affectedRows: 1 }];
         return [[]];
     } };
-    await service.decreaseInventory(connection, 'p', 0);
-    await service.decreaseInventory(connection, 'p', 4);
-    assert.deepEqual(calls.filter((call) => call.sql.startsWith('UPDATE')).map((call) => call.params[0]), [2, 2]);
-    await assert.rejects(() => service.decreaseInventory(connection, 'p', 9), (e) => e.errorCode === 'INSUFFICIENT_STOCK');
+    await service.decreaseInventory(connection, { product_id: 'p', quantity: 0 }, 'r');
+    await service.decreaseInventory(connection, { product_id: 'p', quantity: 4 }, 'r');
+    const updates = calls.filter((call) => call.sql.startsWith('UPDATE'));
+    assert.deepEqual(updates.map((call) => call.params), [[2, 'i1', 2], [2, 'i2', 2]]);
+    assert.ok(updates.every((call) => call.sql.includes('quantity - reserved_quantity >= ?')));
+    const movements = calls.filter((call) => call.sql.includes('INSERT INTO inventory_movements'));
+    assert.deepEqual(movements.map((call) => [call.params[2], call.params[3]]), [['Devoluciones a Proveedores', 2], ['General', 2]]);
+    // Only 4 unreserved units exist: 5 cannot be returned without touching reservations.
+    await assert.rejects(
+        () => service.decreaseInventory(connection, { product_id: 'p', quantity: 5 }, 'r'),
+        (e) => e.errorCode === 'INSUFFICIENT_STOCK' && e.statusCode === 409
+    );
 });
 
 test('supplier return approval rejects missing, repeated and empty returns', async (t) => {
@@ -141,7 +156,8 @@ test('supplier return approval updates inventory, accounting, balance and audit'
         calls.push({ sql: statement, params });
         if (statement.includes('SELECT * FROM supplier_returns')) return [[{ id: 'r', status: 'pending', return_number: 'DR-1', supplier_id: 's' }]];
         if (statement.includes('SELECT * FROM supplier_return_items')) return [[{ product_id: 'p', quantity: 2, unit_cost: 5, reason: '' }]];
-        if (statement.startsWith('SELECT id, quantity FROM inventory')) return [[{ id: 'i', quantity: 2 }]];
+        if (statement.startsWith('SELECT id, location, quantity, reserved_quantity')) return [[{ id: 'i', location: 'General', quantity: 2, reserved_quantity: 0 }]];
+        if (statement.startsWith('UPDATE inventory')) return [{ affectedRows: 1 }];
         return [[]];
     });
     const originals = { audit: auditService.log, journal: accountingService.createJournalEntry };
@@ -169,7 +185,8 @@ test('supplier return approval accepts missing historical cost without creating 
         if (statement.includes('SELECT * FROM supplier_return_items')) {
             return [[{ product_id: 'p', quantity: 1, unit_cost: null, reason: 'Sin costo histórico' }]];
         }
-        if (statement.startsWith('SELECT id, quantity FROM inventory')) return [[{ id: 'i', quantity: 1 }]];
+        if (statement.startsWith('SELECT id, location, quantity, reserved_quantity')) return [[{ id: 'i', location: 'General', quantity: 1, reserved_quantity: 0 }]];
+        if (statement.startsWith('UPDATE inventory')) return [{ affectedRows: 1 }];
         return [[]];
     });
     const originals = { audit: auditService.log, journal: accountingService.createJournalEntry };

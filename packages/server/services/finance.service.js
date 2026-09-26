@@ -461,11 +461,8 @@ class FinanceService {
                     );
                     if (orders.length > 0) {
                         const currentOrderStatus = this._normalizeOrderStatus(orders[0].status);
-                        const shouldComplete =
-                            paymentStatus === 'paid'
-                            && currentOrderStatus !== 'completed'
-                            && currentOrderStatus !== 'cancelled'
-                            && currentOrderStatus !== 'returned';
+                        // Same rule as registerInvoicePayments: payment only closes a delivered order.
+                        const shouldComplete = paymentStatus === 'paid' && currentOrderStatus === 'delivered';
                         const nextOrderStatus = shouldComplete ? 'completed' : currentOrderStatus;
 
                         await connection.query(

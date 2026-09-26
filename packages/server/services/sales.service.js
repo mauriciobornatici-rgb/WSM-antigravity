@@ -210,7 +210,7 @@ class SalesService extends BaseService {
      * reservation is consumed as fully picked. Remote 'packed' is ignored: packing is local.
      */
     async applyExternalStatus(orderId, externalStatus, userId = null) {
-        if (!['cancelled', 'delivered', 'completed'].includes(externalStatus)) return null;
+        if (!['cancelled', 'dispatched', 'delivered', 'completed'].includes(externalStatus)) return null;
         const order = await this.findById(orderId);
         if (!order) return null;
         let current = this._normalizeOrderStatus(order.status);
@@ -223,8 +223,12 @@ class SalesService extends BaseService {
         const steps = [];
         if (current === 'pending') steps.push('picking');
         if (['pending', 'picking'].includes(current)) steps.push('packed');
-        if (['pending', 'picking', 'packed', 'dispatched'].includes(current)) steps.push('delivered');
-        if (externalStatus === 'completed' && current !== 'completed') steps.push('completed');
+        if (externalStatus === 'dispatched') {
+            if (['pending', 'picking', 'packed'].includes(current)) steps.push('dispatched');
+        } else {
+            if (['pending', 'picking', 'packed', 'dispatched'].includes(current)) steps.push('delivered');
+            if (externalStatus === 'completed' && current !== 'completed') steps.push('completed');
+        }
 
         let updated = order;
         for (const step of steps) {
@@ -1139,6 +1143,11 @@ class SalesService extends BaseService {
                         return { ...existingInvoices[0], idempotent_replay: true };
                     }
                 }
+                // Invoicing an order bills what was sold, at the order's prices and the
+                // catalog VAT: client-sent items, prices, VAT or discounts are ignored (H4).
+                const invoice = await this.createInvoice(invoiceData.order_id, invoiceData, userId, connection);
+                await connection.commit();
+                return invoice;
             }
 
             const items = invoiceData.items || [];

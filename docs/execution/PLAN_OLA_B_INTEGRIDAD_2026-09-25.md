@@ -7,13 +7,13 @@ Decisiones de negocio: ADR-008 en `.agents/context/DECISIONS.md` (precios netos)
 
 | # | Qué | Estado |
 |---|---|---|
-| I1 | Venta POS de mostrador descuenta stock + movimiento `sale` en `CreateOrderUseCase` (locks ordenados, UPDATE condicional). Nuevo `domains/inventory/StockLedger.js`. | en curso |
-| I2 | Harness de integración MySQL real: `packages/server/integration/*.integration.js`, modo `integration` en `qa-runner`, `npm run qa:integration`. | en curso |
-| I3 | `common/src/pricing.ts` (neto + IVA, redondeo por línea) usado por cliente, servidor y ARCA; permiso `ORDERS_PRICE_OVERRIDE` (admin, manager) con auditoría. | pendiente |
-| I4 | `POST /api/pos/checkout` atómico (pedido + stock + factura + pagos de caja, idempotente, reanuda estados legados); POS y cola offline usan una sola llamada; `addShiftPayment` 409 si el replay difiere. | pendiente |
-| I5 | `OrderStatusService` único; sin `GREATEST(…,0)`; pagos/facturas no saltan estados; Tiendanube vía servicio; devoluciones a proveedor respetan reservas. | pendiente |
-| I6 | Resto H4 (factura manual, devoluciones), H3 (lock NC), H5 (recepción no asienta), M8 (transferencia no borra), `beginTransaction` dentro de `try`. | pendiente |
-| I7 | `scripts/diagnose-stock-drift.js` (READ ONLY) y `repair-stock-drift.js` (dry-run por defecto, `--apply --confirm=<DB>`), clases A/B/C. | pendiente |
+| I1 | Venta POS de mostrador descuenta stock + movimiento `sale` en `CreateOrderUseCase` (locks ordenados, UPDATE condicional). Nuevo `domains/inventory/StockLedger.js`. | hecho (`0f62d53`) |
+| I2 | Harness de integración MySQL real: `packages/server/integration/*.integration.js`, modo `integration` en `qa-runner`, `npm run qa:integration`. | hecho (29 tests MySQL) |
+| I3 | `common/src/pricing.ts` (neto + IVA, redondeo por línea) usado por cliente, servidor y ARCA; permiso `ORDERS_PRICE_OVERRIDE` (admin, manager) con auditoría. | hecho (`405373b`; pricing unificado sin archivo común aparte) |
+| I4 | `POST /api/pos/checkout` atómico (pedido + stock + factura + pagos de caja, idempotente, reanuda estados legados); POS y cola offline usan una sola llamada; `addShiftPayment` 409 si el replay difiere. | hecho (`ba8391e`) |
+| I5 | `OrderStatusService` único; sin `GREATEST(…,0)`; pagos/facturas no saltan estados; Tiendanube vía servicio; devoluciones a proveedor respetan reservas. | hecho (`d925dfa` + correcciones de auditoría) |
+| I6 | Resto H4 (factura manual, devoluciones), H3 (lock NC), H5 (recepción no asienta), M8 (transferencia no borra), `beginTransaction` dentro de `try`. | hecho (`d221b12`, `ba8391e`) |
+| I7 | `scripts/diagnose-stock-drift.js` (READ ONLY) y `repair-stock-drift.js` (dry-run por defecto, `--apply --confirm=<DB>`), clases A/B/C. | hecho (`fd18df2` + refuerzos de auditoría) |
 | I8 | Migración 045 CHECK de inventario con precondición; se publica solo después de reparar prod. | pendiente (AP2) |
 
 H2 (numeración ARCA / recuperación de CAE) queda para una fase con homologación.

@@ -58,8 +58,15 @@ function createMockConnection(options = {}) {
                 return [state.products.filter((product) => product.id === params[0])];
             }
 
-            if (normalizedSql.includes('FROM inventory') && normalizedSql.includes('available_quantity')) {
-                return [state.inventory.filter((row) => row.product_id === params[0])];
+            if (normalizedSql.startsWith('SELECT id, product_id, location, quantity, reserved_quantity FROM inventory')) {
+                const ids = Array.isArray(params[0]) ? params[0] : [params[0]];
+                const excludedLocations = Array.isArray(params[1]) ? params[1] : [params[1]];
+                // Return copies: StockLedger keeps its own in-memory running total on the
+                // locked row object, separate from the state row the UPDATE mock mutates
+                // (mirrors a real SELECT ... FOR UPDATE snapshot vs. the underlying table row).
+                return [state.inventory
+                    .filter((row) => ids.includes(row.product_id) && !excludedLocations.includes(row.location))
+                    .map((row) => ({ ...row }))];
             }
 
             if (normalizedSql.startsWith('SELECT i.*, c.tax_id AS client_tax_id')) {
@@ -107,9 +114,14 @@ function createMockConnection(options = {}) {
                 return [{ affectedRows: 1 }];
             }
 
-            if (normalizedSql.startsWith('UPDATE inventory SET quantity = GREATEST(quantity - ?, 0)')) {
+            if (normalizedSql.startsWith('UPDATE inventory SET quantity = quantity - ?')) {
                 const row = state.inventory.find((candidate) => candidate.id === params[1]);
-                if (row) row.quantity = Math.max(Number(row.quantity || 0) - Number(params[0] || 0), 0);
+                if (!row) return [{ affectedRows: 0 }];
+                const consume = Number(params[0] || 0);
+                const guard = Number(params[2] ?? consume);
+                const availableQty = Number(row.quantity || 0) - Number(row.reserved_quantity || 0);
+                if (availableQty < guard) return [{ affectedRows: 0 }];
+                row.quantity = Number(row.quantity || 0) - consume;
                 return [{ affectedRows: 1 }];
             }
 
@@ -492,10 +504,52 @@ test('deducts available stock for extras without consuming reservations', async 
     assert.equal(mockConn.state.inventory[0].quantity, 8);
     assert.equal(mockConn.state.inventory[0].reserved_quantity, 2);
     assert.ok(mockConn.executedQueries.some(({ sql }) => sql.includes('INSERT INTO inventory_movements')));
+    // The extras deduction guards against reserved stock (WHERE ... reserved_quantity) but
+    // never decrements the reservation itself.
     assert.equal(
-        mockConn.executedQueries.some(({ sql }) => /^\s*UPDATE inventory\b/i.test(sql) && sql.includes('reserved_quantity')),
+        mockConn.executedQueries.some(({ sql }) => /^\s*UPDATE inventory\b/i.test(sql) && /reserved_quantity\s*=\s*reserved_quantity/i.test(sql)),
         false
     );
+});
+
+test('locks multiple extras in a stable sorted order and grows the order total by each gross line', async () => {
+    const invoiceData = { id: 'invoice-multi-extra', payment_status: 'paid', items: [] };
+    const mockConn = createMockConnection({
+        orders: [{ id: 'order-multi-extra', status: 'packed', shipping_method: 'pickup', total_amount: 5000 }],
+        products: [
+            { id: 'aaa-product', name: 'Buff', sale_price: 1000, vat_rate: 21 },
+            { id: 'zzz-product', name: 'Cinta', sale_price: 500, vat_rate: 10.5 }
+        ],
+        inventory: [
+            { id: 'inventory-aaa', product_id: 'aaa-product', location: 'Estante A', quantity: 20, reserved_quantity: 0 },
+            { id: 'inventory-zzz', product_id: 'zzz-product', location: 'Estante B', quantity: 20, reserved_quantity: 0 }
+        ],
+        invoices: [{ id: invoiceData.id }]
+    });
+    const { useCase } = createUseCase(mockConn, {}, paidInvoiceDependencies(mockConn, invoiceData, null));
+
+    // Requested out of alphabetical order: the use case must sort by product_id before
+    // locking (stable lock order across concurrent counters, avoiding deadlocks).
+    await useCase.execute('order-multi-extra', {
+        extra_items: [
+            { product_id: 'zzz-product', quantity: 2 },
+            { product_id: 'aaa-product', quantity: 1 }
+        ]
+    }, 'cashier-1');
+
+    const isLockQuery = (sql) => sql.replace(/\s+/g, ' ').trim()
+        .startsWith('SELECT id, product_id, location, quantity, reserved_quantity FROM inventory');
+    const lockQuery = mockConn.executedQueries.find(({ sql }) => isLockQuery(sql));
+    assert.ok(lockQuery, 'lockSellableRows must run once for every extra line');
+    assert.deepEqual(lockQuery.params[0], ['aaa-product', 'zzz-product']);
+
+    // Only one lock query: both extras are locked together, not one row lookup per item.
+    assert.equal(mockConn.executedQueries.filter(({ sql }) => isLockQuery(sql)).length, 1);
+
+    // 1000 net + 21% VAT = 1210; 2 * 500 net + 10.5% VAT = 1105. Gross lines, not net (ADR-008).
+    assert.equal(mockConn.state.orders[0].total_amount, 5000 + 1210 + 1105);
+    assert.equal(mockConn.state.inventory[0].quantity, 19);
+    assert.equal(mockConn.state.inventory[1].quantity, 18);
 });
 
 test('rolls back and releases when the response snapshot fails before commit', async () => {

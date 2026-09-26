@@ -80,6 +80,12 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-010 — Decisiones tras la auditoría AUD-001 (usuario, 2026-09-25)
+- **Precio de venta offline distinto al catálogo:** la venta se registra (ya ocurrió) pero queda como excepción pendiente de revisión de un gerente (permiso `ORDERS_PRICE_OVERRIDE`), visible en un listado.
+- **Venta offline sin stock al sincronizar:** se registra; se descuenta lo disponible sin quedar negativo y el faltante queda como anomalía auditada para conteo, en vez de trabar la cola.
+- **Asientos de compra duplicados históricos:** script de solo lectura que lista duplicados y propone contra-asientos; se aplican solo con comando explícito tras revisión del contador.
+- **403 vs 409 en precio no autorizado:** se mantiene 409 (`PRICE_OVERRIDE_NOT_ALLOWED`): el caso típico es catálogo desactualizado en pantalla.
+
 ### ADR-009 — Riesgos aceptados en la ola de endurecimiento
 - **Fecha:** 2026-09-25
 - `Bearer` sigue aceptado porque lo usan los smokes RBAC/integridad/comercial; la UI usa solo cookie.

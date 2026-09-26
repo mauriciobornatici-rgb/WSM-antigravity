@@ -1,5 +1,27 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-001 y revisión de integridad — 2026-09-25 — `4221d26..d925dfa` (Ola A + Ola B parcial)
+
+Dos revisiones independientes en paralelo, sin contexto de la sesión: `auditor-externo`
+(opus) — veredicto **con reservas**, 5 de 10 criterios del plan verificados — y
+`guardian-integridad` (opus), 12 hallazgos. Cada hallazgo fue verificado en código por el
+coordinador antes de actuar. Resolución (commits posteriores a `d925dfa`):
+
+- [x] Estado de pedido escrito directo en `tiendanube.updateFulfillment` (gemelo de C1) — corregido: pasa por `applyExternalStatus` (acepta `dispatched`).
+- [x] Cobranza multi-documento completaba pedidos no entregados (gemelo) — corregido: solo `delivered → completed`.
+- [x] `createManualInvoice` con `order_id` tomaba ítems/precios/IVA del cliente — corregido: delega en `createInvoice(orderId)`.
+- [x] IVA del pedido tomado del cliente; total POS por heurística — corregido: IVA del catálogo, total POS = neto + IVA.
+- [x] Turno cerrado en ventas offline / reintento no idempotente — corregido por el checkout atómico `POST /api/pos/checkout` (`ba8391e`).
+- [x] NC: monto sin IVA con precio del cliente; ARCA recibía ítems rechazados — corregido: precio vendido, bruto, asiento con IVA DF, ítems rechazados excluidos.
+- [x] Extras del retiro en mostrador con `GREATEST` y bloqueo en orden de payload — corregido: `StockLedger`, orden estable, total bruto.
+- [x] `applyRemoteStatus` tragaba errores; regla "entregado sin picking" sin test — corregido: propaga (cola durable de webhooks reintenta); 2 tests MySQL.
+- [x] Script de reparación: clase B por pedido, B quedaba `pending`, carrera diagnóstico/reparación, "pagado" incompleto, liberaba reservas de asignaciones ajenas — corregidos los cinco, con 5 tests MySQL nuevos.
+- [x] TASKS/plan desactualizados; ediciones en `C:\Dev\Base claude` sin registro — actualizados (ADR-007 las registra: pedidas por el usuario).
+- [ ] **Decisión del usuario:** la excepción de precio offline la declara el cliente (`offline_captured_at`); hoy solo queda auditada (`source: offline_pos`).
+- [ ] 409 `PRICE_OVERRIDE_NOT_ALLOWED` en vez del 403 del plan — aceptado: el caso típico es catálogo desactualizado en pantalla (conflicto de estado), el mensaje guía al cajero.
+- [ ] NC en `authorizing` si el proceso cae tras aprobar ARCA — queda para la fase H2 (recuperación consultando el último comprobante).
+- [ ] Cobertura por archivo nuevo ≥ 90 % — en curso; el gate global ya estaba rojo antes (H-02).
+
 ## Actualización: correcciones autorizadas y QA local
 
 2026-09-06. Implementación por dos Luna max; lectura, planificación, revisión y

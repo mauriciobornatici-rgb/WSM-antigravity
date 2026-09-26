@@ -72,6 +72,13 @@ export const zodSchemas = {
     posCheckout: z.object({
         body: commonSchemas.posCheckoutSchema
     }),
+    posExceptionsQuery: z.object({
+        query: commonSchemas.posExceptionsQuerySchema.optional()
+    }),
+    posExceptionReview: z.object({
+        params: z.object({ id: z.coerce.number().int().positive() }),
+        body: commonSchemas.posExceptionReviewSchema
+    }),
     orderFilters: z.object({
         query: commonSchemas.orderFiltersSchema.optional()
     }),
