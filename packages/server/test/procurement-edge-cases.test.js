@@ -252,16 +252,17 @@ test('goods reception segregates failed stock, creates batches and marks partial
         return [[]];
     });
     const originals = { audit: auditService.log, journal: accountingService.createJournalEntry };
-    let journal;
+    let journalCalls = 0;
     auditService.log = async () => {};
-    accountingService.createJournalEntry = async (_connection, entry) => { journal = entry; };
+    accountingService.createJournalEntry = async () => { journalCalls += 1; };
     t.after(() => {
         auditService.log = originals.audit;
         accountingService.createJournalEntry = originals.journal;
     });
     const result = await new GoodsReceptionService().processReceptionApproval('r', { actorUserId: 'u', approvedBy: 'Admin' });
     assert.equal(result.success, true);
-    assert.equal(journal.lines[2].credit, 36.3);
+    // Reception approval must NOT post to the ledger; the supplier invoice does (see H5).
+    assert.equal(journalCalls, 0);
     assert.ok(calls.some((call) => call.params?.[0] === 'partial' && call.params?.[1] === 'po'));
     assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO product_batches')).length, 2);
 });

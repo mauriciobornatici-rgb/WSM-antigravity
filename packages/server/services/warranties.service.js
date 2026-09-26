@@ -464,49 +464,73 @@ class CreditNotesService extends BaseService {
 
         const cn = rows[0];
         if (cn.status === 'authorized') return cn;
-        
+
+        const previousStatus = cn.status;
+
+        // Atomic claim: only the caller that flips status -> 'authorizing' proceeds.
+        // This prevents two concurrent requests from both calling AFIP for the same
+        // credit note (AFIP would otherwise authorize the same voucher twice).
+        const [claimResult] = await pool.query(
+            `UPDATE credit_notes SET status = 'authorizing' WHERE id = ? AND status NOT IN ('authorized', 'authorizing')`,
+            [creditNoteId]
+        );
+        if (!claimResult || claimResult.affectedRows !== 1) {
+            const err = new Error('La Nota de Crédito ya está siendo autorizada por otra solicitud');
+            err.statusCode = 409;
+            err.status = 'fail';
+            err.errorCode = 'CREDIT_NOTE_ALREADY_AUTHORIZING';
+            throw err;
+        }
+
         let afipRes = null;
-        
-        // Consultar factura original si esta NC viene de una devolucion
-        if (cn.reference_type === 'return' && cn.reference_id) {
-            const [returns] = await pool.query('SELECT order_id FROM client_returns WHERE id = ?', [cn.reference_id]);
-            if (returns.length > 0 && returns[0].order_id) {
-                const [invoices] = await pool.query('SELECT * FROM invoices WHERE order_id = ? AND cae IS NOT NULL', [returns[0].order_id]);
-                if (invoices.length > 0) {
-                    // Factura validada en AFIP. Generar NC_A o NC_B
-                    const originalInvoice = invoices[0];
-                    const [settingsRows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
-                    const companySettings = settingsRows[0] || {};
-                    
-                    const invoiceData = {
-                        invoice_type: cn.credit_note_type === 'A' ? 'NC_A' : 'NC_B',
-                        client_tax_id: originalInvoice.client_tax_id || null,
-                        total_amount: cn.amount,
-                        invoice_number: cn.number
-                    };
-                    
-                    // Recuperar ítems reales de la devolución y sus tasas de IVA del catálogo de productos
-                    const [itemsRows] = await pool.query(`
-                        SELECT 
-                            ri.quantity, 
-                            ri.unit_price, 
-                            COALESCE(p.vat_rate, 21) AS vat_rate
-                        FROM client_return_items ri
-                        JOIN products p ON ri.product_id = p.id
-                        WHERE ri.return_id = ?
-                    `, [cn.reference_id]);
 
-                    const invoiceItems = itemsRows.length > 0 ? itemsRows : [
-                        { quantity: 1, unit_price: cn.amount, vat_rate: 21 }
-                    ];
+        try {
+            // Consultar factura original si esta NC viene de una devolucion
+            // (AFIP call happens outside any DB transaction).
+            if (cn.reference_type === 'return' && cn.reference_id) {
+                const [returns] = await pool.query('SELECT order_id FROM client_returns WHERE id = ?', [cn.reference_id]);
+                if (returns.length > 0 && returns[0].order_id) {
+                    const [invoices] = await pool.query('SELECT * FROM invoices WHERE order_id = ? AND cae IS NOT NULL', [returns[0].order_id]);
+                    if (invoices.length > 0) {
+                        // Factura validada en AFIP. Generar NC_A o NC_B
+                        const originalInvoice = invoices[0];
+                        const [settingsRows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
+                        const companySettings = settingsRows[0] || {};
 
-                    try {
-                        afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
-                    } catch (err) {
-                        throw new Error(`AFIP rechazó la Nota de Crédito: ${err.message}`);
+                        const invoiceData = {
+                            invoice_type: cn.credit_note_type === 'A' ? 'NC_A' : 'NC_B',
+                            client_tax_id: originalInvoice.client_tax_id || null,
+                            total_amount: cn.amount,
+                            invoice_number: cn.number
+                        };
+
+                        // Recuperar ítems reales de la devolución y sus tasas de IVA del catálogo de productos
+                        const [itemsRows] = await pool.query(`
+                            SELECT
+                                ri.quantity,
+                                ri.unit_price,
+                                COALESCE(p.vat_rate, 21) AS vat_rate
+                            FROM client_return_items ri
+                            JOIN products p ON ri.product_id = p.id
+                            WHERE ri.return_id = ?
+                        `, [cn.reference_id]);
+
+                        const invoiceItems = itemsRows.length > 0 ? itemsRows : [
+                            { quantity: 1, unit_price: cn.amount, vat_rate: 21 }
+                        ];
+
+                        try {
+                            afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
+                        } catch (err) {
+                            throw new Error(`AFIP rechazó la Nota de Crédito: ${err.message}`);
+                        }
                     }
                 }
             }
+        } catch (err) {
+            // Release the claim so the credit note can be retried later.
+            await pool.query('UPDATE credit_notes SET status = ? WHERE id = ?', [previousStatus, creditNoteId]);
+            throw err;
         }
 
         const cae = afipRes ? afipRes.cae : null;

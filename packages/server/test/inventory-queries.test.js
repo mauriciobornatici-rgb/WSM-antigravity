@@ -145,7 +145,10 @@ test('transferStock moves an entire row into an existing target', async (t) => {
     const result = await inventoryService.transferStock('p1', ' A ', ' B ', 5, 'u1');
     assert.equal(result.success, true);
     assert.equal(commits, 1);
-    assert.ok(calls.some(({ sql }) => sql.startsWith('DELETE FROM inventory')));
+    // The depleted source row must be zeroed, not deleted: order_item_allocations
+    // references inventory rows with ON DELETE RESTRICT (migration 044).
+    assert.equal(calls.some(({ sql }) => sql.startsWith('DELETE FROM inventory')), false);
+    assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE inventory SET quantity = ?') && params[0] === 0));
     assert.ok(calls.some(({ sql }) => sql.includes('quantity = quantity + ?')));
 });
 

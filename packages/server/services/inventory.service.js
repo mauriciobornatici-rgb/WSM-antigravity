@@ -514,9 +514,9 @@ class InventoryService extends BaseService {
         }
 
         const connection = await pool.getConnection();
-        await connection.beginTransaction();
 
         try {
+            await connection.beginTransaction();
             const [sourceRows] = await connection.query(
                 'SELECT id, quantity, reserved_quantity FROM inventory WHERE product_id = ? AND location = ? FOR UPDATE',
                 [productId, normalizedFrom]
@@ -537,11 +537,10 @@ class InventoryService extends BaseService {
             const sourceId = sourceRows[0].id;
             const remainingQty = sourceRows[0].quantity - qty;
 
-            if (remainingQty === 0) {
-                await connection.query('DELETE FROM inventory WHERE id = ?', [sourceId]);
-            } else {
-                await connection.query('UPDATE inventory SET quantity = ? WHERE id = ?', [remainingQty, sourceId]);
-            }
+            // Keep the row at quantity 0 instead of deleting it: order_item_allocations
+            // references inventory rows with ON DELETE RESTRICT (migration 044), so
+            // deleting a depleted row would break the FK for any prior allocation.
+            await connection.query('UPDATE inventory SET quantity = ? WHERE id = ?', [remainingQty, sourceId]);
 
             const [targetRows] = await connection.query(
                 'SELECT id FROM inventory WHERE product_id = ? AND location = ? FOR UPDATE',

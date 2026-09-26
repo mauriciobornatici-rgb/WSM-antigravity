@@ -8,9 +8,9 @@ export class InvoiceAuthorizationUseCase {
         // The whole flow runs inside a transaction with a row lock, so two
         // concurrent authorizations cannot both reach the AFIP call.
         const connection = await pool.getConnection();
-        await connection.beginTransaction();
 
         try {
+            await connection.beginTransaction();
             const [rows] = await connection.query('SELECT * FROM invoices WHERE id = ? FOR UPDATE', [invoiceId]);
             if (rows.length === 0) {
                 const notFound = new Error('Invoice not found');

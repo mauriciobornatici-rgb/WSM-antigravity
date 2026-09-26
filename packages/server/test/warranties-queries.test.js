@@ -285,6 +285,7 @@ test('authorizeCreditNote obtains AFIP CAE from the original fiscal invoice', as
             id: 'cn-1', status: 'issued', reference_type: 'return', reference_id: 'r-1',
             credit_note_type: 'A', amount: 121, number: 'NC-1'
         }]];
+        if (statement.startsWith("UPDATE credit_notes SET status = 'authorizing'")) return [{ affectedRows: 1 }];
         if (statement.includes('SELECT order_id FROM client_returns')) return [[{ order_id: 'o-1' }]];
         if (statement.includes('SELECT * FROM invoices WHERE order_id')) return [[{ client_tax_id: '20123456789' }]];
         if (statement.includes('SELECT * FROM company_settings')) return [[{ tax_id: '30700000001' }]];
@@ -314,6 +315,7 @@ test('authorizeCreditNote surfaces an AFIP rejection', async (t) => {
         if (statement.startsWith('SELECT * FROM credit_notes WHERE id = ? AND')) return [[{
             id: 'cn-1', status: 'issued', reference_type: 'return', reference_id: 'r-1', amount: 10
         }]];
+        if (statement.startsWith("UPDATE credit_notes SET status = 'authorizing'")) return [{ affectedRows: 1 }];
         if (statement.includes('SELECT order_id FROM client_returns')) return [[{ order_id: 'o-1' }]];
         if (statement.includes('SELECT * FROM invoices WHERE order_id')) return [[{ id: 'i-1' }]];
         if (statement.includes('SELECT * FROM company_settings')) return [[]];
@@ -335,6 +337,7 @@ test('authorizeCreditNote authorizes non-fiscal legacy notes without a CAE', asy
         if (statement.startsWith('SELECT * FROM credit_notes WHERE id = ? AND')) {
             return [[{ id: 'cn-legacy', status: 'issued', reference_type: 'manual', amount: 10 }]];
         }
+        if (statement.startsWith("UPDATE credit_notes SET status = 'authorizing'")) return [{ affectedRows: 1 }];
         if (statement.startsWith('SELECT * FROM credit_notes WHERE id = ?')) {
             lookup += 1;
             return [[{ id: 'cn-legacy', status: 'authorized', cae: null }]];
@@ -348,4 +351,78 @@ test('authorizeCreditNote authorizes non-fiscal legacy notes without a CAE', asy
     assert.equal(result.status, 'authorized');
     assert.equal(result.cae, null);
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE credit_notes') && params[0] === null && params[1] === null));
+});
+
+test('authorizeCreditNote claims atomically so a concurrent second call is rejected with 409 and AFIP is called once', async (t) => {
+    let claimAttempts = 0;
+    let afipCalls = 0;
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.startsWith('SELECT * FROM credit_notes WHERE id = ? AND')) {
+            return [[{
+                id: 'cn-race', status: 'issued', reference_type: 'return', reference_id: 'r-1',
+                credit_note_type: 'B', amount: 50, number: 'NC-2'
+            }]];
+        }
+        if (statement.startsWith("UPDATE credit_notes SET status = 'authorizing'")) {
+            claimAttempts += 1;
+            // Only the first claim to reach the database succeeds, mirroring the
+            // atomic `WHERE status NOT IN (...)` guard against a real DB.
+            return [{ affectedRows: claimAttempts === 1 ? 1 : 0 }];
+        }
+        if (statement.includes('SELECT order_id FROM client_returns')) return [[{ order_id: 'o-1' }]];
+        if (statement.includes('SELECT * FROM invoices WHERE order_id')) return [[{ client_tax_id: '20111111112' }]];
+        if (statement.includes('SELECT * FROM company_settings')) return [[{}]];
+        if (statement.includes('FROM client_return_items ri')) return [[]];
+        if (statement.startsWith('SELECT * FROM credit_notes WHERE id = ?')) return [[{ id: 'cn-race', status: 'authorized', cae: '999' }]];
+        return [[]];
+    });
+    const originalAfip = afipService.authorizeVoucher;
+    const originalAudit = auditService.log;
+    afipService.authorizeVoucher = async () => {
+        afipCalls += 1;
+        return { cae: '999', cae_expiration_date: '2026-09-01' };
+    };
+    auditService.log = async () => {};
+    t.after(() => {
+        afipService.authorizeVoucher = originalAfip;
+        auditService.log = originalAudit;
+    });
+
+    const results = await Promise.allSettled([
+        creditNotesService.authorizeCreditNote('cn-race', 'u1'),
+        creditNotesService.authorizeCreditNote('cn-race', 'u2'),
+    ]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.equal(rejected[0].reason.errorCode, 'CREDIT_NOTE_ALREADY_AUTHORIZING');
+    assert.equal(rejected[0].reason.statusCode, 409);
+    assert.equal(afipCalls, 1);
+});
+
+test('authorizeCreditNote reverts status to the previous value when AFIP rejects the request', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.startsWith('SELECT * FROM credit_notes WHERE id = ? AND')) return [[{
+            id: 'cn-fail', status: 'issued', reference_type: 'return', reference_id: 'r-1', amount: 10, number: 'NC-3'
+        }]];
+        if (statement.startsWith("UPDATE credit_notes SET status = 'authorizing'")) return [{ affectedRows: 1 }];
+        if (statement.includes('SELECT order_id FROM client_returns')) return [[{ order_id: 'o-1' }]];
+        if (statement.includes('SELECT * FROM invoices WHERE order_id')) return [[{ id: 'i-1' }]];
+        if (statement.includes('SELECT * FROM company_settings')) return [[]];
+        if (statement.includes('FROM client_return_items ri')) return [[{ quantity: 1, unit_price: 10, vat_rate: 21 }]];
+        return [[]];
+    });
+    const originalAfip = afipService.authorizeVoucher;
+    afipService.authorizeVoucher = async () => { throw new Error('rechazo QA'); };
+    t.after(() => { afipService.authorizeVoucher = originalAfip; });
+
+    await assert.rejects(() => creditNotesService.authorizeCreditNote('cn-fail', 'u'), /AFIP rechazó.*rechazo QA/);
+    const revert = calls.find(({ sql, params }) => sql.startsWith('UPDATE credit_notes SET status = ?') && params?.[1] === 'cn-fail');
+    assert.ok(revert, 'expected the credit note status to be reverted after an AFIP failure');
+    assert.equal(revert.params[0], 'issued');
 });

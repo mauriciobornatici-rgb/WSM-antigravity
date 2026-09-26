@@ -1,6 +1,5 @@
 import crypto from 'crypto';
 import pool from '../../config/db.js';
-import accountingService from '../../services/accounting.service.js';
 import auditService from '../../services/audit.service.js';
 
 export class GoodsReceptionService {
@@ -9,9 +8,9 @@ export class GoodsReceptionService {
         const actorUserId = options.actorUserId || null;
         const ipAddress = options.ipAddress || null;
         const connection = await pool.getConnection();
-        await connection.beginTransaction();
 
         try {
+            await connection.beginTransaction();
             const [receptions] = await connection.query('SELECT * FROM receptions WHERE id = ? FOR UPDATE', [receptionId]);
             if (receptions.length === 0) {
                 const err = new Error('Reception not found');
@@ -177,27 +176,9 @@ export class GoodsReceptionService {
                 );
             }
 
-            let netPurchaseSubtotal = 0;
-            for (const item of items) {
-                netPurchaseSubtotal += Number(item.quantity_received || 0) * Number(item.unit_cost || 0);
-            }
-            netPurchaseSubtotal = Math.round(netPurchaseSubtotal * 100) / 100;
-            const vatAmount = Math.round((netPurchaseSubtotal * 0.21) * 100) / 100;
-            const totalPurchase = Math.round((netPurchaseSubtotal + vatAmount) * 100) / 100;
-
-            if (totalPurchase > 0) {
-                await accountingService.createJournalEntry(connection, {
-                    date: reception.reception_date || new Date(),
-                    description: `Ingreso de Mercadería - Recepción ${reception.reception_number}`,
-                    reference_type: 'reception',
-                    reference_id: reception.id,
-                    lines: [
-                        { account_code: '1.1.04.01', debit: netPurchaseSubtotal, credit: 0, notes: 'Ingreso al Almacén' },
-                        { account_code: '1.1.05.02', debit: vatAmount, credit: 0, notes: 'IVA Crédito Fiscal 21%' },
-                        { account_code: '2.1.01.01', debit: 0, credit: totalPurchase, notes: `Cuenta Corriente Proveedor` }
-                    ]
-                });
-            }
+            // Accounting entry is posted once, from the supplier invoice
+            // (see supplierInvoiceController.createSupplierInvoice), to avoid
+            // double-posting the same purchase to the ledger.
 
             await connection.query(
                 'UPDATE receptions SET status = "approved", approved_by = ? WHERE id = ?',
