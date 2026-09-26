@@ -185,7 +185,7 @@ test('credentials fall back to environment and stock payload omits an unspecifie
     assert.deepEqual(service.stockPayload('3', '4'), { action: 'replace', value: 3, id: 4 });
 });
 
-test('order metadata persists remote customer totals, fulfillment and local status', async () => {
+test('order metadata persists remote customer totals and fulfillment but never writes the status directly', async () => {
     const calls = [];
     const service = new TiendaNubeService({ db: { query: async (sql, params) => {
         calls.push({ sql: String(sql), params }); return [[]];
@@ -201,7 +201,29 @@ test('order metadata persists remote customer totals, fulfillment and local stat
     });
     assert.deepEqual(fulfillments, [{ id: 'f' }]);
     assert.equal(calls.filter((call) => call.sql.includes('tiendanube_customers')).length, 2);
-    assert.ok(calls.some((call) => call.params?.includes('delivered')));
+    // The status goes through salesService.applyExternalStatus (stock effects), not an UPDATE.
+    assert.equal(calls.some((call) => /\bstatus = COALESCE/.test(call.sql)), false);
+    assert.equal(calls.some((call) => call.params?.includes('delivered')), false);
+});
+
+test('remote status is applied through the local transitions and a failure does not break the import', async () => {
+    const service = new TiendaNubeService({ db: { query: async () => [[]] }, http: {} });
+    const applied = [];
+    const salesStub = { applyExternalStatus: async (orderId, status) => { applied.push([orderId, status]); } };
+    await service.applyRemoteStatus('o-1', { status: 'open', shipping_status: 'fulfilled' }, salesStub);
+    await service.applyRemoteStatus('o-2', { status: 'cancelled' }, salesStub);
+    await service.applyRemoteStatus('o-3', { status: 'open' }, salesStub);
+    assert.deepEqual(applied, [['o-1', 'delivered'], ['o-2', 'cancelled']]);
+
+    const originalError = console.error;
+    const logged = [];
+    console.error = (message) => logged.push(message);
+    try {
+        await service.applyRemoteStatus('o-4', { status: 'closed' }, { applyExternalStatus: async () => { throw new Error('sin stock'); } });
+    } finally {
+        console.error = originalError;
+    }
+    assert.match(logged[0], /o-4.*sin stock/);
 });
 
 test('stock synchronization safely skips disconnected, missing, disabled and unlinked products', async () => {

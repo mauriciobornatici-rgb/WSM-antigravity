@@ -51,7 +51,7 @@ test('_restoreInventoryForCancelledOrder ignores empty deductions and preserves 
     assert.equal(calls.some(({ params }) => params?.includes('skip')), false);
 });
 
-test('_restoreInventoryForCancelledOrder releases reservations across rows and fallback', async () => {
+test('_restoreInventoryForCancelledOrder releases what is reserved and never touches other rows', async () => {
     const calls = [];
     const connection = { query: async (sql, params) => {
         calls.push({ sql: String(sql), params });
@@ -63,7 +63,8 @@ test('_restoreInventoryForCancelledOrder releases reservations across rows and f
     } };
     await salesService._restoreInventoryForCancelledOrder(connection, 'o-1', 'pending');
     assert.ok(calls.some((call) => call.params?.[0] === 2 && call.params?.[1] === 'i-1'));
-    assert.ok(calls.some((call) => call.sql.includes('GREATEST(reserved_quantity - ?, 0)')));
+    // The 2 units no longer reserved anywhere are not "released" from an arbitrary row.
+    assert.equal(calls.some((call) => call.sql.includes('GREATEST') || call.sql.includes('LIMIT 1')), false);
 });
 
 test('_restoreInventoryForCancelledOrder stops releasing once the reservation is satisfied', async () => {
@@ -356,12 +357,13 @@ test('transitionOrderStatus packs picked inventory and records physical movement
         if (statement.includes('reserved_quantity > 0')) {
             return [[{ id: 'reserve-1', location: 'A-1', reserved_quantity: 2 }]];
         }
-        if (statement.includes('product_id = ? AND location = ?')) {
-            return [[{ id: 'inv-1', quantity: 1 }]];
+        if (statement.startsWith('SELECT id, product_id, location')) {
+            return [[
+                { id: 'inv-1', product_id: 'p-1', location: 'A-1', quantity: 1, reserved_quantity: 0 },
+                { id: 'inv-2', product_id: 'p-1', location: 'B-1', quantity: 2, reserved_quantity: 0 }
+            ]];
         }
-        if (statement.includes('WHERE product_id = ? AND quantity > 0')) {
-            return [[{ id: 'fallback-1', location: 'B-1', quantity: 2 }]];
-        }
+        if (statement.includes('SET quantity = quantity - ?')) return [{ affectedRows: 1 }];
         if (statement.includes('SELECT * FROM orders') && !statement.includes('FOR UPDATE')) {
             return [[{ id: 'o-1', status: 'packed' }]];
         }
@@ -373,8 +375,30 @@ test('transitionOrderStatus packs picked inventory and records physical movement
     const result = await salesService.transitionOrderStatus('o-1', 'packed', 'u-1');
     assert.equal(result.status, 'packed');
     assert.ok(calls.some((call) => call.sql.includes("status = 'completed'")));
-    assert.ok(calls.filter((call) => call.sql.includes('INSERT INTO inventory_movements')).length >= 2);
-    assert.ok(calls.some((call) => call.sql.includes('fallback')));
+    // Legacy order without allocations: the picked units come out of unreserved stock.
+    const deductions = calls.filter((call) => call.sql.includes('SET quantity = quantity - ?'));
+    assert.deepEqual(deductions.map((call) => call.params), [[2, 'inv-2', 2], [1, 'inv-1', 1]]);
+    const movements = calls.filter((call) => call.sql.includes('INSERT INTO inventory_movements'));
+    assert.equal(movements.length, 2);
+    assert.ok(movements.every((call) => call.params.at(-1) === 'u-1'));
+    assert.equal(calls.some((call) => call.sql.includes('GREATEST')), false);
+});
+
+test('packing with allocations fails instead of clamping when the stock row no longer holds the reservation', async (t) => {
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('SELECT * FROM orders') && statement.includes('FOR UPDATE')) return [[{ id: 'o-2', status: 'picking' }]];
+        if (statement.includes('SUM(picked_quantity)')) return [[{ total_items: 2, total_picked: 2 }]];
+        if (statement.includes('FROM order_item_allocations oia')) {
+            return [[{ id: 'a-1', product_id: 'p-1', inventory_id: 'inv-1', location_code: 'A-1', reserved_quantity: 2, picked_quantity: 2 }]];
+        }
+        if (statement.includes('SET reserved_quantity = reserved_quantity - ?, quantity = quantity - ?')) return [{ affectedRows: 0 }];
+        return [[]];
+    });
+    await assert.rejects(
+        () => salesService.transitionOrderStatus('o-2', 'packed', 'u-1'),
+        (err) => err.statusCode === 409 && err.errorCode === 'STOCK_INVARIANT_VIOLATION'
+    );
 });
 
 test('transitionOrderStatus handles missing and idempotent orders', async (t) => {
@@ -799,4 +823,38 @@ test('createManualInvoice supports a standalone anonymous document with item def
     assert.ok(calls.some(({ sql, params }) => sql.includes('INSERT INTO invoice_items') && params.includes('Servicio técnico')));
     assert.equal(calls.some(({ sql }) => sql.includes('UPDATE orders')), false);
     assert.equal(calls.some(({ sql }) => sql.includes('current_account_balance')), false);
+});
+
+test('external status walks the real transitions, consumes reservations and never moves backwards', async (t) => {
+    const originalFind = salesService.findById;
+    const originalTransition = salesService.transitionOrderStatus;
+    t.after(() => {
+        salesService.findById = originalFind;
+        salesService.transitionOrderStatus = originalTransition;
+    });
+    let status;
+    const steps = [];
+    salesService.findById = async (id) => ({ id, status });
+    salesService.transitionOrderStatus = async (id, next, _user, options) => {
+        steps.push([next, Boolean(options?.assumeFullyPicked)]);
+        return { id, status: next };
+    };
+
+    status = 'pending';
+    await salesService.applyExternalStatus('o', 'completed');
+    assert.deepEqual(steps.splice(0), [['picking', false], ['packed', true], ['delivered', false], ['completed', false]]);
+
+    status = 'dispatched';
+    await salesService.applyExternalStatus('o', 'delivered');
+    assert.deepEqual(steps.splice(0), [['delivered', false]]);
+
+    status = 'packed';
+    await salesService.applyExternalStatus('o', 'cancelled');
+    assert.deepEqual(steps.splice(0), [['cancelled', false]]);
+
+    for (const [current, remote] of [['completed', 'cancelled'], ['delivered', 'cancelled'], ['completed', 'delivered'], ['pending', 'packed']]) {
+        status = current;
+        await salesService.applyExternalStatus('o', remote);
+    }
+    assert.deepEqual(steps, []);
 });

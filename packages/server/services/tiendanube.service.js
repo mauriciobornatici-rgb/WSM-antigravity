@@ -330,6 +330,7 @@ export class TiendaNubeService {
         );
         if (existing.length > 0) {
             await this.persistOrderMetadata(existing[0].id, payload);
+            await this.applyRemoteStatus(existing[0].id, payload, salesService);
             return { status: 'already_imported', orderId: existing[0].id };
         }
 
@@ -378,6 +379,7 @@ export class TiendaNubeService {
         }, null);
 
         await this.persistOrderMetadata(result.id, payload);
+        await this.applyRemoteStatus(result.id, payload, salesService);
 
         return { status: 'created', orderId: result.id };
     }
@@ -401,6 +403,19 @@ export class TiendaNubeService {
         if (payload.shipping_status === 'packed') return 'packed';
         if (payload.status === 'closed') return 'completed';
         return null;
+    }
+
+    // The remote status goes through the local transitions (never a direct UPDATE of
+    // orders.status), so cancellations release stock and deliveries deduct it. A failure
+    // here must not lose the imported metadata: it is logged for follow-up.
+    async applyRemoteStatus(orderId, payload, salesService) {
+        const remoteStatus = this.mapLocalOrderStatus(payload);
+        if (!remoteStatus || !salesService?.applyExternalStatus) return;
+        try {
+            await salesService.applyExternalStatus(orderId, remoteStatus);
+        } catch (error) {
+            console.error(`[TiendaNube] No se pudo aplicar el estado remoto '${remoteStatus}' al pedido ${orderId}: ${error.message}`);
+        }
     }
 
     async persistOrderMetadata(orderId, payload) {
@@ -487,7 +502,6 @@ export class TiendaNubeService {
             `UPDATE orders SET
                 customer_name = COALESCE(?, customer_name),
                 payment_status = COALESCE(?, payment_status),
-                status = COALESCE(?, status),
                 shipping_address = COALESCE(?, shipping_address),
                 recipient_name = COALESCE(?, recipient_name),
                 recipient_dni = COALESCE(?, recipient_dni),
@@ -496,7 +510,6 @@ export class TiendaNubeService {
             [
                 customerName,
                 payload.payment_status || null,
-                this.mapLocalOrderStatus(payload),
                 this.formatShippingAddress(payload.shipping_address),
                 payload.shipping_address?.name || customerName,
                 identification,

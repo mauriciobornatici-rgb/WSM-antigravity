@@ -71,15 +71,32 @@ test('_restoreInventoryForCancelledOrder releases exact allocations and updates 
 
     await salesService._restoreInventoryForCancelledOrder(connection, 'order-c-1', 'pending');
 
-    const updateInvCalls = calls.filter((c) => c.sql.includes('UPDATE inventory SET reserved_quantity = GREATEST(reserved_quantity - ?, 0)'));
+    const updateInvCalls = calls.filter((c) => c.sql.includes('UPDATE inventory SET reserved_quantity = reserved_quantity - ? WHERE id = ? AND reserved_quantity >= ?'));
     assert.equal(updateInvCalls.length, 2);
-    assert.deepEqual(updateInvCalls[0].params, [5, 'inv-loc-1']);
-    assert.deepEqual(updateInvCalls[1].params, [3, 'inv-loc-2']);
+    assert.deepEqual(updateInvCalls[0].params, [5, 'inv-loc-1', 5]);
+    assert.deepEqual(updateInvCalls[1].params, [3, 'inv-loc-2', 3]);
+    assert.equal(calls.some((c) => c.sql.includes('GREATEST')), false);
 
     const updateAllocCalls = calls.filter((c) => c.sql.includes("UPDATE order_item_allocations SET status = 'cancelled'"));
     assert.equal(updateAllocCalls.length, 2);
     assert.deepEqual(updateAllocCalls[0].params, ['alloc-1']);
     assert.deepEqual(updateAllocCalls[1].params, ['alloc-2']);
+});
+
+test('_restoreInventoryForCancelledOrder refuses to clamp a reservation that is no longer there', async () => {
+    const connection = {
+        async query(sql) {
+            const statement = String(sql);
+            if (statement.includes('FROM order_item_allocations')) {
+                return [[{ id: 'alloc-1', product_id: 'p-1', inventory_id: 'inv-1', reserved_quantity: 5 }]];
+            }
+            return [{ affectedRows: 0 }];
+        }
+    };
+    await assert.rejects(
+        () => salesService._restoreInventoryForCancelledOrder(connection, 'order-c-2', 'pending'),
+        (err) => err.statusCode === 409 && err.errorCode === 'STOCK_INVARIANT_VIOLATION'
+    );
 });
 
 test('pickOrderItem updates order_item_allocations and attaches allocation_id to picking event', async () => {

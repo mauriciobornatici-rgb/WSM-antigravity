@@ -268,11 +268,9 @@ class FinanceService {
                 );
                 if (orders.length > 0) {
                     const currentOrderStatus = this._normalizeOrderStatus(orders[0].status);
-                    const shouldComplete =
-                        paymentStatus === 'paid'
-                        && currentOrderStatus !== 'completed'
-                        && currentOrderStatus !== 'cancelled'
-                        && currentOrderStatus !== 'returned';
+                    // Payment only closes an order that was already delivered: jumping from
+                    // pending/picking/packed would skip the stock deduction done at packing.
+                    const shouldComplete = paymentStatus === 'paid' && currentOrderStatus === 'delivered';
                     const nextOrderStatus = shouldComplete ? 'completed' : currentOrderStatus;
 
                     await connection.query(
