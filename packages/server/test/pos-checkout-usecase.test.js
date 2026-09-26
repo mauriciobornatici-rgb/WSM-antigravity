@@ -45,7 +45,7 @@ function createMockConnection(state) {
             if (statement === 'SELECT * FROM invoices WHERE id = ?') {
                 return [state.invoices.filter((i) => i.id === params[0])];
             }
-            if (statement.includes("FROM shift_payments WHERE shift_id = ? AND order_id = ? AND type = 'sale'")) {
+            if (statement.includes("FROM shift_payments WHERE order_id = ? AND type = 'sale'")) {
                 return [state.shiftPayments.filter((p) => p.shift_id === params[0] && p.order_id === params[1])];
             }
             if (statement.startsWith('INSERT INTO shift_payments')) {

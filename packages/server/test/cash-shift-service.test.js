@@ -93,7 +93,7 @@ test('calculateShiftExpectedBalance defaults the opening balance to 0 for an unk
 test('recordShiftSalePayments consolidates split lines of the same method and rounds the amount', async () => {
     const state = { shiftPayments: [], updatedBalance: null };
     const connection = recordingConnection([
-        [/FROM shift_payments WHERE shift_id = \? AND order_id = \? AND type = 'sale'/, () => [state.shiftPayments]],
+        [/FROM shift_payments WHERE order_id = \? AND type = 'sale'/, () => [state.shiftPayments]],
         ['INSERT INTO shift_payments', (params) => {
             state.shiftPayments.push({ id: params[0], shift_id: params[1], order_id: params[2], payment_method: params[3], amount: params[4] });
             return [{ affectedRows: 1 }];
@@ -126,7 +126,7 @@ test('recordShiftSalePayments skips methods already recorded for that order (rep
     const state = { shiftPayments: [{ id: 'existing', shift_id: 'shift-1', order_id: 'order-1', payment_method: 'cash', amount: 100 }] };
     const inserted = [];
     const connection = recordingConnection([
-        [/FROM shift_payments WHERE shift_id = \? AND order_id = \? AND type = 'sale'/, () => [state.shiftPayments]],
+        [/FROM shift_payments WHERE order_id = \? AND type = 'sale'/, () => [state.shiftPayments]],
         ['INSERT INTO shift_payments', (params) => {
             inserted.push({ payment_method: params[3], amount: params[4] });
             return [{ affectedRows: 1 }];

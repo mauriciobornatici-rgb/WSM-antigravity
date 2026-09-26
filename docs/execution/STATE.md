@@ -1,7 +1,19 @@
 # Estado de ejecución — WSM SportsERP
 
-Última revisión: 2026-09-06.
+Última revisión: 2026-09-26.
 Continuidad actual: [.agents/context/TASKS.md](../../.agents/context/TASKS.md).
+
+## Hito: endurecimiento con capa Claude (2026-09-25/26)
+
+Capa `.claude/` adaptada de Base Claude (8 agentes con modelo por riesgo, hooks, skills).
+Auditorías independientes encontraron y se corrigieron, entre otros: ventas POS que nunca
+descontaban stock (C1), integración Tiendanube entrante rota (401), comprobantes ARCA
+declarando ~17 % menos de lo cobrado, compras asentadas dos veces, precio e IVA tomados
+del cliente, checkout POS no atómico. Decisiones del usuario: ADR-008 y ADR-010.
+Evidencia: `validate` verde, 476 unitarios, 40 tests contra MySQL real (`qa:integration`).
+Pendiente del usuario en producción: runbooks de reparación de stock y de asientos
+duplicados, rotar la contraseña admin si se usó `Password123!`, luego migración 045.
+Detalle: [AUDIT](../../.agents/context/AUDIT.md), [plan Ola B](PLAN_OLA_B_INTEGRIDAD_2026-09-25.md).
 
 ## Hito: adaptación de Base Codex y correcciones de QA
 

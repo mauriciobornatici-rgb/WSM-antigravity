@@ -1,7 +1,7 @@
 import pool from '../../config/db.js';
 import defaultAuditService from '../../services/audit.service.js';
 import defaultSalesService from '../../services/sales.service.js';
-import defaultCreateOrderUseCase from './CreateOrderUseCase.js';
+import defaultCreateOrderUseCase, { isOfflineReplay } from './CreateOrderUseCase.js';
 import { lockOpenShift, recordShiftSalePayments } from '../../services/cashShift.service.js';
 
 /**
@@ -56,8 +56,9 @@ export class PosCheckoutUseCase {
         try {
             await connection.beginTransaction();
 
+            // Same offline criterion as prices and stock (captured ≤ 30 days ago, no future dates).
             const shift = await lockOpenShift(connection, requestedShiftId, {
-                allowReassign: Boolean(orderData.offline_captured_at),
+                allowReassign: isOfflineReplay(orderData),
             });
 
             const [existing] = await connection.query(

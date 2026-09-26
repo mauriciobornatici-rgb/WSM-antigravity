@@ -1,5 +1,20 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-002 — 2026-09-26 — re-auditoría de integridad `d925dfa..f8a47df`
+
+`guardian-integridad` (opus): los cierres de AUD-001 se verificaron con sus gemelos; 5 hallazgos nuevos
+sobre el código agregado, verificados por el coordinador y corregidos:
+
+- [x] F1 alta — replay offline tras cerrar el turno duplicaba el cobro en caja (búsqueda por turno) — ahora por pedido en cualquier turno; test MySQL del escenario completo.
+- [x] F2 media — venta offline con faltante total aparecía como pendiente de reparación C1 — excluida del diagnóstico; test MySQL.
+- [x] F3 media — retiro de pedido sin red se encolaba como venta nueva (duplicado) — bloqueado con aviso al cajero.
+- [x] F4 baja — criterio offline distinto para reasignar turno — unificado en `isOfflineReplay`.
+- [x] F5 baja — unidades rechazadas consumían cupo de devolución — excluidas.
+- [ ] Decisión abierta: `offline_captured_at` declarado por el cliente habilita precio, faltante y reasignación; queda mitigado por revisión obligatoria (pantalla Excepciones POS). Prueba criptográfica de captura offline: evaluar si el usuario lo pide.
+- [ ] Para el contador (preexistente): devolución a proveedor asienta solo neto (sin IVA CF), `transactions.type='expense'` y saldo de proveedor con `GREATEST(…,0)`.
+
+Evidencia: unit 476/476, `qa:integration` 42/42, `validate` exit 0.
+
 ## AUD-001 y revisión de integridad — 2026-09-25 — `4221d26..d925dfa` (Ola A + Ola B parcial)
 
 Dos revisiones independientes en paralelo, sin contexto de la sesión: `auditor-externo`

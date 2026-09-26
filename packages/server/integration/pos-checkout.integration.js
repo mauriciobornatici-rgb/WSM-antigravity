@@ -150,3 +150,27 @@ test('the sales service stays the only invoice writer used by the checkout', () 
     // Guards the default wiring: the checkout must reuse createInvoice (with its fiscal rules).
     assert.equal(new PosCheckoutUseCase().salesService, salesService);
 });
+
+test('a lost response replayed offline after the shift closed does not count the cash twice', async () => {
+    const productId = await seedProduct({ stock: [{ location: 'QA-A', quantity: 5 }] });
+    const shiftA = await seedShift();
+    const request = payload(productId, shiftA.shiftId, { emit_invoice: false });
+
+    // 1. The checkout commits in shift A but the browser never gets the answer.
+    const first = await checkout.execute(request, null, { role: 'cashier' });
+    // 2. The cashier closes A and opens B on the same register.
+    await pool.query("UPDATE cash_shifts SET status = 'closed' WHERE id = ?", [shiftA.shiftId]);
+    const shiftB = await seedShift({ registerId: shiftA.registerId });
+    // 3. The offline queue replays the same sale (same key, original shift A).
+    const replay = await checkout.execute({
+        ...request, offline_captured_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    }, null, { role: 'cashier' });
+
+    assert.equal(replay.idempotent_replay, true);
+    assert.equal(replay.order_id, first.order_id);
+    const payments = await shiftPayments(first.order_id);
+    assert.deepEqual(payments.map((row) => row.shift_id), [shiftA.shiftId, shiftA.shiftId], 'cash stays in shift A only');
+    const [[shiftBRow]] = await pool.query('SELECT expected_balance FROM cash_shifts WHERE id = ?', [shiftB.shiftId]);
+    assert.equal(Number(shiftBRow.expected_balance), 1000, 'shift B is not inflated');
+    assert.deepEqual(await stockOf(productId), { quantity: 3, reserved: 0 });
+});

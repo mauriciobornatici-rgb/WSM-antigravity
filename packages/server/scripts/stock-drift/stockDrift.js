@@ -37,6 +37,12 @@ const AFFECTED_ORDER_SQL = `
     AND NOT EXISTS (
         SELECT 1 FROM audit_logs a
         WHERE a.action = ? AND a.entity_type = 'order' AND a.entity_id = o.id
+    )
+    -- A post-fix offline sale with a full stock shortage has no 'sale' movement either,
+    -- but its shortage is already recorded (ADR-010): it is not a C1 leftover.
+    AND NOT EXISTS (
+        SELECT 1 FROM audit_logs s
+        WHERE s.action = 'OFFLINE_SALE_STOCK_SHORTAGE' AND s.entity_type = 'order' AND s.entity_id = o.id
     )`;
 
 /**

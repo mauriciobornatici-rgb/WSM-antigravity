@@ -13,7 +13,7 @@ export function isCounterSale(orderData) {
 const OFFLINE_REPLAY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
 
-function isOfflineReplay(orderData, now = Date.now()) {
+export function isOfflineReplay(orderData, now = Date.now()) {
     if (orderData.external_source !== 'pos' || !orderData.offline_captured_at) return false;
     const capturedAt = Date.parse(orderData.offline_captured_at);
     return Number.isFinite(capturedAt) && capturedAt <= now + CLOCK_SKEW_MS && now - capturedAt <= OFFLINE_REPLAY_MAX_AGE_MS;

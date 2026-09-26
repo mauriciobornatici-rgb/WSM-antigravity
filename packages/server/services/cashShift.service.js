@@ -75,9 +75,11 @@ export async function recordShiftSalePayments(connection, { shiftId, orderId, pa
         byMethod.set(payment.method, roundMoney((byMethod.get(payment.method) || 0) + amount));
     }
 
+    // Looked up by order, in ANY shift: a replay may land in a different (reassigned)
+    // shift than the attempt that already recorded the cash, which must not count twice.
     const [existing] = await connection.query(
-        "SELECT payment_method FROM shift_payments WHERE shift_id = ? AND order_id = ? AND type = 'sale'",
-        [shiftId, orderId]
+        "SELECT payment_method FROM shift_payments WHERE order_id = ? AND type = 'sale'",
+        [orderId]
     );
     const alreadyRecorded = new Set(existing.map((row) => row.payment_method));
 

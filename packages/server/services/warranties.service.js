@@ -266,6 +266,8 @@ class ReturnsService extends BaseService {
              FROM client_return_items ri
              JOIN client_returns r ON r.id = ri.return_id
              WHERE r.order_id = ? AND r.status NOT IN ('rejected', 'cancelled') AND ri.product_id IN (?)
+               -- a rejected unit was not refunded: it does not use up the returnable quantity
+               AND LOWER(COALESCE(ri.condition_status, '')) <> 'rejected'
              GROUP BY ri.product_id`,
             [data.order_id, productIds]
         );

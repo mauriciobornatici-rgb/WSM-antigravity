@@ -523,6 +523,14 @@ export default function POSPage() {
         setPaymentSplits([defaultPaymentSplit(0)]);
         setPaymentDialogOpen(false);
 
+        // El retiro de un pedido ya existente no puede resguardarse como venta nueva:
+        // al sincronizar se duplicaría la venta y el cobro. Requiere conexión.
+        if (!navigator.onLine && activePickupOrder) {
+            restoreCheckout();
+            toast.error("Sin conexión: el retiro de pedidos requiere red. Reintentá cuando vuelva la conexión.");
+            return;
+        }
+
         // Si estamos sin conexión directa a internet, encolamos inmediatamente en modo contingencia
         if (!navigator.onLine) {
             try {

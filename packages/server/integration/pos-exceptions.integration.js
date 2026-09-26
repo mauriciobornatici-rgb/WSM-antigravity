@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { closePool, pool, seedProduct, stockOf } from './helpers/qaDb.js';
 import { CreateOrderUseCase } from '../domains/sales/CreateOrderUseCase.js';
 import { EXCEPTION_TYPES, PosExceptionsService } from '../domains/sales/PosExceptionsService.js';
+import { findAffectedOrders } from '../scripts/stock-drift/stockDrift.js';
 
 const createOrder = new CreateOrderUseCase({ onStockChanged: async () => {} });
 const exceptions = new PosExceptionsService();
@@ -78,4 +79,18 @@ test('an offline sale without enough stock is recorded, never goes negative and 
     assert.deepEqual(pending[0].details.lines, [{ product_id: productId, requested: 3, shortage: 2 }]);
     const [[item]] = await pool.query('SELECT quantity, picked_quantity FROM order_items WHERE order_id = ?', [order.id]);
     assert.deepEqual([item.quantity, item.picked_quantity], [3, 3], 'the sale records what the customer took');
+});
+
+test('a paid offline sale with a full stock shortage is not mistaken for a historical C1 leftover', async () => {
+    const productId = await seedProduct({ salePrice: 100, stock: [{ location: 'QA-A', quantity: 0 }] });
+    const order = await offlineSale(productId, { quantity: 2 });
+    await pool.query("UPDATE orders SET payment_status = 'paid' WHERE id = ?", [order.id]);
+
+    const connection = await pool.getConnection();
+    try {
+        const affected = await findAffectedOrders(connection);
+        assert.equal(affected.some((item) => item.id === order.id), false);
+    } finally {
+        connection.release();
+    }
 });
