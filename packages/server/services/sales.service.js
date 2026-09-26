@@ -190,8 +190,8 @@ class SalesService extends BaseService {
         }
     }
 
-    async createOrder(orderData, userId) {
-        return createOrderUseCase.execute(orderData, userId);
+    async createOrder(orderData, userId, actor = null) {
+        return createOrderUseCase.execute(orderData, userId, actor);
     }
 
     async transitionOrderStatus(orderId, requestedStatus, userId) {

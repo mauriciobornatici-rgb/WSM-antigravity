@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CreateOrderUseCase } from '../domains/sales/CreateOrderUseCase.js';
+import { CreateOrderUseCase, resolvePriceOverrides } from '../domains/sales/CreateOrderUseCase.js';
 import { InvoiceAuthorizationUseCase } from '../domains/sales/InvoiceAuthorizationUseCase.js';
 import pool from '../config/db.js';
 import auditService from '../services/audit.service.js';
@@ -270,4 +270,62 @@ test('a POS order with shipping keeps the reservation flow', async (t) => {
     assert.equal(calls.find((call) => call.sql.includes('INSERT INTO orders')).params[6], 'pending');
     assert.ok(calls.some((call) => call.sql.includes('reserved_quantity = reserved_quantity +')));
     assert.equal(calls.some((call) => call.sql.includes('SET quantity = quantity - ?')), false);
+});
+
+test('price policy: catalog price unless authorized, imported, or captured offline (ADR-008)', () => {
+    const prices = new Map([['p', 100]]);
+    const names = new Map([['p', 'Pelota']]);
+    const pos = (unitPrice, extra = {}) => ({ external_source: 'pos', items: [{ product_id: 'p', quantity: 1, unit_price: unitPrice }], ...extra });
+
+    assert.deepEqual(resolvePriceOverrides(pos(100), prices, names, { role: 'cashier' }), { overrides: [], source: null });
+    assert.deepEqual(resolvePriceOverrides(pos(undefined), prices, names, { role: 'cashier' }).overrides, []);
+    assert.throws(
+        () => resolvePriceOverrides(pos(0), prices, names, { role: 'cashier' }),
+        (err) => err.statusCode === 409 && err.errorCode === 'PRICE_OVERRIDE_NOT_ALLOWED' && /Pelota/.test(err.message)
+    );
+    assert.throws(() => resolvePriceOverrides(pos(90), prices, names, null), /requiere autorización/);
+
+    assert.equal(resolvePriceOverrides(pos(90), prices, names, { role: 'manager' }).source, 'authorized_user');
+    assert.equal(resolvePriceOverrides(pos(90), prices, names, { role: 'admin' }).source, 'authorized_user');
+    assert.equal(
+        resolvePriceOverrides({ external_source: 'tiendanube', items: [{ product_id: 'p', unit_price: 95 }] }, prices, names, null).source,
+        'tiendanube'
+    );
+
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    assert.deepEqual(resolvePriceOverrides(pos(90, { offline_captured_at: recent }), prices, names, { role: 'cashier' }), {
+        overrides: [{ product_id: 'p', catalog_price: 100, unit_price: 90 }],
+        source: 'offline_pos',
+    });
+    const tooOld = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    for (const capturedAt of [tooOld, future, 'not-a-date']) {
+        assert.throws(() => resolvePriceOverrides(pos(90, { offline_captured_at: capturedAt }), prices, names, { role: 'cashier' }), /requiere autorización/);
+    }
+});
+
+test('an authorized price override is audited in the same transaction as the sale', async (t) => {
+    const audits = [];
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('SELECT id, sale_price, name FROM products')) return [[{ id: 'p', sale_price: 100, name: 'P' }]];
+        if (statement.startsWith('SELECT id, product_id, location')) return [[{ id: 'inv', product_id: 'p', location: 'A', quantity: 5, reserved_quantity: 0 }]];
+        if (statement.includes('SET quantity = quantity - ?')) return [{ affectedRows: 1 }];
+        return [[]];
+    });
+    const originalAudit = auditService.log;
+    auditService.log = async (entry, executor) => { audits.push({ entry, transactional: Boolean(executor) }); };
+    t.after(() => { auditService.log = originalAudit; });
+
+    await new CreateOrderUseCase({ onStockChanged: async () => {} }).execute({
+        external_source: 'pos',
+        external_id: 'd5b8f1c4-4a8e-4e0c-9d5e-2f1f1f1f1f1f',
+        items: [{ product_id: 'p', quantity: 1, unit_price: 80 }],
+    }, 'manager-1', { role: 'manager' });
+
+    const override = audits.find(({ entry }) => entry.action === 'ORDER_PRICE_OVERRIDE');
+    assert.ok(override?.transactional);
+    assert.deepEqual(override.entry.new_values, {
+        source: 'authorized_user', role: 'manager', lines: [{ product_id: 'p', catalog_price: 100, unit_price: 80 }],
+    });
 });

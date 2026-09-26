@@ -42,7 +42,7 @@ export const createOrder = catchAsync(async (req, res) => {
             ...(body.total_amount != null ? { external_total_amount: Number(body.total_amount) } : {})
         }
         : body;
-    const result = await salesService.createOrder(orderData, req.user?.id);
+    const result = await salesService.createOrder(orderData, req.user?.id, { role: req.user?.role });
     res.json(result);
 });
 
@@ -123,7 +123,7 @@ export const createInvoice = catchAsync(async (req, res) => {
 
 export const checkoutPickupOrder = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const result = await pickupOrderCheckoutUseCase.execute(id, req.body, req.user?.id);
+    const result = await pickupOrderCheckoutUseCase.execute(id, req.body, req.user?.id, { role: req.user?.role });
     res.json(result);
 });
 

@@ -2,11 +2,54 @@ import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import defaultStockLedger from '../inventory/StockLedger.js';
+import { hasPermission, PERMISSIONS } from '@wsm/common';
 
 // A POS checkout without shipping is a counter sale: the customer leaves with the
 // goods, so stock is deducted now instead of being reserved for picking.
 export function isCounterSale(orderData) {
     return orderData.external_source === 'pos' && !orderData.shipping_method;
+}
+
+const OFFLINE_REPLAY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+function isOfflineReplay(orderData, now = Date.now()) {
+    if (orderData.external_source !== 'pos' || !orderData.offline_captured_at) return false;
+    const capturedAt = Date.parse(orderData.offline_captured_at);
+    return Number.isFinite(capturedAt) && capturedAt <= now + CLOCK_SKEW_MS && now - capturedAt <= OFFLINE_REPLAY_MAX_AGE_MS;
+}
+
+/**
+ * Lines whose requested price differs from the catalog (ADR-008). Such prices are
+ * accepted only from marketplace imports, users with ORDERS_PRICE_OVERRIDE, or a POS
+ * sale captured offline (the sale already happened at that price); all are audited.
+ */
+export function resolvePriceOverrides(orderData, priceByProduct, nameByProduct, actor) {
+    const overrides = [];
+    for (const item of orderData.items) {
+        const requested = Number(item.unit_price);
+        if (item.unit_price == null || !Number.isFinite(requested) || requested < 0) continue;
+        const catalog = priceByProduct.get(item.product_id);
+        if (Math.abs(requested - catalog) < 0.005) continue;
+        overrides.push({ product_id: item.product_id, catalog_price: catalog, unit_price: requested });
+    }
+    if (overrides.length === 0) return { overrides, source: null };
+
+    const isMarketplaceImport = Boolean(orderData.external_source) && orderData.external_source !== 'pos';
+    if (isMarketplaceImport) return { overrides, source: orderData.external_source };
+    if (isOfflineReplay(orderData)) return { overrides, source: 'offline_pos' };
+    if (hasPermission(actor?.role, PERMISSIONS.ORDERS_PRICE_OVERRIDE)) return { overrides, source: 'authorized_user' };
+
+    const first = overrides[0];
+    const err = new Error(
+        `El precio de ${nameByProduct.get(first.product_id) || first.product_id} no coincide con el catálogo ` +
+        `($${first.catalog_price}). Actualizá los precios en pantalla; cambiar precios requiere autorización.`
+    );
+    err.statusCode = 409;
+    err.status = 'fail';
+    err.errorCode = 'PRICE_OVERRIDE_NOT_ALLOWED';
+    err.details = overrides;
+    throw err;
 }
 
 async function syncOnlineStock(productIds) {
@@ -96,7 +139,7 @@ export class CreateOrderUseCase {
         }
     }
 
-    async execute(orderData, userId) {
+    async execute(orderData, userId, actor = null) {
         const orderId = crypto.randomUUID();
         const counterSale = isCounterSale(orderData);
         const connection = await pool.getConnection();
@@ -135,6 +178,7 @@ export class CreateOrderUseCase {
                     throw new Error(`Producto no encontrado: ${item.product_id}`);
                 }
             }
+            const priceOverride = resolvePriceOverrides(orderData, priceByProduct, nameByProduct, actor);
 
             const computedNet = orderData.items.reduce(
                 (sum, item) => {
@@ -385,6 +429,16 @@ export class CreateOrderUseCase {
                     points_earned: pointsEarned
                 }
             }, connection);
+
+            if (priceOverride.overrides.length > 0) {
+                await auditService.log({
+                    user_id: userId,
+                    action: 'ORDER_PRICE_OVERRIDE',
+                    entity_type: 'order',
+                    entity_id: orderId,
+                    new_values: { source: priceOverride.source, role: actor?.role || null, lines: priceOverride.overrides }
+                }, connection);
+            }
 
             await connection.commit();
 

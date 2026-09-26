@@ -3,6 +3,7 @@ import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import salesService from '../../services/sales.service.js';
 import { calculateShiftExpectedBalance } from '../../services/cashShift.service.js';
+import { resolvePriceOverrides } from './CreateOrderUseCase.js';
 
 export class PickupOrderCheckoutUseCase {
     constructor(dependencies = {}) {
@@ -28,7 +29,7 @@ export class PickupOrderCheckoutUseCase {
         return err;
     }
 
-    async execute(orderId, payload = {}, userId = null) {
+    async execute(orderId, payload = {}, userId = null, actor = null) {
         const connection = await this.pool.getConnection();
 
         try {
@@ -85,6 +86,7 @@ export class PickupOrderCheckoutUseCase {
             }
 
             // 1. Process extra items if added at POS counter
+            const priceOverrides = [];
             if (Array.isArray(payload.extra_items) && payload.extra_items.length > 0) {
                 for (const item of payload.extra_items) {
                     const qty = parseInt(String(item.quantity), 10);
@@ -108,6 +110,14 @@ export class PickupOrderCheckoutUseCase {
                     }
 
                     const product = products[0];
+                    // Same price policy as a counter sale (ADR-008): catalog price unless authorized.
+                    const { overrides } = resolvePriceOverrides(
+                        { external_source: 'pos', items: [item] },
+                        new Map([[product.id, Number(product.sale_price || 0)]]),
+                        new Map([[product.id, product.name]]),
+                        actor
+                    );
+                    priceOverrides.push(...overrides);
                     const requestedPrice = Number(item.unit_price);
                     const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
                         ? requestedPrice
@@ -201,6 +211,16 @@ export class PickupOrderCheckoutUseCase {
                     delivery_notes: deliveryNotes
                 }
             }, connection);
+
+            if (priceOverrides.length > 0) {
+                await this.auditService.log({
+                    user_id: userId,
+                    action: 'ORDER_PRICE_OVERRIDE',
+                    entity_type: 'order',
+                    entity_id: orderId,
+                    new_values: { source: 'authorized_user', role: actor?.role || null, lines: priceOverrides }
+                }, connection);
+            }
 
             // 3. Issue invoice (if not already issued)
             let invoice = null;

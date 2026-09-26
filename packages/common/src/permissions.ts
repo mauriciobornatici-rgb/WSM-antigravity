@@ -9,6 +9,8 @@ export const PERMISSIONS = {
   INVENTORY_ADJUST: 'inventory.adjust',
   ORDERS_READ: 'orders.read',
   ORDERS_SELL: 'orders.sell',
+  // Sell at a price different from the catalog (always audited).
+  ORDERS_PRICE_OVERRIDE: 'orders.price_override',
   ORDERS_PICK: 'orders.pick',
   ORDERS_DISPATCH: 'orders.dispatch',
   INVOICES_MANAGE: 'invoices.manage',
@@ -44,6 +46,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<UserRole, readonly Permission[]>>
     PERMISSIONS.INVENTORY_ADJUST,
     PERMISSIONS.ORDERS_READ,
     PERMISSIONS.ORDERS_SELL,
+    PERMISSIONS.ORDERS_PRICE_OVERRIDE,
     PERMISSIONS.ORDERS_PICK,
     PERMISSIONS.ORDERS_DISPATCH,
     PERMISSIONS.INVOICES_MANAGE,

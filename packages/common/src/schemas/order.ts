@@ -31,6 +31,8 @@ export const orderPaymentLineSchema = z.object({
 
 export const createOrderSchema = z.object({
   idempotency_key: uuidSchema.optional(),
+  // When a POS sale captured offline is replayed: its prices are honoured (audited).
+  offline_captured_at: z.iso.datetime({ offset: true }).optional(),
   client_id: optionalUuidSchema,
   customer_name: z.string().nullable().optional(),
   counter_user_id: optionalUuidSchema,

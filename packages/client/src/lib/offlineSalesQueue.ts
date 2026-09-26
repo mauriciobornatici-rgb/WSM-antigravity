@@ -142,6 +142,7 @@ export async function restoreOfflineQueueFromIndexedDb(): Promise<OfflineSalePay
 export interface POSApiClient {
     createOrder: (payload: {
         idempotency_key: string;
+        offline_captured_at?: string;
         customer_name: string;
         payment_method: string;
         client_id?: string;
@@ -188,6 +189,7 @@ async function performOfflineSync(apiClient: POSApiClient): Promise<SyncResult> 
             const totalAmount = consolidatedPayments.reduce((sum, p) => sum + p.amount, 0);
             const order = await apiClient.createOrder({
                 idempotency_key: sale.idempotency_key,
+                offline_captured_at: new Date(sale.timestamp).toISOString(),
                 customer_name: sale.customer_name,
                 payment_method: sale.payment_method,
                 total_amount: totalAmount,
