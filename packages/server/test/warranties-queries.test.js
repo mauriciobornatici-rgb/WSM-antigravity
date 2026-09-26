@@ -81,11 +81,20 @@ test('createReturn supports a document without items and rolls back database err
     assert.equal(committed, true);
 });
 
-test('createReturn persists item defaults and computed totals', async (t) => {
+test('createReturn persists item defaults and computed totals, pricing from the order not the client', async (t) => {
     const calls = [];
     const connection = mockPool(t, async (sql, params) => {
         const statement = String(sql);
         calls.push({ sql: statement, params });
+        if (statement.includes('SELECT id FROM orders')) return [[{ id: 'o' }]];
+        if (statement.includes('FROM order_items WHERE order_id')) {
+            // Sold prices differ from whatever the client sends, to prove they win.
+            return [[
+                { product_id: 'p', quantity: 5, unit_price: 20 },
+                { product_id: 'p2', quantity: 5, unit_price: 999 },
+            ]];
+        }
+        if (statement.includes('FROM client_return_items ri')) return [[]];
         if (statement.includes('SELECT COALESCE(SUM')) return [[{ total: '30.50' }]];
         return [[]];
     });
@@ -101,8 +110,120 @@ test('createReturn persists item defaults and computed totals', async (t) => {
     assert.equal(committed, true);
     const itemInsert = calls.find(({ sql }) => sql.includes('INSERT INTO client_return_items'));
     assert.equal(itemInsert.params[0][0][4], 'sellable');
-    assert.equal(itemInsert.params[0][0][5], 0);
+    assert.equal(itemInsert.params[0][0][5], 20, 'unit_price for p must come from order_items');
+    assert.equal(itemInsert.params[0][1][4], 'loss');
+    assert.equal(itemInsert.params[0][1][5], 999, 'unit_price for p2 must come from order_items, ignoring the client-sent 15.25');
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE client_returns SET total_amount') && params[0] === '30.50'));
+});
+
+test('createReturn rejects with RETURN_EXCEEDS_SOLD when the requested quantity exceeds what remains to return', async (t) => {
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('SELECT id FROM orders')) return [[{ id: 'o' }]];
+        if (statement.includes('FROM order_items WHERE order_id')) {
+            return [[{ product_id: 'p', quantity: 2, unit_price: 50 }]];
+        }
+        if (statement.includes('FROM client_return_items ri')) {
+            // One unit was already returned on a prior, still-valid return.
+            return [[{ product_id: 'p', quantity: 1 }]];
+        }
+        return [[]];
+    });
+
+    await assert.rejects(
+        () => returnsService.createReturn({
+            order_id: 'o', reason: 'Talle', items: [{ product_id: 'p', quantity: 2 }],
+        }),
+        (error) => error.errorCode === 'RETURN_EXCEEDS_SOLD' && error.statusCode === 409
+    );
+});
+
+test('createReturn uses the catalog sale_price when no order_id is given', async (t) => {
+    const calls = [];
+    const connection = mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT id, sale_price FROM products')) {
+            return [[{ id: 'p', sale_price: 88.5 }]];
+        }
+        if (statement.includes('SELECT COALESCE(SUM')) return [[{ total: '88.50' }]];
+        return [[]];
+    });
+    connection.commit = async () => {};
+    await returnsService.createReturn({
+        customer_name: 'Sin pedido', reason: 'Cambio de opinion',
+        // No order_id: client-sent unit_price must still be ignored in favor of the catalog price.
+        items: [{ product_id: 'p', quantity: 1, unit_price: 1 }],
+    });
+    const itemInsert = calls.find(({ sql }) => sql.includes('INSERT INTO client_return_items'));
+    assert.equal(itemInsert.params[0][0][5], 88.5, 'unit_price must come from products.sale_price, not the client');
+});
+
+test('createReturn throws PRODUCT_NOT_FOUND when the catalog has no matching product and no order_id was given', async (t) => {
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('SELECT id, sale_price FROM products')) return [[]];
+        return [[]];
+    });
+    await assert.rejects(
+        () => returnsService.createReturn({ reason: 'x', items: [{ product_id: 'ghost', quantity: 1 }] }),
+        (error) => error.errorCode === 'PRODUCT_NOT_FOUND' && error.statusCode === 404
+    );
+});
+
+test('createReturn throws INVALID_QUANTITY for a zero, negative or non-integer quantity', async (t) => {
+    mockPool(t, async () => [[]]);
+    for (const quantity of [0, -1, 1.5, 'abc']) {
+        await assert.rejects(
+            () => returnsService.createReturn({ reason: 'x', items: [{ product_id: 'p', quantity }] }),
+            (error) => error.errorCode === 'INVALID_QUANTITY' && error.statusCode === 400,
+            `quantity ${quantity} should be rejected`
+        );
+    }
+});
+
+test('createReturn throws ORDER_NOT_FOUND when the referenced order does not exist', async (t) => {
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('SELECT id FROM orders')) return [[]];
+        return [[]];
+    });
+    await assert.rejects(
+        () => returnsService.createReturn({ order_id: 'missing-order', reason: 'x', items: [{ product_id: 'p', quantity: 1 }] }),
+        (error) => error.errorCode === 'ORDER_NOT_FOUND' && error.statusCode === 404
+    );
+});
+
+test('approveReturn omits the VAT journal line for a 0% VAT product', async (t) => {
+    const originals = { impact: returnsService._increaseInventoryForReturn, number: returnsService._nextCreditNoteNumber, journal: accountingService.createJournalEntry, audit: auditService.log };
+    let journal;
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('SELECT * FROM client_returns')) return [[{ id: 'r', status: 'pending', client_id: null }]];
+        if (statement.includes('SELECT * FROM client_return_items')) return [[
+            { product_id: 'exempt', quantity: 1, unit_price: 50, condition_status: 'sellable' },
+        ]];
+        if (statement.includes('SELECT id, vat_rate FROM products')) return [[{ id: 'exempt', vat_rate: 0 }]];
+        return [[]];
+    });
+    returnsService._increaseInventoryForReturn = async () => ({ restocked: 1, discarded: 0 });
+    returnsService._nextCreditNoteNumber = async () => 'NC-2026-0002';
+    accountingService.createJournalEntry = async (_connection, entry) => { journal = entry; };
+    auditService.log = async () => {};
+    t.after(() => {
+        returnsService._increaseInventoryForReturn = originals.impact;
+        returnsService._nextCreditNoteNumber = originals.number;
+        accountingService.createJournalEntry = originals.journal;
+        auditService.log = originals.audit;
+    });
+
+    const result = await returnsService.approveReturn('r', 'u');
+    assert.equal(result.total_amount, 50, 'no VAT is added for a 0% product');
+    assert.equal(journal.lines.length, 2, 'no 2.1.02.02 VAT line when VAT is 0');
+    assert.ok(!journal.lines.some((l) => l.account_code === '2.1.02.02'));
+    const totalDebit = journal.lines.reduce((sum, l) => sum + l.debit, 0);
+    const totalCredit = journal.lines.reduce((sum, l) => sum + l.credit, 0);
+    assert.equal(totalDebit, totalCredit, 'journal entry must balance');
 });
 
 test('createReturn rolls back and releases its connection on insert failure', async (t) => {
@@ -182,7 +303,7 @@ test('approveReturn validates missing, replayed and itemless returns', async (t)
     await assert.rejects(() => returnsService.approveReturn('r'), (e) => e.errorCode === 'RETURN_WITHOUT_ITEMS');
 });
 
-test('approveReturn creates a type A credit note, client credit and accounting entry', async (t) => {
+test('approveReturn creates a type A credit note, client credit and accounting entry with net/VAT split', async (t) => {
     const calls = [];
     mockPool(t, async (sql, params) => {
         const statement = String(sql);
@@ -193,6 +314,10 @@ test('approveReturn creates a type A credit note, client credit and accounting e
         if (statement.includes('SELECT * FROM client_return_items')) return [[
             { product_id: 'p', quantity: 2, unit_price: 50, condition_status: 'sellable' },
             { product_id: 'rejected', quantity: 1, unit_price: 999, condition_status: 'rejected' },
+        ]];
+        if (statement.includes('SELECT id, vat_rate FROM products')) return [[
+            { id: 'p', vat_rate: 21 },
+            { id: 'rejected', vat_rate: 21 },
         ]];
         if (statement.includes('SELECT billing_pos')) return [[{ billing_pos: '4' }]];
         if (statement.includes('SELECT tax_condition_id')) return [[{ tax_condition_id: 'tc_RespInscripto' }]];
@@ -222,14 +347,25 @@ test('approveReturn creates a type A credit note, client credit and accounting e
     });
 
     const result = await returnsService.approveReturn('r', 'u', '127.0.0.1');
-    assert.equal(result.total_amount, 100);
+    // net = 2 * 50 = 100 (rejected item excluded); VAT 21% = 21; gross refund = 121.
+    assert.equal(result.total_amount, 121);
     assert.equal(result.restocked_quantity, 2);
     assert.equal(result.discarded_quantity, 1);
     const creditNote = calls.find(({ sql }) => sql.includes('INSERT INTO credit_notes'));
     assert.equal(creditNote.params[3], 4);
     assert.equal(creditNote.params[4], 'A');
-    assert.ok(calls.some(({ sql, params }) => sql.includes('UPDATE clients') && params[0] === 100));
+    assert.equal(creditNote.params[7], 121, 'credit_notes.amount must be the gross total');
+    assert.ok(calls.some(({ sql, params }) => sql.includes('UPDATE clients') && params[0] === 121));
+    assert.equal(journal.lines.length, 3);
+    assert.equal(journal.lines[0].account_code, '4.1.01.01');
     assert.equal(journal.lines[0].debit, 100);
+    assert.equal(journal.lines[1].account_code, '2.1.02.02');
+    assert.equal(journal.lines[1].debit, 21);
+    assert.equal(journal.lines[2].account_code, '1.1.03.01');
+    assert.equal(journal.lines[2].credit, 121);
+    const totalDebit = journal.lines.reduce((sum, l) => sum + l.debit, 0);
+    const totalCredit = journal.lines.reduce((sum, l) => sum + l.credit, 0);
+    assert.equal(totalDebit, totalCredit, 'journal entry must balance');
     assert.equal(audited.ip_address, '127.0.0.1');
 });
 

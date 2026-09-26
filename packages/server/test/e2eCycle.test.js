@@ -63,7 +63,7 @@ test("Circuito E2E Operativo Completo: Compra -> Stock -> Venta -> Cta Cte -> Co
         if (sql.includes("SELECT * FROM invoice_items WHERE invoice_id = ?")) {
             return [[{ id: "ii-1", product_id: "prod-100", quantity: 2, unit_price: 120000 }]];
         }
-        if (sql.includes("SELECT id, sale_price, name FROM products WHERE id IN")) {
+        if (sql.includes("SELECT id, sale_price, name, vat_rate FROM products WHERE id IN")) {
             return [[{ id: "prod-100", name: "Botines Phantom", sale_price: 120000 }]];
         }
         if (sql.includes("SELECT * FROM products WHERE id = ?")) {

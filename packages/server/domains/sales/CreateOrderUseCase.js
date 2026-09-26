@@ -139,13 +139,19 @@ export class CreateOrderUseCase {
         }
     }
 
-    async execute(orderData, userId, actor = null) {
+    /**
+     * With existingConnection the order is created inside the caller's transaction
+     * (no begin/commit/release here) and the caller must run esult.syncStock() after
+     * its own commit, as createInvoice does.
+     */
+    async execute(orderData, userId, actor = null, existingConnection = null) {
         const orderId = crypto.randomUUID();
         const counterSale = isCounterSale(orderData);
-        const connection = await pool.getConnection();
+        const isExternalTx = Boolean(existingConnection);
+        const connection = existingConnection || await pool.getConnection();
 
         try {
-            await connection.beginTransaction();
+            if (!isExternalTx) await connection.beginTransaction();
 
             if (orderData.external_source && orderData.external_id) {
                 const [existingOrders] = await connection.query(
@@ -156,7 +162,7 @@ export class CreateOrderUseCase {
                     [orderData.external_source, orderData.external_id]
                 );
                 if (existingOrders.length > 0) {
-                    await connection.rollback();
+                    if (!isExternalTx) await connection.rollback();
                     return {
                         id: existingOrders[0].id,
                         total_amount: Number(existingOrders[0].total_amount || 0),
@@ -167,11 +173,13 @@ export class CreateOrderUseCase {
 
             const productIds = orderData.items.map((item) => item.product_id);
             const [products] = await connection.query(
-                'SELECT id, sale_price, name FROM products WHERE id IN (?)',
+                'SELECT id, sale_price, name, vat_rate FROM products WHERE id IN (?)',
                 [productIds]
             );
             const priceByProduct = new Map(products.map((p) => [p.id, Number(p.sale_price || 0)]));
             const nameByProduct = new Map(products.map((p) => [p.id, p.name || p.id]));
+            // VAT always comes from the catalog, like the invoice: a client-sent vat_rate is ignored.
+            const vatByProduct = new Map(products.map((p) => [p.id, p.vat_rate == null ? 21 : Number(p.vat_rate)]));
 
             for (const item of orderData.items) {
                 if (!priceByProduct.has(item.product_id)) {
@@ -197,11 +205,9 @@ export class CreateOrderUseCase {
                     const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
                         ? requestedPrice
                         : priceByProduct.get(item.product_id);
-                    const vatRate = item.vat_rate != null && Number.isFinite(Number(item.vat_rate))
-                        ? Number(item.vat_rate)
-                        : null;
+                    const vatRate = vatByProduct.get(item.product_id);
                     const lineNet = Math.round(Number(item.quantity) * unitPrice * 100) / 100;
-                    const lineVat = vatRate != null ? Math.round(lineNet * (vatRate / 100) * 100) / 100 : 0;
+                    const lineVat = Math.round(lineNet * (vatRate / 100) * 100) / 100;
                     return sum + lineNet + lineVat;
                 },
                 0
@@ -211,24 +217,9 @@ export class CreateOrderUseCase {
             let resolvedTotal = computedNet;
 
             if (orderData.external_source === 'pos') {
-                if (Number.isFinite(externalTotal) && externalTotal >= 0) {
-                    if (Math.abs(externalTotal - computedWithVat) <= 0.05) {
-                        resolvedTotal = Math.round(computedWithVat * 100) / 100;
-                    } else if (Math.abs(externalTotal - computedNet) <= 0.05) {
-                        resolvedTotal = Math.round(computedNet * 100) / 100;
-                    } else {
-                        resolvedTotal = Math.abs(computedWithVat - computedNet) > 0.01 ? computedWithVat : computedNet;
-                    }
-                } else if (Array.isArray(orderData.payments) && orderData.payments.length > 0) {
-                    const allocated = Math.round(orderData.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0) * 100) / 100;
-                    if (Math.abs(allocated - computedWithVat) <= 0.05) {
-                        resolvedTotal = Math.round(computedWithVat * 100) / 100;
-                    } else {
-                        resolvedTotal = Math.round(computedNet * 100) / 100;
-                    }
-                } else {
-                    resolvedTotal = Math.abs(computedWithVat - computedNet) > 0.01 ? computedWithVat : computedNet;
-                }
+                // Catalog prices are net (ADR-008): a POS sale always charges net + catalog VAT.
+                // The client total is not trusted; payments must add up to this amount.
+                resolvedTotal = Math.round(computedWithVat * 100) / 100;
             } else if (orderData.external_source && Number.isFinite(externalTotal) && externalTotal >= 0) {
                 resolvedTotal = externalTotal;
             } else if (Number.isFinite(externalTotal) && externalTotal >= 0) {
@@ -440,18 +431,23 @@ export class CreateOrderUseCase {
                 }, connection);
             }
 
-            await connection.commit();
-
-            if (counterSale) {
-                // Online stock follows physical stock; a sync failure must not undo the sale.
+            // Online stock follows physical stock; a sync failure must not undo the sale.
+            const syncStock = () => {
+                if (!counterSale) return;
                 setImmediate(() => {
                     this.onStockChanged([...new Set(productIds)]).catch((err) => {
                         console.error('[TiendaNube Sync] Error syncing stock after counter sale:', err);
                     });
                 });
-            }
-            return { id: orderId, total_amount: finalTotal, points_earned: pointsEarned, points_redeemed: pointsRedeemed };
+            };
+            const result = { id: orderId, total_amount: finalTotal, points_earned: pointsEarned, points_redeemed: pointsRedeemed };
+            if (isExternalTx) return { ...result, syncStock };
+
+            await connection.commit();
+            syncStock();
+            return result;
         } catch (err) {
+            if (isExternalTx) throw err;
             await connection.rollback();
             if (err?.code === 'ER_DUP_ENTRY' && orderData.external_source && orderData.external_id) {
                 const [existingOrders] = await pool.query(
@@ -471,7 +467,7 @@ export class CreateOrderUseCase {
             }
             throw err;
         } finally {
-            connection.release();
+            if (!isExternalTx) connection.release();
         }
     }
 }

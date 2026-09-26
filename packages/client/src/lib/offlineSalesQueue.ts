@@ -1,4 +1,5 @@
 import type { Invoice } from "@/types/api";
+import type { PosCheckoutInput } from "@/services/api";
 import { createClientUuid } from "@/lib/clientUuid";
 import {
     clearSalesFromIndexedDb,
@@ -140,6 +141,7 @@ export async function restoreOfflineQueueFromIndexedDb(): Promise<OfflineSalePay
 }
 
 export interface POSApiClient {
+    posCheckout?: (payload: PosCheckoutInput) => Promise<unknown>;
     createOrder: (payload: {
         idempotency_key: string;
         offline_captured_at?: string;
@@ -186,6 +188,32 @@ async function performOfflineSync(apiClient: POSApiClient): Promise<SyncResult> 
     for (const sale of queue) {
         try {
             const consolidatedPayments = consolidatePayments(sale.payments);
+
+            if (apiClient.posCheckout && sale.shift_id) {
+                // Atomic and idempotent: the server completes whatever a previous attempt
+                // left missing and moves the payments to the open shift if this one closed.
+                await apiClient.posCheckout({
+                    idempotency_key: sale.idempotency_key,
+                    shift_id: sale.shift_id,
+                    offline_captured_at: new Date(sale.timestamp).toISOString(),
+                    customer_name: sale.customer_name,
+                    ...(sale.client_id ? { client_id: sale.client_id } : {}),
+                    payment_method: sale.payment_method,
+                    payments: consolidatedPayments,
+                    items: sale.items.map((i) => ({
+                        product_id: i.product_id,
+                        quantity: i.quantity,
+                        unit_price: Number(i.sale_price),
+                    })),
+                    emit_invoice: sale.emit_invoice,
+                    invoice_type: sale.invoice_type || "B",
+                    point_of_sale: 1,
+                });
+                synced++;
+                continue;
+            }
+
+            // Legacy path for sales queued without a shift (kept for older queue entries).
             const totalAmount = consolidatedPayments.reduce((sum, p) => sum + p.amount, 0);
             const order = await apiClient.createOrder({
                 idempotency_key: sale.idempotency_key,

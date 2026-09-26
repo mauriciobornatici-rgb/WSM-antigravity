@@ -123,6 +123,7 @@ export default function POSPage() {
         try {
             setSyncingOffline(true);
             const res = await syncOfflineSales({
+                posCheckout: api.posCheckout,
                 createOrder: api.createOrder,
                 createInvoice: api.createInvoice,
                 addShiftPayment: api.addShiftPayment,
@@ -584,54 +585,27 @@ export default function POSPage() {
             setProcessing(true);
             setLastInvoice(null);
 
-            const orderPayload: Parameters<typeof api.createOrder>[0] = {
+            // One server transaction: sale + stock + invoice (if requested) + cash-shift payments.
+            // Either everything is recorded or nothing is, and a retry with the same key is safe.
+            const result = await api.posCheckout({
                 idempotency_key: checkoutIdempotencyKey,
+                shift_id: currentShift.id,
                 customer_name: selectedClient?.name || "Consumidor final",
+                ...(previousClientId ? { client_id: previousClientId } : {}),
                 payment_method: primaryPaymentMethod,
-                total_amount: grandTotal,
                 payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
                 items: previousCart.map((item) => ({
                     product_id: item.id,
                     quantity: item.quantity,
                     unit_price: Number(item.sale_price),
-                    vat_rate: item.vat_rate != null ? Number(item.vat_rate) : 21.00,
                 })),
-            };
-            if (previousClientId) orderPayload.client_id = previousClientId;
-
-            const order = await api.createOrder(orderPayload);
+                emit_invoice: previousEmitInvoice,
+                invoice_type: invoiceType,
+                point_of_sale: 1,
+            });
             orderCommitted = true;
-            setLastOrderId(order.id);
-
-            if (previousEmitInvoice) {
-                const invoicePayload: Record<string, unknown> = {
-                    order_id: order.id,
-                    customer_name: selectedClient?.name || "Consumidor final",
-                    invoice_type: invoiceType,
-                    point_of_sale: 1,
-                    payment_method: primaryPaymentMethod,
-                    payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
-                    items: previousCart.map((item) => ({
-                        product_id: item.id,
-                        description: item.name,
-                        quantity: item.quantity,
-                        unit_price: item.sale_price,
-                        vat_rate: item.vat_rate != null ? Number(item.vat_rate) : 21.00,
-                    })),
-                };
-                if (previousClientId) invoicePayload.client_id = previousClientId;
-                const invoice = await api.createInvoice(invoicePayload);
-                setLastInvoice(invoice);
-            }
-
-            for (const line of positiveSplits) {
-                await api.addShiftPayment(currentShift.id, {
-                    order_id: order.id,
-                    payment_method: line.method,
-                    amount: line.amount,
-                    type: "sale",
-                });
-            }
+            setLastOrderId(result.order_id);
+            if (result.invoice) setLastInvoice(result.invoice);
 
             toast.success("Venta registrada con éxito");
         } catch (error) {

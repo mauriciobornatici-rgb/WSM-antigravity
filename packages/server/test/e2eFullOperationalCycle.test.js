@@ -95,7 +95,7 @@ test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Fact
         }
 
         // Product queries
-        if (sql.includes("SELECT * FROM products WHERE id = ?") || sql.includes("SELECT id, sale_price, name FROM products WHERE id IN")) {
+        if (sql.includes("SELECT * FROM products WHERE id = ?") || sql.includes("SELECT id, sale_price, name, vat_rate FROM products WHERE id IN")) {
             return [[{ ...memoryState.product }]];
         }
 

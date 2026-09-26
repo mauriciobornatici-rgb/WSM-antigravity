@@ -1,6 +1,7 @@
 import salesService from '../services/sales.service.js';
 import financeService from '../services/finance.service.js';
 import pickupOrderCheckoutUseCase from '../domains/sales/PickupOrderCheckoutUseCase.js';
+import posCheckoutUseCase from '../domains/sales/PosCheckoutUseCase.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
@@ -43,6 +44,11 @@ export const createOrder = catchAsync(async (req, res) => {
         }
         : body;
     const result = await salesService.createOrder(orderData, req.user?.id, { role: req.user?.role });
+    res.json(result);
+});
+
+export const posCheckout = catchAsync(async (req, res) => {
+    const result = await posCheckoutUseCase.execute(req.body, req.user?.id, { role: req.user?.role });
     res.json(result);
 });
 

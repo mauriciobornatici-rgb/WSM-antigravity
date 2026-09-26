@@ -170,7 +170,7 @@ test('createOrder persists external source and id for imported marketplace order
             if (statement.includes('FROM orders') && statement.includes('external_source = ?')) {
                 return [[]];
             }
-            if (statement.includes('SELECT id, sale_price, name FROM products')) {
+            if (statement.includes('SELECT id, sale_price, name, vat_rate FROM products')) {
                 return [[{ id: 'prod-1', sale_price: 100, name: 'Botin Pro' }]];
             }
             if (statement.includes('INSERT INTO orders')) {
@@ -271,7 +271,7 @@ test('createOrder rejects cuenta corriente for Consumidor final without a regist
         async rollback() {},
         release() {},
         async query(sql) {
-            if (String(sql).includes('SELECT id, sale_price, name FROM products')) {
+            if (String(sql).includes('SELECT id, sale_price, name, vat_rate FROM products')) {
                 return [[{ id: 'prod-1', sale_price: 100, name: 'Botin Pro' }]];
             }
             throw new Error(`Unexpected SQL in credit-account client test: ${sql}`);

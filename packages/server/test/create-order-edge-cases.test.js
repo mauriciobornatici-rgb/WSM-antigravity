@@ -31,7 +31,7 @@ test('inventory reservation rejects malformed quantities and ignores zero-availa
 test('order creation rejects missing products and invalid split allocations', async (t) => {
     let mode = 'missing';
     mockPool(t, async (sql) => {
-        if (String(sql).includes('SELECT id, sale_price, name FROM products')) {
+        if (String(sql).includes('SELECT id, sale_price, name, vat_rate FROM products')) {
             return mode === 'missing' ? [[]] : [[{ id: 'p', sale_price: 100, name: 'Producto' }]];
         }
         return [[]];
@@ -53,7 +53,7 @@ test('credit-account orders reject missing, unknown and final-consumer clients',
     let clientMode = 'missing';
     mockPool(t, async (sql) => {
         const statement = String(sql);
-        if (statement.includes('SELECT id, sale_price, name FROM products')) return [[{ id: 'p', sale_price: 100, name: 'P' }]];
+        if (statement.includes('SELECT id, sale_price, name, vat_rate FROM products')) return [[{ id: 'p', sale_price: 100, name: 'P' }]];
         if (statement.includes('SELECT id, name FROM clients')) {
             if (clientMode === 'unknown') return [[]];
             return [[{ id: 'c', name: ' Consumidor Final ' }]];
@@ -74,7 +74,7 @@ test('order creation resolves cashier, catalog prices, mixed checks and loyalty 
     mockPool(t, async (sql, params) => {
         const statement = String(sql);
         calls.push({ sql: statement, params });
-        if (statement.includes('SELECT id, sale_price, name FROM products')) return [[{ id: 'p', sale_price: 1000, name: '' }]];
+        if (statement.includes('SELECT id, sale_price, name, vat_rate FROM products')) return [[{ id: 'p', sale_price: 1000, name: '' }]];
         if (statement.includes('SELECT id, name FROM clients')) return [[{ id: 'c', name: 'Ana' }]];
         if (statement.includes('SELECT name FROM users')) return [[{ name: 'Cajero QA' }]];
         if (statement.startsWith('SELECT id, location')) return [[{ id: 'inv', available_quantity: 5 }]];
@@ -109,7 +109,7 @@ test('duplicate external order races recover the committed remote order', async 
     const connection = mockPool(t, async (sql) => {
         const statement = String(sql);
         if (statement.includes('external_source = ?')) return [[]];
-        if (statement.includes('SELECT id, sale_price, name FROM products')) return [[{ id: 'p', sale_price: 50, name: 'P' }]];
+        if (statement.includes('SELECT id, sale_price, name, vat_rate FROM products')) return [[{ id: 'p', sale_price: 50, name: 'P' }]];
         if (statement.includes('INSERT INTO orders')) {
             const error = new Error('duplicate'); error.code = 'ER_DUP_ENTRY'; throw error;
         }
@@ -167,7 +167,7 @@ test('order creation with VAT and payments matches full gross total (POS checkou
     mockPool(t, async (sql, params) => {
         const statement = String(sql);
         calls.push({ sql: statement, params });
-        if (statement.includes('SELECT id, sale_price, name FROM products')) return [[{ id: 'p', sale_price: 1200000, name: 'Monitor' }]];
+        if (statement.includes('SELECT id, sale_price, name, vat_rate FROM products')) return [[{ id: 'p', sale_price: 1200000, name: 'Monitor' }]];
         if (statement.startsWith('SELECT id, product_id, location')) {
             return [[{ id: 'inv', product_id: 'p', location: 'A-01', quantity: 10, reserved_quantity: 0 }]];
         }
@@ -197,7 +197,7 @@ test('a POS counter sale deducts physical stock and records sale movements inste
     mockPool(t, async (sql, params) => {
         const statement = String(sql);
         calls.push({ sql: statement, params });
-        if (statement.includes('SELECT id, sale_price, name FROM products')) {
+        if (statement.includes('SELECT id, sale_price, name, vat_rate FROM products')) {
             return [[{ id: 'b', sale_price: 100, name: 'Botin' }, { id: 'a', sale_price: 50, name: 'Media' }]];
         }
         if (statement.startsWith('SELECT id, product_id, location')) {
@@ -252,7 +252,7 @@ test('a POS order with shipping keeps the reservation flow', async (t) => {
     mockPool(t, async (sql, params) => {
         const statement = String(sql);
         calls.push({ sql: statement, params });
-        if (statement.includes('SELECT id, sale_price, name FROM products')) return [[{ id: 'p', sale_price: 100, name: 'P' }]];
+        if (statement.includes('SELECT id, sale_price, name, vat_rate FROM products')) return [[{ id: 'p', sale_price: 100, name: 'P' }]];
         if (statement.startsWith('SELECT id, location')) return [[{ id: 'inv', location: 'A', available_quantity: 3 }]];
         return [[]];
     });
@@ -308,7 +308,7 @@ test('an authorized price override is audited in the same transaction as the sal
     const audits = [];
     mockPool(t, async (sql) => {
         const statement = String(sql);
-        if (statement.includes('SELECT id, sale_price, name FROM products')) return [[{ id: 'p', sale_price: 100, name: 'P' }]];
+        if (statement.includes('SELECT id, sale_price, name, vat_rate FROM products')) return [[{ id: 'p', sale_price: 100, name: 'P' }]];
         if (statement.startsWith('SELECT id, product_id, location')) return [[{ id: 'inv', product_id: 'p', location: 'A', quantity: 5, reserved_quantity: 0 }]];
         if (statement.includes('SET quantity = quantity - ?')) return [{ affectedRows: 1 }];
         return [[]];

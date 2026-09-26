@@ -57,6 +57,18 @@ export const createOrderSchema = z.object({
   ).min(1),
 });
 
+// A POS counter checkout processed atomically (sale + invoice + cash-shift payments).
+export const posCheckoutSchema = createOrderSchema
+  .omit({ shipping_method: true, shipping_address: true, estimated_delivery: true, counter_user_id: true })
+  .extend({
+    idempotency_key: uuidSchema,
+    shift_id: uuidSchema,
+    payments: z.array(orderPaymentLineSchema).min(1),
+    emit_invoice: z.boolean().optional(),
+    invoice_type: z.enum(['A', 'B', 'C', 'TK']).optional(),
+    point_of_sale: z.coerce.number().int().positive().optional(),
+  });
+
 export const orderFiltersSchema = z.object({
   client_id: optionalUuidSchema,
   status: z.enum([

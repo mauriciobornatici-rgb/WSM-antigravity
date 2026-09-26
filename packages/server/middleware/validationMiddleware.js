@@ -69,6 +69,9 @@ export const zodSchemas = {
     order: z.object({
         body: commonSchemas.createOrderSchema
     }),
+    posCheckout: z.object({
+        body: commonSchemas.posCheckoutSchema
+    }),
     orderFilters: z.object({
         query: commonSchemas.orderFiltersSchema.optional()
     }),

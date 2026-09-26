@@ -253,6 +253,29 @@ type ProductUpsertInput =
         status?: "active" | "inactive";
     };
 
+export type PosCheckoutInput = {
+    idempotency_key: string;
+    shift_id: string;
+    offline_captured_at?: string;
+    customer_name?: string;
+    client_id?: string;
+    payment_method?: string;
+    payments: Array<{ method: string; amount: number }>;
+    items: Array<{ product_id: string; quantity: number; unit_price?: number }>;
+    emit_invoice?: boolean;
+    invoice_type?: string;
+    point_of_sale?: number;
+};
+
+export type PosCheckoutResult = {
+    order_id: string;
+    total_amount: number;
+    invoice: Invoice | null;
+    shift_id: string;
+    expected_balance: number;
+    idempotent_replay: boolean;
+};
+
 type OrderCreateInput = {
     idempotency_key?: string;
     offline_captured_at?: string;
@@ -443,6 +466,10 @@ export const api = {
 
     createOrder: (data: OrderCreateInput) =>
         httpClient.post<{ id: string; total_amount: number }>("/api/orders", data),
+
+    // Counter sale in one server transaction: sale + stock + optional invoice + cash-shift payments.
+    posCheckout: (data: PosCheckoutInput) =>
+        httpClient.post<PosCheckoutResult>("/api/pos/checkout", data),
 
     updateOrderStatus: (id: string, status: string) =>
         httpClient.put<Order>(`/api/orders/${id}/status`, { status }),

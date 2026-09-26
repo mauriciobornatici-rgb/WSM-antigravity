@@ -14,6 +14,7 @@ const canInvoice = authorizePermission(PERMISSIONS.INVOICES_MANAGE);
 // Orders
 router.get('/orders', canReadOrders, validateZod(zodSchemas.orderFilters), salesController.getOrders);
 router.post('/orders', canSell, validateZod(zodSchemas.order), salesController.createOrder);
+router.post('/pos/checkout', canSell, validateZod(zodSchemas.posCheckout), salesController.posCheckout);
 router.put('/orders/:id/status', canSell, validate(schemas.orderStatus), salesController.updateOrderStatus);
 router.put('/orders/:id/dispatch', canDispatch, validate(schemas.orderDispatch), salesController.dispatchOrder);
 router.put('/orders/:id/deliver', canDispatch, validate(schemas.orderDeliver), salesController.deliverOrder);
