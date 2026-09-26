@@ -27,7 +27,7 @@ v2.1 por pedido del usuario). Decisiones de negocio en ADR-008 (precios de catá
 
 ## Próximos pasos
 
-1. Procesar la re-auditoría; commit final de registro (STATE.md).
+1. Usuario: revisar y hacer push de `codex/hardening-100`; correr los runbooks en producción.
 2. I8: migración 045 (CHECK de inventario) — solo después de que el usuario corra la reparación en producción (AP2). Runbooks: `docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`.
 3. Fase H2 (numeración ARCA, recuperación de CAE y de NC en `authorizing`), ESLint del servidor, E2E de checkout.
 
