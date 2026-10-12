@@ -24,6 +24,23 @@ export class GoodsReceptionService {
                 throw err;
             }
 
+            // Lock the order before its items (same order as createReception) and refuse
+            // to bring stock in against a cancelled order (ADR-012).
+            let currentOrderStatus = null;
+            if (reception.purchase_order_id) {
+                const [orders] = await connection.query(
+                    'SELECT id, status FROM purchase_orders WHERE id = ? FOR UPDATE',
+                    [reception.purchase_order_id]
+                );
+                currentOrderStatus = orders[0]?.status ?? null;
+                if (currentOrderStatus === 'cancelled') {
+                    const err = new Error('La orden de compra está anulada; la recepción no puede aprobarse');
+                    err.errorCode = 'RECEPTION_PURCHASE_ORDER_CANCELLED';
+                    err.statusCode = 409;
+                    throw err;
+                }
+            }
+
             const [items] = await connection.query('SELECT * FROM reception_items WHERE reception_id = ?', [receptionId]);
             if (items.length === 0) {
                 const err = new Error('Reception has no items');
@@ -169,11 +186,15 @@ export class GoodsReceptionService {
                 let status = 'sent';
                 if (received > 0 && received < ordered) status = 'partial';
                 if (ordered > 0 && received >= ordered) status = 'received';
+                // An order closed by hand as received stays received (orders only move forward).
+                if (currentOrderStatus === 'received') status = 'received';
 
-                await connection.query(
-                    'UPDATE purchase_orders SET status = ? WHERE id = ?',
-                    [status, reception.purchase_order_id]
-                );
+                if (status !== currentOrderStatus) {
+                    await connection.query(
+                        'UPDATE purchase_orders SET status = ? WHERE id = ?',
+                        [status, reception.purchase_order_id]
+                    );
+                }
             }
 
             // Accounting entry is posted once, from the supplier invoice

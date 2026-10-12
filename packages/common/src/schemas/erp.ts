@@ -485,6 +485,8 @@ export const creditNotesFiltersSchema = z.object({
 });
 
 export const creditNoteCreateSchema = z.object({
+  // One key per issuing attempt: a retry with the same key returns the note already issued.
+  idempotency_key: uuidSchema.optional(),
   client_id: uuidSchema,
   amount: z.coerce.number().positive(),
   reason: z.string().nullable().optional(),

@@ -80,6 +80,14 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-012 — Reglas de negocio de la revisión del refactor (usuario, 2026-10-12)
+- **Estados de orden de compra (cambio manual):** solo hacia adelante: borrador → enviada → parcial → recibida; cancelar solo antes de recibir algo (borrador o enviada). `recibida` y `cancelada` son finales. Otra transición → 409.
+- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 046.
+- **Aplicación (coordinador, tras la revisión del guardián):**
+  - "Recibir algo" incluye la mercadería en control de calidad: una OC con recepciones `pending_qc` o cantidades recibidas no se puede anular (409 `purchase_order_has_receptions`). La UI oculta "Anular orden" en ese caso.
+  - Aprobar una recepción bloquea la OC antes que sus ítems. Contra una OC anulada responde 409 (`purchase_order_cancelled`), y nunca hace retroceder una OC `received`.
+  - Una clave de NC reusada con otro cliente, monto o referencia se rechaza con 409 (`idempotency_key_reused`, informa el número ya emitido) en vez de devolverse como replay. El formulario rota la clave en ese caso y avisa cuando la respuesta es un replay.
+
 ### ADR-011 — Cierre de decisiones abiertas (usuario, 2026-10-12)
 - **Excepción offline declarada por el cliente:** riesgo aceptado. No hay forma técnica de probar que una terminal estuvo sin red; el control es la revisión obligatoria en "Excepciones POS", con aviso visible al gerente cuando hay pendientes.
 - **Devolución a proveedor:** espeja la factura de compra: Proveedores (bruto) / Mercadería (neto) + IVA crédito fiscal; el saldo del proveedor puede quedar a favor (sin recorte a 0).

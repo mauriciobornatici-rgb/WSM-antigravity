@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
+import { businessError } from '../utils/businessError.js';
 import auditService from './audit.service.js';
 import afipService from './afip.service.js';
 import accountingService from './accounting.service.js';
@@ -641,6 +642,21 @@ class CreditNotesService extends BaseService {
     }
 
     async createManualCreditNote(body, userId, ipAddress) {
+        // Simultaneous submissions with the same key collide on the unique index (or
+        // deadlock on its gap lock): the loser rolls back and retries, and then finds the
+        // winner's committed note, which it returns as a replay.
+        const maxAttempts = body?.idempotency_key ? 3 : 1;
+        for (let attempt = 1; ; attempt += 1) {
+            try {
+                return await this._issueManualCreditNote(body, userId, ipAddress);
+            } catch (err) {
+                const collided = err?.code === 'ER_DUP_ENTRY' || err?.code === 'ER_LOCK_DEADLOCK';
+                if (!collided || attempt >= maxAttempts) throw err;
+            }
+        }
+    }
+
+    async _issueManualCreditNote(body, userId, ipAddress) {
         const id = crypto.randomUUID();
         const allowedReferenceTypes = new Set(['return', 'warranty', 'discount', 'other']);
         const requestedReferenceType = body.reference_type || 'other';
@@ -648,10 +664,36 @@ class CreditNotesService extends BaseService {
             ? 'other'
             : (allowedReferenceTypes.has(requestedReferenceType) ? requestedReferenceType : 'other');
         const notes = body.notes || body.reason || null;
+        const idempotencyKey = body.idempotency_key || null;
 
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
+
+            if (idempotencyKey) {
+                const [issued] = await connection.query(
+                    'SELECT * FROM credit_notes WHERE idempotency_key = ? FOR UPDATE',
+                    [idempotencyKey]
+                );
+                if (issued.length > 0) {
+                    const previous = issued[0];
+                    const samePayload = previous.client_id === body.client_id
+                        && Math.round(Number(previous.amount || 0) * 100) === Math.round(Number(body.amount || 0) * 100)
+                        && previous.reference_type === referenceType
+                        && (previous.reference_id ?? null) === (body.reference_id || null);
+                    if (!samePayload) {
+                        // The key belongs to a different note: answering it as a replay would
+                        // report a note that was never issued.
+                        throw businessError(409, {
+                            error: 'idempotency_key_reused',
+                            message: `Este intento ya emitió la nota ${previous.number}. Revisá el listado antes de emitir otra.`,
+                            credit_note_number: previous.number
+                        });
+                    }
+                    await connection.commit();
+                    return { ...creditNoteResult(previous), idempotent_replay: true };
+                }
+            }
 
             const year = new Date().getFullYear();
             const prefix = `NC-${year}-`;
@@ -667,8 +709,8 @@ class CreditNotesService extends BaseService {
 
             await connection.query(
                 `INSERT INTO credit_notes (
-                id, number, client_id, customer_name, reference_type, reference_id, amount, status, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', ?)`,
+                id, number, client_id, customer_name, reference_type, reference_id, amount, status, notes, idempotency_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?)`,
                 [
                     id,
                     number,
@@ -677,7 +719,8 @@ class CreditNotesService extends BaseService {
                     referenceType,
                     body.reference_id || null,
                     Number(body.amount || 0),
-                    notes
+                    notes,
+                    idempotencyKey
                 ]
             );
 
@@ -713,6 +756,20 @@ class CreditNotesService extends BaseService {
             connection.release();
         }
     }
+}
+
+function creditNoteResult(row) {
+    return {
+        id: row.id,
+        number: row.number,
+        client_id: row.client_id,
+        customer_name: row.customer_name ?? null,
+        reference_type: row.reference_type,
+        reference_id: row.reference_id ?? null,
+        amount: Number(row.amount || 0),
+        notes: row.notes ?? null,
+        status: row.status,
+    };
 }
 
 export const warrantiesService = new WarrantiesService();

@@ -1,7 +1,15 @@
 # Estado de ejecución — WSM SportsERP
 
-Última revisión: 2026-09-26.
+Última revisión: 2026-10-12.
 Continuidad actual: [.agents/context/TASKS.md](../../.agents/context/TASKS.md).
+
+## Hito: gates completos y refactor del servidor (2026-10-12)
+
+PR #1 (`codex/hardening-100`) con CI verde: npm audit 0, devolución a proveedor que espeja
+la compra (ADR-011), cobertura backend 99 / 91 / 99 % (gate 90 % en CI), ESLint del
+servidor, E2E de checkout POS. PR #2 (`codex/sql-out-of-controllers`): SQL fuera de los
+controladores (125 → 0), errores de negocio unificados, OC solo avanza y NC manual
+idempotente (ADR-012, migración 045). Evidencia: validate (810 + 69), 52 tests contra MySQL real.
 
 ## Hito: endurecimiento con capa Claude (2026-09-25/26)
 
@@ -12,7 +20,7 @@ declarando ~17 % menos de lo cobrado, compras asentadas dos veces, precio e IVA 
 del cliente, checkout POS no atómico. Decisiones del usuario: ADR-008 y ADR-010.
 Evidencia: `validate` verde, 476 unitarios, 40 tests contra MySQL real (`qa:integration`).
 Pendiente del usuario en producción: runbooks de reparación de stock y de asientos
-duplicados, rotar la contraseña admin si se usó `Password123!`, luego migración 045.
+duplicados, rotar la contraseña admin si se usó `Password123!`, luego migración 046.
 Detalle: [AUDIT](../../.agents/context/AUDIT.md), [plan Ola B](PLAN_OLA_B_INTEGRIDAD_2026-09-25.md).
 
 ## Hito: adaptación de Base Codex y correcciones de QA

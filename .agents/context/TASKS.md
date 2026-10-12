@@ -38,7 +38,7 @@ v2.1 por pedido del usuario). Decisiones de negocio en ADR-008 (precios de catá
 - [x] Descartados con evidencia: NC por $0 (Zod exige `amount` positivo); tipo de movimiento de caja (Zod restringe a income/expense).
 - Evidencia: validate 0 (791 + 69), coverage 0, qa:integration 44/44, RBAC 17/17.
 
-## Próximos pasos
+## Lint y CI (hecho)
 
 - [x] ESLint del servidor (`packages/server/eslint.config.js`): 29 problemas → 0; en `npm run lint`, `validate` y CI. Ningún hallazgo era bug (imports/variables sobrantes).
 
@@ -52,18 +52,22 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - [x] Revisión independiente (opus): seguridad sin hallazgos explotables; integridad sin regresiones (comparó todos los literales SQL antes/después).
 - [x] Endurecimientos aplicados: clase `BusinessError` (solo 4xx propios se responden; nunca cuerpos de librerías), `headersSent`, rollback único e incondicional en `user.service`, Tiendanube con `this.db`; NC manual audita dentro de la transacción; el GET del turno no pisa el saldo de un turno ya cerrado. 5 tests nuevos.
 - [x] Evidencia: validate 0 (796 + 69), coverage 99,26/91,78/99,00, qa:integration 44/44, RBAC OK.
-- [ ] PR #2 (base `codex/hardening-100`; re-apuntar a `main` tras el merge del #1).
+- [x] PR #2 abierto (base `codex/hardening-100`; re-apuntar a `main` tras el merge del #1).
+- [x] ADR-012 (decisión del usuario): OC solo avanza (`received`/`cancelled` finales, cancelar solo desde `draft`/`sent`; transición con `FOR UPDATE` y 409 `invalid_transition`); NC manual con `idempotency_key` (migración 045, aplicada solo en QA; replay devuelve la NC existente; reintento único ante duplicado/deadlock). Guardián (AUD-003): 5 hallazgos verificados y corregidos (recepción contra OC anulada o recibida; clave de NC reusada → 409; reintentos acotados; no-op sin auditoría). Evidencia: validate 0 (810 + 69), coverage 99,27/91,81/99,01, qa:integration 52/52 ×3, RBAC OK.
 
-Pendiente de decisión del usuario (riesgos previos, no regresiones): ¿una OC `received`/`cancelled` puede volver a `draft`/`sent`? (hoy sí); ¿la NC manual necesita clave de idempotencia? Bajos anotados: borrado de proveedor sin lock contra factura concurrente; renombre de ubicación no atómico; 404 de cliente sin `message`.
+Bajos anotados (riesgos previos, no regresiones): borrado de proveedor sin lock contra factura concurrente; renombre de ubicación no atómico; 404 de cliente sin `message`; carrera en el control de `tax_id` duplicado de proveedores.
 
-1. Abrir PR #2 y consultar las dos decisiones de negocio.
-3. Usuario: correr los runbooks en producción tras el merge.
-2. I8: migración 045 (CHECK de inventario) — solo después de que el usuario corra la reparación en producción (AP2). Runbooks: `docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`.
-3. Fase H2 (numeración ARCA, recuperación de CAE y de NC en `authorizing`), ESLint del servidor, E2E de checkout.
+## Próximos pasos
+
+1. Usuario: revisar y mergear PR #1; después re-apuntar PR #2 a `main`.
+2. Usuario: correr en producción los runbooks (`docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`) y aplicar la migración 045 con el despliegue.
+3. I8: migración 046 (CHECK de inventario) — solo después de la reparación en producción (AP2).
+4. Fase H2: numeración ARCA, recuperación de CAE y de NC en `authorizing`.
+5. Riesgos bajos de arriba.
 
 ## Límites
 
 Sin mutaciones en la DB remota (`.env` apunta a producción). Migraciones nuevas solo en
-QA (`wsm_qa` 127.0.0.1:33308, `docker compose -f docker-compose.test.yml up -d`). Sin push
-ni despliegue. Flaky conocido: `health-and-correlation.test.js` bajo carga.
+QA (`wsm_qa` 127.0.0.1:33308, `docker compose -f docker-compose.test.yml up -d`). Push solo
+a las ramas de los PR; sin merge sin aprobación ni despliegue. Flaky conocido: `health-and-correlation.test.js` bajo carga.
 Verificación: `npm run validate`, `npm run qa:integration`, `node scripts/qa-runner.js coverage`.

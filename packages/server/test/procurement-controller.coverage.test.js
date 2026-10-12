@@ -336,7 +336,8 @@ test('approveReception maps domain errors to HTTP responses', async (t) => {
         ['RECEPTION_HAS_NO_ITEMS', 400, 'reception_without_items'],
         ['RECEPTION_QC_INCOMPLETE', 409, 'quality_check_incomplete'],
         ['RECEPTION_QC_INVALID', 409, 'quality_check_incomplete'],
-        ['RECEPTION_DUPLICATE_PRODUCT_ITEMS', 409, 'duplicate_reception_product']
+        ['RECEPTION_DUPLICATE_PRODUCT_ITEMS', 409, 'duplicate_reception_product'],
+        ['RECEPTION_PURCHASE_ORDER_CANCELLED', 409, 'purchase_order_cancelled']
     ];
     let current;
     stub(t, inventoryService, 'processReceptionApproval', async () => {

@@ -70,6 +70,9 @@ export const approveReception = catchAsync(async (req, res) => {
         if (err.errorCode === 'RECEPTION_DUPLICATE_PRODUCT_ITEMS') {
             return res.status(409).json({ error: 'duplicate_reception_product', message: err.message });
         }
+        if (err.errorCode === 'RECEPTION_PURCHASE_ORDER_CANCELLED') {
+            return res.status(409).json({ error: 'purchase_order_cancelled', message: err.message });
+        }
         throw err;
     }
 
