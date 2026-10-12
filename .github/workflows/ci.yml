@@ -108,7 +108,7 @@ jobs:
       - name: Install official Playwright Chromium
         run: npm -w @wsm/client exec -- playwright install --with-deps chromium
 
-      - name: Run authentication E2E
+      - name: Run E2E (authentication and POS checkout)
         run: npm -w @wsm/client run test:e2e
 
   mysql-qa:
