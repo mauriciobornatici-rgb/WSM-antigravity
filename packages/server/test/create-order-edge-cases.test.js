@@ -235,8 +235,8 @@ test('a POS counter sale deducts physical stock and records sale movements inste
     ]);
     const movements = calls.filter((call) => call.sql.includes('INSERT INTO inventory_movements'));
     assert.equal(movements.length, 3);
-    assert.ok(movements.every((call) => call.sql.includes("'sale'") && call.params.at(-1) === 'cashier-1'));
-    assert.equal(movements.reduce((sum, call) => sum + call.params[3], 0), 6);
+    assert.ok(movements.every((call) => call.params[1] === 'sale' && call.params.at(-1) === 'cashier-1'));
+    assert.equal(movements.reduce((sum, call) => sum + call.params[4], 0), 6);
 
     assert.equal(calls.some((call) => call.sql.includes('reserved_quantity = reserved_quantity +')), false);
     assert.equal(calls.some((call) => call.sql.includes('order_item_allocations')), false);

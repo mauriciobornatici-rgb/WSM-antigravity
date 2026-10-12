@@ -62,7 +62,10 @@ export class StockLedger {
      * `lockedRows` must come from lockSellableRows in the same transaction; they are
      * updated in place so several lines of the same product see the remaining stock.
      */
-    async consumeAvailable(connection, lockedRows, { productId, productName, quantity, orderId, userId, reason, allowShortage = false }) {
+    async consumeAvailable(connection, lockedRows, {
+        productId, productName, quantity, orderId, userId, reason, allowShortage = false,
+        movementType = 'sale', referenceType = 'order', unitCost = 0,
+    }) {
         const name = productName || productId;
         const requestedQty = parsePositiveQuantity(quantity, name);
         const availableQty = lockedRows.reduce((sum, row) => sum + Math.max(available(row), 0), 0);
@@ -94,8 +97,8 @@ export class StockLedger {
             await connection.query(
                 `INSERT INTO inventory_movements (
                     id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
-                ) VALUES (?, 'sale', ?, ?, ?, 0, ?, 'order', ?, ?)`,
-                [crypto.randomUUID(), productId, row.location || 'General', consume, reason, orderId, userId || null]
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [crypto.randomUUID(), movementType, productId, row.location || 'General', consume, unitCost, reason, referenceType, orderId, userId || null]
             );
             remaining -= consume;
         }

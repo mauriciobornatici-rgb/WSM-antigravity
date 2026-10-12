@@ -44,7 +44,35 @@ remera 1. Coincide con 10 − 1 − 1 − 2 = 6, 20 − 2 − 2 + 1 = 17 y 5 −
 - **D3 (media).** Una transferencia sin stock suficiente se rechazaba con un 500 genérico. Ahora
   responde 409 con el motivo (disponible, físico y reservado).
 
-## Hallazgos pendientes de decisión (no corregidos)
+## Segunda tanda: contabilidad completa (ADR-013) — corregido
+
+El usuario aprobó corregir C1–C6 y U1. Después del cambio, la simulación tiene **116 controles,
+todos OK**, y suma una conciliación del mayor contra los submayores durante la corrida:
+
+| Cuenta del mayor | Contra | Resultado |
+|---|---|---|
+| Proveedores | Saldo del proveedor | 320.300 = 320.300 |
+| Deudores | Suma de las cuentas corrientes | 57.900 = 57.900 |
+| Caja | Efectivo real del turno | 63.550 = 63.550 |
+| Tarjetas y QR a cobrar | Cobros con débito | 24.200 = 24.200 |
+| Inventario | Stock físico × costo | 265.000 = 265.000 |
+
+Revisión de `guardian-integridad` (opus). Hallazgos corregidos:
+- U1 podía entregar una segunda unidad al sacar la garantía de "resuelta" y volver a resolverla.
+- La reversión del costo usaba el costo vigente en lugar del de la venta.
+- Garantías borradas.
+- Costo del movimiento distinto del asentado en el conteo.
+- Auditoría del pago a proveedor fuera de la transacción.
+- Reintegro "a cuenta corriente".
+- NC manual duplicada sobre una devolución.
+
+Evidencia: validate (821 + 69), coverage 99,05 / 91,57 / 99,03, `qa:integration` 58/58, RBAC OK.
+
+Pendiente de decisión (ver TASKS): IVA de las NC manuales no fiscales; flujo canónico del
+pago a proveedor con efectivo del cajón; destino de la unidad defectuosa de una garantía;
+acreditación de tarjetas (1.1.02.03 → Banco).
+
+## Hallazgos de la primera corrida (estado original)
 
 La contabilidad de compras, ventas, costo, cobros, devoluciones y NC por devolución es
 correcta y está balanceada. Pero algunas operaciones **no generan asiento**, así que el

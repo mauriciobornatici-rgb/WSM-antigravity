@@ -3,6 +3,8 @@ import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
 import { businessError } from '../utils/businessError.js';
+import { ACCOUNTS } from '../utils/paymentAccounts.js';
+import stockLedger from '../domains/inventory/StockLedger.js';
 import auditService from './audit.service.js';
 import afipService from './afip.service.js';
 import accountingService from './accounting.service.js';
@@ -14,28 +16,81 @@ class WarrantiesService extends BaseService {
 
     // The status form sends `notes`; warranty_claims keeps them as resolution_notes
     // (passing `notes` through to the generic update failed every status change).
+    // A claim resolved by replacement hands the client a new unit: it leaves stock (at cost)
+    // exactly once, in the same transaction as the status change.
     async updateWarrantyStatus(id, body, userId = null, ipAddress = null) {
-        const [rows] = await pool.query('SELECT * FROM warranty_claims WHERE id = ?', [id]);
-        if (rows.length === 0) {
-            throw businessError(404, { error: 'not_found', message: 'Garantía no encontrada' });
-        }
-        const previous = rows[0];
-        const note = String(body.resolution_notes ?? body.notes ?? '').trim();
-        const changes = { status: body.status };
-        if (body.resolution_type !== undefined) changes.resolution_type = body.resolution_type;
-        if (note) changes.resolution_notes = note;
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [rows] = await connection.query('SELECT * FROM warranty_claims WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [id]);
+            if (rows.length === 0) {
+                throw businessError(404, { error: 'not_found', message: 'Garantía no encontrada' });
+            }
+            const previous = rows[0];
+            const note = String(body.resolution_notes ?? body.notes ?? '').trim();
+            const changes = { status: body.status };
+            if ('resolution_type' in body) changes.resolution_type = body.resolution_type;
+            if (note) changes.resolution_notes = note;
 
-        const result = await this.update(id, changes);
-        await auditService.log({
-            user_id: userId,
-            action: 'UPDATE_WARRANTY_STATUS',
-            entity_type: 'warranty_claim',
-            entity_id: id,
-            old_values: { status: previous.status, resolution_type: previous.resolution_type ?? null },
-            new_values: changes,
-            ip_address: ipAddress
-        });
-        return result;
+            const resolutionType = 'resolution_type' in changes ? changes.resolution_type : previous.resolution_type;
+            const replacesNow = changes.status === 'resolved' && resolutionType === 'replaced';
+            // Decided by the fact, not by the previous status: a claim moved out of
+            // "resolved" and back again must not hand out a second unit.
+            const [delivered] = await connection.query(
+                "SELECT id FROM inventory_movements WHERE reference_type = 'warranty_claim' AND reference_id = ? AND type = 'warranty_replacement' LIMIT 1",
+                [id]
+            );
+            const alreadyReplaced = delivered.length > 0;
+            let replacement = null;
+            if (replacesNow && !alreadyReplaced) {
+                if (!previous.product_id) {
+                    throw businessError(409, { error: 'warranty_without_product', message: 'La garantía no tiene producto para reemplazar.' });
+                }
+                const unitCost = (await accountingService.productUnitCosts(connection, [previous.product_id])).get(previous.product_id) || 0;
+                const locked = await stockLedger.lockSellableRows(connection, [previous.product_id]);
+                await stockLedger.consumeAvailable(connection, locked.get(previous.product_id) || [], {
+                    productId: previous.product_id,
+                    quantity: 1,
+                    orderId: id,
+                    userId,
+                    reason: 'Reemplazo por garantía',
+                    movementType: 'warranty_replacement',
+                    referenceType: 'warranty_claim',
+                    unitCost,
+                });
+                await accountingService.createJournalEntryIfAny(connection, {
+                    date: new Date(),
+                    description: 'Reemplazo de producto por garantía',
+                    reference_type: 'warranty_claim',
+                    reference_id: id,
+                    lines: [
+                        { account_code: ACCOUNTS.GENERAL_EXPENSES, debit: unitCost, credit: 0, notes: 'Costo de reemplazo en garantía' },
+                        { account_code: ACCOUNTS.INVENTORY, debit: 0, credit: unitCost, notes: 'Unidad entregada al cliente' },
+                    ],
+                });
+                replacement = { quantity: 1, unit_cost: unitCost };
+            }
+
+            const sets = Object.keys(changes).map((key) => `${key} = ?`).join(', ');
+            await connection.query(`UPDATE warranty_claims SET ${sets} WHERE id = ?`, [...Object.values(changes), id]);
+            await auditService.log({
+                user_id: userId,
+                action: 'UPDATE_WARRANTY_STATUS',
+                entity_type: 'warranty_claim',
+                entity_id: id,
+                old_values: { status: previous.status, resolution_type: previous.resolution_type ?? null },
+                new_values: { ...changes, ...(replacement ? { replacement } : {}) },
+                ip_address: ipAddress
+            }, connection);
+            const [updated] = await connection.query('SELECT * FROM warranty_claims WHERE id = ?', [id]);
+            await connection.commit();
+            return updated[0];
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
     }
 
     async getWarranties(filters = {}) {
@@ -95,18 +150,30 @@ class ReturnsService extends BaseService {
         return `${prefix}${String(nextSeq).padStart(4, '0')}`;
     }
 
-    async _increaseInventoryForReturn(connection, { returnId, item, actorUserId }) {
+    // Location a returned sellable unit goes back to: where the sale took it from.
+    async _returnLocationFor(connection, orderId, productId) {
+        if (!orderId) return 'General';
+        const [rows] = await connection.query(
+            `SELECT from_location FROM inventory_movements
+             WHERE reference_id = ? AND product_id = ? AND type = 'sale' AND from_location IS NOT NULL
+             ORDER BY quantity DESC LIMIT 1`,
+            [orderId, productId]
+        );
+        return rows[0]?.from_location || 'General';
+    }
+
+    async _increaseInventoryForReturn(connection, { returnId, item, actorUserId, orderId = null, unitCost = 0 }) {
         const quantity = Number(item.quantity || 0);
-        if (quantity <= 0) return { restocked: 0, discarded: 0 };
+        if (quantity <= 0) return { restocked: 0, discarded: 0, reentered: 0, lost: 0 };
 
         const condition = String(item.condition_status || 'sellable').toLowerCase();
-        
+
         let targetLocation = null;
         let movementType = 'damage';
         let movementReason = '';
 
         if (condition === 'sellable') {
-            targetLocation = 'General';
+            targetLocation = await this._returnLocationFor(connection, orderId, item.product_id);
             movementType = 'return';
             movementReason = 'Devolución de cliente - Reingreso a stock';
         } else if (condition === 'supplier_rma') {
@@ -152,16 +219,20 @@ class ReturnsService extends BaseService {
                 item.product_id,
                 targetLocation,
                 quantity,
-                Number(item.unit_price || 0),
+                Number(unitCost || 0),
                 movementReason,
                 returnId,
                 actorUserId || null
             ]
         );
 
+        const sellable = condition === 'sellable';
         return {
-            restocked: targetLocation === 'General' ? quantity : 0,
-            discarded: targetLocation !== 'General' ? quantity : 0
+            restocked: sellable ? quantity : 0,
+            discarded: sellable ? 0 : quantity,
+            // For the cost entry: units back in stock vs. units lost (a rejected line is not taken back).
+            reentered: targetLocation ? quantity : 0,
+            lost: !targetLocation && condition !== 'rejected' ? quantity : 0
         };
     }
 
@@ -415,14 +486,60 @@ class ReturnsService extends BaseService {
             
             let restockedTotal = 0;
             let discardedTotal = 0;
+            let reenteredCost = 0;
+            let lostCost = 0;
+            const unitCosts = await accountingService.productUnitCosts(conn, items.map((item) => item.product_id));
             for (const item of items) {
+                // The cost recorded when it was sold (the CMV was posted at that cost);
+                // today's cost only for sales recorded before movements carried it.
+                let unitCost = unitCosts.get(item.product_id) || 0;
+                if (returnRow.order_id) {
+                    const [sold] = await conn.query(
+                        `SELECT SUM(quantity * unit_cost) / NULLIF(SUM(quantity), 0) AS cost
+                         FROM inventory_movements
+                         WHERE reference_id = ? AND product_id = ? AND type = 'sale' AND unit_cost > 0`,
+                        [returnRow.order_id, item.product_id]
+                    );
+                    const soldCost = Number(sold?.[0]?.cost || 0);
+                    if (soldCost > 0) unitCost = Math.round(soldCost * 100) / 100;
+                }
                 const impact = await this._increaseInventoryForReturn(conn, {
                     returnId,
                     item,
-                    actorUserId
+                    actorUserId,
+                    orderId: returnRow.order_id || null,
+                    unitCost
                 });
                 restockedTotal += impact.restocked;
                 discardedTotal += impact.discarded;
+                reenteredCost += unitCost * (impact.reentered || 0);
+                lostCost += unitCost * (impact.lost || 0);
+            }
+
+            // The sale moved the cost to CMV; undo it for what came back. Units back in stock
+            // return to Inventory; units lost are reclassified as inventory losses. Only when
+            // the original sale posted its CMV, otherwise there is nothing to reverse.
+            if (returnRow.order_id && (reenteredCost > 0 || lostCost > 0)) {
+                const [cmvPosted] = await conn.query(
+                    `SELECT je.id FROM journal_entries je
+                     JOIN invoices i ON i.id = je.reference_id AND je.reference_type = 'invoice' AND i.deleted_at IS NULL
+                     JOIN journal_entry_lines jl ON jl.journal_entry_id = je.id AND jl.account_code = ?
+                     WHERE i.order_id = ? LIMIT 1`,
+                    [ACCOUNTS.COGS, returnRow.order_id]
+                );
+                if (cmvPosted.length > 0) {
+                    await accountingService.createJournalEntryIfAny(conn, {
+                        date: new Date(),
+                        description: 'Reversión de costo por devolución de cliente',
+                        reference_type: 'client_return',
+                        reference_id: returnId,
+                        lines: [
+                            { account_code: ACCOUNTS.INVENTORY, debit: reenteredCost, credit: 0, notes: 'Mercadería reingresada al costo' },
+                            { account_code: ACCOUNTS.INVENTORY_LOSSES, debit: lostCost, credit: 0, notes: 'Mercadería devuelta no recuperable' },
+                            { account_code: ACCOUNTS.COGS, debit: 0, credit: reenteredCost + lostCost, notes: 'Reversión de CMV' }
+                        ]
+                    });
+                }
             }
 
             let creditNoteId = null;
@@ -719,6 +836,23 @@ class CreditNotesService extends BaseService {
                 }
             }
 
+            if (referenceType === 'return' && body.reference_id) {
+                // An approved return issues its own note: a manual one on top would credit it twice.
+                const [credited] = await connection.query(
+                    `SELECT number FROM credit_notes
+                     WHERE reference_type = 'return' AND reference_id = ? AND deleted_at IS NULL
+                       AND (status IS NULL OR status <> 'cancelled')
+                     LIMIT 1`,
+                    [body.reference_id]
+                );
+                if (credited.length > 0) {
+                    throw businessError(409, {
+                        error: 'return_already_credited',
+                        message: `La devolución ya tiene su nota de crédito (${credited[0].number}).`
+                    });
+                }
+            }
+
             const year = new Date().getFullYear();
             const prefix = `NC-${year}-`;
             const [rows] = await connection.query(
@@ -759,6 +893,25 @@ class CreditNotesService extends BaseService {
                 notes,
                 status: 'issued'
             };
+
+            // A manual note lowers what the client owes like a return does: sales and output
+            // VAT go down by its net and VAT parts (amount is gross, company VAT rate).
+            const [taxRows] = await connection.query('SELECT tax_rate FROM company_settings WHERE id = 1');
+            const rawRate = taxRows[0]?.tax_rate == null ? 0.21 : Number(taxRows[0].tax_rate);
+            const rate = rawRate > 1 ? rawRate / 100 : rawRate;
+            const gross = Number(body.amount || 0);
+            const net = Math.round((gross / (1 + rate)) * 100) / 100;
+            await accountingService.createJournalEntryIfAny(connection, {
+                date: new Date(),
+                description: `Nota de crédito ${number} - ${notes || 'manual'}`,
+                reference_type: 'credit_note',
+                reference_id: id,
+                lines: [
+                    { account_code: ACCOUNTS.SALES, debit: net, credit: 0, notes: 'Bonificación / ajuste a favor del cliente' },
+                    { account_code: ACCOUNTS.VAT_DEBIT_21, debit: Math.round((gross - net) * 100) / 100, credit: 0, notes: 'Reversión de IVA Débito Fiscal' },
+                    { account_code: ACCOUNTS.RECEIVABLES, debit: 0, credit: gross, notes: 'Crédito a favor del cliente' }
+                ]
+            });
 
             // Audited inside the transaction: a credit note is never issued without its trace
             // (and a failed audit no longer leaves an issued note behind for a retry to duplicate).

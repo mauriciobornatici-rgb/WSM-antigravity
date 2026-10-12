@@ -2,6 +2,7 @@ import pool from '../config/db.js';
 import crypto from 'crypto';
 import auditService from './audit.service.js';
 import accountingService from './accounting.service.js';
+import { receiptAccountFor, disbursementAccountFor } from '../utils/paymentAccounts.js';
 
 class FinanceService {
     _buildValidationError(message, errorCode = 'VALIDATION_ERROR') {
@@ -139,10 +140,8 @@ class FinanceService {
                 );
             }
 
-            const normalizedMethod = String(payment.method).toLowerCase();
-            const cashAccount = normalizedMethod === 'check'
-                ? '1.1.02.02'
-                : (['transfer', 'bank'].includes(normalizedMethod) ? '1.1.02.01' : '1.1.01.01');
+            const cashAccount = receiptAccountFor(payment.method);
+
 
             const payAmount = this._roundMoney(payment.amount);
             await accountingService.createJournalEntry(connection, {
@@ -178,10 +177,8 @@ class FinanceService {
                 );
             }
 
-            const normalizedMethod = String(payment.method).toLowerCase();
-            const cashAccount = normalizedMethod === 'check'
-                ? '1.1.02.02'
-                : (['transfer', 'bank'].includes(normalizedMethod) ? '1.1.02.01' : '1.1.01.01');
+            const cashAccount = receiptAccountFor(payment.method);
+
             await accountingService.createJournalEntry(connection, {
                 date: new Date(),
                 description: `Cobro anticipado de venta ${orderLabel} - (${payment.method})`,
@@ -980,11 +977,8 @@ class FinanceService {
 
                     // Journal entry for bookkeeping
                     const checkSourceType = payment.check?.source_type === 'third_party' ? 'third_party' : 'own';
-                    const cashAccount = payment.method === 'check' && checkSourceType === 'third_party'
-                        ? '1.1.02.02' // Valores a depositar entregados al proveedor
-                        : (['transfer', 'bank', 'check'].includes(String(payment.method).toLowerCase())
-                            ? '1.1.02.01' // Banco / cheque propio
-                            : '1.1.01.01'); // Caja
+                    const cashAccount = disbursementAccountFor(payment.method, { thirdPartyCheck: checkSourceType === 'third_party' });
+
 
                     await accountingService.createJournalEntry(connection, {
                         date: new Date(),
@@ -1014,7 +1008,7 @@ class FinanceService {
             // Update supplier account balance
             await connection.query(
                 `UPDATE suppliers
-                 SET account_balance = GREATEST(COALESCE(account_balance, 0) - ?, 0)
+                 SET account_balance = COALESCE(account_balance, 0) - ?
                  WHERE id = ?`,
                 [totalPaid, supplierId]
             );

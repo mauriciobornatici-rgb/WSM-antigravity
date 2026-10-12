@@ -335,6 +335,7 @@ class SalesService extends BaseService {
                 );
 
                 if (allocations.length > 0) {
+                    const allocationCosts = await accountingService.productUnitCosts(connection, allocations.map((alloc) => alloc.product_id));
                     for (const alloc of allocations) {
                         const reserved = Number(alloc.reserved_quantity || 0);
                         const picked = Math.min(reserved, Math.max(Number(alloc.picked_quantity || 0), 0));
@@ -355,8 +356,8 @@ class SalesService extends BaseService {
                             await connection.query(
                                 `INSERT INTO inventory_movements (
                                     id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
-                                ) VALUES (?, 'sale', ?, ?, ?, 0, 'Order stock deduction (allocated)', 'order', ?)`,
-                                [crypto.randomUUID(), alloc.product_id, alloc.location_code || 'General', picked, orderId]
+                                ) VALUES (?, 'sale', ?, ?, ?, ?, 'Order stock deduction (allocated)', 'order', ?)`,
+                                [crypto.randomUUID(), alloc.product_id, alloc.location_code || 'General', picked, allocationCosts.get(alloc.product_id) || 0, orderId]
                             );
                         }
 
@@ -409,7 +410,8 @@ class SalesService extends BaseService {
                                 quantity: pickQty,
                                 orderId,
                                 userId,
-                                reason: 'Order stock deduction'
+                                reason: 'Order stock deduction',
+                                unitCost: (await accountingService.productUnitCosts(connection, [item.product_id])).get(item.product_id) || 0
                             });
                         }
                     }

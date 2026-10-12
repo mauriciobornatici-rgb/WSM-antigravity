@@ -41,6 +41,12 @@ const CLIENT_BALANCE_JOINS = `
         GROUP BY t.client_id
     ) pay ON pay.client_id = c.id
     LEFT JOIN (
+        SELECT client_id, COALESCE(SUM(amount), 0) AS total_refunded
+        FROM transactions
+        WHERE type = 'refund' AND client_id IS NOT NULL
+        GROUP BY client_id
+    ) ref ON ref.client_id = c.id
+    LEFT JOIN (
         SELECT credit_orders.client_id, COALESCE(SUM(credit_orders.credit_amount), 0) AS total_uninvoiced_credit
         FROM (
             SELECT o.id, o.client_id,
@@ -65,7 +71,8 @@ const CLIENT_BALANCE_SQL = `
         COALESCE(inv.total_invoiced, 0)
         + COALESCE(ord.total_uninvoiced_credit, 0)
         - COALESCE(cn.total_credit_notes, 0)
-        - COALESCE(pay.total_paid, 0),
+        - COALESCE(pay.total_paid, 0)
+        + COALESCE(ref.total_refunded, 0),
         2
     )
 `;

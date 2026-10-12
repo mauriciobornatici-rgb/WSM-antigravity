@@ -244,33 +244,45 @@ test('return inventory impact covers supplier RMA, loss, rejection and zero quan
         if (String(sql).startsWith('SELECT id FROM inventory')) return [[]];
         return [[]];
     } };
-    assert.deepEqual(await returnsService._increaseInventoryForReturn(connection, { returnId: 'r', item: { quantity: 0 } }), { restocked: 0, discarded: 0 });
+    assert.deepEqual(await returnsService._increaseInventoryForReturn(connection, { returnId: 'r', item: { quantity: 0 } }), { restocked: 0, discarded: 0, reentered: 0, lost: 0 });
     const rma = await returnsService._increaseInventoryForReturn(connection, { returnId: 'r', item: { product_id: 'p', quantity: 2, condition_status: 'supplier_rma' } });
     const loss = await returnsService._increaseInventoryForReturn(connection, { returnId: 'r', item: { product_id: 'p', quantity: 1, condition_status: 'loss' } });
     const rejected = await returnsService._increaseInventoryForReturn(connection, { returnId: 'r', item: { product_id: 'p', quantity: 1, condition_status: 'rejected' } });
-    assert.deepEqual(rma, { restocked: 0, discarded: 2 });
-    assert.equal(loss.discarded, 1);
-    assert.equal(rejected.discarded, 1);
+    // RMA units are back in a stock location (cost returns to inventory); a loss is lost;
+    // a rejected line was never taken back.
+    assert.deepEqual(rma, { restocked: 0, discarded: 2, reentered: 2, lost: 0 });
+    assert.deepEqual(loss, { restocked: 0, discarded: 1, reentered: 0, lost: 1 });
+    assert.deepEqual(rejected, { restocked: 0, discarded: 1, reentered: 0, lost: 0 });
     assert.ok(calls.some((call) => call.sql.includes('INSERT INTO inventory (')));
     assert.ok(calls.some((call) => call.params?.includes('rejected')));
 });
 
-test('sellable return inventory reuses its location and traces actor and cost', async () => {
+test('sellable return goes back to the location it was sold from, traced at cost', async () => {
     const calls = [];
     const connection = { query: async (sql, params) => {
         calls.push({ sql: String(sql), params });
-        if (String(sql).startsWith('SELECT id FROM inventory')) return [[{ id: 'inv-general' }]];
+        if (String(sql).includes('SELECT from_location FROM inventory_movements')) return [[{ from_location: 'SALON' }]];
+        if (String(sql).startsWith('SELECT id FROM inventory')) return [[{ id: 'inv-salon' }]];
         return [[]];
     } };
     const result = await returnsService._increaseInventoryForReturn(connection, {
-        returnId: 'r', actorUserId: 'u',
+        returnId: 'r', actorUserId: 'u', orderId: 'o-1', unitCost: 7,
         item: { product_id: 'p', quantity: 2, condition_status: 'SELLABLE', unit_price: 12.5 },
     });
-    assert.deepEqual(result, { restocked: 2, discarded: 0 });
-    assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE inventory') && params[1] === 'inv-general'));
+    assert.deepEqual(result, { restocked: 2, discarded: 0, reentered: 2, lost: 0 });
+    assert.ok(calls.some(({ sql, params }) => sql.startsWith('SELECT id FROM inventory') && params[1] === 'SALON'));
+    assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE inventory') && params[1] === 'inv-salon'));
     const movement = calls.find(({ sql }) => sql.includes('INSERT INTO inventory_movements'));
-    assert.equal(movement.params[5], 12.5);
+    assert.equal(movement.params[3], 'SALON');
+    assert.equal(movement.params[5], 7, 'the movement carries the unit cost, not the sale price');
     assert.equal(movement.params.at(-1), 'u');
+});
+
+test('a sellable return without its sale on record goes to General', async () => {
+    const calls = [];
+    const connection = { query: async (sql, params) => { calls.push({ sql: String(sql), params }); return [[]]; } };
+    await returnsService._increaseInventoryForReturn(connection, { returnId: 'r', item: { product_id: 'p', quantity: 1 } });
+    assert.ok(calls.some(({ sql, params }) => sql.startsWith('INSERT INTO inventory (') && params[2] === 'General'));
 });
 
 test('approveReturn rejects invalid states', async (t) => {

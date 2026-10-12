@@ -166,6 +166,14 @@ function createMockConnection(options = {}) {
                 return [{ affectedRows: 1 }];
             }
 
+            // Unit cost recorded on the sale movement (C6).
+            if (normalizedSql.startsWith('SELECT id, purchase_price, cost_price FROM products')) {
+                const ids = new Set(params[0]);
+                return [state.products.filter((product) => ids.has(product.id)).map((product) => ({
+                    id: product.id, purchase_price: product.purchase_price ?? null, cost_price: product.cost_price ?? null,
+                }))];
+            }
+
             throw new Error(`Unexpected SQL in mock: ${normalizedSql}`);
         }
     };

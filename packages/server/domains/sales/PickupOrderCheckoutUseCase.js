@@ -5,6 +5,7 @@ import salesService from '../../services/sales.service.js';
 import { calculateShiftExpectedBalance } from '../../services/cashShift.service.js';
 import { resolvePriceOverrides } from './CreateOrderUseCase.js';
 import defaultStockLedger from '../inventory/StockLedger.js';
+import accountingService from '../../services/accounting.service.js';
 
 export class PickupOrderCheckoutUseCase {
     constructor(dependencies = {}) {
@@ -94,6 +95,7 @@ export class PickupOrderCheckoutUseCase {
                 const extraItems = [...payload.extra_items]
                     .sort((a, b) => String(a.product_id).localeCompare(String(b.product_id)));
                 const lockedRows = await this.stockLedger.lockSellableRows(connection, extraItems.map((item) => item.product_id));
+                const unitCosts = await accountingService.productUnitCosts(connection, extraItems.map((item) => item.product_id));
                 for (const item of extraItems) {
                     const qty = parseInt(String(item.quantity), 10);
                     if (!Number.isFinite(qty) || qty <= 0) {
@@ -136,7 +138,8 @@ export class PickupOrderCheckoutUseCase {
                         quantity: qty,
                         orderId,
                         userId,
-                        reason: 'Mostrador POS - agregado a pedido'
+                        reason: 'Mostrador POS - agregado a pedido',
+                        unitCost: unitCosts.get(item.product_id) || 0,
                     });
 
                     // Record order item as already physically picked

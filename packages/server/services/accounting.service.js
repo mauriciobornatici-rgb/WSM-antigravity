@@ -37,6 +37,27 @@ class AccountingService {
         }));
     }
 
+    // Unit cost used for CMV (same rule as the sale's cost entry): purchase price, else cost price.
+    async productUnitCosts(connection, productIds) {
+        const ids = [...new Set((productIds || []).filter(Boolean))];
+        if (ids.length === 0) return new Map();
+        const result = await connection.query(
+            'SELECT id, purchase_price, cost_price FROM products WHERE id IN (?)',
+            [ids]
+        );
+        const rows = Array.isArray(result?.[0]) ? result[0] : [];
+        return new Map(rows.map((row) => [row.id, Number(row.purchase_price || row.cost_price || 0)]));
+    }
+
+    // Posts an entry dropping zero lines; does nothing when every line is zero.
+    async createJournalEntryIfAny(connection, entryData) {
+        const lines = (entryData.lines || [])
+            .map((line) => ({ ...line, debit: this._round(line.debit || 0), credit: this._round(line.credit || 0) }))
+            .filter((line) => line.debit > 0 || line.credit > 0);
+        if (lines.length < 2) return null;
+        return this.createJournalEntry(connection, { ...entryData, lines });
+    }
+
     async createJournalEntry(connection, entryData) {
         const { date, description, reference_type, reference_id, reversal_of_entry_id, lines } = entryData;
 

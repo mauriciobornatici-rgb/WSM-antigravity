@@ -80,9 +80,26 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-013 — Contabilidad completa de pagos, caja, ajustes y devoluciones (usuario, 2026-10-12)
+El usuario aprobó corregir lo que encontró la simulación operativa. Desde ahora toda operación que mueve dinero o stock deja asiento.
+- **Medios de pago:** un solo mapa medio de pago → cuenta (`utils/paymentAccounts.js`). Tarjeta y QR van a "Tarjetas y QR a cobrar" (1.1.02.03, migración 046), no a Caja.
+- **Asientos nuevos:**
+  - Pago a proveedor desde "Proveedores": Proveedores / Banco o Caja.
+  - NC manual: Ventas + IVA DF / Deudores.
+  - Ajuste por conteo, al costo: faltante neto Pérdidas / Inventario; sobrante a la inversa.
+  - Reintegro: Deudores / medio de pago, y además baja el saldo a favor del cliente.
+  - Egreso: Gastos / Caja. Ingreso: Caja / Otros ingresos.
+  - Devolución de cliente: revierte el CMV al costo de la venta (Inventario por lo reingresado, Pérdidas por la merma).
+- **Garantía resuelta con reemplazo:** descuenta una unidad (una sola vez, por el hecho registrado) y asienta Gastos / Inventario.
+- **Stock:**
+  - La devolución vendible vuelve a la ubicación de la venta.
+  - Los movimientos de venta guardan el costo unitario.
+  - El saldo del proveedor no se recorta a 0 (ADR-011).
+- **Rechazos (409/400):** una NC manual sobre una devolución que ya tiene su NC, y un reintegro, egreso o ingreso "a cuenta corriente".
+
 ### ADR-012 — Reglas de negocio de la revisión del refactor (usuario, 2026-10-12)
 - **Estados de orden de compra (cambio manual):** solo hacia adelante: borrador → enviada → parcial → recibida; cancelar solo antes de recibir algo (borrador o enviada). `recibida` y `cancelada` son finales. Otra transición → 409.
-- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 046.
+- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 047 (la 046 agrega cuentas contables, ADR-013).
 - **Aplicación (coordinador, tras la revisión del guardián):**
   - "Recibir algo" incluye la mercadería en control de calidad: una OC con recepciones `pending_qc` o cantidades recibidas no se puede anular (409 `purchase_order_has_receptions`). La UI oculta "Anular orden" en ese caso.
   - Aprobar una recepción bloquea la OC antes que sus ítems. Contra una OC anulada responde 409 (`purchase_order_cancelled`), y nunca hace retroceder una OC `received`.

@@ -57,11 +57,23 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 
 Bajos anotados (riesgos previos, no regresiones): borrado de proveedor sin lock contra factura concurrente; renombre de ubicación no atómico; 404 de cliente sin `message`; carrera en el control de `tax_id` duplicado de proveedores.
 
+## Simulación operativa y contabilidad completa — rama `codex/simulacion-operativa` (local, sin push)
+
+- [x] `ec8dfcd` simulación de punta a punta (`packages/server/scripts/simulation/simulacion-operativa.mjs`), D1 devolución con cliente (500), D2 estado de garantía (500), D3 transferencia sin stock (409).
+- [x] ADR-013: C1–C6, U1 y U2. La simulación da 116/116 y el mayor concilia con los submayores. El guardián encontró 7 puntos técnicos, todos corregidos. Migración 046 (cuentas) aplicada en la base local y en QA.
+- Evidencia: validate 0 (821 + 69), coverage 99,05/91,57/99,03, qa:integration 58/58 ×2, RBAC OK.
+- Decisiones abiertas para el usuario:
+  1. IVA de las NC manuales no fiscales (hoy rebajan IVA DF sin pasar por ARCA).
+  2. Flujo canónico del pago a proveedor con efectivo del cajón (hoy egreso de caja + pago en efectivo duplicaría la salida de Caja).
+  3. Unidad defectuosa de una garantía: ¿a Cuarentena? ¿Gastos generales es la cuenta correcta?
+  4. Acreditación de tarjetas (1.1.02.03 → Banco).
+  5. Prioridad de ubicación del POS (U3).
+
 ## Próximos pasos
 
 1. Usuario: revisar y mergear PR #1; después re-apuntar PR #2 a `main`.
 2. Usuario: correr en producción los runbooks (`docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`) y aplicar la migración 045 con el despliegue.
-3. I8: migración 046 (CHECK de inventario) — solo después de la reparación en producción (AP2).
+3. I8: migración 047 (CHECK de inventario) — solo después de la reparación en producción (AP2).
 4. Fase H2: numeración ARCA, recuperación de CAE y de NC en `authorizing`.
 5. Riesgos bajos de arriba.
 

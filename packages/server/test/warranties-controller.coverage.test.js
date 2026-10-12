@@ -127,30 +127,45 @@ test('updateWarrantyStatus delegates id, body, user and ip', async (t) => {
     assert.equal(typeof calls[0][3], 'string');
 });
 
+function warrantyConnection(claim) {
+    const current = claim ? { ...claim } : null;
+    return createTrackedConnection((statement, params) => {
+        if (statement.startsWith('SELECT * FROM warranty_claims')) return [current ? [{ ...current }] : []];
+        if (statement.startsWith('UPDATE warranty_claims SET')) {
+            const keys = statement.slice('UPDATE warranty_claims SET '.length, statement.indexOf(' WHERE')).split(', ').map((s) => s.split(' =')[0]);
+            keys.forEach((key, i) => { current[key] = params[i]; });
+            return [{ affectedRows: 1 }];
+        }
+        return [[]];
+    });
+}
+
 test('warranty status keeps the form notes as resolution notes and audits the change', async (t) => {
-    const previousQuery = pool.query;
-    pool.query = async () => [[{ id: 'w1', status: 'received', resolution_type: null }]];
-    t.after(() => { pool.query = previousQuery; });
-    const updates = stub(t, warrantiesService, 'update', (_id, data) => ({ id: 'w1', ...data }));
+    const tracked = warrantyConnection({ id: 'w1', status: 'received', resolution_type: null, product_id: 'p1' });
+    installPool(t, tracked);
     const audits = stub(t, auditService, 'log', () => {});
 
     const result = await warrantiesService.updateWarrantyStatus('w1', { status: 'in_progress', notes: ' Revisión técnica ' }, 'u1', '10.0.0.1');
 
     // `notes` is not a warranty_claims column: passing it through made every status change fail.
-    assert.deepEqual(updates[0][1], { status: 'in_progress', resolution_notes: 'Revisión técnica' });
+    const update = tracked.calls.find(({ statement }) => statement.startsWith('UPDATE warranty_claims'));
+    assert.deepEqual(update.params, ['in_progress', 'Revisión técnica', 'w1']);
     assert.equal(result.status, 'in_progress');
+    assert.equal(result.resolution_notes, 'Revisión técnica');
     assert.equal(audits[0][0].action, 'UPDATE_WARRANTY_STATUS');
     assert.deepEqual(audits[0][0].old_values, { status: 'received', resolution_type: null });
+    assert.equal(tracked.calls.some(({ statement }) => /^(UPDATE inventory|INSERT INTO inventory)/.test(statement)), false, 'no stock effect');
+    assert.deepEqual(tracked.counts, { begin: 1, commit: 1, rollback: 0, release: 1 });
 });
 
 test('warranty status of an unknown claim is a 404', async (t) => {
-    const previousQuery = pool.query;
-    pool.query = async () => [[]];
-    t.after(() => { pool.query = previousQuery; });
+    const tracked = warrantyConnection(null);
+    installPool(t, tracked);
     await assert.rejects(
         () => warrantiesService.updateWarrantyStatus('missing', { status: 'closed' }),
         (err) => err.statusCode === 404 && err.responseBody.error === 'not_found'
     );
+    assert.deepEqual(tracked.counts, { begin: 1, commit: 0, rollback: 1, release: 1 });
 });
 
 // ---- returns ----
@@ -231,6 +246,9 @@ function creditNoteQueryMock({ maxSeq = 4, failInsert = false } = {}) {
             if (failInsert) throw new Error('insert failed');
             return [{}];
         }
+        // C2: the manual note is posted (sales + output VAT / receivables).
+        if (statement.startsWith('SELECT tax_rate FROM company_settings')) return [[{ tax_rate: 0.21 }]];
+        if (statement.startsWith('INSERT INTO journal_entr')) return [{}];
         throw new Error(`Unexpected SQL: ${statement}`);
     };
 }

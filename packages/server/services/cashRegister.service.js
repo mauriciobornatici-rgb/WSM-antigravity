@@ -3,6 +3,31 @@ import pool from '../config/db.js';
 import auditService from './audit.service.js';
 import { calculateShiftExpectedBalance } from './cashShift.service.js';
 import { businessError } from '../utils/businessError.js';
+import accountingService from './accounting.service.js';
+import { ACCOUNTS, receiptAccountFor } from '../utils/paymentAccounts.js';
+
+// Ledger side of a non-sale drawer movement (sales are posted by their invoice payments,
+// posting them here too would count them twice).
+async function postCashMovement(connection, { type, method, amount, referenceId, description }) {
+    const money = receiptAccountFor(method || 'cash');
+    const counterpart = {
+        refund: ACCOUNTS.RECEIVABLES,       // money handed back to a client against their credit
+        expense: ACCOUNTS.GENERAL_EXPENSES,
+        income: ACCOUNTS.OTHER_INCOME,
+    }[type];
+    if (!counterpart) return;
+    const moneyIn = type === 'income';
+    await accountingService.createJournalEntryIfAny(connection, {
+        date: new Date(),
+        description,
+        reference_type: 'cash_movement',
+        reference_id: referenceId,
+        lines: [
+            { account_code: moneyIn ? money : counterpart, debit: amount, credit: 0, notes: description },
+            { account_code: moneyIn ? counterpart : money, debit: 0, credit: amount, notes: description },
+        ],
+    });
+}
 
 class CashRegisterService {
     async listCashRegisters() {
@@ -213,11 +238,36 @@ class CashRegisterService {
                 }
             }
 
+            if ((type || 'sale') !== 'sale' && paymentMethod === 'credit_account') {
+                // A refund, expense or income moves real money: "current account" is not a drawer method.
+                throw businessError(400, { error: 'invalid_payment_method', message: 'Un reintegro, egreso o ingreso de caja no puede ser a cuenta corriente.' });
+            }
+
             const paymentId = crypto.randomUUID();
             await connection.query(`
             INSERT INTO shift_payments (id, shift_id, order_id, payment_method, amount, type)
             VALUES (?, ?, ?, ?, ?, ?)
         `, [paymentId, shiftId, orderId || null, paymentMethod || 'cash', amount || 0, type || 'sale']);
+            if (type === 'refund') {
+                // A refund pays back the credit a client holds: it belongs in their account.
+                let clientId = null;
+                if (orderId) {
+                    const [orders] = await connection.query('SELECT client_id FROM orders WHERE id = ?', [orderId]);
+                    clientId = orders[0]?.client_id || null;
+                }
+                await connection.query(
+                    `INSERT INTO transactions (id, type, amount, description, payment_method, reference_id, client_id)
+                     VALUES (?, 'refund', ?, ?, ?, ?, ?)`,
+                    [crypto.randomUUID(), Number(amount || 0), 'Reintegro a cliente', paymentMethod || 'cash', paymentId, clientId]
+                );
+            }
+            await postCashMovement(connection, {
+                type: type || 'sale',
+                method: paymentMethod || 'cash',
+                amount: Number(amount || 0),
+                referenceId: paymentId,
+                description: `Caja: ${type === 'refund' ? 'reintegro a cliente' : type === 'expense' ? 'egreso' : 'ingreso'}${orderId ? ` (pedido ${orderId.slice(0, 8)})` : ''}`,
+            });
 
             const summary = await calculateShiftExpectedBalance(connection, shiftId);
             await connection.query(
@@ -285,6 +335,13 @@ class CashRegisterService {
                 `${type === 'income' ? 'Ingreso' : 'Egreso'} de caja: ${reason}${notes ? ` (${notes})` : ''}`,
                 paymentId
             ]);
+            await postCashMovement(connection, {
+                type: paymentType,
+                method: 'cash',
+                amount: Number(amount),
+                referenceId: paymentId,
+                description: `${paymentType === 'income' ? 'Ingreso' : 'Egreso'} de caja: ${reason}`,
+            });
 
             const summary = await calculateShiftExpectedBalance(connection, shiftId);
             await connection.query(

@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import pool from '../config/db.js';
 import auditService from './audit.service.js';
+import accountingService from './accounting.service.js';
+import { ACCOUNTS } from '../utils/paymentAccounts.js';
 
 const ACTIVE_STATUS = 'in_progress';
 const FINAL_STATUSES = new Set(['completed', 'adjusted']);
@@ -492,9 +494,13 @@ class StockAuditService {
             }
 
             let adjustedItems = 0;
+            // Net value of the variances at the CMV unit cost: a shortage is a loss, a surplus recovers it.
+            let varianceValue = 0;
+            const unitCosts = await accountingService.productUnitCosts(connection, items.map((item) => item.product_id));
             for (const item of items) {
                 const variance = asNumber(item.variance);
                 if (variance === 0) continue;
+                varianceValue += variance * (unitCosts.get(item.product_id) || 0);
                 const countedQuantity = asNumber(item.counted_quantity);
                 const inventory = lockedInventory.get(item.product_id);
                 if (inventory) {
@@ -514,11 +520,25 @@ class StockAuditService {
                     crypto.randomUUID(), item.product_id,
                     variance < 0 ? session.location_code : null,
                     variance > 0 ? session.location_code : null,
-                    Math.abs(variance), asNumber(item.purchase_price),
+                    Math.abs(variance), unitCosts.get(item.product_id) || 0,
                     `Ajuste por auditoría ${session.audit_number}`, id, userId || null,
                 ]);
                 adjustedItems += 1;
             }
+            const shortage = varianceValue < 0 ? -varianceValue : 0;
+            const surplus = varianceValue > 0 ? varianceValue : 0;
+            await accountingService.createJournalEntryIfAny(connection, {
+                date: new Date(),
+                description: `Ajuste de inventario por conteo ${session.audit_number}`,
+                reference_type: 'stock_audit',
+                reference_id: id,
+                lines: [
+                    { account_code: ACCOUNTS.INVENTORY_LOSSES, debit: shortage, credit: 0, notes: 'Faltante de inventario' },
+                    // Only one of shortage/surplus is non-zero (the variance is netted).
+                    { account_code: ACCOUNTS.INVENTORY, debit: surplus, credit: shortage, notes: 'Ajuste al stock contado' },
+                    { account_code: ACCOUNTS.INVENTORY_LOSSES, debit: 0, credit: surplus, notes: 'Sobrante de inventario' },
+                ],
+            });
             await connection.query(
                 "UPDATE stock_audit_sessions SET status = 'adjusted', adjusted_by = ?, adjusted_at = NOW() WHERE id = ?",
                 [userId || null, id]

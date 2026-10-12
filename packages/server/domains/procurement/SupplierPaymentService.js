@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
+import accountingService from '../../services/accounting.service.js';
+import { ACCOUNTS, disbursementAccountFor } from '../../utils/paymentAccounts.js';
 
 export class SupplierPaymentService {
     async getSupplierPayments(supplierId = null) {
@@ -46,6 +48,7 @@ export class SupplierPaymentService {
                 if (amount <= 0) continue;
 
                 const id = crypto.randomUUID();
+                const method = payment.payment_method || 'Efectivo';
                 createdIds.push(id);
                 total += amount;
 
@@ -57,10 +60,23 @@ export class SupplierPaymentService {
                     supplier_id,
                     amount,
                     payment_date || new Date().toISOString().slice(0, 10),
-                    payment.payment_method || 'Efectivo',
+                    method,
                     payment.reference_number || null,
                     notes || null
                 ]);
+
+                // Same posting as the invoice-by-invoice payment: the supplier debt goes down
+                // and so does the bank or cash account it was paid from.
+                await accountingService.createJournalEntry(connection, {
+                    date: new Date(),
+                    description: `Pago a proveedor (${method})`,
+                    reference_type: 'supplier_payment',
+                    reference_id: id,
+                    lines: [
+                        { account_code: ACCOUNTS.SUPPLIERS, debit: amount, credit: 0, notes: 'Cancelación deuda proveedor' },
+                        { account_code: disbursementAccountFor(method), debit: 0, credit: amount, notes: payment.reference_number || 'Pago a proveedor' }
+                    ]
+                });
             }
 
             if (total <= 0) {
@@ -71,7 +87,7 @@ export class SupplierPaymentService {
 
             await connection.query(`
                 UPDATE suppliers
-                SET account_balance = GREATEST(COALESCE(account_balance, 0) - ?, 0)
+                SET account_balance = COALESCE(account_balance, 0) - ?
                 WHERE id = ?
             `, [total, supplier_id]);
 
@@ -86,8 +102,8 @@ export class SupplierPaymentService {
                 supplier_id
             ]);
 
-            await connection.commit();
-
+            // Audited inside the transaction: a failing audit no longer leaves a committed
+            // payment behind for a retry to post twice.
             await auditService.log({
                 user_id: userId || null,
                 action: 'CREATE_SUPPLIER_PAYMENT',
@@ -101,7 +117,8 @@ export class SupplierPaymentService {
                     total
                 },
                 ip_address: ipAddress
-            });
+            }, connection);
+            await connection.commit();
 
             return { success: true, ids: createdIds, total };
         } catch (err) {

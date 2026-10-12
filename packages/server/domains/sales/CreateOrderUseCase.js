@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import defaultStockLedger from '../inventory/StockLedger.js';
+import accountingService from '../../services/accounting.service.js';
 import { hasPermission, PERMISSIONS } from '@wsm/common';
 
 // A POS checkout without shipping is a counter sale: the customer leaves with the
@@ -335,6 +336,9 @@ export class CreateOrderUseCase {
             const lockedRows = counterSale
                 ? await this.stockLedger.lockSellableRows(connection, productIds)
                 : null;
+            const unitCosts = counterSale
+                ? await accountingService.productUnitCosts(connection, productIds)
+                : new Map();
             const itemsInLockOrder = [...orderData.items].sort((a, b) => String(a.product_id).localeCompare(String(b.product_id)));
 
             for (const item of itemsInLockOrder) {
@@ -356,6 +360,8 @@ export class CreateOrderUseCase {
                         orderId,
                         userId,
                         reason: 'Venta mostrador POS',
+                        // Cost at the moment of sale: a later return reverses CMV at this cost.
+                        unitCost: unitCosts.get(item.product_id) || 0,
                         // An offline sale already happened: record it even without stock (ADR-010).
                         allowShortage: offlineReplay
                     });

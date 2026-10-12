@@ -93,6 +93,13 @@ async function reconcileMovements(productIds) {
 }
 const names = {};
 
+// Saldo deudor (debe − haber) de una cuenta del mayor.
+async function ledger(code) {
+    const [row] = await q('SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) AS bal FROM journal_entry_lines WHERE account_code = ?', [code]);
+    return Number(row.bal);
+}
+const LEDGER = { cash: '1.1.01.01', cards: '1.1.02.03', receivables: '1.1.03.01', inventory: '1.1.04.01', suppliers: '2.1.01.01' };
+
 // ---------- simulación ----------
 async function main() {
     db = await mysql.createConnection(DB);
@@ -100,6 +107,10 @@ async function main() {
     console.log(`Simulación ${RUN} contra ${API}`);
 
     const ctx = {};
+    // Foto del mayor al inicio: la conciliación compara variaciones de esta corrida.
+    ctx.ledger0 = {};
+    for (const [k, code] of Object.entries(LEDGER)) ctx.ledger0[k] = await ledger(code);
+    const ledgerDelta = async (k) => money((await ledger(LEDGER[k])) - ctx.ledger0[k]);
 
     // 1. Maestros
     await step('1. Alta de proveedor, clientes, productos y ubicaciones', async () => {
@@ -384,9 +395,12 @@ async function main() {
     });
 
     await step('13. Reintegro en efectivo y NC manual idempotente', async () => {
-        await call('POST', `/api/cash-shifts/${ctx.shift.id}/payments`, { amount: 12100, payment_method: 'cash', type: 'refund' });
+        const before = await clientBalance(ctx.client2.id);
+        check('Cliente mostrador queda con 24.200 a favor tras la devolución', before, -24200);
+        await call('POST', `/api/cash-shifts/${ctx.shift.id}/payments`, { order_id: ctx.posOrderId, amount: 12100, payment_method: 'cash', type: 'refund' });
         ctx.cashExpected -= 12100;
         check('Caja baja por el reintegro', await shiftExpected(), ctx.cashExpected);
+        check('El reintegro en efectivo reduce el saldo a favor del cliente (−12.100)', await clientBalance(ctx.client2.id), -12100);
         await call('POST', '/api/cash-transactions', { register_id: ctx.register.id, type: 'expense', amount: 3000, reason: 'Flete local' });
         ctx.cashExpected -= 3000;
         check('Caja baja por gasto', await shiftExpected(), ctx.cashExpected);
@@ -476,6 +490,17 @@ async function main() {
         results.push({ type: 'info', name: 'Asientos de la simulación', detail: simEntries });
         console.log('  info asientos:', JSON.stringify(simEntries));
         await reconcileMovements(ctx.pids || []);
+
+        // Conciliación mayor ↔ submayores (variación durante esta corrida)
+        check('Mayor Proveedores = saldo del proveedor', -(await ledgerDelta('suppliers')), await supplierBalance());
+        const clientsSum = (await clientBalance(ctx.client.id)) + (await clientBalance(ctx.client2.id));
+        check('Mayor Deudores = suma de cuentas corrientes de clientes', await ledgerDelta('receivables'), money(clientsSum));
+        check('Mayor Caja = movimiento real de efectivo del turno', await ledgerDelta('cash'), money(ctx.cashExpected - 20000));
+        check('Mayor Tarjetas y QR a cobrar = cobros con débito (24.200)', await ledgerDelta('cards'), 24200);
+        const [valued] = await q(
+            `SELECT COALESCE(SUM(i.quantity * COALESCE(NULLIF(p.purchase_price, 0), p.cost_price, 0)), 0) AS v
+             FROM inventory i JOIN products p ON p.id = i.product_id WHERE i.product_id IN (?)`, [ctx.pids]);
+        check('Mayor Inventario = stock físico valuado al costo', await ledgerDelta('inventory'), money(valued.v));
         const neg = await q('SELECT COUNT(*) n FROM inventory WHERE quantity < 0 OR reserved_quantity < 0 OR reserved_quantity > quantity');
         check('Inventario global sin negativos ni sobre-reservas', Number(neg[0].n), 0);
     });
