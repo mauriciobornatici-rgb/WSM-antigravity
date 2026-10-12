@@ -1,4 +1,5 @@
 import type { Order } from "@/types";
+import { PrintPortal } from "@/components/common/PrintPortal";
 
 type PrintableOrderAreaProps = {
     order: Order | null;
@@ -8,7 +9,8 @@ export function PrintableOrderArea({ order }: PrintableOrderAreaProps) {
     if (!order) return null;
 
     return (
-        <div id="printable-order" className="fixed inset-0 z-[9999] m-0 hidden bg-white p-8 text-black print:block font-sans">
+        <PrintPortal>
+            <div id="printable-order" className="m-0 hidden bg-white p-8 text-black print:block font-sans w-full max-w-[210mm] mx-auto">
             {/* Header */}
             <div className="flex justify-between border-b pb-4">
                 <div>
@@ -91,5 +93,6 @@ export function PrintableOrderArea({ order }: PrintableOrderAreaProps) {
                 </div>
             </div>
         </div>
+        </PrintPortal>
     );
 }

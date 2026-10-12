@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ArgentinaDateInput } from '@/components/common/ArgentinaDateInput';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DollarSign, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { SupplierPaymentCreateInput } from '@/types/api';
+import { createClientUuid } from '@/lib/clientUuid';
 
 interface PaymentLine {
     id: string;
@@ -30,12 +32,12 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
     const [submitting, setSubmitting] = useState(false);
 
     const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([
-        { id: crypto.randomUUID(), amount: '', payment_method: 'Efectivo', reference_number: '' }
+        { id: createClientUuid(), amount: '', payment_method: 'Efectivo', reference_number: '' }
     ]);
 
     const addPaymentLine = () => {
         setPaymentLines([...paymentLines, {
-            id: crypto.randomUUID(),
+            id: createClientUuid(),
             amount: '',
             payment_method: 'Efectivo',
             reference_number: ''
@@ -186,11 +188,11 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                     <Label htmlFor="paymentDate">Fecha General de Pago</Label>
-                    <Input
+                    <ArgentinaDateInput
                         id="paymentDate"
-                        type="date"
                         value={paymentDate}
-                        onChange={(e) => setPaymentDate(e.target.value)}
+                        onChange={setPaymentDate}
+                        ariaLabel="Fecha general de pago"
                         required
                     />
                 </div>

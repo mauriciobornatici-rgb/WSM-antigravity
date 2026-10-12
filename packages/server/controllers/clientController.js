@@ -17,16 +17,53 @@ const CLIENT_BALANCE_JOINS = `
         GROUP BY client_id
     ) cn ON cn.client_id = c.id
     LEFT JOIN (
-        SELECT client_id, COALESCE(SUM(amount), 0) AS total_paid
-        FROM transactions
-        WHERE type = 'sale'
-        GROUP BY client_id
+        SELECT t.client_id, COALESCE(SUM(t.amount), 0) AS total_paid
+        FROM transactions t
+        WHERE t.type = 'sale'
+          AND (
+              EXISTS (
+                  SELECT 1 FROM invoices payment_invoice
+                  WHERE payment_invoice.id = t.reference_id
+                    AND payment_invoice.deleted_at IS NULL
+              )
+              OR EXISTS (
+                  SELECT 1
+                  FROM orders payment_order
+                  LEFT JOIN order_payments payment_split ON payment_split.order_id = payment_order.id
+                  WHERE payment_order.id = t.reference_id
+                    AND payment_order.deleted_at IS NULL
+                    AND (
+                        payment_order.payment_method = 'credit_account'
+                        OR payment_split.payment_method = 'credit_account'
+                    )
+              )
+          )
+        GROUP BY t.client_id
     ) pay ON pay.client_id = c.id
+    LEFT JOIN (
+        SELECT credit_orders.client_id, COALESCE(SUM(credit_orders.credit_amount), 0) AS total_uninvoiced_credit
+        FROM (
+            SELECT o.id, o.client_id,
+                   CASE
+                       WHEN COALESCE(SUM(CASE WHEN op.payment_method = 'credit_account' THEN op.amount ELSE 0 END), 0) > 0
+                           THEN SUM(CASE WHEN op.payment_method = 'credit_account' THEN op.amount ELSE 0 END)
+                       WHEN o.payment_method = 'credit_account' THEN o.total_amount
+                       ELSE 0
+                   END AS credit_amount
+            FROM orders o
+            LEFT JOIN order_payments op ON op.order_id = o.id
+            WHERE o.deleted_at IS NULL AND o.invoice_id IS NULL AND o.status NOT IN ('cancelled', 'returned')
+            GROUP BY o.id, o.client_id, o.payment_method, o.total_amount
+        ) credit_orders
+        WHERE credit_orders.credit_amount > 0
+        GROUP BY credit_orders.client_id
+    ) ord ON ord.client_id = c.id
 `;
 
 const CLIENT_BALANCE_SQL = `
     ROUND(
         COALESCE(inv.total_invoiced, 0)
+        + COALESCE(ord.total_uninvoiced_credit, 0)
         - COALESCE(cn.total_credit_notes, 0)
         - COALESCE(pay.total_paid, 0),
         2

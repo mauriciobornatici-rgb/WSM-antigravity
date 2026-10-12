@@ -38,7 +38,7 @@ class AccountingService {
     }
 
     async createJournalEntry(connection, entryData) {
-        const { date, description, reference_type, reference_id, lines } = entryData;
+        const { date, description, reference_type, reference_id, reversal_of_entry_id, lines } = entryData;
 
         if (!description || String(description).trim().length === 0) {
             throw new Error('La descripción del asiento contable es obligatoria.');
@@ -78,14 +78,15 @@ class AccountingService {
         const entryDate = date ? new Date(date) : new Date();
 
         await connection.query(`
-            INSERT INTO journal_entries (id, date, description, reference_type, reference_id)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO journal_entries (id, date, description, reference_type, reference_id, reversal_of_entry_id)
+            VALUES (?, ?, ?, ?, ?, ?)
         `, [
             entryId,
             entryDate,
             description.trim(),
             reference_type || null,
-            reference_id || null
+            reference_id || null,
+            reversal_of_entry_id || null
         ]);
 
         for (const line of lines) {
@@ -108,9 +109,84 @@ class AccountingService {
         return entryId;
     }
 
+    async postInvoiceAccountingEntries(connection, invoiceId) {
+        const [invoiceRows] = await connection.query('SELECT * FROM invoices WHERE id = ? FOR UPDATE', [invoiceId]);
+        if (invoiceRows.length === 0) throw new Error('Invoice not found');
+        const invoice = invoiceRows[0];
+        const invoiceLabel = `${invoice.invoice_type}-${String(invoice.point_of_sale).padStart(4, '0')}-${String(invoice.invoice_number).padStart(8, '0')}`;
+
+        const [saleRows] = await connection.query(`
+            SELECT je.id
+            FROM journal_entries je
+            JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+            WHERE je.reference_type = 'invoice' AND je.reference_id = ? AND jel.account_code = '4.1.01.01'
+            LIMIT 1
+        `, [invoiceId]);
+        if (saleRows.length === 0 && Number(invoice.total_amount || 0) > 0) {
+            const saleAmount = this._round(Number(invoice.total_amount || 0) - Number(invoice.vat_amount || 0));
+            const saleLines = [
+                { account_code: '1.1.03.01', debit: Number(invoice.total_amount), credit: 0, notes: `Crédito por venta ${invoiceLabel}` },
+                { account_code: '4.1.01.01', debit: 0, credit: saleAmount, notes: 'Ingreso por ventas' }
+            ];
+            if (Number(invoice.vat_amount || 0) > 0) {
+                saleLines.push({ account_code: '2.1.02.02', debit: 0, credit: Number(invoice.vat_amount), notes: 'IVA Débito Fiscal 21%' });
+            }
+            const difference = this._round(
+                saleLines.reduce((sum, line) => sum + Number(line.debit || 0), 0)
+                - saleLines.reduce((sum, line) => sum + Number(line.credit || 0), 0)
+            );
+            if (Math.abs(difference) > 0 && Math.abs(difference) < 0.05) {
+                saleLines[1].credit = this._round(Number(saleLines[1].credit) + difference);
+            }
+            await this.createJournalEntry(connection, {
+                date: invoice.issue_date,
+                description: `Asiento de Venta - Factura ${invoiceLabel}`,
+                reference_type: 'invoice',
+                reference_id: invoiceId,
+                lines: saleLines
+            });
+        }
+
+        const [cmvRows] = await connection.query(`
+            SELECT je.id
+            FROM journal_entries je
+            JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+            WHERE je.reference_type = 'invoice' AND je.reference_id = ? AND jel.account_code = '5.1.01.01'
+            LIMIT 1
+        `, [invoiceId]);
+        if (cmvRows.length === 0) {
+            const [itemCosts] = await connection.query(`
+                SELECT ii.quantity, p.purchase_price, p.cost_price
+                FROM invoice_items ii
+                JOIN products p ON ii.product_id = p.id
+                WHERE ii.invoice_id = ?
+            `, [invoiceId]);
+            const totalCmv = this._round(itemCosts.reduce((sum, item) => {
+                const cost = Number(item.purchase_price || item.cost_price || 0);
+                return sum + cost * Number(item.quantity || 0);
+            }, 0));
+            if (totalCmv > 0) {
+                await this.createJournalEntry(connection, {
+                    date: invoice.issue_date,
+                    description: `Costo de Mercadería Vendida - Factura ${invoiceLabel}`,
+                    reference_type: 'invoice',
+                    reference_id: invoiceId,
+                    lines: [
+                        { account_code: '5.1.01.01', debit: totalCmv, credit: 0, notes: 'Costo de ventas (CMV)' },
+                        { account_code: '1.1.04.01', debit: 0, credit: totalCmv, notes: 'Salida de inventario' }
+                    ]
+                });
+            }
+        }
+    }
+
     async getJournalEntries(filters = {}, connection = pool) {
         let query = `
-            SELECT je.*
+            SELECT je.*,
+                   EXISTS(
+                       SELECT 1 FROM journal_entries reversal
+                       WHERE reversal.reversal_of_entry_id = je.id
+                   ) AS is_reversed
             FROM journal_entries je
             WHERE 1=1
         `;
@@ -163,6 +239,68 @@ class AccountingService {
             });
         }
 
+        const referenceIds = [...new Set(entries.map((entry) => entry.reference_id).filter(Boolean))];
+        const relatedMap = {};
+        const addRelated = (referenceId, movement) => {
+            if (!referenceId) return;
+            if (!relatedMap[referenceId]) relatedMap[referenceId] = [];
+            relatedMap[referenceId].push(movement);
+        };
+        if (referenceIds.length > 0) {
+            const [transactions] = await connection.query(`
+                SELECT id, type, amount, description, payment_method, check_id, reference_id, date
+                FROM transactions WHERE reference_id IN (?)
+                ORDER BY date ASC
+            `, [referenceIds]);
+            for (const transaction of transactions) {
+                addRelated(transaction.reference_id, {
+                    id: transaction.id,
+                    kind: 'transaction',
+                    type: transaction.type,
+                    date: transaction.date,
+                    amount: this._round(transaction.amount),
+                    description: transaction.description,
+                    payment_method: transaction.payment_method,
+                    check_id: transaction.check_id
+                });
+            }
+
+            const [inventoryMovements] = await connection.query(`
+                SELECT id, type, product_id, quantity, from_location, to_location, reason, reference_id, created_at
+                FROM inventory_movements WHERE reference_id IN (?)
+                ORDER BY created_at ASC
+            `, [referenceIds]);
+            for (const movement of inventoryMovements) {
+                addRelated(movement.reference_id, {
+                    id: movement.id,
+                    kind: 'inventory',
+                    type: movement.type,
+                    date: movement.created_at,
+                    quantity: Number(movement.quantity || 0),
+                    product_id: movement.product_id,
+                    from_location: movement.from_location,
+                    to_location: movement.to_location,
+                    description: movement.reason
+                });
+            }
+
+            const [creditNotes] = await connection.query(`
+                SELECT id, number, amount, status, notes, reference_id, created_at AS date
+                FROM credit_notes WHERE reference_id IN (?)
+                ORDER BY created_at ASC
+            `, [referenceIds]);
+            for (const creditNote of creditNotes) {
+                addRelated(creditNote.reference_id, {
+                    id: creditNote.id,
+                    kind: 'credit_note',
+                    type: creditNote.status,
+                    date: creditNote.date,
+                    amount: this._round(creditNote.amount),
+                    description: `${creditNote.number} · ${creditNote.notes || 'Nota de crédito'}`
+                });
+            }
+        }
+
         return entries.map(e => ({
             id: e.id,
             entry_number: e.entry_number,
@@ -171,7 +309,8 @@ class AccountingService {
             reference_type: e.reference_type,
             reference_id: e.reference_id,
             created_at: e.created_at,
-            lines: linesMap[e.id] || []
+            lines: linesMap[e.id] || [],
+            related_movements: relatedMap[e.reference_id] || []
         }));
     }
 
@@ -179,7 +318,7 @@ class AccountingService {
         const { start_date, end_date } = filters;
         
         // 1. Get initial balances before start_date
-        let initialBalMap = {};
+        const initialBalMap = {};
         if (start_date) {
             const [initialRows] = await connection.query(`
                 SELECT 
@@ -295,6 +434,39 @@ class AccountingService {
         query += ' GROUP BY jel.account_code, coa.name, coa.type';
         const [rows] = await connection.query(query, params);
 
+        let unpostedInvoiceQuery = `
+            SELECT
+                COALESCE(SUM(i.total_amount - COALESCE(i.vat_amount, 0)), 0) AS revenue,
+                COALESCE(SUM(costs.cmv), 0) AS cmv
+            FROM invoices i
+            LEFT JOIN (
+                SELECT ii.invoice_id,
+                       SUM(ii.quantity * COALESCE(NULLIF(p.purchase_price, 0), p.cost_price, 0)) AS cmv
+                FROM invoice_items ii
+                LEFT JOIN products p ON p.id = ii.product_id
+                GROUP BY ii.invoice_id
+            ) costs ON costs.invoice_id = i.id
+            WHERE i.deleted_at IS NULL AND i.status <> 'cancelled'
+              AND NOT EXISTS (
+                  SELECT 1 FROM journal_entries posted
+                  JOIN journal_entry_lines posted_line ON posted_line.journal_entry_id = posted.id
+                  WHERE posted.reference_type = 'invoice' AND posted.reference_id = i.id
+                    AND posted_line.account_code = '4.1.01.01'
+              )
+        `;
+        const unpostedParams = [];
+        if (start_date) {
+            unpostedInvoiceQuery += ' AND DATE(i.issue_date) >= DATE(?)';
+            unpostedParams.push(start_date);
+        }
+        if (end_date) {
+            unpostedInvoiceQuery += ' AND DATE(i.issue_date) <= DATE(?)';
+            unpostedParams.push(end_date);
+        }
+        const [unpostedRows] = await connection.query(unpostedInvoiceQuery, unpostedParams);
+        const unpostedRevenue = this._round(unpostedRows[0]?.revenue || 0);
+        const unpostedCmv = this._round(unpostedRows[0]?.cmv || 0);
+
         const revenueItems = [];
         const expenseItems = [];
         let totalRevenue = 0;
@@ -321,6 +493,19 @@ class AccountingService {
                     balance
                 });
             }
+        }
+
+        if (unpostedRevenue !== 0) {
+            const existingRevenue = revenueItems.find((item) => item.code === '4.1.01.01');
+            if (existingRevenue) existingRevenue.balance = this._round(existingRevenue.balance + unpostedRevenue);
+            else revenueItems.push({ code: '4.1.01.01', name: 'Ventas de Mercaderías (operaciones históricas)', balance: unpostedRevenue });
+            totalRevenue = this._round(totalRevenue + unpostedRevenue);
+        }
+        if (unpostedCmv !== 0) {
+            const existingCmv = expenseItems.find((item) => item.code === '5.1.01.01');
+            if (existingCmv) existingCmv.balance = this._round(existingCmv.balance + unpostedCmv);
+            else expenseItems.push({ code: '5.1.01.01', name: 'Costo de Mercaderías Vendidas (histórico)', balance: unpostedCmv });
+            totalExpense = this._round(totalExpense + unpostedCmv);
         }
 
         const netResult = this._round(totalRevenue - totalExpense);
@@ -353,7 +538,7 @@ class AccountingService {
                 entity_type: 'journal_entry',
                 entity_id: entryId,
                 new_values: payload
-            });
+            }, connection);
 
             await connection.commit();
             return { success: true, id: entryId };
@@ -412,38 +597,34 @@ class AccountingService {
         return { success: true };
     }
 
-    async deleteJournalEntry(id, userId) {
-        // Absolute power
-        const connection = await pool.getConnection();
-        try {
-            await connection.beginTransaction();
-            await connection.query('DELETE FROM journal_entries WHERE id = ?', [id]);
-            
-            await auditService.log({
-                user_id: userId,
-                action: 'DELETE_JOURNAL_ENTRY',
-                entity_type: 'journal_entry',
-                entity_id: id,
-                new_values: null
-            });
-            await connection.commit();
-            return { success: true };
-        } catch (err) {
-            await connection.rollback();
-            throw err;
-        } finally {
-            connection.release();
-        }
-    }
-
     async reverseJournalEntry(id, userId) {
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
             
-            const [entries] = await connection.query('SELECT * FROM journal_entries WHERE id = ?', [id]);
-            if (entries.length === 0) throw new Error('Asiento no encontrado');
+            const [entries] = await connection.query('SELECT * FROM journal_entries WHERE id = ? FOR UPDATE', [id]);
+            if (entries.length === 0) {
+                const error = new Error('Asiento no encontrado');
+                error.statusCode = 404;
+                throw error;
+            }
             const originalEntry = entries[0];
+
+            if (originalEntry.reversal_of_entry_id || originalEntry.reference_type === 'reversal') {
+                const error = new Error('Un contra-asiento no puede revertirse nuevamente');
+                error.statusCode = 409;
+                throw error;
+            }
+
+            const [existingReversals] = await connection.query(
+                'SELECT id FROM journal_entries WHERE reversal_of_entry_id = ? LIMIT 1',
+                [id]
+            );
+            if (existingReversals.length > 0) {
+                const error = new Error('El asiento ya fue revertido');
+                error.statusCode = 409;
+                throw error;
+            }
 
             const [lines] = await connection.query('SELECT * FROM journal_entry_lines WHERE journal_entry_id = ?', [id]);
             
@@ -460,6 +641,7 @@ class AccountingService {
                 description: `Anulación de Asiento #${originalEntry.entry_number}: ${originalEntry.description}`,
                 reference_type: 'reversal',
                 reference_id: id,
+                reversal_of_entry_id: id,
                 lines: reversedLines
             });
 
@@ -469,68 +651,10 @@ class AccountingService {
                 entity_type: 'journal_entry',
                 entity_id: reverseId,
                 new_values: { original_id: id }
-            });
+            }, connection);
 
             await connection.commit();
             return { success: true, id: reverseId };
-        } catch (err) {
-            await connection.rollback();
-            throw err;
-        } finally {
-            connection.release();
-        }
-    }
-
-    async updateJournalEntry(id, payload, userId) {
-        const connection = await pool.getConnection();
-        try {
-            await connection.beginTransaction();
-
-            const { date, description, lines } = payload;
-            
-            let totalDebit = 0, totalCredit = 0;
-            for (const line of lines) {
-                const deb = this._round(line.debit || 0);
-                const cred = this._round(line.credit || 0);
-                if (deb < 0 || cred < 0) throw new Error('Los montos no pueden ser negativos.');
-                if (deb > 0 && cred > 0) throw new Error('Una línea no puede tener débito y crédito simultáneos.');
-                if (deb === 0 && cred === 0) throw new Error('Cada partida debe tener un importe mayor a cero.');
-                totalDebit = this._round(totalDebit + deb);
-                totalCredit = this._round(totalCredit + cred);
-            }
-            if (Math.abs(totalDebit - totalCredit) > 0.0101) {
-                throw new Error(`Error de partida doble.`);
-            }
-
-            await connection.query('UPDATE journal_entries SET date = ?, description = ? WHERE id = ?', [date, description, id]);
-            await connection.query('DELETE FROM journal_entry_lines WHERE journal_entry_id = ?', [id]);
-
-            for (const line of lines) {
-                const deb = this._round(line.debit || 0);
-                const cred = this._round(line.credit || 0);
-                await connection.query(`
-                    INSERT INTO journal_entry_lines (id, journal_entry_id, account_code, debit, credit, notes)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                `, [
-                    crypto.randomUUID(),
-                    id,
-                    line.account_code,
-                    deb,
-                    cred,
-                    line.notes || null
-                ]);
-            }
-
-            await auditService.log({
-                user_id: userId,
-                action: 'UPDATE_JOURNAL_ENTRY',
-                entity_type: 'journal_entry',
-                entity_id: id,
-                new_values: payload
-            });
-
-            await connection.commit();
-            return { success: true };
         } catch (err) {
             await connection.rollback();
             throw err;

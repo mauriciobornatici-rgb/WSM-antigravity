@@ -5,11 +5,18 @@ import auditService from './audit.service.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
 import financeService from './finance.service.js';
 import accountingService from './accounting.service.js';
-import afipService from './afip.service.js';
+import invoiceAuthorizationUseCase from '../domains/sales/InvoiceAuthorizationUseCase.js';
+import createOrderUseCase from '../domains/sales/CreateOrderUseCase.js';
+import stockLedger from '../domains/inventory/StockLedger.js';
+import dispatchOrderUseCase from '../domains/sales/DispatchOrderUseCase.js';
+import deliverOrderUseCase from '../domains/sales/DeliverOrderUseCase.js';
 
 class SalesService extends BaseService {
     constructor() {
         super('orders');
+        dispatchOrderUseCase.normalizeOrderStatus = this._normalizeOrderStatus.bind(this);
+        dispatchOrderUseCase.assertOrderTransition = this._assertOrderTransition.bind(this);
+        deliverOrderUseCase.assertOrderTransition = this._assertOrderTransition.bind(this);
     }
 
     _sanitizeOrdersSortColumn(columnName) {
@@ -40,6 +47,17 @@ class SalesService extends BaseService {
             paid: 'packed'
         };
         return alias[raw] || raw;
+    }
+
+    _buildStockInvariantError(productId, where) {
+        const err = new Error(
+            `El stock del producto ${productId} (${where}) no coincide con sus reservas; ` +
+            'revisá el inventario (conteo) antes de continuar.'
+        );
+        err.statusCode = 409;
+        err.status = 'fail';
+        err.errorCode = 'STOCK_INVARIANT_VIOLATION';
+        return err;
     }
 
     _canTransitionOrder(currentStatus, nextStatus) {
@@ -78,48 +96,8 @@ class SalesService extends BaseService {
         return err;
     }
 
-    async _decreaseInventoryForOrder(connection, { orderId, productId, productName, quantity }) {
-        const requestedQty = Number.parseInt(String(quantity), 10);
-        if (!Number.isFinite(requestedQty) || requestedQty <= 0) {
-            const err = new Error(`Cantidad invalida para producto ${productName || productId}`);
-            err.statusCode = 400;
-            err.status = 'fail';
-            err.errorCode = 'INVALID_QUANTITY';
-            throw err;
-        }
-
-        // Query available stock: quantity - reserved_quantity
-        const [stockRows] = await connection.query(
-            `SELECT id, location, quantity, reserved_quantity, (quantity - reserved_quantity) AS available_quantity
-             FROM inventory
-             WHERE product_id = ? AND (quantity - reserved_quantity) > 0 AND location NOT IN ('Cuarentena', 'Devoluciones a Proveedores', 'Mermas')
-             ORDER BY (quantity - reserved_quantity) DESC
-             FOR UPDATE`,
-            [productId]
-        );
-
-        const availableQty = stockRows.reduce((sum, row) => sum + Number(row.available_quantity || 0), 0);
-        if (availableQty < requestedQty) {
-            throw this._buildStockError(productId, productName, requestedQty, availableQty);
-        }
-
-        let remaining = requestedQty;
-        for (const row of stockRows) {
-            if (remaining <= 0) break;
-            const rowAvailable = Number(row.available_quantity || 0);
-            const consume = Math.min(rowAvailable, remaining);
-            if (consume <= 0) continue;
-
-            await connection.query(
-                'UPDATE inventory SET reserved_quantity = reserved_quantity + ? WHERE id = ?',
-                [consume, row.id]
-            );
-            remaining -= consume;
-        }
-
-        if (remaining > 0) {
-            throw this._buildStockError(productId, productName, requestedQty, availableQty);
-        }
+    async _decreaseInventoryForOrder(connection, payload) {
+        return createOrderUseCase._decreaseInventoryForOrder(connection, payload);
     }
 
     async _restoreInventoryForCancelledOrder(connection, orderId, originalStatus = 'pending') {
@@ -139,11 +117,13 @@ class SalesService extends BaseService {
 
             if (deductionMovements.length > 0) {
                 for (const m of deductionMovements) {
+                    const quantity = Number(m.quantity || 0);
+                    if (quantity <= 0) continue;
                     await connection.query(
                         `INSERT INTO inventory (id, product_id, location, quantity)
                          VALUES (?, ?, ?, ?)
                          ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
-                        [crypto.randomUUID(), m.product_id, m.from_location || 'General', m.quantity]
+                        [crypto.randomUUID(), m.product_id, m.from_location || 'General', quantity]
                     );
 
                     await connection.query(
@@ -154,7 +134,7 @@ class SalesService extends BaseService {
                             crypto.randomUUID(),
                             m.product_id,
                             m.from_location || 'General',
-                            m.quantity,
+                            quantity,
                             Number(m.unit_cost || 0),
                             'Order cancellation restock',
                             orderId
@@ -163,144 +143,101 @@ class SalesService extends BaseService {
                 }
             }
         } else {
-            // Otherwise, it was only reserved (pending or picking), so we release the reservation
-            const [orderItems] = await connection.query(
-                'SELECT product_id, quantity FROM order_items WHERE order_id = ? FOR UPDATE',
+            // Check if exact allocations exist for this order
+            const [allocations] = await connection.query(
+                `SELECT id, product_id, inventory_id, reserved_quantity
+                 FROM order_item_allocations
+                 WHERE order_id = ? AND status = 'reserved'
+                 FOR UPDATE`,
                 [orderId]
             );
-            for (const item of orderItems) {
-                let remainingRelease = Number(item.quantity || 0);
-                const [reserveRows] = await connection.query(
-                    `SELECT id, reserved_quantity 
-                     FROM inventory 
-                     WHERE product_id = ? AND reserved_quantity > 0 
-                     ORDER BY reserved_quantity DESC 
-                     FOR UPDATE`,
-                    [item.product_id]
-                );
 
-                for (const r of reserveRows) {
-                    if (remainingRelease <= 0) break;
-                    const release = Math.min(Number(r.reserved_quantity || 0), remainingRelease);
-                    await connection.query(
-                        'UPDATE inventory SET reserved_quantity = reserved_quantity - ? WHERE id = ?',
-                        [release, r.id]
+            if (allocations.length > 0) {
+                for (const alloc of allocations) {
+                    const [release] = await connection.query(
+                        'UPDATE inventory SET reserved_quantity = reserved_quantity - ? WHERE id = ? AND reserved_quantity >= ?',
+                        [alloc.reserved_quantity, alloc.inventory_id, alloc.reserved_quantity]
                     );
-                    remainingRelease -= release;
+                    if (Number(release?.affectedRows) !== 1) {
+                        throw this._buildStockInvariantError(alloc.product_id, alloc.inventory_id);
+                    }
+                    await connection.query(
+                        "UPDATE order_item_allocations SET status = 'cancelled' WHERE id = ?",
+                        [alloc.id]
+                    );
                 }
-
-                if (remainingRelease > 0) {
-                    await connection.query(
-                        'UPDATE inventory SET reserved_quantity = GREATEST(reserved_quantity - ?, 0) WHERE product_id = ? LIMIT 1',
-                        [remainingRelease, item.product_id]
+            } else {
+                // Legacy fallback: release by product reservation
+                const [orderItems] = await connection.query(
+                    'SELECT product_id, quantity FROM order_items WHERE order_id = ? FOR UPDATE',
+                    [orderId]
+                );
+                for (const item of orderItems) {
+                    let remainingRelease = Number(item.quantity || 0);
+                    const [reserveRows] = await connection.query(
+                        `SELECT id, reserved_quantity 
+                         FROM inventory 
+                         WHERE product_id = ? AND reserved_quantity > 0 
+                         ORDER BY reserved_quantity DESC 
+                         FOR UPDATE`,
+                        [item.product_id]
                     );
+
+                    for (const r of reserveRows) {
+                        if (remainingRelease <= 0) break;
+                        const release = Math.min(Number(r.reserved_quantity || 0), remainingRelease);
+                        await connection.query(
+                            'UPDATE inventory SET reserved_quantity = reserved_quantity - ? WHERE id = ?',
+                            [release, r.id]
+                        );
+                        remainingRelease -= release;
+                    }
+                    // A reservation that no longer exists is not released from another row.
                 }
             }
         }
     }
 
-    async createOrder(orderData, userId) {
-        const orderId = crypto.randomUUID();
-        const connection = await pool.getConnection();
-
-        try {
-            await connection.beginTransaction();
-
-            const productIds = orderData.items.map((item) => item.product_id);
-            const [products] = await connection.query(
-                'SELECT id, sale_price, name FROM products WHERE id IN (?)',
-                [productIds]
-            );
-            const priceByProduct = new Map(products.map((p) => [p.id, Number(p.sale_price || 0)]));
-            const nameByProduct = new Map(products.map((p) => [p.id, p.name || p.id]));
-
-            for (const item of orderData.items) {
-                if (!priceByProduct.has(item.product_id)) {
-                    throw new Error(`Producto no encontrado: ${item.product_id}`);
-                }
-            }
-
-            const computedTotal = orderData.items.reduce(
-                (sum, item) => sum + Number(item.quantity) * priceByProduct.get(item.product_id),
-                0
-            );
-
-            let counterName = String(orderData.counter_name || '').trim();
-            if (!counterName && userId) {
-                const [users] = await connection.query(
-                    'SELECT name FROM users WHERE id = ? LIMIT 1',
-                    [userId]
-                );
-                counterName = String(users[0]?.name || '').trim();
-            }
-            const resolvedCounterName = counterName || null;
-
-            await connection.query(
-                `INSERT INTO orders (
-                    id, client_id, counter_user_id, customer_name, counter_name,
-                    total_amount, status, payment_status, payment_method,
-                    shipping_method, shipping_address, estimated_delivery,
-                    recipient_name, recipient_dni, delivery_notes, notes,
-                    external_source, external_id
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    orderId,
-                    orderData.client_id || null,
-                    userId || orderData.counter_user_id || null,
-                    orderData.customer_name || null,
-                    resolvedCounterName,
-                    computedTotal,
-                    orderData.payment_method || 'cash',
-                    orderData.shipping_method || null,
-                    orderData.shipping_address || null,
-                    orderData.estimated_delivery || null,
-                    orderData.recipient_name || null,
-                    orderData.recipient_dni || null,
-                    orderData.delivery_notes || null,
-                    orderData.notes || null,
-                    orderData.external_source || null,
-                    orderData.external_id || null
-                ]
-            );
-
-            for (const item of orderData.items) {
-                await this._decreaseInventoryForOrder(connection, {
-                    orderId,
-                    productId: item.product_id,
-                    productName: nameByProduct.get(item.product_id),
-                    quantity: item.quantity
-                });
-
-                const itemId = crypto.randomUUID();
-                const unitPrice = priceByProduct.get(item.product_id);
-                await connection.query(
-                    'INSERT INTO order_items (id, order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?, ?)',
-                    [itemId, orderId, item.product_id, item.quantity, unitPrice]
-                );
-            }
-
-            await auditService.log({
-                user_id: userId,
-                action: 'CREATE_ORDER',
-                entity_type: 'order',
-                entity_id: orderId,
-                new_values: {
-                    ...orderData,
-                    total_amount: computedTotal
-                }
-            });
-
-            await connection.commit();
-            return { id: orderId, total_amount: computedTotal };
-        } catch (err) {
-            await connection.rollback();
-            throw err;
-        } finally {
-            connection.release();
-        }
+    async createOrder(orderData, userId, actor = null) {
+        return createOrderUseCase.execute(orderData, userId, actor);
     }
 
-    async transitionOrderStatus(orderId, requestedStatus, userId) {
+    /**
+     * Applies a status reported by an external channel (Tiendanube) through the real
+     * transitions, so every step has its stock effect. Never moves an order backwards.
+     * cancelled -> releases or restocks; delivered/completed -> the goods left, so the
+     * reservation is consumed as fully picked. Remote 'packed' is ignored: packing is local.
+     */
+    async applyExternalStatus(orderId, externalStatus, userId = null) {
+        if (!['cancelled', 'dispatched', 'delivered', 'completed'].includes(externalStatus)) return null;
+        const order = await this.findById(orderId);
+        if (!order) return null;
+        let current = this._normalizeOrderStatus(order.status);
+
+        if (externalStatus === 'cancelled') {
+            if (!['pending', 'picking', 'packed', 'dispatched'].includes(current)) return order;
+            return this.transitionOrderStatus(orderId, 'cancelled', userId);
+        }
+
+        const steps = [];
+        if (current === 'pending') steps.push('picking');
+        if (['pending', 'picking'].includes(current)) steps.push('packed');
+        if (externalStatus === 'dispatched') {
+            if (['pending', 'picking', 'packed'].includes(current)) steps.push('dispatched');
+        } else {
+            if (['pending', 'picking', 'packed', 'dispatched'].includes(current)) steps.push('delivered');
+            if (externalStatus === 'completed' && current !== 'completed') steps.push('completed');
+        }
+
+        let updated = order;
+        for (const step of steps) {
+            updated = await this.transitionOrderStatus(orderId, step, userId, { assumeFullyPicked: step === 'packed' });
+            current = step;
+        }
+        return updated;
+    }
+
+    async transitionOrderStatus(orderId, requestedStatus, userId, { assumeFullyPicked = false } = {}) {
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
@@ -324,7 +261,32 @@ class SalesService extends BaseService {
                 return order;
             }
 
+            if (nextStatus === 'packed' && assumeFullyPicked) {
+                // The goods already left through another channel: treat every reserved
+                // unit as picked so packing deducts it instead of releasing it as shortage.
+                await connection.query('UPDATE order_items SET picked_quantity = quantity WHERE order_id = ?', [orderId]);
+                await connection.query(
+                    "UPDATE order_item_allocations SET picked_quantity = reserved_quantity WHERE order_id = ? AND status = 'reserved'",
+                    [orderId]
+                );
+            }
+
+            let cancellationCreditAmount = 0;
             if (nextStatus === 'cancelled') {
+                if (order.invoice_id) {
+                    const err = new Error('El pedido ya está facturado. Debe anularse mediante una nota de crédito para conservar la trazabilidad fiscal.');
+                    err.statusCode = 409;
+                    err.status = 'fail';
+                    err.errorCode = 'INVOICED_ORDER_REQUIRES_CREDIT_NOTE';
+                    throw err;
+                }
+                const [paymentRows] = await connection.query(
+                    `SELECT COALESCE(SUM(amount), 0) AS paid_amount
+                     FROM transactions
+                     WHERE reference_id = ? AND type = 'sale'`,
+                    [orderId]
+                );
+                cancellationCreditAmount = this._roundMoney(paymentRows[0]?.paid_amount || 0);
                 await this._restoreInventoryForCancelledOrder(connection, orderId, order.status);
             }
 
@@ -348,132 +310,146 @@ class SalesService extends BaseService {
                     );
                 }
             } else if (nextStatus === 'packed') {
-                const [pickedRows] = await connection.query(
-                    'SELECT COALESCE(SUM(picked_quantity), 0) AS total_picked FROM order_items WHERE order_id = ?',
+                const [countRows] = await connection.query(
+                    'SELECT COALESCE(SUM(quantity), 0) AS total_items, COALESCE(SUM(picked_quantity), 0) AS total_picked FROM order_items WHERE order_id = ?',
                     [orderId]
                 );
-                const totalPicked = pickedRows[0]?.total_picked || 0;
+                const totalItems = Number(countRows[0]?.total_items || 0);
+                const totalPicked = Number(countRows[0]?.total_picked || 0);
+                const hasShortage = totalPicked < totalItems;
+
                 await connection.query(
                     `UPDATE picking_sessions 
-                     SET status = 'completed', completed_at = CURRENT_TIMESTAMP, total_items_picked = ? 
+                     SET status = 'completed', completed_at = CURRENT_TIMESTAMP, total_items_picked = ?, completed_with_shortage = ?
                      WHERE order_id = ? AND status = 'in_progress'`,
-                    [totalPicked, orderId]
+                    [totalPicked, hasShortage, orderId]
                 );
 
-                // 1. Release reservations & 2. Deduct physical stock recolectado
-                const [orderItems] = await connection.query(
-                    'SELECT product_id, quantity, picked_quantity FROM order_items WHERE order_id = ?',
+                // 1. Check if exact allocations exist for this order
+                const [allocations] = await connection.query(
+                    `SELECT oia.*
+                     FROM order_item_allocations oia
+                     WHERE oia.order_id = ? AND oia.status = 'reserved'
+                     FOR UPDATE`,
                     [orderId]
                 );
 
-                for (const item of orderItems) {
-                    const reqQty = Number(item.quantity || 0);
-                    const pickQty = Number(item.picked_quantity || 0);
-                    
-                    if (reqQty <= 0) continue;
+                if (allocations.length > 0) {
+                    for (const alloc of allocations) {
+                        const reserved = Number(alloc.reserved_quantity || 0);
+                        const picked = Math.min(reserved, Math.max(Number(alloc.picked_quantity || 0), 0));
 
-                    // Release original reservation
-                    let remainingRelease = reqQty;
-                    const [reserveRows] = await connection.query(
-                        `SELECT id, location, reserved_quantity 
-                         FROM inventory 
-                         WHERE product_id = ? AND reserved_quantity > 0 
-                         ORDER BY reserved_quantity DESC 
-                         FOR UPDATE`,
-                        [item.product_id]
-                    );
-                    
-                    const releasedLocations = [];
-                    for (const r of reserveRows) {
-                        if (remainingRelease <= 0) break;
-                        const release = Math.min(Number(r.reserved_quantity || 0), remainingRelease);
-                        await connection.query(
-                            'UPDATE inventory SET reserved_quantity = reserved_quantity - ? WHERE id = ?',
-                            [release, r.id]
+                        // Release the reservation and deduct what was picked in one conditional
+                        // update: never clamp, never leave quantity below other orders' reservations.
+                        const [stockUpdate] = await connection.query(
+                            `UPDATE inventory
+                             SET reserved_quantity = reserved_quantity - ?, quantity = quantity - ?
+                             WHERE id = ? AND reserved_quantity >= ? AND quantity - ? >= reserved_quantity - ?`,
+                            [reserved, picked, alloc.inventory_id, reserved, picked, reserved]
                         );
-                        remainingRelease -= release;
-                        releasedLocations.push({ location: r.location, quantity: release });
-                    }
-
-                    if (remainingRelease > 0) {
-                        await connection.query(
-                            'UPDATE inventory SET reserved_quantity = GREATEST(reserved_quantity - ?, 0) WHERE product_id = ? LIMIT 1',
-                            [remainingRelease, item.product_id]
-                        );
-                        releasedLocations.push({ location: 'General', quantity: remainingRelease });
-                    }
-
-                    // Deduct physical stock physically picked
-                    let remainingDeduct = pickQty;
-                    for (const loc of releasedLocations) {
-                        if (remainingDeduct <= 0) break;
-                        const [invRows] = await connection.query(
-                            'SELECT id, quantity FROM inventory WHERE product_id = ? AND location = ? FOR UPDATE',
-                            [item.product_id, loc.location]
-                        );
-                        if (invRows.length > 0) {
-                            const currentQty = Number(invRows[0].quantity || 0);
-                            const deduct = Math.min(currentQty, remainingDeduct);
-                            if (deduct > 0) {
-                                await connection.query(
-                                    'UPDATE inventory SET quantity = quantity - ? WHERE id = ?',
-                                    [deduct, invRows[0].id]
-                                );
-                                
-                                await connection.query(
-                                    `INSERT INTO inventory_movements (
-                                        id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
-                                    ) VALUES (?, 'sale', ?, ?, ?, 0, 'Order stock deduction', 'order', ?)`,
-                                    [crypto.randomUUID(), item.product_id, loc.location, deduct, orderId]
-                                );
-                                
-                                remainingDeduct -= deduct;
-                            }
+                        if (Number(stockUpdate?.affectedRows) !== 1) {
+                            throw this._buildStockInvariantError(alloc.product_id, alloc.location_code);
                         }
-                    }
 
-                    if (remainingDeduct > 0) {
-                        const [fallbackRows] = await connection.query(
-                            `SELECT id, location, quantity 
+                        if (picked > 0) {
+                            await connection.query(
+                                `INSERT INTO inventory_movements (
+                                    id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
+                                ) VALUES (?, 'sale', ?, ?, ?, 0, 'Order stock deduction (allocated)', 'order', ?)`,
+                                [crypto.randomUUID(), alloc.product_id, alloc.location_code || 'General', picked, orderId]
+                            );
+                        }
+
+                        await connection.query(
+                            "UPDATE order_item_allocations SET status = 'picked', picked_quantity = ?, shortage_quantity = ? WHERE id = ?",
+                            [picked, Math.max(0, reserved - picked), alloc.id]
+                        );
+                    }
+                } else {
+                    // Legacy fallback: release reservations & deduct physical stock
+                    const [orderItems] = await connection.query(
+                        'SELECT product_id, quantity, picked_quantity FROM order_items WHERE order_id = ?',
+                        [orderId]
+                    );
+
+                    for (const item of orderItems) {
+                        const reqQty = Number(item.quantity || 0);
+                        const pickQty = Number(item.picked_quantity || 0);
+                        
+                        if (reqQty <= 0) continue;
+
+                        let remainingRelease = reqQty;
+                        const [reserveRows] = await connection.query(
+                            `SELECT id, location, reserved_quantity 
                              FROM inventory 
-                             WHERE product_id = ? AND quantity > 0 
-                             ORDER BY quantity DESC 
+                             WHERE product_id = ? AND reserved_quantity > 0 
+                             ORDER BY reserved_quantity DESC 
                              FOR UPDATE`,
                             [item.product_id]
                         );
-                        for (const fb of fallbackRows) {
-                            if (remainingDeduct <= 0) break;
-                            const currentQty = Number(fb.quantity || 0);
-                            const deduct = Math.min(currentQty, remainingDeduct);
-                            if (deduct > 0) {
-                                await connection.query(
-                                    'UPDATE inventory SET quantity = quantity - ? WHERE id = ?',
-                                    [deduct, fb.id]
-                                );
-                                await connection.query(
-                                    `INSERT INTO inventory_movements (
-                                        id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
-                                    ) VALUES (?, 'sale', ?, ?, ?, 0, 'Order stock deduction (fallback)', 'order', ?)`,
-                                    [crypto.randomUUID(), item.product_id, fb.location, deduct, orderId]
-                                );
-                                remainingDeduct -= deduct;
-                            }
+
+                        for (const r of reserveRows) {
+                            if (remainingRelease <= 0) break;
+                            const release = Math.min(Number(r.reserved_quantity || 0), remainingRelease);
+                            await connection.query(
+                                'UPDATE inventory SET reserved_quantity = reserved_quantity - ? WHERE id = ?',
+                                [release, r.id]
+                            );
+                            remainingRelease -= release;
+                        }
+                        // A reservation that no longer exists is not "released" from some other
+                        // row: that would free stock reserved by other orders.
+
+                        // Deduct what was picked from unreserved stock, never below zero.
+                        if (pickQty > 0) {
+                            const lockedRows = await stockLedger.lockSellableRows(connection, [item.product_id]);
+                            await stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
+                                productId: item.product_id,
+                                productName: item.product_id,
+                                quantity: pickQty,
+                                orderId,
+                                userId,
+                                reason: 'Order stock deduction'
+                            });
                         }
                     }
                 }
             }
 
-            await connection.query(
-                'UPDATE orders SET status = ? WHERE id = ? AND deleted_at IS NULL',
-                [nextStatus, orderId]
-            );
+            if (nextStatus === 'cancelled') {
+                await connection.query(
+                    `UPDATE orders
+                     SET status = 'cancelled', payment_status = ?
+                     WHERE id = ? AND deleted_at IS NULL`,
+                    [cancellationCreditAmount > 0 ? 'credit_balance' : 'voided', orderId]
+                );
+            } else {
+                await connection.query(
+                    'UPDATE orders SET status = ? WHERE id = ? AND deleted_at IS NULL',
+                    [nextStatus, orderId]
+                );
+            }
             const [updated] = await connection.query(
                 'SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL',
                 [orderId]
             );
 
+            await auditService.log({
+                user_id: userId,
+                action: 'UPDATE_ORDER_STATUS',
+                entity_type: 'order',
+                entity_id: orderId,
+                old_values: { status: order.status },
+                new_values: { status: nextStatus }
+            }, connection);
             await connection.commit();
-            return updated[0];
+            return nextStatus === 'cancelled'
+                ? {
+                    ...updated[0],
+                    cancellation_credit_amount: cancellationCreditAmount,
+                    cancellation_financial_status: cancellationCreditAmount > 0 ? 'client_credit' : 'debt_voided'
+                }
+                : updated[0];
         } catch (err) {
             await connection.rollback();
             throw err;
@@ -536,10 +512,21 @@ class SalesService extends BaseService {
             LEFT JOIN products p ON oi.product_id = p.id
             WHERE oi.order_id IN (?)
         `, [orderIds]);
+        const [paymentRows] = await pool.query(`
+            SELECT id, order_id, payment_method AS method, amount
+            FROM order_payments
+            WHERE order_id IN (?)
+            ORDER BY created_at ASC
+        `, [orderIds]);
 
         const rows = orders.map((o) => ({
             ...o,
-            items: items.filter((i) => i.order_id === o.id)
+            items: items.filter((i) => i.order_id === o.id),
+            payments: paymentRows.filter((payment) => payment.order_id === o.id).map((payment) => ({
+                id: payment.id,
+                method: payment.method,
+                amount: Number(payment.amount || 0)
+            }))
         }));
 
         if (options.includeTotal) {
@@ -550,168 +537,138 @@ class SalesService extends BaseService {
     }
 
     async dispatchOrder(orderId, data, userId) {
+        return dispatchOrderUseCase.execute(orderId, data, userId);
+    }
+
+    async deliverOrder(orderId, data, userId) {
+        return deliverOrderUseCase.execute(orderId, data, userId);
+    }
+
+    async pickOrderItem(itemId, pickedQuantity, userId) {
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
+            const [items] = await connection.query('SELECT * FROM order_items WHERE id = ? FOR UPDATE', [itemId]);
+            if (items.length === 0) throw new Error('Order item not found');
 
-            const [orders] = await connection.query('SELECT * FROM orders WHERE id = ? FOR UPDATE', [orderId]);
-            if (orders.length === 0) throw new Error('Order not found');
-            const currentStatus = this._normalizeOrderStatus(orders[0].status);
+            const item = items[0];
+            const safeQty = Math.max(0, Math.min(Number(pickedQuantity || 0), Number(item.quantity)));
+            await connection.query('UPDATE order_items SET picked_quantity = ? WHERE id = ?', [safeQty, itemId]);
 
-            const isPickup = data.shipping_method === 'pickup';
-            const requestedNextStatus = isPickup ? 'delivered' : 'dispatched';
-            const nextStatus = this._assertOrderTransition(currentStatus, requestedNextStatus);
+            const [allocs] = await connection.query(
+                'SELECT * FROM order_item_allocations WHERE order_item_id = ? FOR UPDATE',
+                [itemId]
+            );
+            let firstAllocId = null;
+            if (allocs.length > 0) {
+                firstAllocId = allocs[0].id;
+                let remainingPick = safeQty;
+                for (const alloc of allocs) {
+                    const thisPick = Math.min(Number(alloc.reserved_quantity || 0), remainingPick);
+                    const thisShortage = Math.max(0, Number(alloc.reserved_quantity || 0) - thisPick);
+                    await connection.query(
+                        'UPDATE order_item_allocations SET picked_quantity = ?, shortage_quantity = ? WHERE id = ?',
+                        [thisPick, thisShortage, alloc.id]
+                    );
+                    remainingPick -= thisPick;
+                }
+            }
 
-            await connection.query(`
-                UPDATE orders
-                SET
-                    status = ?,
-                    shipping_method = ?,
-                    tracking_number = ?,
-                    estimated_delivery = ?,
-                    shipping_address = ?,
-                    recipient_name = ?,
-                    recipient_dni = ?,
-                    dispatched_at = NOW(),
-                    delivered_at = CASE WHEN ? = 1 THEN NOW() ELSE delivered_at END
-                WHERE id = ?
-            `, [
-                nextStatus,
-                data.shipping_method || null,
-                data.tracking_number || null,
-                data.estimated_delivery || null,
-                data.shipping_address || null,
-                data.recipient_name || null,
-                data.recipient_dni || null,
-                isPickup ? 1 : 0,
-                orderId
-            ]);
+            const [sessions] = await connection.query(
+                'SELECT id FROM picking_sessions WHERE order_id = ? AND status = "in_progress" LIMIT 1 FOR UPDATE',
+                [item.order_id]
+            );
+            if (sessions.length > 0) {
+                await connection.query(
+                    `INSERT INTO picking_session_events (id, session_id, product_id, order_item_id, allocation_id, picker_id, action_type, location_code, quantity)
+                     VALUES (?, ?, ?, ?, ?, ?, 'quantity_confirmed', ?, ?)`,
+                    [crypto.randomUUID(), sessions[0].id, item.product_id, itemId, firstAllocId, userId || null, item.location || 'General', safeQty]
+                );
+            }
 
             await auditService.log({
                 user_id: userId,
-                action: 'DISPATCH_ORDER',
-                entity_type: 'order',
-                entity_id: orderId,
-                new_values: { status: nextStatus, ...data }
-            });
+                action: 'PICK_ORDER_ITEM',
+                entity_type: 'order_item',
+                entity_id: itemId,
+                old_values: { picked_quantity: Number(item.picked_quantity || 0) },
+                new_values: { picked_quantity: safeQty }
+            }, connection);
 
+            const [updatedRows] = await connection.query('SELECT * FROM order_items WHERE id = ?', [itemId]);
             await connection.commit();
-            const [updated] = await connection.query('SELECT * FROM orders WHERE id = ?', [orderId]);
-            return updated[0];
-        } catch (err) {
+            return updatedRows[0];
+        } catch (error) {
             await connection.rollback();
-            throw err;
+            throw error;
         } finally {
             connection.release();
         }
     }
 
-    async deliverOrder(orderId, data, userId) {
-        const [orders] = await pool.query('SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL', [orderId]);
-        if (orders.length === 0) throw new Error('Order not found');
-        this._assertOrderTransition(orders[0].status, 'delivered');
-
-        await pool.query(`
-            UPDATE orders
-            SET status = 'delivered',
-                recipient_name = ?,
-                recipient_dni = ?,
-                delivery_notes = ?,
-                delivered_at = NOW()
-            WHERE id = ?
-        `, [data.recipient_name || null, data.recipient_dni || null, data.delivery_notes || null, orderId]);
-
-        await auditService.log({
-            user_id: userId,
-            action: 'DELIVER_ORDER',
-            entity_type: 'order',
-            entity_id: orderId,
-            new_values: data
-        });
-
-        const [updated] = await pool.query('SELECT * FROM orders WHERE id = ?', [orderId]);
-        return updated[0];
-    }
-
-    async pickOrderItem(itemId, pickedQuantity, userId) {
-        const [items] = await pool.query('SELECT * FROM order_items WHERE id = ?', [itemId]);
-        if (items.length === 0) throw new Error('Order item not found');
-
-        const item = items[0];
-        const safeQty = Math.max(0, Math.min(Number(pickedQuantity || 0), Number(item.quantity)));
-        await pool.query('UPDATE order_items SET picked_quantity = ? WHERE id = ?', [safeQty, itemId]);
-
-        await auditService.log({
-            user_id: userId,
-            action: 'PICK_ORDER_ITEM',
-            entity_type: 'order_item',
-            entity_id: itemId,
-            new_values: { picked_quantity: safeQty }
-        });
-
-        // WMS Audit trail session event logging
-        const [sessions] = await pool.query(
-            'SELECT id FROM picking_sessions WHERE order_id = ? AND status = "in_progress" LIMIT 1',
-            [item.order_id]
-        );
-        if (sessions.length > 0) {
-            const sessionId = sessions[0].id;
-            const eventId = crypto.randomUUID();
-            await pool.query(
-                `INSERT INTO picking_session_events (id, session_id, product_id, action_type, location_code, quantity)
-                 VALUES (?, ?, ?, 'quantity_confirmed', ?, ?)`,
-                [eventId, sessionId, item.product_id, item.location || 'General', safeQty]
-            );
-        }
-
-        const [updatedRows] = await pool.query('SELECT * FROM order_items WHERE id = ?', [itemId]);
-        return updatedRows[0];
-    }
-
     async recordPickingEvent(orderId, eventData, userId) {
-        const [sessions] = await pool.query(
-            'SELECT id FROM picking_sessions WHERE order_id = ? AND status = "in_progress" LIMIT 1',
-            [orderId]
-        );
-        let sessionId;
-        if (sessions.length === 0) {
-            sessionId = crypto.randomUUID();
-            const [countRows] = await pool.query(
-                'SELECT COALESCE(SUM(quantity), 0) AS total_items FROM order_items WHERE order_id = ?',
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [sessions] = await connection.query(
+                'SELECT id FROM picking_sessions WHERE order_id = ? AND status = "in_progress" LIMIT 1 FOR UPDATE',
                 [orderId]
             );
-            const totalItems = countRows[0]?.total_items || 0;
-            await pool.query(
-                `INSERT INTO picking_sessions (id, order_id, picker_id, status, total_items_requested, total_items_picked, started_at)
-                 VALUES (?, ?, ?, 'in_progress', ?, 0, CURRENT_TIMESTAMP)`,
-                [sessionId, orderId, userId || 'unknown_picker', totalItems]
-            );
-        } else {
-            sessionId = sessions[0].id;
-        }
+            let sessionId;
+            if (sessions.length === 0) {
+                sessionId = crypto.randomUUID();
+                const [countRows] = await connection.query(
+                    'SELECT COALESCE(SUM(quantity), 0) AS total_items FROM order_items WHERE order_id = ?',
+                    [orderId]
+                );
+                const totalItems = countRows[0]?.total_items || 0;
+                await connection.query(
+                    `INSERT INTO picking_sessions (id, order_id, picker_id, status, total_items_requested, total_items_picked, started_at)
+                     VALUES (?, ?, ?, 'in_progress', ?, 0, CURRENT_TIMESTAMP)`,
+                    [sessionId, orderId, userId || 'unknown_picker', totalItems]
+                );
+            } else {
+                sessionId = sessions[0].id;
+            }
 
-        const eventId = crypto.randomUUID();
-        await pool.query(
-            `INSERT INTO picking_session_events (id, session_id, product_id, action_type, location_code, barcode_scanned, quantity)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [
-                eventId,
-                sessionId,
-                eventData.product_id,
-                eventData.action_type,
-                eventData.location_code || null,
-                eventData.barcode_scanned || null,
-                eventData.quantity || 0
-            ]
-        );
-        return { success: true, event_id: eventId, session_id: sessionId };
+            const eventId = crypto.randomUUID();
+            await connection.query(
+                `INSERT INTO picking_session_events (id, session_id, product_id, action_type, location_code, barcode_scanned, quantity)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    eventId,
+                    sessionId,
+                    eventData.product_id,
+                    eventData.action_type,
+                    eventData.location_code || null,
+                    eventData.barcode_scanned || null,
+                    eventData.quantity || 0
+                ]
+            );
+            await connection.commit();
+            return { success: true, event_id: eventId, session_id: sessionId };
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
     }
 
     async getOrderSummary(orderId) {
         const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [orderId]);
         if (orders.length === 0) throw new Error('Order not found');
 
-        const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [orderId]);
+        const [items] = await pool.query(`
+            SELECT oi.*, p.name AS product_name, p.sku, p.location, p.barcode
+            FROM order_items oi
+            LEFT JOIN products p ON p.id = oi.product_id
+            WHERE oi.order_id = ?
+        `, [orderId]);
+        const [payments] = await pool.query(
+            'SELECT id, payment_method AS method, amount FROM order_payments WHERE order_id = ? ORDER BY created_at ASC',
+            [orderId]
+        );
         const totalItems = items.reduce((sum, i) => sum + Number(i.quantity || 0), 0);
         const totalPicked = items.reduce((sum, i) => sum + Number(i.picked_quantity || 0), 0);
 
@@ -724,9 +681,19 @@ class SalesService extends BaseService {
             [orderId]
         );
 
+        const [allocations] = await pool.query(
+            `SELECT oia.*, inv.location AS inventory_location
+             FROM order_item_allocations oia
+             LEFT JOIN inventory inv ON inv.id = oia.inventory_id
+             WHERE oia.order_id = ?
+             ORDER BY oia.location_code ASC`,
+            [orderId]
+        );
+
         return {
-            order: orders[0],
+            order: { ...orders[0], payments: payments.map((payment) => ({ ...payment, amount: Number(payment.amount || 0) })) },
             items,
+            allocations,
             summary: {
                 total_items: totalItems,
                 total_picked: totalPicked,
@@ -818,7 +785,7 @@ class SalesService extends BaseService {
                 );
             }
 
-            return { method, amount };
+            return { method, amount, ...(payment?.check ? { check: payment.check } : {}) };
         });
     }
 
@@ -845,7 +812,7 @@ class SalesService extends BaseService {
                 );
             }
 
-            return { method, amount };
+            return { method, amount, ...(payment?.check ? { check: payment.check } : {}) };
         });
 
         const paidAmount = this._roundMoney(
@@ -867,12 +834,56 @@ class SalesService extends BaseService {
         };
     }
 
+    async _transferOrderReceivablePayments(connection, { orderId, invoiceId, invoiceLabel, totalAmount }) {
+        if (!orderId) return 0;
+        const [paymentRows] = await connection.query(
+            `SELECT COALESCE(SUM(amount), 0) AS paid_amount
+             FROM transactions
+             WHERE reference_id = ? AND type = 'sale'`,
+            [orderId]
+        );
+        const paidAmount = this._roundMoney(paymentRows[0]?.paid_amount || 0);
+        if (paidAmount <= 0) return 0;
+        if (paidAmount > this._roundMoney(totalAmount) + 0.01) {
+            throw this._buildValidationError(
+                'Los cobros anticipados del pedido superan el total de la factura. Revise importes antes de facturar.',
+                'ORDER_PAYMENTS_EXCEED_INVOICE'
+            );
+        }
+
+        await connection.query(
+            `UPDATE transactions
+             SET reference_id = ?, description = REPLACE(description, 'venta pedido', 'factura')
+             WHERE reference_id = ? AND type = 'sale'`,
+            [invoiceId, orderId]
+        );
+        await connection.query(
+            `UPDATE customer_check_allocations cca
+             JOIN transactions t ON t.id = cca.transaction_id
+             SET cca.invoice_id = ?
+             WHERE t.reference_id = ? AND cca.invoice_id IS NULL`,
+            [invoiceId, invoiceId]
+        );
+        await accountingService.createJournalEntry(connection, {
+            date: new Date(),
+            description: `Aplicación de anticipos a factura ${invoiceLabel}`,
+            reference_type: 'invoice',
+            reference_id: invoiceId,
+            lines: [
+                { account_code: '2.1.03.01', debit: paidAmount, credit: 0, notes: 'Cancelación de anticipos de clientes' },
+                { account_code: '1.1.03.01', debit: 0, credit: paidAmount, notes: `Aplicación a factura ${invoiceLabel}` }
+            ]
+        });
+        return paidAmount;
+    }
 
 
-    async createInvoice(orderId, invoiceData, userId) {
-        const connection = await pool.getConnection();
+
+    async createInvoice(orderId, invoiceData, userId, existingConnection = null) {
+        const connection = existingConnection || await pool.getConnection();
+        const isExternalTx = Boolean(existingConnection);
         try {
-            await connection.beginTransaction();
+            if (!isExternalTx) await connection.beginTransaction();
 
             const [orders] = await connection.query('SELECT * FROM orders WHERE id = ? FOR UPDATE', [orderId]);
             if (orders.length === 0) throw new Error('Order not found');
@@ -932,10 +943,24 @@ class SalesService extends BaseService {
             const invoiceId = crypto.randomUUID();
 
             const client = await this._resolveClientSnapshot(connection, order.client_id, order.customer_name);
-            const hasExplicitPayments = Array.isArray(invoiceData.payments) && invoiceData.payments.length > 0;
+            const [plannedPaymentRows] = await connection.query(
+                'SELECT payment_method AS method, amount, check_payload FROM order_payments WHERE order_id = ? ORDER BY created_at ASC',
+                [orderId]
+            );
+            const plannedPayments = plannedPaymentRows
+                .filter((payment) => payment.method !== 'credit_account')
+                .map((payment) => ({
+                    method: payment.method,
+                    amount: Number(payment.amount || 0),
+                    ...(payment.check_payload ? { check: typeof payment.check_payload === 'string' ? JSON.parse(payment.check_payload) : payment.check_payload } : {})
+                }));
+            const paymentSource = Array.isArray(invoiceData.payments) && invoiceData.payments.length > 0
+                ? invoiceData.payments
+                : plannedPayments;
+            const hasExplicitPayments = paymentSource.length > 0;
             const paymentData = hasExplicitPayments
                 ? this._normalizePayments(
-                    invoiceData.payments,
+                    paymentSource,
                     totalAmount,
                     order.payment_method || 'cash'
                 )
@@ -999,15 +1024,34 @@ class SalesService extends BaseService {
                 ]);
             }
 
+            await accountingService.postInvoiceAccountingEntries(connection, invoiceId);
+
+            const anticipatedAmount = await this._transferOrderReceivablePayments(connection, {
+                orderId,
+                invoiceId,
+                invoiceLabel,
+                totalAmount
+            });
+
             await financeService._registerInvoicePayments(connection, {
                 invoiceId,
                 clientId: client.client_id,
                 invoiceLabel,
-                payments: paymentData.payments
+                payments: paymentData.payments,
+                userId
             });
 
+            const totalPaidAmount = this._roundMoney(anticipatedAmount + paymentData.paidAmount);
+            const resolvedPaymentStatus = this._resolvePaymentStatus(totalAmount, totalPaidAmount);
+            if (anticipatedAmount > 0) {
+                await connection.query(
+                    'UPDATE invoices SET payment_status = ? WHERE id = ?',
+                    [resolvedPaymentStatus, invoiceId]
+                );
+            }
+
             if (client.client_id) {
-                const outstanding = this._roundMoney(totalAmount - paymentData.paidAmount);
+                const outstanding = this._roundMoney(totalAmount - totalPaidAmount);
                 if (outstanding > 0) {
                     await connection.query(
                         `UPDATE clients
@@ -1018,10 +1062,14 @@ class SalesService extends BaseService {
                 }
             }
 
-            const nextOrderStatus = paymentData.paymentStatus === 'paid' ? 'completed' : order.status;
+            // Invoicing only closes a delivered order (counter sales are born completed);
+            // any earlier status still has its stock reserved and must go through packing.
+            const nextOrderStatus = resolvedPaymentStatus === 'paid' && this._normalizeOrderStatus(order.status) === 'delivered'
+                ? 'completed'
+                : order.status;
             await connection.query(
                 'UPDATE orders SET invoice_id = ?, status = ?, payment_status = ? WHERE id = ?',
-                [invoiceId, nextOrderStatus, paymentData.paymentStatus, orderId]
+                [invoiceId, nextOrderStatus, resolvedPaymentStatus, orderId]
             );
 
             await auditService.log({
@@ -1035,26 +1083,41 @@ class SalesService extends BaseService {
                     pointOfSale,
                     invoiceNumber,
                     totalAmount,
-                    paid_amount: paymentData.paidAmount,
-                    payment_status: paymentData.paymentStatus
+                    paid_amount: totalPaidAmount,
+                    payment_status: resolvedPaymentStatus
                 }
-            });
+            }, connection);
 
-            await connection.commit();
+            if (!isExternalTx) await connection.commit();
             return {
                 id: invoiceId,
+                order_id: order.id,
+                client_id: client.client_id,
+                client_name: client.client_name || order.customer_name,
+                client_tax_id: client.client_tax_id,
+                client_address: client.client_address,
+                client_tax_condition: client.client_tax_condition,
                 invoice_type: invoiceType,
                 point_of_sale: pointOfSale,
                 invoice_number: invoiceNumber,
+                net_amount: netAmount,
+                vat_amount: vatAmount,
+                exempt_amount: 0,
                 total_amount: totalAmount,
-                paid_amount: paymentData.paidAmount,
-                payment_status: paymentData.paymentStatus
+                subtotal: netAmount,
+                tax_amount: vatAmount,
+                status: 'issued',
+                issue_date: new Date().toISOString(),
+                payment_method: paymentMethod,
+                paid_amount: totalPaidAmount,
+                payment_status: resolvedPaymentStatus,
+                items: invoiceItems
             };
         } catch (err) {
-            await connection.rollback();
+            if (!isExternalTx) await connection.rollback();
             throw err;
         } finally {
-            connection.release();
+            if (!isExternalTx) connection.release();
         }
     }
 
@@ -1062,6 +1125,29 @@ class SalesService extends BaseService {
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
+
+            if (invoiceData.order_id) {
+                const [orders] = await connection.query(
+                    'SELECT id, invoice_id FROM orders WHERE id = ? FOR UPDATE',
+                    [invoiceData.order_id]
+                );
+                if (orders.length === 0) throw new Error('Order not found');
+                if (orders[0].invoice_id) {
+                    const [existingInvoices] = await connection.query(
+                        'SELECT * FROM invoices WHERE id = ? LIMIT 1',
+                        [orders[0].invoice_id]
+                    );
+                    if (existingInvoices.length > 0) {
+                        await connection.commit();
+                        return { ...existingInvoices[0], idempotent_replay: true };
+                    }
+                }
+                // Invoicing an order bills what was sold, at the order's prices and the
+                // catalog VAT: client-sent items, prices, VAT or discounts are ignored (H4).
+                const invoice = await this.createInvoice(invoiceData.order_id, invoiceData, userId, connection);
+                await connection.commit();
+                return invoice;
+            }
 
             const items = invoiceData.items || [];
             if (items.length === 0) throw new Error('Invoice must contain items');
@@ -1109,11 +1195,12 @@ class SalesService extends BaseService {
             netAmount = this._roundMoney(netAmount);
             vatAmount = this._roundMoney(vatAmount);
             const totalAmount = this._roundMoney(netAmount + vatAmount);
-            const paymentData = this._normalizePayments(
-                invoiceData.payments,
-                totalAmount,
-                invoiceData.payment_method || 'cash'
-            );
+            const collectiblePayments = Array.isArray(invoiceData.payments)
+                ? invoiceData.payments.filter((payment) => payment.method !== 'credit_account')
+                : [];
+            const paymentData = collectiblePayments.length > 0
+                ? this._normalizePayments(collectiblePayments, totalAmount, invoiceData.payment_method || 'cash')
+                : { payments: [], paidAmount: 0, paymentStatus: 'pending', primaryMethod: invoiceData.payment_method || null };
             const invoiceLabel = `${invoiceType}-${String(pointOfSale).padStart(4, '0')}-${String(invoiceNumber).padStart(8, '0')}`;
 
             await connection.query(`
@@ -1168,15 +1255,31 @@ class SalesService extends BaseService {
                 ]);
             }
 
+            await accountingService.postInvoiceAccountingEntries(connection, invoiceId);
+
+            const anticipatedAmount = await this._transferOrderReceivablePayments(connection, {
+                orderId: invoiceData.order_id || null,
+                invoiceId,
+                invoiceLabel,
+                totalAmount
+            });
+
             await financeService._registerInvoicePayments(connection, {
                 invoiceId,
                 clientId: client.client_id,
                 invoiceLabel,
-                payments: paymentData.payments
+                payments: paymentData.payments,
+                userId
             });
 
+            const totalPaidAmount = this._roundMoney(anticipatedAmount + paymentData.paidAmount);
+            const resolvedPaymentStatus = this._resolvePaymentStatus(totalAmount, totalPaidAmount);
+            if (anticipatedAmount > 0) {
+                await connection.query('UPDATE invoices SET payment_status = ? WHERE id = ?', [resolvedPaymentStatus, invoiceId]);
+            }
+
             if (client.client_id) {
-                const outstanding = this._roundMoney(totalAmount - paymentData.paidAmount);
+                const outstanding = this._roundMoney(totalAmount - totalPaidAmount);
                 if (outstanding > 0) {
                     await connection.query(
                         `UPDATE clients
@@ -1191,10 +1294,10 @@ class SalesService extends BaseService {
                 await connection.query(
                     `UPDATE orders
                      SET invoice_id = ?,
-                         status = CASE WHEN ? = 'paid' THEN 'completed' ELSE status END,
+                         status = CASE WHEN ? = 'paid' AND status = 'delivered' THEN 'completed' ELSE status END,
                          payment_status = ?
                      WHERE id = ?`,
-                    [invoiceId, paymentData.paymentStatus, paymentData.paymentStatus, invoiceData.order_id]
+                    [invoiceId, resolvedPaymentStatus, resolvedPaymentStatus, invoiceData.order_id]
                 );
             }
 
@@ -1208,23 +1311,35 @@ class SalesService extends BaseService {
                     pointOfSale,
                     invoiceNumber,
                     totalAmount,
-                    paid_amount: paymentData.paidAmount,
-                    payment_status: paymentData.paymentStatus
+                    paid_amount: totalPaidAmount,
+                    payment_status: resolvedPaymentStatus
                 }
-            });
+            }, connection);
 
             await connection.commit();
             return {
                 id: invoiceId,
+                order_id: invoiceData.order_id || null,
+                client_id: client.client_id,
+                client_name: client.client_name || invoiceData.customer_name,
+                client_tax_id: client.client_tax_id,
+                client_address: client.client_address,
+                client_tax_condition: client.client_tax_condition,
                 invoice_type: invoiceType,
                 point_of_sale: pointOfSale,
                 invoice_number: invoiceNumber,
+                net_amount: netAmount,
+                vat_amount: vatAmount,
+                exempt_amount: 0,
                 total_amount: totalAmount,
+                subtotal: netAmount,
+                tax_amount: vatAmount,
                 issue_date: new Date().toISOString(),
                 status: 'issued',
-                client_name: client.client_name,
-                paid_amount: paymentData.paidAmount,
-                payment_status: paymentData.paymentStatus
+                payment_method: paymentData.primaryMethod,
+                paid_amount: totalPaidAmount,
+                payment_status: resolvedPaymentStatus,
+                items: parsedItems
             };
         } catch (err) {
             await connection.rollback();
@@ -1237,112 +1352,7 @@ class SalesService extends BaseService {
 
 
     async authorizeInvoice(invoiceId, userId) {
-        const [rows] = await pool.query('SELECT * FROM invoices WHERE id = ?', [invoiceId]);
-        if (rows.length === 0) throw new Error('Invoice not found');
-        if (rows[0].status === 'authorized') return rows[0];
-        
-        const invoiceData = rows[0];
-
-        // 1. Get company settings
-        const [settingsRows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
-        const companySettings = settingsRows[0] || {};
-        
-        // 2. Get invoice items for AFIP detail
-        const [invoiceItems] = await pool.query('SELECT * FROM invoice_items WHERE invoice_id = ?', [invoiceId]);
-
-        const afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
-
-        const cae = afipRes.cae;
-        const expirationDate = afipRes.cae_expiration_date;
-        const finalInvoiceNumber = afipRes.invoice_number;
-
-        const connection = await pool.getConnection();
-        await connection.beginTransaction();
-
-        try {
-            await connection.query(
-                'UPDATE invoices SET status = "authorized", cae = ?, cae_expiration_date = ?, invoice_number = ? WHERE id = ?',
-                [cae, expirationDate, finalInvoiceNumber, invoiceId]
-            );
-
-            const [updatedInvoiceRows] = await connection.query('SELECT * FROM invoices WHERE id = ?', [invoiceId]);
-            const invoice = updatedInvoiceRows[0];
-
-            const debitAccount = ['cash', 'card', 'debit_card', 'credit_card', 'qr'].includes(String(invoice.payment_method).toLowerCase())
-                ? '1.1.01.01'
-                : '1.1.03.01';
-                
-            const invoiceLabel = `${invoice.invoice_type}-${String(invoice.point_of_sale).padStart(4, '0')}-${String(invoice.invoice_number).padStart(8, '0')}`;
-            const saleAmount = Math.round((Number(invoice.total_amount) - Number(invoice.vat_amount)) * 100) / 100;
-            
-            const saleLines = [
-                { account_code: debitAccount, debit: Number(invoice.total_amount), credit: 0, notes: `Venta Factura ${invoiceLabel}` },
-                { account_code: '4.1.01.01', debit: 0, credit: saleAmount, notes: 'Ingreso por Ventas' }
-            ];
-            
-            if (Number(invoice.vat_amount) > 0) {
-                saleLines.push({ account_code: '2.1.02.02', debit: 0, credit: Number(invoice.vat_amount), notes: 'IVA Débito Fiscal 21%' });
-            }
-            
-            let sumDeb = saleLines.reduce((s, l) => s + l.debit, 0);
-            let sumCred = saleLines.reduce((s, l) => s + l.credit, 0);
-            const diff = sumDeb - sumCred;
-            if (Math.abs(diff) > 0 && Math.abs(diff) < 0.05) {
-                saleLines[1].credit = Math.round((saleLines[1].credit + diff) * 100) / 100;
-            }
-
-            await accountingService.createJournalEntry(connection, {
-                date: invoice.issue_date,
-                description: `Asiento de Venta - Factura ${invoiceLabel}`,
-                reference_type: 'invoice',
-                reference_id: invoice.id,
-                lines: saleLines
-            });
-
-            const [itemCosts] = await connection.query(`
-                SELECT ii.quantity, p.purchase_price, p.cost_price
-                FROM invoice_items ii
-                JOIN products p ON ii.product_id = p.id
-                WHERE ii.invoice_id = ?
-            `, [invoiceId]);
-
-            let totalCmv = 0;
-            for (const item of itemCosts) {
-                const cost = Number(item.purchase_price || item.cost_price || 0);
-                const qty = Number(item.quantity || 0);
-                totalCmv += cost * qty;
-            }
-            totalCmv = Math.round(totalCmv * 100) / 100;
-
-            if (totalCmv > 0) {
-                await accountingService.createJournalEntry(connection, {
-                    date: invoice.issue_date,
-                    description: `Costo de Mercadería Vendida - Factura ${invoiceLabel}`,
-                    reference_type: 'invoice',
-                    reference_id: invoice.id,
-                    lines: [
-                        { account_code: '5.1.01.01', debit: totalCmv, credit: 0, notes: 'Costo de Ventas (CMV)' },
-                        { account_code: '1.1.04.01', debit: 0, credit: totalCmv, notes: 'Salida de Inventario' }
-                    ]
-                });
-            }
-
-            await auditService.log({
-                user_id: userId,
-                action: 'AUTHORIZE_INVOICE',
-                entity_type: 'invoice',
-                entity_id: invoiceId,
-                new_values: { cae, cae_expiration_date: expirationDate }
-            });
-
-            await connection.commit();
-            return invoice;
-        } catch (error) {
-            await connection.rollback();
-            throw error;
-        } finally {
-            connection.release();
-        }
+        return invoiceAuthorizationUseCase.execute(invoiceId, userId);
     }
 
     async getInvoices(filters = {}) {
@@ -1380,11 +1390,43 @@ class SalesService extends BaseService {
         }));
     }
 
+    async getInvoiceById(invoiceId) {
+        const [rows] = await pool.query(`
+            SELECT i.*, c.tax_id AS client_tax_id, c.address AS client_address
+            FROM invoices i
+            LEFT JOIN clients c ON i.client_id = c.id
+            WHERE i.id = ? AND (i.deleted_at IS NULL)
+        `, [invoiceId]);
+        if (rows.length === 0) return null;
+        const invoice = {
+            ...rows[0],
+            client_name: rows[0].client_name || rows[0].customer_name
+        };
+        invoice.items = await this.getInvoiceItems(invoiceId);
+        return invoice;
+    }
+
     async getInvoiceItems(invoiceId) {
         const [rows] = await pool.query(
             'SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id ASC',
             [invoiceId]
         );
+        if (rows.length === 0) {
+            const [fallbackRows] = await pool.query(`
+                SELECT oi.id, ? AS invoice_id, oi.product_id,
+                       COALESCE(p.name, 'Producto') AS description,
+                       COALESCE(p.name, 'Producto') AS product_name,
+                       p.sku, oi.quantity, oi.unit_price,
+                       COALESCE(p.vat_rate, 21) AS vat_rate,
+                       ROUND(oi.quantity * oi.unit_price, 2) AS total_line
+                FROM invoices i
+                JOIN order_items oi ON oi.order_id = i.order_id
+                LEFT JOIN products p ON p.id = oi.product_id
+                WHERE i.id = ?
+                ORDER BY oi.id ASC
+            `, [invoiceId, invoiceId]);
+            return fallbackRows;
+        }
         return rows;
     }
 

@@ -2,15 +2,16 @@ import express from 'express';
 import * as procurementController from '../controllers/procurementController.js';
 import * as supplierInvoiceController from '../controllers/supplierInvoiceController.js';
 import { validate, schemas } from '../middleware/validationMiddleware.js';
-import { authorizeRoles } from '../middleware/authMiddleware.js';
+import { authorizePermission } from '../middleware/authMiddleware.js';
+import { PERMISSIONS } from '@wsm/common';
 
 const router = express.Router();
-const purchaseOrderReadRoles = authorizeRoles('admin', 'manager', 'warehouse');
-const purchaseOrderWriteRoles = authorizeRoles('admin', 'manager');
-const receptionRoles = authorizeRoles('admin', 'manager', 'warehouse');
-const supplierReturnRoles = authorizeRoles('admin', 'manager', 'warehouse');
-const supplierPaymentRoles = authorizeRoles('admin', 'manager');
-const qualityRoles = authorizeRoles('admin', 'manager', 'warehouse');
+const purchaseOrderReadRoles = authorizePermission(PERMISSIONS.PROCUREMENT_READ);
+const purchaseOrderWriteRoles = authorizePermission(PERMISSIONS.PROCUREMENT_MANAGE);
+const receptionRoles = authorizePermission(PERMISSIONS.RECEPTIONS_MANAGE);
+const supplierReturnRoles = authorizePermission(PERMISSIONS.SUPPLIER_RETURNS_MANAGE);
+const supplierPaymentRoles = authorizePermission(PERMISSIONS.SUPPLIER_PAYMENTS_MANAGE);
+const qualityRoles = authorizePermission(PERMISSIONS.QUALITY_MANAGE);
 
 // Purchase Orders
 router.get('/purchase-orders', purchaseOrderReadRoles, validate(schemas.purchaseOrderFilters), procurementController.getPurchaseOrders);

@@ -1,0 +1,43 @@
+{
+  "$comment": "Plantilla de Lifecycle Hooks para Google Antigravity. Renombrar a hooks.json para activar.",
+  "safety-gate": {
+    "enabled": false,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -Command \"Write-Output '{\\\"decision\\\": \\\"allow\\\"}'\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  },
+  "post-tool-lint": {
+    "enabled": false,
+    "PostToolUse": [
+      {
+        "matcher": "replace_file_content|write_to_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npm run lint --silent",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  },
+  "stop-guard": {
+    "enabled": false,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "powershell -Command \"Write-Output '{\\\"decision\\\": \\\"continue\\\", \\\"reason\\\": \\\"Verifique si los tests pasaron antes de finalizar.\\\"}'\"",
+        "timeout": 10
+      }
+    ]
+  }
+}

@@ -5,6 +5,7 @@ import type { PurchaseOrder, Supplier } from "@/types";
 import { showErrorToast } from "@/lib/errorHandling";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -35,7 +36,8 @@ interface ReceptionItem {
 function toReceptionItem(item: PurchaseOrderItem): ReceptionItem {
     const quantityOrdered = Number(item.quantity_ordered ?? item.quantity ?? 0);
     const quantityPreviouslyReceived = Number(item.quantity_received ?? item.received_quantity ?? 0);
-    const pendingToReceive = Math.max(0, quantityOrdered - quantityPreviouslyReceived);
+    const quantityPendingQc = Number(item.quantity_pending_qc ?? 0);
+    const pendingToReceive = Math.max(0, quantityOrdered - quantityPreviouslyReceived - quantityPendingQc);
 
     return {
         product_id: item.product_id,
@@ -264,7 +266,7 @@ export function ReceptionForm({
                                             <Input
                                                 type="number"
                                                 min="0"
-                                                className="mx-auto h-8 w-24 text-center"
+                                                className="mx-auto h-8 w-24 bg-white text-center text-slate-950 placeholder:text-slate-500 [color-scheme:light]"
                                                 value={item.quantity_received}
                                                 onChange={(event) => {
                                                     const value = Number.parseFloat(event.target.value) || 0;
@@ -274,18 +276,18 @@ export function ReceptionForm({
                                         </td>
                                         <td className="px-4 py-3">
                                             <Input
-                                                className="h-8 text-xs"
+                                                className="h-8 bg-white text-xs text-slate-950 placeholder:text-slate-500 [color-scheme:light]"
                                                 value={item.batch_number}
                                                 onChange={(event) => updateItem(index, { batch_number: event.target.value })}
                                                 placeholder="Lote"
                                             />
                                         </td>
                                         <td className="px-4 py-3">
-                                            <Input
-                                                type="date"
-                                                className="h-8 text-xs"
+                                            <ArgentinaDateInput
+                                                className="[&_input]:h-8 [&_input]:bg-white [&_input]:text-xs [&_input]:text-slate-950 [&_input]:placeholder:text-slate-500"
                                                 value={item.expiration_date}
-                                                onChange={(event) => updateItem(index, { expiration_date: event.target.value })}
+                                                onChange={(value) => updateItem(index, { expiration_date: value })}
+                                                ariaLabel={`Vencimiento de ${item.product_name || "producto"}`}
                                             />
                                         </td>
                                         <td className="px-4 py-3 text-center">

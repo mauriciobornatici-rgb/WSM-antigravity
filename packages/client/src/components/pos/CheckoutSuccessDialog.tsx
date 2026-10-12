@@ -19,9 +19,25 @@ export function CheckoutSuccessDialog({
     const [authorizing, setAuthorizing] = useState(false);
 
     useEffect(() => {
-        if (open) {
+        let isMounted = true;
+        if (open && lastInvoice) {
             setInvoiceState(lastInvoice);
+            if (!lastInvoice.items || lastInvoice.items.length === 0) {
+                void api.getInvoiceItems(lastInvoice.id).then((items) => {
+                    if (isMounted && items && items.length > 0) {
+                        setInvoiceState((prev) => {
+                            if (!prev) return null;
+                            return { ...prev, items };
+                        });
+                    }
+                }).catch((err) => {
+                    console.warn("No se pudieron cargar los ítems del comprobante", err);
+                });
+            }
         }
+        return () => {
+            isMounted = false;
+        };
     }, [lastInvoice, open]);
 
     const handleAuthorize = async () => {
@@ -29,7 +45,15 @@ export function CheckoutSuccessDialog({
         setAuthorizing(true);
         try {
             const updated = await api.authorizeInvoice(invoiceState.id);
-            setInvoiceState(updated);
+            const items = (updated.items && updated.items.length > 0) ? updated.items : invoiceState.items;
+            const nextInvoice: Invoice = {
+                ...invoiceState,
+                ...updated,
+            };
+            if (items && items.length > 0) {
+                nextInvoice.items = items;
+            }
+            setInvoiceState(nextInvoice);
             toast.success("Factura autorizada exitosamente con CAE");
         } catch {
             toast.error("Error al autorizar factura con AFIP");
@@ -42,7 +66,7 @@ export function CheckoutSuccessDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-md bg-slate-900 border-slate-800 text-slate-100">
+            <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-md bg-slate-900 border-slate-800 text-slate-100 print:hidden">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2 text-white">
                         <ShieldCheck className="h-6 w-6 text-emerald-500" />

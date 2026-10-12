@@ -4,7 +4,7 @@ import { validate, schemas, validateZod, zodSchemas } from '../middleware/valida
 
 const router = express.Router();
 
-// All routes here are already protected by authenticateToken + authorizeRoles('admin') in index.js
+// All routes here are protected by authenticateToken + users.manage in index.js.
 router.get('/', userController.getUsers);
 router.post('/', validateZod(zodSchemas.user), userController.createUser);
 router.put('/:id', validateZod(zodSchemas.userUpdate), userController.updateUser);

@@ -17,7 +17,6 @@ export interface LoginCredentials {
 
 export interface LoginResponse {
     user: User;
-    token: string;
 }
 
 export type QueryPrimitive = string | number | boolean | null | undefined;
@@ -240,8 +239,18 @@ export type InvoiceItem = {
 export type InvoiceCreateInput = Record<string, unknown>;
 
 export type InvoicePaymentLineInput = {
-    method: "cash" | "transfer" | "credit_account" | "card" | "debit_card" | "credit_card" | "qr";
+    method: "cash" | "transfer" | "credit_account" | "card" | "debit_card" | "credit_card" | "qr" | "check";
     amount: number;
+    check?: {
+        issuer_name: string;
+        bank_name: string;
+        check_number: string;
+        issue_date?: string;
+        due_date: string;
+        instrument_amount?: number;
+        source_type?: "own" | "third_party";
+        source_customer_check_id?: string;
+    };
 };
 
 export type InvoicePaymentRegisterInput = {
@@ -346,7 +355,9 @@ export type ApiCatalog = {
 };
 
 export type BulkPaymentAllocation = {
-    invoiceId: string;
+    invoiceId?: string;
+    documentId?: string;
+    documentType?: "invoice" | "order";
     payments: InvoicePaymentLineInput[];
 };
 
@@ -366,11 +377,104 @@ export type BulkPaymentResponse = {
     }>;
 };
 
+export type CustomerCheck = {
+    id: string;
+    client_id?: string | null;
+    client_name?: string | null;
+    issuer_name: string;
+    bank_name: string;
+    check_number: string;
+    amount: number;
+    issue_date?: string | null;
+    due_date: string;
+    status: 'received' | 'deposited' | 'cleared' | 'endorsed' | 'rejected' | 'cancelled';
+    received_at: string;
+    deposited_at?: string | null;
+    cleared_at?: string | null;
+    delivered_to?: string | null;
+    notes?: string | null;
+    allocated_amount?: number;
+    invoice_count?: number;
+    events?: Array<{
+        id: string;
+        status: CustomerCheck["status"];
+        notes?: string | null;
+        performed_by_name?: string | null;
+        created_at: string;
+    }>;
+    allocations?: Array<{
+        id: string;
+        invoice_id?: string | null;
+        invoice_type?: string | null;
+        point_of_sale?: number | null;
+        invoice_number?: number | string | null;
+        amount: number;
+        created_at: string;
+    }>;
+};
+
+export type OutgoingCheck = {
+    id: string;
+    supplier_id: string;
+    supplier_name?: string | null;
+    source_type: "own" | "third_party";
+    source_customer_check_id?: string | null;
+    issuer_name: string;
+    bank_name: string;
+    check_number: string;
+    amount: number;
+    issue_date?: string | null;
+    due_date: string;
+    status: "delivered" | "cleared" | "rejected" | "cancelled";
+    delivered_at?: string | null;
+    cleared_at?: string | null;
+    notes?: string | null;
+    allocated_amount?: number;
+    invoice_count?: number;
+    events?: Array<{
+        id: string;
+        status: OutgoingCheck["status"];
+        notes?: string | null;
+        performed_by_name?: string | null;
+        created_at: string;
+    }>;
+    allocations?: Array<{
+        id: string;
+        supplier_invoice_id?: string | null;
+        invoice_type?: string | null;
+        invoice_number?: string | null;
+        amount: number;
+        created_at: string;
+    }>;
+};
+
 export type PendingInvoiceResponse = Invoice & {
+    document_type: "invoice" | "order";
+    fiscal_status: "authorized" | "pending_cae" | "not_invoiced";
+    order_id?: string | null;
     client_name?: string;
     client_tax_id?: string;
     paid_amount: number;
     pending_amount: number;
+};
+
+export type FiscalSaleStatus = {
+    order_id: string;
+    sale_date: string;
+    order_total: number;
+    customer_name?: string | null;
+    client_id: string;
+    client_name: string;
+    client_tax_id?: string | null;
+    invoice_id?: string | null;
+    invoice_type?: string | null;
+    point_of_sale?: number | null;
+    invoice_number?: number | null;
+    invoice_total?: number | null;
+    invoice_status?: string | null;
+    cae?: string | null;
+    cae_expiration_date?: string | null;
+    fiscal_status: "authorized" | "pending_cae" | "not_invoiced";
 };
 
 export type BulkSupplierPaymentAllocation = {
@@ -411,4 +515,3 @@ export type PendingSupplierInvoiceResponse = {
     pending_amount: number;
     payment_status: "pending" | "partial" | "paid";
 };
-

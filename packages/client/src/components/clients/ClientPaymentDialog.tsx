@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/lib/errorHandling";
+import { createClientUuid } from "@/lib/clientUuid";
 import type { InvoiceSummary } from "./ClientDocumentsCards";
 
 type PaymentLine = {
@@ -30,7 +31,7 @@ const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentLine["method"]; label: strin
 
 function createPaymentLine(defaultAmount = ""): PaymentLine {
     return {
-        id: crypto.randomUUID(),
+        id: createClientUuid(),
         method: "cash",
         amount: defaultAmount,
     };
@@ -44,9 +45,7 @@ function formatInvoiceLabel(invoice: Pick<InvoiceSummary, "invoice_type" | "poin
     return `${type}-${pos}-${number}`;
 }
 
-const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(value || 0));
-};
+import { formatMoney } from "@/lib/formatters";
 
 interface ClientPaymentDialogProps {
     open: boolean;
@@ -265,6 +264,7 @@ export function ClientPaymentDialog({
                                         type="button"
                                         variant="ghost"
                                         size="icon"
+                                        aria-label="Eliminar medio de pago"
                                         onClick={() =>
                                             setPaymentLines((prev) => (prev.length <= 1 ? prev : prev.filter((entry) => entry.id !== line.id)))
                                         }

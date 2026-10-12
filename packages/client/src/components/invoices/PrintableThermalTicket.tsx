@@ -1,11 +1,18 @@
 import type { InvoiceView } from "./types"
 import type { CompanySettings } from "@/types"
 import { formatInvoiceNumber } from "./invoiceUtils"
+import { buildAfipQrUrlFromInvoice } from "./afipQr"
+import { AfipQrImage } from "./AfipQrImage"
+import { PrintPortal } from "@/components/common/PrintPortal"
 
-const DEFAULT_CAE_EXPIRATION_DATE = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .substring(0, 10)
-    .replace(/-/g, "")
+// Calculado en cada render: si se calcula al cargar el módulo queda vencido
+// cuando la app permanece abierta varios días.
+function defaultCaeExpirationDate(): string {
+    return new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .substring(0, 10)
+        .replace(/-/g, "")
+}
 
 type PrintableThermalTicketProps = {
     invoice: InvoiceView | null
@@ -29,42 +36,18 @@ export function PrintableThermalTicket({
         ? `${Number(companySettings.operation.tax_rate * 100).toFixed(0)}%`
         : "21%"
 
-    const getAfipQrValue = () => {
-        const cleanCuit = companyTaxId.replace(/-/g, "") || "20123456789"
-        const cleanClientCuit = (invoice.client_tax_id || "99999999999").replace(/-/g, "")
-        const qrData = {
-            ver: 1,
-            fecha: invoice.issue_date ? String(invoice.issue_date).substring(0, 10) : new Date().toISOString().substring(0, 10),
-            cuit: Number(cleanCuit) || 20123456789,
-            ptoVta: Number(invoice.point_of_sale || 1),
-            tipoCmp: invoice.invoice_type === "A" ? 1 : 6,
-            nroCmp: Number(invoice.invoice_number || 1),
-            importe: Number(invoice.total_amount || 0),
-            moneda: "PES",
-            cotiz: 1,
-            tipoDocRec: cleanClientCuit.length > 8 ? 80 : 99,
-            nroDocRec: Number(cleanClientCuit) || 99999999999,
-            tipoCodAut: "E",
-            codAut: Number(invoice.cae) || 0
-        }
-        try {
-            const jsonStr = JSON.stringify(qrData)
-            const b64 = btoa(unescape(encodeURIComponent(jsonStr)))
-            return `https://www.afip.gob.ar/fe/qr/?p=${b64}`
-        } catch {
-            return "https://www.afip.gob.ar/fe/qr/?p=mock"
-        }
-    }
+    const afipQrUrl = buildAfipQrUrlFromInvoice(invoice, companyTaxId)
 
     const emisorCuit = companyTaxId.replace(/-/g, "") || "20123456789"
     const compTypeNum = invoice.invoice_type === "A" ? "01" : "06"
     const expDateStr = invoice.cae_expiration_date
         ? String(invoice.cae_expiration_date).substring(0, 10).replace(/-/g, "")
-        : DEFAULT_CAE_EXPIRATION_DATE
+        : defaultCaeExpirationDate()
     const barcodeValue = `${emisorCuit}${compTypeNum}${String(invoice.point_of_sale || 1).padStart(4, "0")}${invoice.cae || ""}${expDateStr}`
 
     return (
-        <div id="printable-ticket" className="fixed inset-0 z-[9999] m-0 hidden bg-white p-4 text-black print:block font-mono text-xs w-[80mm] leading-tight">
+        <PrintPortal>
+            <div id="printable-ticket" className="m-0 hidden bg-white px-5 py-4 text-black print:block font-mono text-xs w-[80mm] max-w-[80mm] mx-auto leading-tight box-border">
             {/* Header */}
             <div className="text-center space-y-1 pb-2 border-b border-dashed border-slate-400">
                 <h2 className="text-sm font-black uppercase tracking-wider">{companyName}</h2>
@@ -79,7 +62,7 @@ export function PrintableThermalTicket({
 
             {/* Document Title */}
             <div className="text-center py-2 border-b border-dashed border-slate-400">
-                <h3 className="text-xs font-bold uppercase">{isTicket ? "TICKET NO FISCAL" : `FACTURA DE COMPRA ${invoice.invoice_type}`}</h3>
+                <h3 className="text-xs font-bold uppercase">{isTicket ? "TICKET NO FISCAL" : `FACTURA ${invoice.invoice_type}`}</h3>
                 <p className="text-[10px]">Comprobante Nº {formatInvoiceNumber(invoice)}</p>
                 <p className="text-[10px]">Fecha: {invoice.issue_date ? new Date(invoice.issue_date).toLocaleString("es-AR") : "-"}</p>
             </div>
@@ -95,26 +78,39 @@ export function PrintableThermalTicket({
             {/* Items Table */}
             <div className="py-2 border-b border-dashed border-slate-400">
                 <div className="flex justify-between text-[10px] font-bold pb-1">
-                    <span>Item / Descripción</span>
+                    <span>Producto / Detalle</span>
                     <span>Total</span>
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-1.5 pt-1">
                     {invoice.items && invoice.items.length > 0 ? (
-                        invoice.items.map((item, index) => (
-                            <div key={index} className="text-[10px] space-y-0.5 border-b border-dotted border-slate-200 pb-1 last:border-b-0">
-                                <div className="flex justify-between">
-                                    <span className="truncate max-w-[200px]">{item.product_name || item.description || "Producto"}</span>
-                                    <span>${(Number(item.quantity) * Number(item.unit_price)).toFixed(2)}</span>
+                        invoice.items.map((item, index) => {
+                            const qty = Number(item.quantity || 1);
+                            const unitPrice = Number(item.unit_price || 0);
+                            const totalLine = Number(item.total_line != null ? item.total_line : qty * unitPrice);
+                            return (
+                                <div key={index} className="text-[10px] space-y-0.5 border-b border-dotted border-slate-200 pb-1.5 last:border-b-0">
+                                    <div className="flex justify-between items-start gap-2">
+                                        <span className="font-bold break-words flex-1 text-slate-900">
+                                            {item.product_name || item.description || "Producto"}
+                                        </span>
+                                        <span className="font-bold shrink-0 text-slate-900">
+                                            ${totalLine.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                    <div className="text-[9px] text-slate-600 flex justify-between">
+                                        <span>
+                                            {qty} un. x ${unitPrice.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            {item.vat_rate != null ? ` (IVA ${item.vat_rate}%)` : ""}
+                                        </span>
+                                        {item.sku && <span className="font-mono text-slate-400">SKU: {item.sku}</span>}
+                                    </div>
                                 </div>
-                                <div className="text-[9px] text-slate-500">
-                                    {item.quantity} x ${Number(item.unit_price).toFixed(2)} (IVA {item.vat_rate || 21}%)
-                                </div>
-                            </div>
-                        ))
+                            );
+                        })
                     ) : (
-                        <div className="flex justify-between text-[10px]">
-                            <span>Venta Comercial</span>
-                            <span>${Number(invoice.total_amount).toFixed(2)}</span>
+                        <div className="flex justify-between text-[10px] text-slate-500 italic py-1">
+                            <span>Comprobante sin ítems asociados</span>
+                            <span>${Number(invoice.total_amount || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                     )}
                 </div>
@@ -124,15 +120,15 @@ export function PrintableThermalTicket({
             <div className="py-2 space-y-1 text-right text-[10px]">
                 <div className="flex justify-between">
                     <span>Neto Gravado:</span>
-                    <span>${Number(invoice.net_amount || 0).toFixed(2)}</span>
+                    <span>${Number(invoice.net_amount || invoice.subtotal || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">
                     <span>IVA ({taxRateLabel}):</span>
-                    <span>${Number(invoice.vat_amount || 0).toFixed(2)}</span>
+                    <span>${Number(invoice.vat_amount || invoice.tax_amount || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between text-sm font-black border-t border-dashed border-slate-400 pt-1.5 mt-1">
                     <span>TOTAL FACTURADO:</span>
-                    <span>${Number(invoice.total_amount || 0).toFixed(2)}</span>
+                    <span>${Number(invoice.total_amount || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
             </div>
 
@@ -144,29 +140,21 @@ export function PrintableThermalTicket({
                         <p>VTO. CAE: {invoice.cae_expiration_date ? new Date(invoice.cae_expiration_date).toLocaleDateString("es-AR") : "-"}</p>
                     </div>
 
-                    {/* Compact Simulated QR Code */}
+                    {/* Real AFIP QR Code (generado localmente) */}
                     <div className="flex items-center justify-center gap-2 border border-slate-400 p-1.5 bg-white rounded-sm select-none">
-                        <div className="w-12 h-12 shrink-0 bg-white border border-slate-200 p-0.5 rounded flex flex-wrap gap-[0.5px]">
-                            {Array.from({ length: 49 }).map((_, idx) => {
-                                const isCorner = 
-                                    (idx < 5 && idx % 7 < 2) || 
-                                    (idx < 15 && idx >= 10 && idx % 7 < 2) || 
-                                    (idx >= 25 && idx % 7 < 2) ||
-                                    (idx < 5 && idx % 7 >= 4) ||
-                                    (idx >= 40 && idx % 7 < 2) ||
-                                    (idx % 9 === 0) || (idx % 5 === 0);
-                                return (
-                                    <div 
-                                        key={idx} 
-                                        className={`w-[5px] h-[5px] ${isCorner ? 'bg-slate-900' : 'bg-slate-200'}`} 
-                                    />
-                                )
-                            })}
-                        </div>
+                        {afipQrUrl && (
+                            <AfipQrImage
+                                url={afipQrUrl}
+                                size={120}
+                                className="w-12 h-12 shrink-0 bg-white border border-slate-200 p-0.5 rounded"
+                            />
+                        )}
                         <div className="text-[8px] space-y-0.5 text-slate-800 leading-tight text-left">
                             <span className="bg-slate-900 text-white px-1 py-0.2 rounded font-black text-[7px] tracking-wider">ARCA/AFIP</span>
                             <p className="font-bold">Factura Autorizada</p>
-                            <p className="font-mono text-[6px] text-slate-500 max-w-[130px] truncate">{getAfipQrValue().substring(0, 24)}...</p>
+                            {afipQrUrl && (
+                                <p className="font-mono text-[6px] text-slate-500 max-w-[130px] truncate">{afipQrUrl.substring(0, 24)}...</p>
+                            )}
                         </div>
                     </div>
 
@@ -199,5 +187,6 @@ export function PrintableThermalTicket({
                 ¡Gracias por su compra en WSM Sports!
             </div>
         </div>
+        </PrintPortal>
     )
 }

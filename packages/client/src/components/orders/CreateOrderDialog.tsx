@@ -1,13 +1,16 @@
 import { useState, useEffect, useMemo } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Plus, Trash2 } from "lucide-react"
+import { AlertCircle, CheckCircle2, Calculator, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
+import { createClientUuid } from "@/lib/clientUuid"
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
@@ -33,13 +36,19 @@ const PAYMENT_METHODS = [
 
 const CONSUMIDOR_FINAL_VALUE = "__consumidor_final__"
 
+type CreatePaymentLine = { id: string; method: string; amount: string }
+
+function newPaymentLine(method = "cash", amount = ""): CreatePaymentLine {
+    return { id: createClientUuid(), method, amount }
+}
+
 export function CreateOrderDialog({ open, onOpenChange, clients, products, currentUser }: CreateOrderDialogProps) {
     const queryClient = useQueryClient()
 
     // Form states
     const [createClientId, setCreateClientId] = useState("")
     const [createCounterName, setCreateCounterName] = useState("")
-    const [createPaymentMethod, setCreatePaymentMethod] = useState("cash")
+    const [createPaymentLines, setCreatePaymentLines] = useState<CreatePaymentLine[]>([newPaymentLine()])
     const [createShippingMethod, setCreateShippingMethod] = useState<ShippingMethod>("pickup")
     const [createEstimatedDelivery, setCreateEstimatedDelivery] = useState("")
     const [createShippingAddress, setCreateShippingAddress] = useState("")
@@ -101,6 +110,42 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
         }, 0)
     }, [createItems, productById])
 
+    const totalItemsCount = createItems.length
+    const totalUnitsCount = useMemo(() => {
+        return createItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+    }, [createItems])
+
+    const paymentsTotal = useMemo(() => {
+        return Math.round(createPaymentLines.reduce((sum, line) => sum + Number(line.amount || 0), 0) * 100) / 100
+    }, [createPaymentLines])
+
+    const remainingToAssign = useMemo(() => {
+        return Math.round((createOrderTotal - paymentsTotal) * 100) / 100
+    }, [createOrderTotal, paymentsTotal])
+
+    const hasItems = totalItemsCount > 0
+    const isPaymentBalanced = hasItems && Math.abs(remainingToAssign) <= 0.01 && createPaymentLines.length > 0 && createPaymentLines.every((l) => Number(l.amount || 0) > 0)
+    const canSubmit = hasItems && isPaymentBalanced && !createOrderMutation.isPending
+
+    function assignRemainingToLastLine() {
+        if (remainingToAssign <= 0 || createPaymentLines.length === 0) return
+        setCreatePaymentLines((current) => {
+            if (current.length === 0) return current
+            const lastIndex = current.length - 1
+            const lastLine = current[lastIndex]
+            if (!lastLine) return current
+            const currentAmount = Number(lastLine.amount || 0)
+            const newAmount = Math.round((currentAmount + remainingToAssign) * 100) / 100
+            return current.map((line, idx) => (idx === lastIndex ? { ...line, amount: String(newAmount) } : line))
+        })
+    }
+
+    function assignTotalToSingleLine() {
+        if (createOrderTotal <= 0) return
+        const method = createPaymentLines[0]?.method || "cash"
+        setCreatePaymentLines([newPaymentLine(method, String(createOrderTotal))])
+    }
+
     useEffect(() => {
         if (!open) return
         setCreateCounterName(currentUser?.name || "")
@@ -109,7 +154,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
     function resetCreateForm() {
         setCreateClientId("")
         setCreateCounterName(currentUser?.name || "")
-        setCreatePaymentMethod("cash")
+        setCreatePaymentLines([newPaymentLine()])
         setCreateShippingMethod("pickup")
         setCreateEstimatedDelivery("")
         setCreateShippingAddress("")
@@ -146,6 +191,10 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
 
     function removeCreateItem(productId: string) {
         setCreateItems((current) => current.filter((item) => item.product_id !== productId))
+    }
+
+    function updatePaymentLine(id: string, patch: Partial<CreatePaymentLine>) {
+        setCreatePaymentLines((current) => current.map((line) => line.id === id ? { ...line, ...patch } : line))
     }
 
     async function createQuickClient() {
@@ -190,7 +239,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
             toast.error("Agrega al menos un producto al pedido")
             return
         }
-        if (createPaymentMethod === "credit_account" && !createClientId) {
+        if (createPaymentLines.some((line) => line.method === "credit_account") && !createClientId) {
             toast.error("Cuenta corriente requiere cliente")
             return
         }
@@ -220,21 +269,39 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
             return
         }
 
+        if (!isPaymentBalanced) {
+            if (remainingToAssign > 0) {
+                toast.error(`Falta asignar $${remainingToAssign.toLocaleString("es-AR")} en medios de pago`)
+            } else if (remainingToAssign < 0) {
+                toast.error(`Los medios de pago superan el total del pedido por $${Math.abs(remainingToAssign).toLocaleString("es-AR")}`)
+            } else {
+                toast.error("Revisa los importes de los medios de pago")
+            }
+            return
+        }
+
         try {
             const payload: Parameters<typeof api.createOrder>[0] = {
                 customer_name: selectedCreateClient?.name || "Consumidor final",
                 counter_name: createCounterName || currentUser?.name || "",
-                payment_method: createPaymentMethod,
+                payment_method: createPaymentLines[0]?.method || "cash",
+                payments: createPaymentLines.map((line) => ({ method: line.method, amount: Number(line.amount) })),
+                total_amount: createOrderTotal,
                 shipping_method: createShippingMethod,
                 estimated_delivery: createEstimatedDelivery,
                 shipping_address: createShippingMethod === "delivery" ? createShippingAddress : "",
                 recipient_name: createRecipientName,
                 recipient_dni: createRecipientDni,
                 notes: createNotes,
-                items: createItems.map((item) => ({
-                    product_id: item.product_id,
-                    quantity: Number(item.quantity || 1),
-                })),
+                items: createItems.map((item) => {
+                    const product = productById.get(item.product_id)
+                    return {
+                        product_id: item.product_id,
+                        quantity: Number(item.quantity || 1),
+                        unit_price: Number(product?.sale_price || 0),
+                        vat_rate: Number(product?.vat_rate ?? 21.00),
+                    }
+                }),
             }
             if (createClientId) payload.client_id = createClientId
             if (currentUser?.id) payload.counter_user_id = currentUser.id
@@ -313,7 +380,23 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                         </div>
 
                         <div className="space-y-3 rounded-md border p-3">
-                            <Label>Productos del pedido</Label>
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Label className="text-sm font-semibold">Productos del pedido</Label>
+                                    {hasItems ? (
+                                        <Badge variant="outline" className="text-xs font-normal">
+                                            {totalItemsCount} {totalItemsCount === 1 ? "ítem" : "ítems"} ({totalUnitsCount} u.)
+                                        </Badge>
+                                    ) : null}
+                                </div>
+                                {hasItems ? (
+                                    <div className="flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">
+                                        <Calculator className="h-4 w-4" />
+                                        <span className="text-xs uppercase tracking-wide opacity-80">Suma total:</span>
+                                        <span className="text-base font-bold">${createOrderTotal.toLocaleString("es-AR")}</span>
+                                    </div>
+                                ) : null}
+                            </div>
                             <Input
                                 value={productSearch}
                                 onChange={(event) => setProductSearch(event.target.value)}
@@ -363,18 +446,39 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                 <div className="space-y-2">
                                     {createItems.map((item) => {
                                         const product = productById.get(item.product_id)
+                                        const availableStock = Number(product?.stock_current ?? 0)
+                                        const isOutOfStock = availableStock <= 0
+                                        const isInsufficient = !isOutOfStock && Number(item.quantity || 0) > availableStock
                                         return (
                                             <div
                                                 key={item.product_id}
-                                                className="grid gap-2 rounded-md border p-2 md:grid-cols-[minmax(0,1fr)_120px_130px_auto]"
+                                                className={`grid gap-2 rounded-md border p-2 md:grid-cols-[minmax(0,1fr)_120px_130px_auto] transition-colors ${
+                                                    isOutOfStock
+                                                        ? "border-red-500/80 bg-red-50/60 dark:bg-red-950/30 dark:border-red-700/80"
+                                                        : isInsufficient
+                                                        ? "border-amber-500/80 bg-amber-50/60 dark:bg-amber-950/30 dark:border-amber-700/80"
+                                                        : ""
+                                                }`}
                                             >
                                                 <div className="min-w-0">
                                                     <p className="truncate text-sm font-medium">
                                                         {product ? `${product.sku} - ${product.name}` : item.product_id}
                                                     </p>
-                                                    <p className="text-xs text-muted-foreground">
-                                                        Stock disponible: {Number(product?.stock_current ?? 0)}
-                                                    </p>
+                                                    {isOutOfStock ? (
+                                                        <span className="inline-flex items-center gap-1 rounded bg-red-100 dark:bg-red-900/50 px-1.5 py-0.5 text-xs font-semibold text-red-700 dark:text-red-300">
+                                                            <AlertCircle className="h-3 w-3 shrink-0" />
+                                                            Stock: 0 (Sin stock disponible - Requiere confirmación en almacén)
+                                                        </span>
+                                                    ) : isInsufficient ? (
+                                                        <span className="inline-flex items-center gap-1 rounded bg-amber-100 dark:bg-amber-900/50 px-1.5 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300">
+                                                            <AlertCircle className="h-3 w-3 shrink-0" />
+                                                            Stock insuficiente (Disponible: {availableStock}, Solicitado: {item.quantity})
+                                                        </span>
+                                                    ) : (
+                                                        <p className="text-xs text-muted-foreground">
+                                                            Stock disponible: {availableStock}
+                                                        </p>
+                                                    )}
                                                 </div>
                                                 <Input
                                                     type="number"
@@ -401,26 +505,156 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                             </div>
                                         )
                                     })}
+
+                                    {/* Resumen inferior de suma total de productos */}
+                                    <div className="mt-3 flex flex-col sm:flex-row items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-2.5">
+                                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                            <Calculator className="h-4 w-4 text-primary shrink-0" />
+                                            <span>
+                                                Total acumulado ({totalUnitsCount} {totalUnitsCount === 1 ? "unidad" : "unidades"} en {totalItemsCount} {totalItemsCount === 1 ? "producto" : "productos"}):
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs uppercase font-medium text-muted-foreground">Suma pedido:</span>
+                                            <span className="text-lg font-bold text-foreground">
+                                                ${createOrderTotal.toLocaleString("es-AR")}
+                                            </span>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
                         </div>
 
-                        <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
-                            <div className="space-y-2">
-                                <Label>Metodo de pago</Label>
-                                <Select value={createPaymentMethod} onValueChange={setCreatePaymentMethod}>
-                                    <SelectTrigger>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {PAYMENT_METHODS.map((method) => (
-                                            <SelectItem key={method.value} value={method.value}>
-                                                {method.label}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                        {/* Medios de pago */}
+                        <div className="space-y-3 rounded-md border p-3">
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                    <Label className="text-sm font-semibold">Medios de pago</Label>
+                                    {hasItems ? (
+                                        <span className="text-xs text-muted-foreground">
+                                            (Total a cubrir: <strong>${createOrderTotal.toLocaleString("es-AR")}</strong>)
+                                        </span>
+                                    ) : null}
+                                </div>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setCreatePaymentLines((current) => [...current, newPaymentLine("transfer")])}
+                                >
+                                    <Plus className="mr-1 h-3.5 w-3.5" /> Agregar medio
+                                </Button>
                             </div>
+
+                            <div className="space-y-2">
+                                {createPaymentLines.map((line) => (
+                                    <div key={line.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px_auto]">
+                                        <Select value={line.method} onValueChange={(method) => updatePaymentLine(line.id, { method })}>
+                                            <SelectTrigger><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                {PAYMENT_METHODS.map((method) => (
+                                                    <SelectItem key={method.value} value={method.value}>{method.label}</SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        <Input
+                                            type="number"
+                                            min="0.01"
+                                            step="0.01"
+                                            value={line.amount}
+                                            onChange={(event) => updatePaymentLine(line.id, { amount: event.target.value })}
+                                            placeholder="Importe"
+                                        />
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            aria-label="Eliminar medio de pago"
+                                            disabled={createPaymentLines.length === 1}
+                                            onClick={() => setCreatePaymentLines((current) => current.filter((item) => item.id !== line.id))}
+                                        >
+                                            <Trash2 className="h-4 w-4 text-red-500" />
+                                        </Button>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Indicador dinámico de balance de pagos */}
+                            <div className="space-y-2 pt-1">
+                                {hasItems ? (
+                                    remainingToAssign > 0.005 ? (
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700/60 p-3 text-sm">
+                                            <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 font-medium">
+                                                <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                                                <span>
+                                                    Falta asignar: <strong className="text-base font-bold text-amber-700 dark:text-amber-300">${remainingToAssign.toLocaleString("es-AR")}</strong>
+                                                </span>
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-8 text-xs border-amber-400 bg-white/80 dark:bg-amber-900/40 hover:bg-amber-100 dark:hover:bg-amber-900/70"
+                                                    onClick={assignRemainingToLastLine}
+                                                >
+                                                    Asignar resto a última línea
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-8 text-xs border-amber-400 bg-white/80 dark:bg-amber-900/40 hover:bg-amber-100 dark:hover:bg-amber-900/70"
+                                                    onClick={assignTotalToSingleLine}
+                                                >
+                                                    Asignar total al primero
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ) : remainingToAssign < -0.005 ? (
+                                        <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive font-medium">
+                                            <AlertCircle className="h-4 w-4 shrink-0" />
+                                            <span>
+                                                El monto asignado supera el total del pedido por <strong>${Math.abs(remainingToAssign).toLocaleString("es-AR")}</strong>
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-700/60 p-3 text-sm text-emerald-900 dark:text-emerald-200 font-medium">
+                                            <div className="flex items-center gap-2">
+                                                <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                                <span>
+                                                    Monto completamente asignado (<strong>$0</strong> pendiente). Total: ${paymentsTotal.toLocaleString("es-AR")}
+                                                </span>
+                                            </div>
+                                            <Badge variant="outline" className="border-emerald-500 text-emerald-700 dark:text-emerald-300 bg-emerald-100/50 dark:bg-emerald-900/30 text-xs">
+                                                Listo para crear
+                                            </Badge>
+                                        </div>
+                                    )
+                                ) : (
+                                    <p className="text-xs text-muted-foreground">
+                                        Agrega productos arriba para calcular el total a pagar y habilitar los pagos.
+                                    </p>
+                                )}
+
+                                <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+                                    <span>Total asignado: <strong>${paymentsTotal.toLocaleString("es-AR")}</strong> de ${createOrderTotal.toLocaleString("es-AR")}</span>
+                                    {hasItems && Math.abs(remainingToAssign) > 0.01 ? (
+                                        <Button
+                                            type="button"
+                                            variant="link"
+                                            size="sm"
+                                            className="h-auto p-0 text-xs text-primary"
+                                            onClick={assignTotalToSingleLine}
+                                        >
+                                            Asignar total a un solo medio
+                                        </Button>
+                                    ) : null}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
                             <div className="space-y-2">
                                 <Label>Metodo logistico</Label>
                                 <Select
@@ -438,10 +672,10 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                             </div>
                             <div className="space-y-2">
                                 <Label>Fecha estimada entrega/retiro</Label>
-                                <Input
-                                    type="date"
+                                <ArgentinaDateInput
                                     value={createEstimatedDelivery}
-                                    onChange={(event) => setCreateEstimatedDelivery(event.target.value)}
+                                    onChange={setCreateEstimatedDelivery}
+                                    ariaLabel="Fecha estimada de entrega o retiro"
                                 />
                             </div>
                             <div className="space-y-2">
@@ -483,13 +717,38 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                         <div className="rounded-md border bg-muted/20 p-3 text-right text-sm">
                             Total pedido: <strong>${createOrderTotal.toLocaleString("es-AR")}</strong>
                         </div>
-                        <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
-                            <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
-                                Cancelar
-                            </Button>
-                            <Button type="submit" disabled={createOrderMutation.isPending}>
-                                {createOrderMutation.isPending ? "Creando..." : "Crear"}
-                            </Button>
+                        <div className="flex flex-col items-end gap-1.5 border-t pt-3">
+                            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end w-full">
+                                <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
+                                    Cancelar
+                                </Button>
+                                <Button
+                                    type="submit"
+                                    disabled={!canSubmit}
+                                    title={
+                                        !hasItems
+                                            ? "Debes agregar al menos un producto"
+                                            : !isPaymentBalanced
+                                            ? remainingToAssign > 0
+                                                ? `Falta asignar $${remainingToAssign.toLocaleString("es-AR")} en medios de pago`
+                                                : `El monto asignado supera el total por $${Math.abs(remainingToAssign).toLocaleString("es-AR")}`
+                                            : undefined
+                                    }
+                                >
+                                    {createOrderMutation.isPending ? "Creando..." : "Crear"}
+                                </Button>
+                            </div>
+                            {!canSubmit && hasItems && !createOrderMutation.isPending ? (
+                                <p className="text-xs text-amber-600 dark:text-amber-400 font-medium text-right">
+                                    {remainingToAssign > 0
+                                        ? `* Falta asignar $${remainingToAssign.toLocaleString("es-AR")} en medios de pago para poder crear el pedido`
+                                        : remainingToAssign < 0
+                                        ? `* El importe asignado excede el total del pedido por $${Math.abs(remainingToAssign).toLocaleString("es-AR")}`
+                                        : createPaymentLines.some((l) => Number(l.amount || 0) <= 0)
+                                        ? "* Todos los medios de pago deben tener un importe mayor a cero"
+                                        : ""}
+                                </p>
+                            ) : null}
                         </div>
                     </form>
                 </DialogContent>

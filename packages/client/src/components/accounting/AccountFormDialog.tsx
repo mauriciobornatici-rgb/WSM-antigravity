@@ -20,8 +20,9 @@ export function AccountFormDialog({ isOpen, onOpenChange, form, onChange, onSave
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                     <div className="space-y-2">
-                        <label className="text-sm font-medium">Código</label>
+                        <label htmlFor="account-code" className="text-sm font-medium">Código</label>
                         <Input
+                            id="account-code"
                             placeholder="Ej: 1.1.01"
                             value={form.code}
                             onChange={(e) => onChange({ ...form, code: e.target.value })}
@@ -29,21 +30,22 @@ export function AccountFormDialog({ isOpen, onOpenChange, form, onChange, onSave
                         />
                     </div>
                     <div className="space-y-2">
-                        <label className="text-sm font-medium">Nombre de la Cuenta</label>
+                        <label htmlFor="account-name" className="text-sm font-medium">Nombre de la Cuenta</label>
                         <Input
+                            id="account-name"
                             placeholder="Ej: Caja General"
                             value={form.name}
                             onChange={(e) => onChange({ ...form, name: e.target.value })}
                         />
                     </div>
                     <div className="space-y-2">
-                        <label className="text-sm font-medium">Tipo</label>
+                        <label htmlFor="account-type" className="text-sm font-medium">Tipo</label>
                         <Select
                             value={form.type}
                             onValueChange={(val) => onChange({ ...form, type: val })}
                             disabled={form.isEdit}
                         >
-                            <SelectTrigger>
+                            <SelectTrigger id="account-type">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>

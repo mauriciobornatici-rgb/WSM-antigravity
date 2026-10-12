@@ -2,6 +2,7 @@ import pool from './db.js';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { runMigrations } from './migrations_manager.js';
+import { assertSafeDatabaseTarget, getEnvConfig } from './env.js';
 import { isStrongPassword, getPasswordPolicyMessage } from '../utils/passwordPolicy.js';
 
 const SALT_ROUNDS = 10;
@@ -10,9 +11,14 @@ const REQUIRED_TABLES = [
     'company_settings',
     'clients',
     'suppliers',
+    'product_families',
+    'product_catalog_options',
     'products',
     'inventory',
     'inventory_movements',
+    'stock_audit_sessions',
+    'stock_audit_items',
+    'stock_audit_count_events',
     'orders',
     'order_items',
     'transactions',
@@ -36,7 +42,8 @@ const REQUIRED_TABLES = [
     'document_sequences',
     'chart_of_accounts',
     'journal_entries',
-    'journal_entry_lines'
+    'journal_entry_lines',
+    'order_item_allocations'
 ];
 
 async function assertRequiredTables() {
@@ -86,6 +93,7 @@ async function seedCompanySettings() {
 }
 
 export const initDatabase = async () => {
+    assertSafeDatabaseTarget(getEnvConfig());
     try {
         console.log('Checking for migrations...');
         await runMigrations();

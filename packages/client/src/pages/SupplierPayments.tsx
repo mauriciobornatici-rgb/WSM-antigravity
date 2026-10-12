@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Receipt } from "lucide-react";
+import { Plus, Trash2, Receipt, Landmark, History } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -10,15 +10,39 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput";
+import { PaginationControls } from "@/components/common/PaginationControls";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/lib/errorHandling";
-import type { PendingSupplierInvoiceResponse, BulkSupplierPaymentAllocation, InvoicePaymentLineInput, BulkSupplierPaymentInput } from "@/types/api";
+import { createClientUuid } from "@/lib/clientUuid";
+import type { PendingSupplierInvoiceResponse, BulkSupplierPaymentAllocation, InvoicePaymentLineInput, BulkSupplierPaymentInput, CustomerCheck, OutgoingCheck } from "@/types/api";
 import type { Supplier } from "@/types";
 
 type PaymentLine = {
     id: string;
     method: InvoicePaymentLineInput["method"];
     amount: string;
+    check: {
+        source_type: "own" | "third_party";
+        source_customer_check_id: string;
+        issuer_name: string;
+        bank_name: string;
+        check_number: string;
+        issue_date: string;
+        due_date: string;
+    };
+};
+
+type OutgoingCheckFilter = "all" | "open" | "due_soon" | "overdue" | "cleared";
+const LIST_PAGE_SIZE = 10;
+
+const OUTGOING_STATUS_LABELS: Record<OutgoingCheck["status"], string> = {
+    delivered: "Entregado",
+    cleared: "Cobrado por banco",
+    rejected: "Rechazado",
+    cancelled: "Anulado",
 };
 
 const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentLine["method"]; label: string }> = [
@@ -29,13 +53,15 @@ const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentLine["method"]; label: strin
     { value: "qr", label: "QR" },
     { value: "credit_account", label: "Cuenta corriente" },
     { value: "card", label: "Tarjeta" },
+    { value: "check", label: "Cheque" },
 ];
 
 function createPaymentLine(defaultAmount = ""): PaymentLine {
     return {
-        id: crypto.randomUUID(),
+        id: createClientUuid(),
         method: "cash",
         amount: defaultAmount,
+        check: { source_type: "own", source_customer_check_id: "", issuer_name: "", bank_name: "", check_number: "", issue_date: "", due_date: "" },
     };
 }
 
@@ -55,6 +81,11 @@ export default function SupplierPaymentsPage() {
     const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
     const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([createPaymentLine()]);
     const [paymentNotes, setPaymentNotes] = useState("");
+    const [outgoingFilter, setOutgoingFilter] = useState<OutgoingCheckFilter>("all");
+    const [outgoingPage, setOutgoingPage] = useState(1);
+    const [selectedOutgoingCheckId, setSelectedOutgoingCheckId] = useState<string | null>(null);
+    const [outgoingStatus, setOutgoingStatus] = useState<OutgoingCheck["status"]>("delivered");
+    const [outgoingNotes, setOutgoingNotes] = useState("");
     
     // 1. Fetch pending invoices
     const { data: pendingInvoices = [], isLoading: isLoadingInvoices } = useQuery<PendingSupplierInvoiceResponse[]>({
@@ -67,6 +98,43 @@ export default function SupplierPaymentsPage() {
         queryKey: ["suppliers"],
         queryFn: () => api.getSuppliers(),
     });
+    const { data: customerChecks = [] } = useQuery<CustomerCheck[]>({
+        queryKey: ["collections", "checks"],
+        queryFn: () => api.getCustomerChecks(),
+    });
+    const { data: outgoingChecks = [] } = useQuery<OutgoingCheck[]>({
+        queryKey: ["supplier-payments", "outgoing-checks"],
+        queryFn: () => api.getOutgoingChecks(),
+    });
+    const { data: selectedOutgoingCheck, isFetching: isLoadingOutgoingCheck } = useQuery<OutgoingCheck>({
+        queryKey: ["supplier-payments", "outgoing-checks", selectedOutgoingCheckId],
+        queryFn: () => api.getOutgoingCheck(selectedOutgoingCheckId!),
+        enabled: Boolean(selectedOutgoingCheckId),
+    });
+
+    const availableThirdPartyChecks = useMemo(
+        () => customerChecks.filter((check) => check.status === "received"),
+        [customerChecks]
+    );
+
+    const filteredOutgoingChecks = useMemo(() => {
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+        const limit = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7);
+        const dueSoonLimit = `${limit.getFullYear()}-${String(limit.getMonth() + 1).padStart(2, "0")}-${String(limit.getDate()).padStart(2, "0")}`;
+        const isOpen = (status: OutgoingCheck["status"]) => status === "delivered";
+        return outgoingChecks.filter((check) => {
+            const dueDate = String(check.due_date || "").slice(0, 10);
+            if (outgoingFilter === "open") return isOpen(check.status);
+            if (outgoingFilter === "cleared") return check.status === "cleared";
+            if (outgoingFilter === "overdue") return isOpen(check.status) && dueDate < today;
+            if (outgoingFilter === "due_soon") return isOpen(check.status) && dueDate >= today && dueDate <= dueSoonLimit;
+            return true;
+        });
+    }, [outgoingChecks, outgoingFilter]);
+    const outgoingTotalPages = Math.max(1, Math.ceil(filteredOutgoingChecks.length / LIST_PAGE_SIZE));
+    const safeOutgoingPage = Math.min(outgoingPage, outgoingTotalPages);
+    const visibleOutgoingChecks = filteredOutgoingChecks.slice((safeOutgoingPage - 1) * LIST_PAGE_SIZE, safeOutgoingPage * LIST_PAGE_SIZE);
 
     const isLoading = isLoadingInvoices || isLoadingSuppliers;
 
@@ -172,7 +240,16 @@ export default function SupplierPaymentsPage() {
             
             // Distribute payments top to bottom
             const allocations: BulkSupplierPaymentAllocation[] = [];
-            const remainingPayments = paymentLines.map(p => ({ method: p.method, amount: Number(p.amount || 0) }));
+            const remainingPayments = paymentLines.map(p => ({
+                method: p.method,
+                amount: Number(p.amount || 0),
+                ...(p.method === "check" ? {
+                    check: {
+                        ...p.check,
+                        instrument_amount: Number(p.amount || 0),
+                    }
+                } : {})
+            }));
             
             const selectedInvoiceObjects = supplierInvoices.filter((inv: PendingSupplierInvoiceResponse) => selectedInvoiceIds.has(inv.id));
             
@@ -188,7 +265,11 @@ export default function SupplierPaymentsPage() {
                     pay.amount -= take;
                     pending -= take;
                     
-                    invPayments.push({ method: pay.method, amount: Number(take.toFixed(2)) });
+                    invPayments.push({
+                        method: pay.method,
+                        amount: Number(take.toFixed(2)),
+                        ...(pay.check ? { check: pay.check } : {})
+                    });
                 }
                 
                 if (invPayments.length > 0) {
@@ -213,6 +294,8 @@ export default function SupplierPaymentsPage() {
                 description: `Se pagaron ${formatMoney(data.total_paid)} a proveedor correctamente.`
             });
             queryClient.invalidateQueries({ queryKey: ["supplier-payments", "pending-invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["supplier-payments", "outgoing-checks"] });
+            queryClient.invalidateQueries({ queryKey: ["collections", "checks"] });
             setSelectedInvoiceIds(new Set());
             setPaymentLines([createPaymentLine()]);
             setPaymentNotes("");
@@ -225,6 +308,11 @@ export default function SupplierPaymentsPage() {
     const isSubmitDisabled = 
         !selectedSupplierId || 
         selectedInvoiceIds.size === 0 || 
+        paymentLines.some((line) => Number(line.amount || 0) <= 0 || (line.method === "check" && (
+            line.check.source_type === "third_party"
+                ? !line.check.source_customer_check_id
+                : (!line.check.issuer_name || !line.check.bank_name || !line.check.check_number || !line.check.due_date)
+        ))) ||
         totalToRegister <= 0 || 
         Math.abs(remainingToAssign) > 0.01 || 
         isRegistering;
@@ -245,9 +333,9 @@ export default function SupplierPaymentsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Paso 1: Seleccionar Proveedor */}
                 <div className="lg:col-span-3">
-                    <Card className="bg-slate-900/40 backdrop-blur border-slate-800">
+                    <Card>
                         <CardHeader className="pb-4">
-                            <CardTitle className="text-lg font-semibold text-slate-200">
+                            <CardTitle className="text-lg font-semibold">
                                 1. Seleccione el Proveedor
                             </CardTitle>
                             <CardDescription>
@@ -256,7 +344,7 @@ export default function SupplierPaymentsPage() {
                         </CardHeader>
                         <CardContent className="space-y-4">
                             {isLoading ? (
-                                <div className="h-10 w-full bg-slate-800/50 animate-pulse rounded-md" />
+                                <div className="h-10 w-full bg-muted animate-pulse rounded-md" />
                             ) : (
                                 <Select 
                                     value={selectedSupplierId} 
@@ -267,10 +355,10 @@ export default function SupplierPaymentsPage() {
                                         setPaymentNotes("");
                                     }}
                                 >
-                                    <SelectTrigger className="w-full bg-slate-950 border-slate-800 text-slate-200 h-11 focus:ring-blue-500">
-                                        <SelectValue placeholder="Seleccione un proveedor..." />
+                                    <SelectTrigger className="w-full bg-background border-input text-foreground h-11 focus:ring-blue-500">
+                                        <SelectValue placeholder="Buscar o seleccionar proveedor..." />
                                     </SelectTrigger>
-                                    <SelectContent className="bg-slate-950 border-slate-800 text-slate-200">
+                                    <SelectContent className="bg-popover border-border text-popover-foreground">
                                         {sortedSuppliers.length === 0 ? (
                                             <div className="py-6 text-center text-muted-foreground text-sm">
                                                 No se encontraron proveedores.
@@ -279,7 +367,7 @@ export default function SupplierPaymentsPage() {
                                             sortedSuppliers.map((sup) => {
                                                 const debt = suppliersWithDebtMap.get(sup.id) || 0;
                                                 return (
-                                                    <SelectItem key={sup.id} value={sup.id} className="focus:bg-blue-600/30">
+                                                    <SelectItem key={sup.id} value={sup.id}>
                                                         {sup.name} (Saldo: {formatMoney(sup.account_balance)} {debt > 0 ? `/ Facturas: ${formatMoney(debt)}` : ""})
                                                     </SelectItem>
                                                 );
@@ -289,14 +377,14 @@ export default function SupplierPaymentsPage() {
                                 </Select>
                             )}
                             {selectedSupplier && (
-                                <div className="flex flex-col sm:flex-row gap-4 p-3.5 rounded-lg border border-slate-800 bg-slate-950/40 text-sm text-slate-400 mt-4">
+                                <div className="flex flex-col sm:flex-row gap-4 p-3.5 rounded-lg border border-border bg-muted/40 text-sm text-muted-foreground mt-4">
                                     <div>
-                                        <span className="text-xs uppercase tracking-wider text-slate-500 block">Proveedor</span>
-                                        <span className="font-semibold text-slate-200 text-base">{selectedSupplier.name}</span>
+                                        <span className="text-xs uppercase tracking-wider text-muted-foreground block">Proveedor</span>
+                                        <span className="font-semibold text-foreground text-base">{selectedSupplier.name}</span>
                                     </div>
                                     <div className="sm:ml-auto text-sm sm:text-right">
-                                        <span className="text-xs uppercase tracking-wider text-slate-500 block">Saldo en Cuenta Corriente</span>
-                                        <span className="font-bold text-slate-200 text-base">{formatMoney(selectedSupplier.account_balance)}</span>
+                                        <span className="text-xs uppercase tracking-wider text-muted-foreground block">Saldo en Cuenta Corriente</span>
+                                        <span className="font-bold text-foreground font-mono text-base">{formatMoney(selectedSupplier.account_balance)}</span>
                                     </div>
                                 </div>
                             )}
@@ -308,10 +396,10 @@ export default function SupplierPaymentsPage() {
                     <>
                         {/* Paso 2: Seleccionar Facturas */}
                         <div className="lg:col-span-2 space-y-6">
-                            <Card className="bg-slate-900/40 backdrop-blur border-slate-800">
+                            <Card>
                                 <CardHeader className="pb-4 flex flex-row items-center justify-between">
                                     <div>
-                                        <CardTitle className="text-lg font-semibold text-slate-200">
+                                        <CardTitle className="text-lg font-semibold">
                                             2. Seleccione las Facturas a Pagar
                                         </CardTitle>
                                         <CardDescription>
@@ -323,7 +411,7 @@ export default function SupplierPaymentsPage() {
                                             variant="ghost"
                                             size="sm"
                                             onClick={toggleAllInvoices}
-                                            className="text-blue-400 hover:text-blue-300 hover:bg-slate-800"
+                                            className="text-primary hover:bg-muted"
                                         >
                                             {selectedInvoiceIds.size === supplierInvoices.length
                                                 ? "Deseleccionar Todo"
@@ -332,14 +420,14 @@ export default function SupplierPaymentsPage() {
                                     )}
                                 </CardHeader>
                                 <CardContent className="p-0">
-                                    <div className="border-t border-slate-800 overflow-x-auto">
-                                        <Table>
+                                    <div className="border-t border-border overflow-x-auto">
+                                        <Table className="min-w-[650px]">
                                             <TableHeader>
-                                                <TableRow className="border-slate-800 hover:bg-transparent">
+                                                <TableRow className="border-border hover:bg-transparent">
                                                     <TableHead className="w-[50px] text-center">
                                                         <input 
                                                             type="checkbox"
-                                                            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                                                            className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
                                                             checked={supplierInvoices.length > 0 && selectedInvoiceIds.size === supplierInvoices.length}
                                                             onChange={toggleAllInvoices}
                                                         />
@@ -348,7 +436,7 @@ export default function SupplierPaymentsPage() {
                                                     <TableHead>Fecha</TableHead>
                                                     <TableHead className="text-right">Total</TableHead>
                                                     <TableHead className="text-right">Pagado</TableHead>
-                                                    <TableHead className="text-right">Pendiente</TableHead>
+                                                    <TableHead className="text-right font-bold text-amber-600 dark:text-amber-400">Pendiente</TableHead>
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
@@ -362,28 +450,28 @@ export default function SupplierPaymentsPage() {
                                                     supplierInvoices.map((inv) => (
                                                         <TableRow 
                                                             key={inv.id} 
-                                                            className={cn("cursor-pointer border-slate-800/50", selectedInvoiceIds.has(inv.id) && "bg-slate-800/30")}
+                                                            className={cn("cursor-pointer border-border", selectedInvoiceIds.has(inv.id) && "bg-muted/50")}
                                                             onClick={() => toggleInvoiceSelection(inv.id)}
                                                         >
                                                             <TableCell className="text-center">
                                                                 <input 
                                                                     type="checkbox"
-                                                                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                                                                    className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
                                                                     checked={selectedInvoiceIds.has(inv.id)}
                                                                     onChange={() => toggleInvoiceSelection(inv.id)}
                                                                     onClick={(e) => e.stopPropagation()}
                                                                 />
                                                             </TableCell>
                                                             <TableCell className="font-medium">
-                                                                <div className="flex items-center gap-2 text-slate-300">
-                                                                    <Receipt className="h-4 w-4 text-slate-500" />
+                                                                <div className="flex items-center gap-2 text-foreground">
+                                                                    <Receipt className="h-4 w-4 text-muted-foreground" />
                                                                     {formatInvoiceLabel(inv)}
                                                                 </div>
                                                             </TableCell>
-                                                            <TableCell className="text-slate-400">{new Date(inv.issue_date || "").toLocaleDateString()}</TableCell>
-                                                            <TableCell className="text-right text-slate-300">{formatMoney(inv.total_amount)}</TableCell>
-                                                            <TableCell className="text-right text-emerald-500">{formatMoney(inv.paid_amount)}</TableCell>
-                                                            <TableCell className="text-right text-orange-400 font-semibold">{formatMoney(inv.pending_amount)}</TableCell>
+                                                            <TableCell className="text-muted-foreground">{new Date(inv.issue_date || "").toLocaleDateString()}</TableCell>
+                                                            <TableCell className="text-right font-mono text-foreground">{formatMoney(inv.total_amount)}</TableCell>
+                                                            <TableCell className="text-right font-mono text-emerald-600 dark:text-emerald-400">{formatMoney(inv.paid_amount)}</TableCell>
+                                                            <TableCell className="text-right font-mono text-amber-600 dark:text-amber-400 font-semibold">{formatMoney(inv.pending_amount)}</TableCell>
                                                         </TableRow>
                                                     ))
                                                 )}
@@ -396,9 +484,9 @@ export default function SupplierPaymentsPage() {
 
                         {/* Paso 3: Registrar Pago */}
                         <div className="space-y-6">
-                            <Card className="bg-slate-900/40 backdrop-blur border-slate-800">
+                            <Card>
                                 <CardHeader className="pb-4">
-                                    <CardTitle className="text-lg font-semibold text-slate-200">
+                                    <CardTitle className="text-lg font-semibold">
                                         3. Detalle del Pago
                                     </CardTitle>
                                     <CardDescription>
@@ -408,47 +496,83 @@ export default function SupplierPaymentsPage() {
                                 <CardContent className="space-y-4">
                                     <div className="space-y-3">
                                         {paymentLines.map((line, idx) => (
-                                            <div key={line.id} className="flex gap-2 items-end">
-                                                <div className="flex-1 space-y-1.5">
-                                                    {idx === 0 && <Label className="text-xs text-slate-400">Método</Label>}
-                                                    <Select
-                                                        value={line.method}
-                                                        onValueChange={(val) => updatePaymentLine(line.id, { method: val as PaymentLine["method"] })}
-                                                    >
-                                                        <SelectTrigger className="bg-slate-950 border-slate-800 text-slate-200 h-10">
-                                                            <SelectValue />
-                                                        </SelectTrigger>
-                                                        <SelectContent className="bg-slate-950 border-slate-800 text-slate-200">
-                                                            {PAYMENT_METHOD_OPTIONS.map((opt) => (
-                                                                <SelectItem key={opt.value} value={opt.value}>
-                                                                    {opt.label}
-                                                                </SelectItem>
-                                                            ))}
-                                                        </SelectContent>
-                                                    </Select>
+                                            <div key={line.id} className="space-y-3 rounded-lg border p-3">
+                                                <div className="flex gap-2 items-end">
+                                                    <div className="flex-1 space-y-1.5">
+                                                        {idx === 0 && <Label className="text-xs text-muted-foreground">Método</Label>}
+                                                        <Select
+                                                            value={line.method}
+                                                            onValueChange={(val) => updatePaymentLine(line.id, { method: val as PaymentLine["method"] })}
+                                                        >
+                                                            <SelectTrigger className="bg-background border-input text-foreground h-10"><SelectValue /></SelectTrigger>
+                                                            <SelectContent className="bg-popover border-border text-popover-foreground">
+                                                                {PAYMENT_METHOD_OPTIONS.map((opt) => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                    <div className="flex-1 space-y-1.5">
+                                                        {idx === 0 && <Label className="text-xs text-muted-foreground">Monto</Label>}
+                                                        <Input type="number" value={line.amount} onChange={(e) => updatePaymentLine(line.id, { amount: e.target.value })} placeholder="0.00" className="h-10 bg-background text-right font-mono" />
+                                                    </div>
+                                                    {paymentLines.length > 1 && (
+                                                        <Button variant="ghost" size="icon" aria-label="Eliminar medio de pago" onClick={() => setPaymentLines(prev => prev.filter(p => p.id !== line.id))} className="h-10 w-10 shrink-0 text-destructive hover:bg-destructive/10">
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </Button>
+                                                    )}
                                                 </div>
 
-                                                <div className="flex-1 space-y-1.5">
-                                                    {idx === 0 && <Label className="text-xs text-slate-400">Monto</Label>}
-                                                    <Input
-                                                        type="number"
-                                                        value={line.amount}
-                                                        onChange={(e) => updatePaymentLine(line.id, { amount: e.target.value })}
-                                                        placeholder="0.00"
-                                                        className="bg-slate-950 border-slate-800 text-slate-200 h-10 text-right"
-                                                    />
-                                                </div>
+                                                {line.method === "check" ? (
+                                                    <div className="space-y-3 rounded-md bg-muted/40 p-3">
+                                                        <div className="space-y-1.5">
+                                                            <Label className="text-xs">Origen del cheque</Label>
+                                                            <Select value={line.check.source_type} onValueChange={(value) => updatePaymentLine(line.id, { check: { ...line.check, source_type: value as "own" | "third_party", source_customer_check_id: "" } })}>
+                                                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                                                <SelectContent>
+                                                                    <SelectItem value="own">Cheque propio</SelectItem>
+                                                                    <SelectItem value="third_party">Cheque de terceros en cartera</SelectItem>
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
 
-                                                {paymentLines.length > 1 && (
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        onClick={() => setPaymentLines(prev => prev.filter(p => p.id !== line.id))}
-                                                        className="text-rose-400 hover:text-rose-300 hover:bg-slate-800 h-10 w-10 shrink-0"
-                                                    >
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </Button>
-                                                )}
+                                                        {line.check.source_type === "third_party" ? (
+                                                            <div className="space-y-1.5">
+                                                                <Label className="text-xs">Cheque disponible para endosar</Label>
+                                                                <Select value={line.check.source_customer_check_id} onValueChange={(value) => {
+                                                                    const selected = availableThirdPartyChecks.find((check) => check.id === value);
+                                                                    if (!selected) return;
+                                                                    updatePaymentLine(line.id, {
+                                                                        amount: String(Number(selected.amount).toFixed(2)),
+                                                                        check: {
+                                                                            source_type: "third_party",
+                                                                            source_customer_check_id: selected.id,
+                                                                            issuer_name: selected.issuer_name,
+                                                                            bank_name: selected.bank_name,
+                                                                            check_number: selected.check_number,
+                                                                            issue_date: String(selected.issue_date || "").slice(0, 10),
+                                                                            due_date: String(selected.due_date || "").slice(0, 10),
+                                                                        }
+                                                                    });
+                                                                }}>
+                                                                    <SelectTrigger><SelectValue placeholder="Seleccionar cheque recibido" /></SelectTrigger>
+                                                                    <SelectContent>
+                                                                        {availableThirdPartyChecks.map((check) => (
+                                                                            <SelectItem key={check.id} value={check.id}>{check.bank_name} · Nº {check.check_number} · {formatMoney(check.amount)}</SelectItem>
+                                                                        ))}
+                                                                    </SelectContent>
+                                                                </Select>
+                                                                <p className="text-xs text-muted-foreground">Se utilizará por su importe total y quedará marcado como endosado al proveedor.</p>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                                <div className="space-y-1"><Label className="text-xs">Titular / librador</Label><Input value={line.check.issuer_name} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, issuer_name: event.target.value } })} /></div>
+                                                                <div className="space-y-1"><Label className="text-xs">Banco</Label><Input value={line.check.bank_name} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, bank_name: event.target.value } })} /></div>
+                                                                <div className="space-y-1 sm:col-span-2"><Label className="text-xs">Número de cheque</Label><Input value={line.check.check_number} onChange={(event) => updatePaymentLine(line.id, { check: { ...line.check, check_number: event.target.value } })} /></div>
+                                                                <div className="space-y-1"><Label className="text-xs">Fecha de emisión</Label><ArgentinaDateInput value={line.check.issue_date} onChange={(value) => updatePaymentLine(line.id, { check: { ...line.check, issue_date: value } })} ariaLabel="Fecha de emisión del cheque propio" /></div>
+                                                                <div className="space-y-1"><Label className="text-xs">Fecha de cobro / vencimiento</Label><ArgentinaDateInput value={line.check.due_date} onChange={(value) => updatePaymentLine(line.id, { check: { ...line.check, due_date: value } })} ariaLabel="Fecha de cobro del cheque propio" required /></div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : null}
                                             </div>
                                         ))}
 
@@ -468,7 +592,7 @@ export default function SupplierPaymentsPage() {
                                             value={paymentNotes}
                                             onChange={(e) => setPaymentNotes(e.target.value)}
                                             placeholder="Detalle de cheques, números de transferencia, etc."
-                                            className="bg-slate-950 border-slate-800 text-slate-200 min-h-[80px]"
+                                            className="bg-background border-input text-foreground min-h-[80px]"
                                         />
                                     </div>
 
@@ -514,6 +638,84 @@ export default function SupplierPaymentsPage() {
                     </>
                 )}
             </div>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-lg"><Landmark className="h-5 w-5" /> Cheques entregados a proveedores</CardTitle>
+                    <CardDescription>Control de cheques propios y de terceros desde la entrega hasta su cobro, rechazo o anulación.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="mb-4 grid gap-3 sm:grid-cols-[minmax(0,240px)_1fr] sm:items-end">
+                        <div className="space-y-1.5">
+                            <Label>Estado de cartera</Label>
+                            <Select value={outgoingFilter} onValueChange={(value) => { setOutgoingFilter(value as OutgoingCheckFilter); setOutgoingPage(1); }}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Todos</SelectItem>
+                                    <SelectItem value="open">Pendientes de cobro</SelectItem>
+                                    <SelectItem value="due_soon">Vencen en 7 días</SelectItem>
+                                    <SelectItem value="overdue">Vencidos sin cobrar</SelectItem>
+                                    <SelectItem value="cleared">Cobrados</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <p className="text-sm text-muted-foreground">{filteredOutgoingChecks.length} cheque{filteredOutgoingChecks.length === 1 ? "" : "s"} en la vista seleccionada.</p>
+                    </div>
+                    <Table className="min-w-[900px]">
+                        <TableHeader><TableRow>
+                            <TableHead>Cheque</TableHead><TableHead>Origen</TableHead><TableHead>Proveedor</TableHead><TableHead>Vencimiento</TableHead><TableHead className="text-right">Importe</TableHead><TableHead>Estado</TableHead><TableHead>Acción</TableHead>
+                        </TableRow></TableHeader>
+                        <TableBody>
+                            {visibleOutgoingChecks.length === 0 ? (
+                                <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">No hay cheques emitidos para este filtro.</TableCell></TableRow>
+                            ) : visibleOutgoingChecks.map((check) => (
+                                <TableRow key={check.id}>
+                                    <TableCell><p className="font-medium">{check.bank_name}</p><p className="font-mono text-xs text-muted-foreground">Nº {check.check_number}</p></TableCell>
+                                    <TableCell><Badge variant={check.source_type === "own" ? "default" : "secondary"}>{check.source_type === "own" ? "Propio" : "De terceros"}</Badge></TableCell>
+                                    <TableCell>{check.supplier_name || "—"}</TableCell>
+                                    <TableCell>{new Date(`${String(check.due_date).slice(0, 10)}T12:00:00`).toLocaleDateString("es-AR")}</TableCell>
+                                    <TableCell className="text-right font-mono font-semibold">{formatMoney(check.amount)}</TableCell>
+                                    <TableCell>{OUTGOING_STATUS_LABELS[check.status]}</TableCell>
+                                    <TableCell><Button type="button" variant="outline" size="sm" onClick={() => { setSelectedOutgoingCheckId(check.id); setOutgoingStatus(check.status); setOutgoingNotes(""); }}><History className="mr-1 h-4 w-4" /> Ver seguimiento</Button></TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                    <PaginationControls page={safeOutgoingPage} totalPages={outgoingTotalPages} totalCount={filteredOutgoingChecks.length} itemLabel="cheque" onPageChange={setOutgoingPage} />
+                </CardContent>
+            </Card>
+
+            <Dialog open={Boolean(selectedOutgoingCheckId)} onOpenChange={(open) => { if (!open) setSelectedOutgoingCheckId(null); }}>
+                <DialogContent className="max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle>Seguimiento del cheque entregado</DialogTitle>
+                        <DialogDescription>{selectedOutgoingCheck ? `${selectedOutgoingCheck.bank_name} · Nº ${selectedOutgoingCheck.check_number} · ${formatMoney(selectedOutgoingCheck.amount)}` : "Cargando instrumento..."}</DialogDescription>
+                    </DialogHeader>
+                    {isLoadingOutgoingCheck && !selectedOutgoingCheck ? <p className="py-8 text-center text-sm text-muted-foreground">Cargando trazabilidad...</p> : selectedOutgoingCheck ? (
+                        <div className="space-y-5">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="space-y-2"><Label>Nuevo estado</Label><Select value={outgoingStatus} onValueChange={(value) => setOutgoingStatus(value as OutgoingCheck["status"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(OUTGOING_STATUS_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+                                <div className="space-y-2 sm:col-span-2"><Label htmlFor="outgoing-check-notes">Nota del movimiento</Label><Textarea id="outgoing-check-notes" value={outgoingNotes} onChange={(event) => setOutgoingNotes(event.target.value)} placeholder="Constancia bancaria, motivo del rechazo, etc." /></div>
+                            </div>
+                            <div><h3 className="mb-2 text-sm font-semibold">Facturas imputadas</h3>{selectedOutgoingCheck.allocations?.length ? <div className="max-h-40 space-y-2 overflow-y-auto">{selectedOutgoingCheck.allocations.map((allocation) => <div key={allocation.id} className="flex justify-between rounded-md border p-2 text-sm"><span>Factura {allocation.invoice_type || ""}-{allocation.invoice_number || ""}</span><span className="font-mono font-medium">{formatMoney(allocation.amount)}</span></div>)}</div> : <p className="text-sm text-muted-foreground">Sin facturas vinculadas.</p>}</div>
+                            <div><h3 className="mb-2 text-sm font-semibold">Historial</h3><div className="max-h-48 space-y-2 overflow-y-auto">{selectedOutgoingCheck.events?.map((event) => <div key={event.id} className="rounded-md border-l-2 border-primary bg-muted/40 px-3 py-2 text-sm"><div className="flex justify-between gap-3"><span className="font-medium">{OUTGOING_STATUS_LABELS[event.status]}</span><span className="text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString("es-AR")}</span></div>{event.notes ? <p className="mt-1 text-muted-foreground">{event.notes}</p> : null}</div>)}</div></div>
+                        </div>
+                    ) : null}
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setSelectedOutgoingCheckId(null)}>Cerrar</Button>
+                        <Button type="button" disabled={!selectedOutgoingCheck} onClick={async () => {
+                            if (!selectedOutgoingCheckId) return;
+                            try {
+                                const updated = await api.updateOutgoingCheckStatus(selectedOutgoingCheckId, { status: outgoingStatus, notes: outgoingNotes.trim() });
+                                toast.success("Seguimiento del cheque actualizado");
+                                queryClient.setQueryData(["supplier-payments", "outgoing-checks", selectedOutgoingCheckId], updated);
+                                await queryClient.invalidateQueries({ queryKey: ["supplier-payments", "outgoing-checks"] });
+                                setOutgoingNotes("");
+                            } catch (error) { showErrorToast("No se pudo actualizar el cheque", error); }
+                        }}>Guardar movimiento</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

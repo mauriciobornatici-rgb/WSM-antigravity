@@ -4,6 +4,9 @@ import { DashboardSkeleton } from "@/components/common/Skeletons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { showErrorToast } from "@/lib/errorHandling";
 import { api } from "@/services/api";
+import { SizeColorHeatmapCard } from "@/components/dashboard/SizeColorHeatmapCard";
+import { useQuery } from "@tanstack/react-query";
+import { formatMoney } from "@/lib/formatters";
 
 type DashboardStat = {
     title: string;
@@ -34,16 +37,10 @@ type PickerLeaderboardItem = {
     shortage_count: number;
 };
 
-const currencyFormatter = new Intl.NumberFormat("es-AR", {
-    style: "currency",
-    currency: "ARS",
-    maximumFractionDigits: 0,
-});
-
 function parseDate(value: string | undefined): Date | null {
     if (!value) return null;
     const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
+    return isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function formatRelativeTime(value: string | undefined): string {
@@ -65,13 +62,18 @@ function formatRelativeTime(value: string | undefined): string {
     return parsed.toLocaleDateString("es-AR");
 }
 
-
 export default function Dashboard() {
     const [isLoading, setIsLoading] = useState(true);
     const [stats, setStats] = useState<DashboardStat[]>([]);
     const [dailySales, setDailySales] = useState<DailySalesPoint[]>([]);
     const [activities, setActivities] = useState<ActivityItem[]>([]);
     const [pickerLeaderboard, setPickerLeaderboard] = useState<PickerLeaderboardItem[]>([]);
+
+    const sizeAnalyticsQuery = useQuery({
+        queryKey: ["dashboard", "size-color-analytics"],
+        queryFn: () => api.getSizeColorAnalytics(),
+        staleTime: 60_000
+    });
 
     useEffect(() => {
         void loadDashboard();
@@ -91,7 +93,7 @@ export default function Dashboard() {
             setStats([
                 {
                     title: "Ventas de hoy",
-                    value: currencyFormatter.format(data.salesToday),
+                    value: formatMoney(data.salesToday),
                     icon: DollarSign,
                     trend: `${data.todayOperations} operaciones (${salesDelta})`,
                 },
@@ -106,7 +108,7 @@ export default function Dashboard() {
                     value: String(data.lowStockCount),
                     icon: AlertCircle,
                     trend: data.lowStockCount > 0 ? "Requiere reposicion" : "Sin alertas",
-                    className: data.lowStockCount > 0 ? "text-destructive" : "text-emerald-600",
+                    className: data.lowStockCount > 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400",
                 },
                 {
                     title: "Rendimiento",
@@ -157,7 +159,7 @@ export default function Dashboard() {
                             <stat.icon className="h-4 w-4 text-muted-foreground" />
                         </CardHeader>
                         <CardContent>
-                            <div className="text-2xl font-bold">{stat.value}</div>
+                            <div className="text-2xl font-bold font-mono">{stat.value}</div>
                             <p className={`text-xs text-muted-foreground ${stat.className || ""}`}>{stat.trend}</p>
                         </CardContent>
                     </Card>
@@ -180,11 +182,11 @@ export default function Dashboard() {
                                     <div key={point.label} className="space-y-1">
                                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                                             <span className="font-medium uppercase">{point.label}</span>
-                                            <span className="font-semibold text-slate-700">{currencyFormatter.format(point.amount)}</span>
+                                            <span className="font-semibold text-foreground font-mono">{formatMoney(point.amount)}</span>
                                         </div>
-                                        <div className="h-2 rounded bg-slate-200">
+                                        <div className="h-2 rounded bg-muted">
                                             <div
-                                                className="h-2 rounded bg-blue-600"
+                                                className="h-2 rounded bg-primary"
                                                 style={{
                                                     width: `${Math.max(4, (point.amount / maxDailySales) * 100)}%`,
                                                 }}
@@ -210,12 +212,12 @@ export default function Dashboard() {
                                     <div key={activity.id} className="flex items-center gap-4">
                                         <div className={`h-2 w-2 rounded-full ${activity.positive ? "bg-emerald-500" : "bg-rose-500"}`} />
                                         <div className="flex-1">
-                                            <p className="text-sm font-medium">{activity.title}</p>
+                                            <p className="text-sm font-medium text-foreground">{activity.title}</p>
                                             <p className="text-xs text-muted-foreground">{activity.subtitle}</p>
                                         </div>
-                                        <div className={`text-sm font-bold ${activity.positive ? "text-emerald-600" : "text-rose-600"}`}>
+                                        <div className={`text-sm font-bold font-mono ${activity.positive ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
                                             {activity.positive ? "+" : "-"}
-                                            {currencyFormatter.format(activity.amount)}
+                                            {formatMoney(activity.amount)}
                                         </div>
                                     </div>
                                 ))}
@@ -223,6 +225,10 @@ export default function Dashboard() {
                         )}
                     </CardContent>
                 </Card>
+            </div>
+
+            <div className="mt-6">
+                <SizeColorHeatmapCard data={sizeAnalyticsQuery.data} isLoading={sizeAnalyticsQuery.isLoading} />
             </div>
 
             <div className="grid grid-cols-1 gap-6 md:grid-cols-7 mt-6">
@@ -241,9 +247,9 @@ export default function Dashboard() {
                             <p className="text-sm text-muted-foreground">No hay registros de picking completados esta semana.</p>
                         ) : (
                             <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse text-sm">
+                                <table className="w-full text-left border-collapse text-sm min-w-[650px]">
                                     <thead>
-                                        <tr className="border-b border-slate-700/50 pb-2 text-muted-foreground text-xs uppercase tracking-wider">
+                                        <tr className="border-b border-border pb-2 text-muted-foreground text-xs uppercase tracking-wider">
                                             <th className="py-2 font-medium">Picker</th>
                                             <th className="py-2 text-center font-medium">Pedidos</th>
                                             <th className="py-2 text-right font-medium">Bultos</th>
@@ -251,7 +257,7 @@ export default function Dashboard() {
                                             <th className="py-2 text-right font-medium">Discrepancias</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-slate-800/40">
+                                    <tbody className="divide-y divide-border">
                                         {pickerLeaderboard.map((item, idx) => {
                                             const maxPicked = Math.max(1, ...pickerLeaderboard.map(p => p.total_picked));
                                             const progressPct = Math.round((item.total_picked / maxPicked) * 100);
@@ -264,39 +270,39 @@ export default function Dashboard() {
                                             };
 
                                             return (
-                                                <tr key={idx} className="hover:bg-slate-800/20 transition-colors">
-                                                    <td className="py-3 font-semibold text-slate-200">
+                                                <tr key={idx} className="hover:bg-muted/40 transition-colors">
+                                                    <td className="py-3 font-semibold text-foreground">
                                                         <div className="flex items-center gap-2">
-                                                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-400">
+                                                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500/10 text-xs font-bold text-blue-600 dark:text-blue-400">
                                                                 {idx + 1}
                                                             </span>
                                                             {item.picker_name}
                                                         </div>
                                                     </td>
-                                                    <td className="py-3 text-center font-bold text-slate-300">
+                                                    <td className="py-3 text-center font-bold text-muted-foreground">
                                                         {item.sessions_count}
                                                     </td>
                                                     <td className="py-3 text-right">
                                                         <div className="flex flex-col items-end gap-1">
-                                                            <span className="font-bold text-slate-100">{item.total_picked}</span>
-                                                            <div className="h-1 w-20 rounded bg-slate-850 overflow-hidden">
+                                                            <span className="font-bold text-foreground">{item.total_picked}</span>
+                                                            <div className="h-1 w-20 rounded bg-muted overflow-hidden">
                                                                 <div 
-                                                                    className="h-full bg-blue-500 rounded" 
+                                                                    className="h-full bg-blue-600 rounded" 
                                                                     style={{ width: `${progressPct}%` }}
                                                                 />
                                                             </div>
                                                         </div>
                                                     </td>
-                                                    <td className="py-3 text-right font-mono text-slate-300 text-xs">
+                                                    <td className="py-3 text-right font-mono text-muted-foreground text-xs">
                                                         {formatDuration(item.avg_duration_sec)}
                                                     </td>
                                                     <td className="py-3 text-right">
                                                         {item.shortage_count > 0 ? (
-                                                            <span className="inline-flex items-center rounded-full bg-rose-500/10 px-2.5 py-0.5 text-xs font-semibold text-rose-400">
+                                                            <span className="inline-flex items-center rounded-full bg-rose-500/10 px-2.5 py-0.5 text-xs font-semibold text-rose-600 dark:text-rose-400 border border-rose-500/20">
                                                                 {item.shortage_count} quiebres
                                                             </span>
                                                         ) : (
-                                                            <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-400">
+                                                            <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                                                                 Sin quiebres
                                                             </span>
                                                         )}

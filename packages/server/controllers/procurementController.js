@@ -3,9 +3,11 @@ import pool from '../config/db.js';
 import catchAsync from '../utils/catchAsync.js';
 import inventoryService from '../services/inventory.service.js';
 import auditService from '../services/audit.service.js';
-import accountingService from '../services/accounting.service.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
 import getRequestIp from '../utils/requestIp.js';
+import purchaseOrderService from '../domains/procurement/PurchaseOrderService.js';
+import supplierReturnService from '../domains/procurement/SupplierReturnService.js';
+import supplierPaymentService from '../domains/procurement/SupplierPaymentService.js';
 
 async function getTaxRate(connection) {
     const conn = connection || pool;
@@ -14,20 +16,6 @@ async function getTaxRate(connection) {
         return parseFloat(rows[0].tax_rate);
     }
     return 0.21;
-}
-
-async function nextPONumber(connection) {
-    const year = new Date().getFullYear();
-    const prefix = `PO-${year}-`;
-    const [rows] = await connection.query(
-        `SELECT MAX(CAST(SUBSTRING_INDEX(po_number, '-', -1) AS UNSIGNED)) AS max_seq
-         FROM purchase_orders
-         WHERE po_number LIKE ?`,
-        [`${prefix}%`]
-    );
-    const maxExisting = Number(rows[0]?.max_seq || 0);
-    const nextSeq = await nextDocumentSequence(connection, `purchase_order:${year}`, maxExisting);
-    return `${prefix}${String(nextSeq).padStart(3, '0')}`;
 }
 
 async function nextReceptionNumber(connection) {
@@ -58,72 +46,8 @@ async function nextSupplierReturnNumber(connection) {
     return `${prefix}${String(nextSeq).padStart(4, '0')}`;
 }
 
-async function decreaseInventory(connection, productId, quantityToRemove) {
-    const qty = Number(quantityToRemove || 0);
-    if (qty <= 0) return;
-
-    const [stockRows] = await connection.query(
-        'SELECT id, quantity FROM inventory WHERE product_id = ? AND quantity > 0 ORDER BY quantity DESC FOR UPDATE',
-        [productId]
-    );
-
-    let remaining = qty;
-    for (const row of stockRows) {
-        if (remaining <= 0) break;
-        const available = Number(row.quantity || 0);
-        const consume = Math.min(available, remaining);
-        await connection.query('UPDATE inventory SET quantity = quantity - ? WHERE id = ?', [consume, row.id]);
-        remaining -= consume;
-    }
-
-    if (remaining > 0) {
-        throw new Error('Stock insuficiente para procesar la devolucion');
-    }
-}
-
 export const getPurchaseOrders = catchAsync(async (req, res) => {
-    const { supplier_id, status } = req.query;
-    let query = `
-        SELECT po.*, s.name AS supplier_name
-        FROM purchase_orders po
-        LEFT JOIN suppliers s ON po.supplier_id = s.id
-        WHERE 1=1
-    `;
-    const params = [];
-
-    if (supplier_id) {
-        query += ' AND po.supplier_id = ?';
-        params.push(supplier_id);
-    }
-    if (status) {
-        query += ' AND po.status = ?';
-        params.push(status);
-    }
-    query += ' ORDER BY po.created_at DESC';
-
-    const [orders] = await pool.query(query, params);
-    if (orders.length === 0) {
-        return res.json(orders);
-    }
-
-    const orderIds = orders.map((o) => o.id);
-    const [allItems] = await pool.query(`
-        SELECT poi.*, p.name AS product_name, p.sku
-        FROM purchase_order_items poi
-        LEFT JOIN products p ON poi.product_id = p.id
-        WHERE poi.purchase_order_id IN (?)
-    `, [orderIds]);
-
-    const itemsByOrder = {};
-    for (const item of allItems) {
-        if (!itemsByOrder[item.purchase_order_id]) itemsByOrder[item.purchase_order_id] = [];
-        itemsByOrder[item.purchase_order_id].push(item);
-    }
-
-    for (const order of orders) {
-        order.items = itemsByOrder[order.id] || [];
-    }
-
+    const orders = await purchaseOrderService.getPurchaseOrders(req.query);
     res.json(orders);
 });
 
@@ -143,7 +67,13 @@ export const getPurchaseOrder = catchAsync(async (req, res) => {
 
     const order = orders[0];
     const [items] = await pool.query(`
-        SELECT poi.*, p.name AS product_name, p.sku
+        SELECT poi.*, p.name AS product_name, p.sku,
+               COALESCE((
+                   SELECT SUM(ri.quantity_received)
+                   FROM reception_items ri
+                   JOIN receptions r ON r.id = ri.reception_id
+                   WHERE ri.po_item_id = poi.id AND r.status = 'pending_qc'
+               ), 0) AS quantity_pending_qc
         FROM purchase_order_items poi
         LEFT JOIN products p ON poi.product_id = p.id
         WHERE poi.purchase_order_id = ?
@@ -154,75 +84,8 @@ export const getPurchaseOrder = catchAsync(async (req, res) => {
 });
 
 export const createPurchaseOrder = catchAsync(async (req, res) => {
-    const { supplier_id, order_date, expected_delivery_date, items, notes } = req.body;
-    const id = crypto.randomUUID();
-
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
-
-        const poNumber = await nextPONumber(connection);
-        const taxRate = await getTaxRate(connection);
-
-        let subtotal = 0;
-        for (const item of items) {
-            const qty = Number(item.quantity_ordered || item.quantity || 0);
-            subtotal += qty * Number(item.unit_cost || 0);
-        }
-        const taxAmount = subtotal * taxRate;
-        const totalAmount = subtotal + taxAmount;
-
-        await connection.query(`
-            INSERT INTO purchase_orders (
-                id, po_number, supplier_id, order_date, expected_delivery_date, status, subtotal, tax_amount, total_amount, notes
-            ) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)
-        `, [
-            id,
-            poNumber,
-            supplier_id,
-            order_date || new Date().toISOString().slice(0, 10),
-            expected_delivery_date || null,
-            subtotal,
-            taxAmount,
-            totalAmount,
-            notes || null
-        ]);
-
-        for (const item of items) {
-            const qty = Number(item.quantity_ordered || item.quantity || 0);
-            await connection.query(`
-                INSERT INTO purchase_order_items (id, purchase_order_id, product_id, quantity_ordered, unit_cost)
-                VALUES (?, ?, ?, ?, ?)
-            `, [crypto.randomUUID(), id, item.product_id, qty, item.unit_cost]);
-        }
-
-        await connection.commit();
-        await auditService.log({
-            user_id: req.user?.id || null,
-            action: 'CREATE_PURCHASE_ORDER',
-            entity_type: 'purchase_order',
-            entity_id: id,
-            new_values: {
-                id,
-                po_number: poNumber,
-                supplier_id,
-                order_date: order_date || new Date().toISOString().slice(0, 10),
-                expected_delivery_date: expected_delivery_date || null,
-                subtotal,
-                tax_amount: taxAmount,
-                total_amount: totalAmount,
-                notes: notes || null,
-                items
-            },
-            ip_address: getRequestIp(req)
-        });
-        res.json({ id, po_number: poNumber });
-    } catch (err) {
-        await connection.rollback();
-        throw err;
-    } finally {
-        connection.release();
-    }
+    const result = await purchaseOrderService.createPurchaseOrder(req.body, req.user?.id, getRequestIp(req));
+    res.json(result);
 });
 
 export const updatePurchaseOrderStatus = catchAsync(async (req, res) => {
@@ -306,13 +169,92 @@ export const createReception = catchAsync(async (req, res) => {
     try {
         await connection.beginTransaction();
 
+        if (purchase_order_id) {
+            const [orders] = await connection.query(
+                'SELECT id, supplier_id, status FROM purchase_orders WHERE id = ? FOR UPDATE',
+                [purchase_order_id]
+            );
+            if (orders.length === 0) {
+                const error = new Error('Orden de compra no encontrada');
+                error.statusCode = 404;
+                error.errorCode = 'PURCHASE_ORDER_NOT_FOUND';
+                throw error;
+            }
+            if (!['sent', 'partial'].includes(String(orders[0].status))) {
+                const error = new Error('La orden de compra ya no admite nuevas recepciones');
+                error.statusCode = 409;
+                error.errorCode = 'PURCHASE_ORDER_NOT_RECEIVABLE';
+                throw error;
+            }
+
+            const [poItems] = await connection.query(
+                'SELECT id, product_id, quantity_ordered, quantity_received FROM purchase_order_items WHERE purchase_order_id = ? FOR UPDATE',
+                [purchase_order_id]
+            );
+            const poItemById = new Map(poItems.map((item) => [item.id, item]));
+            const [pendingRows] = await connection.query(`
+                SELECT ri.po_item_id, COALESCE(SUM(ri.quantity_received), 0) AS pending_quantity
+                FROM reception_items ri
+                JOIN receptions r ON r.id = ri.reception_id
+                WHERE r.purchase_order_id = ? AND r.status = 'pending_qc'
+                GROUP BY ri.po_item_id
+            `, [purchase_order_id]);
+            const pendingByItem = new Map(pendingRows.map((row) => [row.po_item_id, Number(row.pending_quantity || 0)]));
+            const submittedItemIds = new Set();
+
+            for (const item of items) {
+                if (!item.po_item_id || submittedItemIds.has(item.po_item_id)) {
+                    const error = new Error('La recepción contiene ítems repetidos o sin vínculo a la orden');
+                    error.statusCode = 400;
+                    error.errorCode = 'INVALID_RECEPTION_ITEMS';
+                    throw error;
+                }
+                submittedItemIds.add(item.po_item_id);
+                const poItem = poItemById.get(item.po_item_id);
+                if (!poItem || poItem.product_id !== item.product_id) {
+                    const error = new Error('Uno de los productos no pertenece a la orden de compra');
+                    error.statusCode = 400;
+                    error.errorCode = 'RECEPTION_ITEM_NOT_IN_ORDER';
+                    throw error;
+                }
+                const receiving = Number(item.quantity_received || 0);
+                const available = Math.max(
+                    0,
+                    Number(poItem.quantity_ordered || 0)
+                    - Number(poItem.quantity_received || 0)
+                    - Number(pendingByItem.get(item.po_item_id) || 0)
+                );
+                if (!Number.isInteger(receiving) || receiving <= 0 || receiving > available) {
+                    const error = new Error(`La cantidad a recibir supera el saldo pendiente de la orden (${available})`);
+                    error.statusCode = 409;
+                    error.errorCode = 'RECEPTION_EXCEEDS_PENDING_QUANTITY';
+                    throw error;
+                }
+            }
+        }
+
         let effectiveSupplierId = supplier_id;
         if (!effectiveSupplierId && purchase_order_id) {
             const [po] = await connection.query('SELECT supplier_id FROM purchase_orders WHERE id = ?', [purchase_order_id]);
             if (po.length > 0) effectiveSupplierId = po[0].supplier_id;
         }
         if (!effectiveSupplierId) {
-            throw new Error('supplier_id es obligatorio');
+            throw Object.assign(new Error('supplier_id es obligatorio'), { statusCode: 400, errorCode: 'SUPPLIER_REQUIRED' });
+        }
+
+        if (remito_number) {
+            const [duplicates] = await connection.query(
+                `SELECT id FROM receptions
+                 WHERE supplier_id = ? AND remito_number = ?
+                 LIMIT 1 FOR UPDATE`,
+                [effectiveSupplierId, remito_number]
+            );
+            if (duplicates.length > 0) {
+                const error = new Error('Este remito ya fue registrado para el proveedor');
+                error.statusCode = 409;
+                error.errorCode = 'DUPLICATE_REMITO';
+                throw error;
+            }
         }
 
         const receptionNumber = await nextReceptionNumber(connection);
@@ -345,7 +287,6 @@ export const createReception = catchAsync(async (req, res) => {
             );
         }
 
-        await connection.commit();
         await auditService.log({
             user_id: req.user?.id || null,
             action: 'CREATE_RECEPTION',
@@ -361,7 +302,8 @@ export const createReception = catchAsync(async (req, res) => {
                 items
             },
             ip_address: getRequestIp(req)
-        });
+        }, connection);
+        await connection.commit();
         res.json({ id, reception_number: receptionNumber });
     } catch (err) {
         await connection.rollback();
@@ -373,13 +315,14 @@ export const createReception = catchAsync(async (req, res) => {
 
 export const approveReception = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const { approved_by } = req.body || {};
-    const approverId = approved_by || req.user?.id || null;
+    // The approver is always the authenticated user; a client-supplied approved_by is ignored.
+    const approverId = req.user?.id || null;
 
     try {
         await inventoryService.processReceptionApproval(id, {
             approvedBy: approverId,
-            actorUserId: req.user?.id || approverId || null
+            actorUserId: req.user?.id || approverId || null,
+            ipAddress: getRequestIp(req)
         });
     } catch (err) {
         if (err.errorCode === 'RECEPTION_NOT_FOUND') {
@@ -391,17 +334,14 @@ export const approveReception = catchAsync(async (req, res) => {
         if (err.errorCode === 'RECEPTION_HAS_NO_ITEMS') {
             return res.status(400).json({ error: 'reception_without_items', message: 'La recepcion no contiene items' });
         }
+        if (err.errorCode === 'RECEPTION_QC_INCOMPLETE' || err.errorCode === 'RECEPTION_QC_INVALID') {
+            return res.status(409).json({ error: 'quality_check_incomplete', message: err.message });
+        }
+        if (err.errorCode === 'RECEPTION_DUPLICATE_PRODUCT_ITEMS') {
+            return res.status(409).json({ error: 'duplicate_reception_product', message: err.message });
+        }
         throw err;
     }
-
-    await auditService.log({
-        user_id: req.user?.id || approverId || null,
-        action: 'APPROVE_RECEPTION',
-        entity_type: 'reception',
-        entity_id: id,
-        new_values: { status: 'approved', approved_by: approverId },
-        ip_address: getRequestIp(req)
-    });
 
     res.json({ success: true, message: 'Recepcion aprobada y stock actualizado' });
 });
@@ -485,7 +425,6 @@ export const createReturn = catchAsync(async (req, res) => {
             ]);
         }
 
-        await connection.commit();
         await auditService.log({
             user_id: req.user?.id || null,
             action: 'CREATE_SUPPLIER_RETURN',
@@ -499,7 +438,8 @@ export const createReturn = catchAsync(async (req, res) => {
                 items: items || []
             },
             ip_address: getRequestIp(req)
-        });
+        }, connection);
+        await connection.commit();
         res.json({ id, return_number: returnNumber });
     } catch (err) {
         await connection.rollback();
@@ -511,203 +451,44 @@ export const createReturn = catchAsync(async (req, res) => {
 
 export const approveReturn = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const connection = await pool.getConnection();
-
     try {
-        await connection.beginTransaction();
-
-        const [returns] = await connection.query('SELECT * FROM supplier_returns WHERE id = ? FOR UPDATE', [id]);
-        if (returns.length === 0) {
-            await connection.rollback();
+        const result = await supplierReturnService.approveSupplierReturn(id, req.user?.id, getRequestIp(req));
+        res.json(result);
+    } catch (err) {
+        if (err.errorCode === 'RETURN_NOT_FOUND') {
             return res.status(404).json({ error: 'not_found', message: 'Devolucion no encontrada' });
         }
-        const supplierReturn = returns[0];
-        if (supplierReturn.status === 'approved') {
-            await connection.rollback();
+        if (err.errorCode === 'RETURN_ALREADY_APPROVED') {
             return res.status(400).json({ error: 'already_approved', message: 'La devolucion ya fue aprobada' });
         }
-
-        const [items] = await connection.query('SELECT * FROM supplier_return_items WHERE return_id = ?', [id]);
-        if (items.length === 0) {
-            throw new Error('La devolucion no tiene items');
-        }
-
-        let totalAmount = 0;
-        for (const item of items) {
-            await decreaseInventory(connection, item.product_id, Number(item.quantity));
-            totalAmount += Number(item.quantity) * Number(item.unit_cost || 0);
-
-            await connection.query(`
-                INSERT INTO inventory_movements (
-                    id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
-                ) VALUES (?, 'return', ?, ?, ?, ?, ?, 'supplier_return', ?)
-            `, [
-                crypto.randomUUID(),
-                item.product_id,
-                'General',
-                item.quantity,
-                item.unit_cost || 0,
-                item.reason || 'Return to supplier',
-                id
-            ]);
-        }
-
-        await connection.query('UPDATE supplier_returns SET status = "approved" WHERE id = ?', [id]);
-
-        await accountingService.createJournalEntry(connection, {
-            description: `Devolución a proveedor ${supplierReturn.return_number}`,
-            reference_type: 'supplier_return',
-            reference_id: id,
-            lines: [
-                { account_code: '2.1.01.01', debit: totalAmount, credit: 0 },
-                { account_code: '1.1.04.01', debit: 0, credit: totalAmount }
-            ]
-        });
-
-        await connection.query(`
-            INSERT INTO transactions (id, type, amount, description, reference_id, supplier_id)
-            VALUES (?, 'expense', ?, ?, ?, ?)
-        `, [
-            crypto.randomUUID(),
-            totalAmount,
-            `Devolucion a proveedor ${supplierReturn.return_number}`,
-            id,
-            supplierReturn.supplier_id
-        ]);
-
-        await connection.query(`
-            UPDATE suppliers
-            SET account_balance = GREATEST(COALESCE(account_balance, 0) - ?, 0)
-            WHERE id = ?
-        `, [totalAmount, supplierReturn.supplier_id]);
-
-        await connection.commit();
-        await auditService.log({
-            user_id: req.user?.id || null,
-            action: 'APPROVE_SUPPLIER_RETURN',
-            entity_type: 'supplier_return',
-            entity_id: id,
-            old_values: { status: supplierReturn.status },
-            new_values: { status: 'approved', total_amount: totalAmount },
-            ip_address: getRequestIp(req)
-        });
-        res.json({ success: true, message: 'Devolucion aprobada correctamente' });
-    } catch (err) {
-        await connection.rollback();
         throw err;
-    } finally {
-        connection.release();
     }
 });
 
 export const getSupplierPayments = catchAsync(async (req, res) => {
-    const { supplier_id } = req.query;
-    let query = `
-        SELECT sp.*, s.name AS supplier_name
-        FROM supplier_payments sp
-        LEFT JOIN suppliers s ON sp.supplier_id = s.id
-        WHERE 1=1
-    `;
-    const params = [];
-    if (supplier_id) {
-        query += ' AND sp.supplier_id = ?';
-        params.push(supplier_id);
-    }
-    query += ' ORDER BY sp.payment_date DESC, sp.created_at DESC';
-
-    const [rows] = await pool.query(query, params);
+    const rows = await supplierPaymentService.getSupplierPayments(req.query.supplier_id);
     res.json(rows);
 });
 
 export const createSupplierPayment = catchAsync(async (req, res) => {
-    const { supplier_id, payment_date, notes, payments } = req.body;
-
-    if (!supplier_id) {
-        return res.status(400).json({ error: 'missing_supplier', message: 'supplier_id es obligatorio' });
-    }
-    if (!Array.isArray(payments) || payments.length === 0) {
-        return res.status(400).json({ error: 'missing_payments', message: 'Debe incluir al menos una linea de pago' });
-    }
-
-    const connection = await pool.getConnection();
     try {
-        await connection.beginTransaction();
-
-        let total = 0;
-        const createdIds = [];
-        for (const payment of payments) {
-            const amount = Number(payment.amount || 0);
-            if (amount <= 0) continue;
-
-            const id = crypto.randomUUID();
-            createdIds.push(id);
-            total += amount;
-
-            await connection.query(`
-                INSERT INTO supplier_payments (id, supplier_id, amount, payment_date, payment_method, reference_number, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            `, [
-                id,
-                supplier_id,
-                amount,
-                payment_date || new Date().toISOString().slice(0, 10),
-                payment.payment_method || 'Efectivo',
-                payment.reference_number || null,
-                notes || null
-            ]);
-        }
-
-        if (total <= 0) {
-            throw new Error('El monto total del pago debe ser mayor a 0');
-        }
-
-        await connection.query(`
-            UPDATE suppliers
-            SET account_balance = GREATEST(COALESCE(account_balance, 0) - ?, 0)
-            WHERE id = ?
-        `, [total, supplier_id]);
-
-        await connection.query(`
-            INSERT INTO transactions (id, type, amount, description, reference_id, supplier_id)
-            VALUES (?, 'expense', ?, ?, ?, ?)
-        `, [
-            crypto.randomUUID(),
-            total,
-            'Pago a proveedor',
-            createdIds[0] || null,
-            supplier_id
-        ]);
-
-        await connection.commit();
-        await auditService.log({
-            user_id: req.user?.id || null,
-            action: 'CREATE_SUPPLIER_PAYMENT',
-            entity_type: 'supplier_payment',
-            entity_id: createdIds[0] || null,
-            new_values: {
-                supplier_id,
-                payment_date: payment_date || new Date().toISOString().slice(0, 10),
-                notes: notes || null,
-                payment_ids: createdIds,
-                total
-            },
-            ip_address: getRequestIp(req)
-        });
-        res.json({ success: true, ids: createdIds, total });
+        const result = await supplierPaymentService.createSupplierPayment(req.body, req.user?.id, getRequestIp(req));
+        res.json(result);
     } catch (err) {
-        await connection.rollback();
+        if (err.errorCode === 'MISSING_SUPPLIER') {
+            return res.status(400).json({ error: 'missing_supplier', message: err.message });
+        }
+        if (err.errorCode === 'MISSING_PAYMENTS') {
+            return res.status(400).json({ error: 'missing_payments', message: err.message });
+        }
         throw err;
-    } finally {
-        connection.release();
     }
 });
 
 export const createQualityCheck = catchAsync(async (req, res) => {
-    const id = crypto.randomUUID();
     const {
         reception_id,
         product_id,
-        inspector_id,
         result,
         quantity_checked,
         quantity_passed,
@@ -716,48 +497,113 @@ export const createQualityCheck = catchAsync(async (req, res) => {
         action_taken,
         notes
     } = req.body;
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const [receptions] = await connection.query(
+            'SELECT id, status FROM receptions WHERE id = ? FOR UPDATE',
+            [reception_id]
+        );
+        if (receptions.length === 0) {
+            const error = new Error('Recepción no encontrada');
+            error.statusCode = 404;
+            throw error;
+        }
+        if (receptions[0].status !== 'pending_qc') {
+            const error = new Error('El control de calidad sólo puede modificarse mientras la recepción está pendiente');
+            error.statusCode = 409;
+            throw error;
+        }
 
-    await pool.query(`
-        INSERT INTO quality_checks (
-            id, reception_id, product_id, inspector_id, result,
-            quantity_checked, quantity_passed, quantity_failed, defect_description, action_taken, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-        id,
-        reception_id,
-        product_id,
-        inspector_id || null,
-        result,
-        quantity_checked || 0,
-        quantity_passed || 0,
-        quantity_failed || 0,
-        defect_description || null,
-        action_taken || 'approve',
-        notes || null
-    ]);
+        const [receptionItems] = await connection.query(
+            `SELECT id, quantity_received
+             FROM reception_items
+             WHERE reception_id = ? AND product_id = ?
+             FOR UPDATE`,
+            [reception_id, product_id]
+        );
+        if (receptionItems.length !== 1) {
+            const error = new Error(receptionItems.length === 0
+                ? 'El producto no pertenece a la recepción'
+                : 'El producto está repetido en la recepción; unifique las líneas antes de controlar');
+            error.statusCode = 409;
+            throw error;
+        }
+        const receivedQuantity = Number(receptionItems[0].quantity_received || 0);
+        if (Number(quantity_checked) !== receivedQuantity
+            || Number(quantity_passed) + Number(quantity_failed) !== receivedQuantity) {
+            const error = new Error('El control de calidad debe cubrir exactamente toda la cantidad recibida');
+            error.statusCode = 409;
+            throw error;
+        }
 
-    await auditService.log({
-        user_id: req.user?.id || inspector_id || null,
-        action: 'CREATE_QUALITY_CHECK',
-        entity_type: 'quality_check',
-        entity_id: id,
-        new_values: {
+        const [existingRows] = await connection.query(
+            `SELECT * FROM quality_checks
+             WHERE reception_id = ? AND product_id = ?
+             ORDER BY check_date DESC, id DESC
+             LIMIT 1 FOR UPDATE`,
+            [reception_id, product_id]
+        );
+        const id = existingRows[0]?.id || crypto.randomUUID();
+        const authenticatedInspectorId = req.user?.id || null;
+        const values = [
+            authenticatedInspectorId,
+            result,
+            quantity_checked,
+            quantity_passed,
+            quantity_failed,
+            defect_description || null,
+            action_taken || 'approve',
+            notes || null
+        ];
+        if (existingRows.length > 0) {
+            await connection.query(
+                `UPDATE quality_checks
+                 SET inspector_id = ?, result = ?, quantity_checked = ?, quantity_passed = ?,
+                     quantity_failed = ?, defect_description = ?, action_taken = ?, notes = ?, check_date = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [...values, id]
+            );
+        } else {
+            await connection.query(
+                `INSERT INTO quality_checks (
+                    id, reception_id, product_id, inspector_id, result,
+                    quantity_checked, quantity_passed, quantity_failed, defect_description, action_taken, notes
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [id, reception_id, product_id, ...values]
+            );
+        }
+
+        const safeValues = {
             id,
             reception_id,
             product_id,
-            inspector_id: inspector_id || null,
+            inspector_id: authenticatedInspectorId,
             result,
-            quantity_checked: quantity_checked || 0,
-            quantity_passed: quantity_passed || 0,
-            quantity_failed: quantity_failed || 0,
+            quantity_checked,
+            quantity_passed,
+            quantity_failed,
             defect_description: defect_description || null,
             action_taken: action_taken || 'approve',
             notes: notes || null
-        },
-        ip_address: getRequestIp(req)
-    });
-
-    res.json({ id, success: true });
+        };
+        await auditService.log({
+            user_id: authenticatedInspectorId,
+            action: existingRows.length > 0 ? 'UPDATE_QUALITY_CHECK' : 'CREATE_QUALITY_CHECK',
+            entity_type: 'quality_check',
+            entity_id: id,
+            old_values: existingRows[0] || null,
+            new_values: safeValues,
+            ip_address: getRequestIp(req)
+        }, connection);
+        await connection.commit();
+        res.json({ id, success: true });
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
 });
 
 export const exportIVACompras = catchAsync(async (req, res) => {

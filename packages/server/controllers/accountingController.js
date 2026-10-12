@@ -55,17 +55,7 @@ export const deleteAccount = catchAsync(async (req, res) => {
     res.json(result);
 });
 
-export const deleteJournalEntry = catchAsync(async (req, res) => {
-    const result = await accountingService.deleteJournalEntry(req.params.id, req.user?.id);
-    res.json(result);
-});
-
 export const reverseJournalEntry = catchAsync(async (req, res) => {
     const result = await accountingService.reverseJournalEntry(req.params.id, req.user?.id);
-    res.json(result);
-});
-
-export const updateJournalEntry = catchAsync(async (req, res) => {
-    const result = await accountingService.updateJournalEntry(req.params.id, req.body, req.user?.id);
     res.json(result);
 });

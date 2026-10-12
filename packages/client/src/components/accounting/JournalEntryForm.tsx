@@ -1,4 +1,5 @@
 import { Input } from "@/components/ui/input"
+import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CheckCircle, AlertTriangle, Trash, Plus } from "lucide-react"
@@ -47,12 +48,13 @@ export function JournalEntryForm({
         <div className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-3">
                 <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Fecha del Asiento</label>
-                    <Input type="date" value={date} onChange={(e) => onDateChange(e.target.value)} />
+                    <label htmlFor="journal-entry-date" className="text-xs font-bold text-slate-500 uppercase">Fecha del Asiento</label>
+                    <ArgentinaDateInput id="journal-entry-date" value={date} onChange={onDateChange} ariaLabel="Fecha del asiento" required />
                 </div>
                 <div className="flex flex-col gap-1.5 sm:col-span-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Concepto / Glosa General</label>
+                    <label htmlFor="journal-entry-description" className="text-xs font-bold text-slate-500 uppercase">Concepto / Glosa General</label>
                     <Input
+                        id="journal-entry-description"
                         placeholder="Ej: Ajuste de fin de mes, devengamiento de tasas..."
                         value={description}
                         onChange={(e) => onDescriptionChange(e.target.value)}
@@ -61,7 +63,7 @@ export function JournalEntryForm({
             </div>
 
             <div className="space-y-3">
-                <label className="text-xs font-bold text-slate-500 uppercase block">Partidas del Asiento</label>
+                <span className="text-xs font-bold text-slate-500 uppercase block">Partidas del Asiento</span>
 
                 {lines.map((line, idx) => (
                     <div
@@ -122,6 +124,7 @@ export function JournalEntryForm({
                             type="button"
                             variant="ghost"
                             size="icon"
+                            aria-label={`Eliminar partida ${idx + 1}`}
                             onClick={() => onRemoveLine(idx)}
                             className="text-red-500 hover:text-red-700 hover:bg-red-50/50 shrink-0 self-end sm:self-center"
                         >

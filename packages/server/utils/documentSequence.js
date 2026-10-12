@@ -1,11 +1,11 @@
 export async function nextDocumentSequence(connection, scope, minimumValue = 0) {
     await connection.query(
-        'INSERT IGNORE INTO document_sequences (scope, last_value) VALUES (?, 0)',
+        'INSERT IGNORE INTO document_sequences (scope, `last_value`) VALUES (?, 0)',
         [scope]
     );
 
     const [rows] = await connection.query(
-        'SELECT last_value FROM document_sequences WHERE scope = ? FOR UPDATE',
+        'SELECT `last_value` FROM document_sequences WHERE scope = ? FOR UPDATE',
         [scope]
     );
 
@@ -15,7 +15,7 @@ export async function nextDocumentSequence(connection, scope, minimumValue = 0) 
     const nextValue = baseValue + 1;
 
     await connection.query(
-        'UPDATE document_sequences SET last_value = ? WHERE scope = ?',
+        'UPDATE document_sequences SET `last_value` = ? WHERE scope = ?',
         [nextValue, scope]
     );
 

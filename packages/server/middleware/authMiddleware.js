@@ -1,12 +1,17 @@
 import jwt from 'jsonwebtoken';
 import pool from '../config/db.js';
 import { getEnvConfig } from '../config/env.js';
+import { hasPermission } from '@wsm/common';
+import { getCookieValue, isTrustedCookieRequest } from '../utils/authCookie.js';
 
-const { jwtSecret: JWT_SECRET } = getEnvConfig();
+const env = getEnvConfig();
+const JWT_SECRET = env.jwtSecret;
 
 export const authenticateToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(' ')[1];
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+    const cookieToken = getCookieValue(req.headers.cookie);
+    const token = bearerToken || cookieToken;
 
     if (!token) {
         return res.status(401).json({
@@ -15,9 +20,16 @@ export const authenticateToken = async (req, res, next) => {
         });
     }
 
+    if (!bearerToken && cookieToken && !isTrustedCookieRequest(req.method, req.headers.origin, env.corsOrigins)) {
+        return res.status(403).json({
+            error: 'invalid_origin',
+            message: 'Origen de solicitud no permitido'
+        });
+    }
+
     let user;
     try {
-        user = jwt.verify(token, JWT_SECRET);
+        user = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
     } catch (err) {
         const isExpired = err.name === 'TokenExpiredError';
         return res.status(401).json({
@@ -61,9 +73,9 @@ export const authenticateToken = async (req, res, next) => {
     }
 };
 
-export const authorizeRoles = (...roles) => {
+export const authorizePermission = (permission) => {
     return (req, res, next) => {
-        if (!req.user || !roles.includes(req.user.role)) {
+        if (!req.user || !hasPermission(req.user.role, permission)) {
             return res.status(403).json({
                 error: 'forbidden',
                 message: 'No tiene permisos para realizar esta accion'

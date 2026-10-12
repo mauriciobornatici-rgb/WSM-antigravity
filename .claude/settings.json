@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "PowerShell(git status*)",
+      "PowerShell(git diff*)",
+      "PowerShell(git log*)",
+      "PowerShell(git show*)",
+      "PowerShell(git branch*)",
+      "PowerShell(git ls-files*)",
+      "PowerShell(npm run validate*)",
+      "PowerShell(npm run lint*)",
+      "PowerShell(npm run typecheck*)",
+      "PowerShell(npm run build*)",
+      "PowerShell(npm run test*)",
+      "PowerShell(npm run audit*)",
+      "PowerShell(npm -w @wsm/client run lint*)",
+      "PowerShell(npm -w @wsm/client run typecheck*)",
+      "PowerShell(npm -w @wsm/client run test*)",
+      "PowerShell(npm -w @wsm/client run build*)",
+      "PowerShell(npm -w @wsm/server run lint*)",
+      "PowerShell(node scripts/qa-runner.js unit*)",
+      "PowerShell(node scripts/qa-runner.js coverage*)",
+      "PowerShell(Get-ChildItem*)",
+      "PowerShell(Get-Content*)",
+      "PowerShell(Test-Path*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Edit(./.agents/context/**)",
+      "Agent(explorador)",
+      "Agent(planificador)",
+      "Agent(implementador)",
+      "Agent(verificador)",
+      "Agent(auditor-externo)",
+      "Agent(revisor-seguridad)",
+      "Agent(guardian-integridad)",
+      "Agent(revisor-ux)"
+    ],
+    "ask": [
+      "PowerShell(git push*)",
+      "PowerShell(git reset --hard*)",
+      "PowerShell(git checkout -- *)",
+      "PowerShell(git clean*)",
+      "PowerShell(npm install*)",
+      "PowerShell(npm i *)",
+      "PowerShell(npm uninstall*)",
+      "PowerShell(npm run server*)",
+      "PowerShell(npm run dev:all*)",
+      "PowerShell(npm run smoke:*)",
+      "PowerShell(npm run preflight:*)",
+      "PowerShell(npm run db:*)",
+      "PowerShell(npm run qa:bootstrap*)",
+      "PowerShell(npm -w @wsm/server run *)",
+      "PowerShell(node packages/server/index.js*)",
+      "PowerShell(node index.js*)",
+      "PowerShell(docker *)",
+      "PowerShell(Remove-Item*)",
+      "PowerShell(Invoke-WebRequest*)",
+      "PowerShell(Invoke-RestMethod*)",
+      "Bash(git push*)",
+      "Bash(npm install*)",
+      "Bash(curl *)",
+      "Edit(./CLAUDE.md)",
+      "Edit(./AGENTS.md)",
+      "Edit(./GEMINI.md)",
+      "Edit(./.claude/**)",
+      "Edit(./packages/server/migrations/**)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.development)",
+      "Read(./.env.production)",
+      "Read(./.env.local)",
+      "Read(./packages/*/.env)",
+      "Read(./packages/*/.env.development)",
+      "Read(./packages/*/.env.production)",
+      "Read(**/*.pem)",
+      "Read(**/*.pfx)",
+      "Read(**/*.key)",
+      "Read(./backups/**)",
+      "Read(**/node_modules/**)",
+      "Read(**/dist/**)",
+      "Read(./.pnpm-store/**)",
+      "Read(./recovery-snapshot-*.zip)",
+      "PowerShell(git push --force*)",
+      "PowerShell(git push -f*)",
+      "Bash(rm -rf *)",
+      "Bash(git push --force*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/hooks/orientacion.ps1"],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/hooks/bitacora.ps1"],
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/hooks/marca-compactacion.ps1"],
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/hooks/puerta-estado.ps1"],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -41,4 +41,7 @@ export const queryKeys = {
     creditNotes: {
         all: ["credit-notes"] as const,
     },
+    posExceptions: {
+        byStatus: (status: "pending" | "reviewed") => ["pos-exceptions", status] as const,
+    },
 } as const;

@@ -69,6 +69,16 @@ export const zodSchemas = {
     order: z.object({
         body: commonSchemas.createOrderSchema
     }),
+    posCheckout: z.object({
+        body: commonSchemas.posCheckoutSchema
+    }),
+    posExceptionsQuery: z.object({
+        query: commonSchemas.posExceptionsQuerySchema.optional()
+    }),
+    posExceptionReview: z.object({
+        params: z.object({ id: z.coerce.number().int().positive() }),
+        body: commonSchemas.posExceptionReviewSchema
+    }),
     orderFilters: z.object({
         query: commonSchemas.orderFiltersSchema.optional()
     }),
@@ -95,6 +105,12 @@ export const zodSchemas = {
             id: commonSchemas.uuidSchema
         }),
         body: commonSchemas.orderInvoiceSchema
+    }),
+    pickupOrderCheckout: z.object({
+        params: z.object({
+            id: commonSchemas.uuidSchema
+        }),
+        body: commonSchemas.pickupOrderCheckoutSchema
     }),
     invoicePayment: z.object({
         params: z.object({
@@ -167,6 +183,16 @@ export const zodSchemas = {
     }),
     inventoryMovementCreate: z.object({
         body: commonSchemas.inventoryMovementCreateSchema
+    }),
+    stockAuditCreate: z.object({
+        body: commonSchemas.stockAuditCreateSchema
+    }),
+    stockAuditCount: z.object({
+        params: z.object({ id: commonSchemas.uuidSchema }),
+        body: commonSchemas.stockAuditCountSchema
+    }),
+    stockAuditFilters: z.object({
+        query: commonSchemas.stockAuditFiltersSchema.optional()
     }),
     batchFilters: z.object({
         query: commonSchemas.batchFiltersSchema.optional()

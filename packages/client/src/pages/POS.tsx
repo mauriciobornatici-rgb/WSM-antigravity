@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, History } from "lucide-react";
+import { POSHeader } from "@/components/pos/POSHeader";
 import { toast } from "sonner";
+import { useTheme } from "@/hooks/useTheme";
 import { api } from "@/services/api";
-import type { Client, CompanySettings } from "@/types";
-import type { CashRegister, CashShiftSummary, Invoice } from "@/types/api";
+import { isApiError } from "@/services/httpClient";
+import type { Client, CompanySettings, Order } from "@/types";
+import type { CashRegister, CashShiftSummary, Invoice, InvoiceItem } from "@/types/api";
 import { showErrorToast } from "@/lib/errorHandling";
 import { DEFAULT_COMPANY_SETTINGS, fetchCompanySettingsSafe, getTaxRatePercentage } from "@/lib/companySettings";
 import { CartPanelCard } from "@/components/pos/CartPanelCard";
@@ -13,24 +15,49 @@ import { PaymentDialog } from "@/components/pos/PaymentDialog";
 import { ProductCatalogCard } from "@/components/pos/ProductCatalogCard";
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog";
 import { POSHistoryDialog } from "@/components/pos/POSHistoryDialog";
+import { ParkedCartsDialog } from "@/components/pos/ParkedCartsDialog";
+import { POSPickupOrdersDialog } from "@/components/pos/POSPickupOrdersDialog";
 import type { CartItem, InvoiceType, NewClientForm, PaymentSplit, POSProduct } from "@/components/pos/types";
-import { Button } from "@/components/ui/button";
 import { PrintableInvoiceArea } from "@/components/invoices/PrintableInvoiceArea";
 import { PrintableThermalTicket } from "@/components/invoices/PrintableThermalTicket";
+import { usePOSCart } from "@/hooks/usePOSCart";
+import { usePOSHotkeys } from "@/hooks/usePOSHotkeys";
+import { playScanErrorBeep } from "@/lib/scanAudio";
+import { createClientUuid } from "@/lib/clientUuid";
+import {
+    enqueueOfflineSale,
+    getOfflineQueue,
+    restoreOfflineQueueFromIndexedDb,
+    syncOfflineSales,
+} from "@/lib/offlineSalesQueue";
 
 function roundMoney(value: number): number {
     return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
 function defaultPaymentSplit(amount = 0): PaymentSplit {
-    return { id: crypto.randomUUID(), method: "cash", amount: roundMoney(amount) };
+    return { id: createClientUuid(), method: "cash", amount: roundMoney(amount) };
 }
 
 export default function POSPage() {
     const navigate = useNavigate();
+    const { theme, toggleTheme } = useTheme();
     const [products, setProducts] = useState<POSProduct[]>([]);
     const [clients, setClients] = useState<Client[]>([]);
-    const [cart, setCart] = useState<CartItem[]>([]);
+    const {
+        cart,
+        setCart,
+        addToCart,
+        updateQuantity,
+        removeFromCart,
+        subtotal,
+        taxAmount,
+        grandTotal,
+        parkedCarts,
+        parkCurrentCart,
+        restoreParkedCart,
+        deleteParkedCart,
+    } = usePOSCart();
     const [loading, setLoading] = useState(true);
 
     const [search, setSearch] = useState("");
@@ -38,7 +65,7 @@ export default function POSPage() {
     const [selectedClientId, setSelectedClientId] = useState("");
 
     const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-    const [paymentSplits, setPaymentSplits] = useState<PaymentSplit[]>([defaultPaymentSplit(0)]);
+    const [paymentSplits, setPaymentSplits] = useState<PaymentSplit[]>(() => [defaultPaymentSplit(0)]);
     const [emitInvoice, setEmitInvoice] = useState(false);
     const [invoiceType, setInvoiceType] = useState<InvoiceType>("B");
     const [processing, setProcessing] = useState(false);
@@ -58,60 +85,254 @@ export default function POSPage() {
     const [lastOrderId, setLastOrderId] = useState<string | null>(null);
     const [lastInvoice, setLastInvoice] = useState<Invoice | null>(null);
     const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
+    const [parkedDialogOpen, setParkedDialogOpen] = useState(false);
+    const [activePickupOrder, setActivePickupOrder] = useState<Order | null>(null);
+    const [pickupDialogOpen, setPickupDialogOpen] = useState(false);
+    const [pickupOrdersCount, setPickupOrdersCount] = useState(0);
+
+    const loadPickupCount = useCallback(async () => {
+        try {
+            const packed = await api.getOrders({ shipping_method: "pickup", status: "packed" });
+            const dispatched = await api.getOrders({ shipping_method: "pickup", status: "dispatched" });
+            const uninvoiced = [...(packed || []), ...(dispatched || [])].filter((o) => !o.invoice_id);
+            const uniqueIds = new Set(uninvoiced.map((o) => o.id));
+            setPickupOrdersCount(uniqueIds.size);
+        } catch {
+            // Ignore background check failure
+        }
+    }, []);
 
     const [companySettings, setCompanySettings] = useState<CompanySettings>(DEFAULT_COMPANY_SETTINGS);
     const [currentRegister, setCurrentRegister] = useState<CashRegister | null>(null);
     const [currentShift, setCurrentShift] = useState<CashShiftSummary | null>(null);
-    const [activePrintLayout, setActivePrintLayout] = useState<'a4' | 'thermal' | null>(null);
+    const [activePrintLayout, setActivePrintLayout] = useState<"a4" | "thermal" | null>(null);
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
 
-    const handlePrint = (layout: 'a4' | 'thermal', invoice: Invoice) => {
-        setActivePrintLayout(layout);
-        setSelectedInvoice(invoice);
-        setTimeout(() => {
+    const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== "undefined" ? navigator.onLine : true);
+    const [offlineQueueCount, setOfflineQueueCount] = useState<number>(() => getOfflineQueue().length);
+    const [syncingOffline, setSyncingOffline] = useState(false);
+
+    const refreshOfflineCount = useCallback(() => {
+        setOfflineQueueCount(getOfflineQueue().length);
+    }, []);
+
+    const handleSyncOffline = useCallback(async () => {
+        const queue = getOfflineQueue();
+        if (queue.length === 0) return;
+
+        try {
+            setSyncingOffline(true);
+            const res = await syncOfflineSales({
+                posCheckout: api.posCheckout,
+                createOrder: api.createOrder,
+                createInvoice: api.createInvoice,
+                addShiftPayment: api.addShiftPayment,
+            });
+
+            refreshOfflineCount();
+            if (res.synced > 0) {
+                toast.success(`Sincronización completada: ${res.synced} venta(s) procesada(s).`);
+            }
+            if (res.failed > 0) {
+                toast.error(`${res.failed} venta(s) no pudieron sincronizarse. Se reintentará luego.`);
+            }
+        } catch {
+            toast.error("Error al sincronizar cola offline.");
+        } finally {
+            setSyncingOffline(false);
+        }
+    }, [refreshOfflineCount]);
+
+    // Online/Offline network monitoring
+    useEffect(() => {
+        const handleOnline = () => {
+            setIsOnline(true);
+            toast.success("Conexión restablecida.");
+            void handleSyncOffline();
+        };
+        const handleOffline = () => {
+            setIsOnline(false);
+            toast.warning("Sin conexión. Las ventas se guardarán en la cola offline de contingencia.");
+        };
+
+        window.addEventListener("online", handleOnline);
+        window.addEventListener("offline", handleOffline);
+
+        return () => {
+            window.removeEventListener("online", handleOnline);
+            window.removeEventListener("offline", handleOffline);
+        };
+    }, [handleSyncOffline]);
+
+    usePOSHotkeys({
+        onSearchFocus: () => {
+            const inputEl = document.querySelector<HTMLInputElement>("input[type='search'], input[placeholder*='Buscar']");
+            inputEl?.focus();
+        },
+        onPaymentOpen: () => {
+            if (cart.length > 0) {
+                setPaymentDialogOpen(true);
+            } else {
+                toast.warning("El carrito está vacío");
+            }
+        },
+        onEscape: () => {
+            setSearch("");
+            setPaymentDialogOpen(false);
+            setClientDialogOpen(false);
+            setHistoryDialogOpen(false);
+            setParkedDialogOpen(false);
+            setPickupDialogOpen(false);
+        },
+        onToggleInvoice: () => {
+            setEmitInvoice((prev) => {
+                const next = !prev;
+                toast.info(`Emisión de comprobante: ${next ? "Activada" : "Desactivada"}`);
+                return next;
+            });
+        },
+        onClearCart: () => {
+            if (cart.length > 0) {
+                setCart([]);
+                setActivePickupOrder(null);
+                toast.info("Carrito vaciado");
+            }
+        },
+        onOpenHistory: () => {
+            setHistoryDialogOpen(true);
+        },
+    });
+
+    const handlePrint = async (layout: "a4" | "thermal", invoice: Invoice) => {
+        try {
+            let fullInvoice: Invoice = { ...invoice };
+            if (!fullInvoice.items || fullInvoice.items.length === 0) {
+                try {
+                    const items = await api.getInvoiceItems(invoice.id);
+                    if (items && items.length > 0) {
+                        fullInvoice = { ...fullInvoice, items: items as InvoiceItem[] };
+                    }
+                } catch (e) {
+                    console.warn("No se pudieron cargar los ítems desde la API:", e);
+                }
+            }
+            if (!fullInvoice.client_name && selectedClient) {
+                fullInvoice.client_name = selectedClient.name;
+                fullInvoice.client_tax_id = selectedClient.tax_id;
+                fullInvoice.client_address = selectedClient.address;
+                fullInvoice.client_tax_condition = "Consumidor Final";
+            }
+            setSelectedInvoice(fullInvoice);
+            setActivePrintLayout(layout);
+            await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
             window.print();
-        }, 300);
+            const cleanup = () => {
+                setActivePrintLayout(null);
+                window.removeEventListener("afterprint", cleanup);
+            };
+            window.addEventListener("afterprint", cleanup);
+            setTimeout(cleanup, 1000);
+        } catch (error) {
+            showErrorToast("Error al preparar la impresión", error);
+        }
     };
 
     useEffect(() => {
-        void loadData();
-    }, []);
+        async function loadData() {
+            try {
+                setLoading(true);
+                const [clientsResponse, productsResponse, registersResponse, settingsResponse] = await Promise.all([
+                    api.getClients(),
+                    api.getProducts(),
+                    api.getCashRegisters(),
+                    fetchCompanySettingsSafe(),
+                ]);
 
-    async function loadData() {
-        try {
-            setLoading(true);
-            const [clientsResponse, productsResponse, registersResponse, settingsResponse] = await Promise.all([
-                api.getClients(),
-                api.getProducts(),
-                api.getCashRegisters(),
-                fetchCompanySettingsSafe(),
-            ]);
+                setClients(clientsResponse);
+                setCompanySettings(settingsResponse);
+                setProducts(productsResponse.map((product) => ({ ...product, stock: Number(product.stock_current ?? 0) })));
 
-            setClients(clientsResponse);
-            setCompanySettings(settingsResponse);
-            setProducts(productsResponse.map((product) => ({ ...product, stock: Number(product.stock_current ?? 0) })));
-
-            const primaryRegister = registersResponse[0] ?? null;
-            setCurrentRegister(primaryRegister);
-            if (primaryRegister) {
-                const shift = await api.getOpenShift(primaryRegister.id);
-                setCurrentShift(shift);
-            } else {
-                setCurrentShift(null);
+                const primaryRegister = registersResponse[0] ?? null;
+                setCurrentRegister(primaryRegister);
+                if (primaryRegister) {
+                    const shift = await api.getOpenShift(primaryRegister.id);
+                    setCurrentShift(shift);
+                } else {
+                    setCurrentShift(null);
+                }
+                void loadPickupCount();
+            } catch (error) {
+                showErrorToast("Error al cargar POS", error);
+            } finally {
+                setLoading(false);
             }
-        } catch (error) {
-            showErrorToast("Error al cargar POS", error);
-        } finally {
-            setLoading(false);
         }
-    }
+
+        void loadData();
+        void restoreOfflineQueueFromIndexedDb().then((queue) => {
+            if (queue.length > 0) {
+                setOfflineQueueCount(queue.length);
+            }
+        });
+    }, [loadPickupCount]);
+
+    const handleSelectPickupOrder = async (order: Order) => {
+        try {
+            const summary = await api.getOrderSummary(order.id);
+            const orderItems = summary.items || [];
+
+            const newCartItems: CartItem[] = orderItems.map((item) => {
+                const product = products.find((p) => p.id === item.product_id);
+                const fallbackProduct: POSProduct = {
+                    id: item.product_id,
+                    sku: item.sku || "SKU-PROD",
+                    name: item.product_name || "Producto",
+                    description: "",
+                    category: "General",
+                    sale_price: Number(item.unit_price || 0),
+                    purchase_price: 0,
+                    created_at: new Date().toISOString(),
+                    stock: 0,
+                };
+                const base = product || fallbackProduct;
+                return {
+                    ...base,
+                    id: item.product_id,
+                    name: item.product_name || base.name,
+                    sku: item.sku || base.sku,
+                    sale_price: Number(item.unit_price || base.sale_price),
+                    quantity: Number(item.picked_quantity || item.quantity || 1),
+                    isPrepared: true,
+                };
+            });
+
+            setCart(newCartItems);
+            setActivePickupOrder(order);
+            if (order.client_id) {
+                setSelectedClientId(order.client_id);
+            } else {
+                setSelectedClientId("");
+            }
+            setEmitInvoice(true);
+            toast.info(`Pedido #${order.id.slice(0, 8)} cargado en mostrador. Puedes cobrarlo o sumar productos adicionales.`);
+        } catch (err) {
+            showErrorToast("Error al cargar ítems del pedido", err);
+        }
+    };
+
+    const handleCancelPickup = () => {
+        setActivePickupOrder(null);
+        setCart([]);
+        setSelectedClientId("");
+        toast.info("Retiro de pedido cancelado. Carrito restablecido.");
+    };
 
     const taxLabel = `IVA ${getTaxRatePercentage(companySettings)}%`;
 
     const categories = useMemo(() => {
         const values = new Set<string>();
         for (const product of products) {
-        values.add(product.category || "Sin categoría");
+            values.add(product.category || "Sin categoría");
         }
         return ["all", ...Array.from(values)];
     }, [products]);
@@ -124,34 +345,26 @@ export default function POSPage() {
             if (!query) return true;
             return (
                 product.name.toLowerCase().includes(query)
+                || (product.family_name ?? "").toLowerCase().includes(query)
                 || product.sku.toLowerCase().includes(query)
                 || (product.barcode ?? "").toLowerCase().includes(query)
+                || (product.brand ?? "").toLowerCase().includes(query)
+                || (product.size ?? "").toLowerCase().includes(query)
+                || (product.color ?? "").toLowerCase().includes(query)
+                || (product.location ?? "").toLowerCase().includes(query)
             );
-        });
+        }).sort((first, second) => (
+            first.name.localeCompare(second.name, "es", { sensitivity: "base" })
+            || (first.size ?? "").localeCompare(second.size ?? "", "es", { numeric: true, sensitivity: "base" })
+            || (first.color ?? "").localeCompare(second.color ?? "", "es", { sensitivity: "base" })
+            || first.sku.localeCompare(second.sku, "es", { numeric: true, sensitivity: "base" })
+        ));
     }, [products, search, categoryFilter]);
 
     const selectedClient = useMemo(
         () => clients.find((client) => client.id === selectedClientId) ?? null,
         [clients, selectedClientId],
     );
-
-    function addToCart(product: POSProduct) {
-        if (product.stock <= 0) {
-            toast.warning("Producto sin stock");
-            return;
-        }
-
-        setCart((current) => {
-            const found = current.find((item) => item.id === product.id);
-            if (!found) return [...current, { ...product, quantity: 1 }];
-
-            if (found.quantity >= product.stock) {
-                toast.warning("No hay más stock disponible");
-                return current;
-            }
-            return current.map((item) => (item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item));
-        });
-    }
 
     function handleCatalogScan(rawValue: string) {
         const scannedValue = rawValue.trim().toLowerCase();
@@ -165,43 +378,13 @@ export default function POSPage() {
 
         if (!product) {
             toast.warning("Código no encontrado");
+            playScanErrorBeep();
             return;
         }
 
         addToCart(product);
         setSearch("");
     }
-
-    function updateQuantity(productId: string, delta: number) {
-        setCart((current) =>
-            current
-                .map((item) => {
-                    if (item.id !== productId) return item;
-                    const nextQuantity = Math.max(0, item.quantity + delta);
-                    if (nextQuantity > item.stock) {
-                        toast.warning("No hay más stock disponible");
-                        return item;
-                    }
-                    return { ...item, quantity: nextQuantity };
-                })
-                .filter((item) => item.quantity > 0),
-        );
-    }
-
-    function removeFromCart(productId: string) {
-        setCart((current) => current.filter((item) => item.id !== productId));
-    }
-
-    const subtotal = roundMoney(cart.reduce((sum, item) => sum + Number(item.sale_price || 0) * item.quantity, 0));
-    const taxAmount = roundMoney(
-        cart.reduce((sum, item) => {
-            const itemVatRate = item.vat_rate != null ? Number(item.vat_rate) : 21.00;
-            const lineNet = roundMoney(item.quantity * Number(item.sale_price || 0));
-            const lineVat = roundMoney(lineNet * (itemVatRate / 100));
-            return sum + lineVat;
-        }, 0),
-    );
-    const grandTotal = roundMoney(subtotal + taxAmount);
 
     async function createClient() {
         if (!newClient.name || !newClient.tax_id) {
@@ -248,12 +431,17 @@ export default function POSPage() {
             return;
         }
 
-        const positiveSplits = paymentSplits
+        const normalizedSplits = paymentSplits
             .map((line) => ({
                 method: line.method,
                 amount: roundMoney(Number(line.amount || 0)),
             }))
             .filter((line) => line.amount > 0);
+        const amountsByMethod = new Map<PaymentSplit["method"], number>();
+        for (const line of normalizedSplits) {
+            amountsByMethod.set(line.method, roundMoney((amountsByMethod.get(line.method) || 0) + line.amount));
+        }
+        const positiveSplits = Array.from(amountsByMethod, ([method, amount]) => ({ method, amount }));
 
         if (positiveSplits.length === 0) {
             toast.error("Debes cargar al menos un monto de pago");
@@ -286,6 +474,36 @@ export default function POSPage() {
         const previousClientId = selectedClientId;
         const previousEmitInvoice = emitInvoice;
         const previousPaymentSplits = [...paymentSplits];
+        const checkoutIdempotencyKey = createClientUuid();
+        let orderCommitted = false;
+
+        const contingencySale = {
+            idempotency_key: checkoutIdempotencyKey,
+            customer_name: selectedClient?.name || "Consumidor final",
+            ...(previousClientId ? { client_id: previousClientId } : {}),
+            payment_method: primaryPaymentMethod,
+            payments: positiveSplits.map((payment) => ({ method: payment.method, amount: payment.amount })),
+            items: previousCart.map((item) => ({
+                product_id: item.id,
+                name: item.name,
+                quantity: item.quantity,
+                sale_price: Number(item.sale_price),
+                vat_rate: item.vat_rate != null ? Number(item.vat_rate) : 21,
+            })),
+            emit_invoice: previousEmitInvoice,
+            invoice_type: invoiceType,
+            shift_id: currentShift.id,
+        };
+
+        const restoreCheckout = () => {
+            setProducts(previousProducts);
+            setCart(previousCart);
+            setSelectedClientId(previousClientId);
+            setEmitInvoice(previousEmitInvoice);
+            setPaymentSplits(previousPaymentSplits);
+            setSuccessDialogOpen(false);
+            setPaymentDialogOpen(true);
+        };
 
         const soldByProduct = cart.reduce<Record<string, number>>((acc, item) => {
             acc[item.id] = (acc[item.id] || 0) + item.quantity;
@@ -304,70 +522,126 @@ export default function POSPage() {
         setEmitInvoice(false);
         setPaymentSplits([defaultPaymentSplit(0)]);
         setPaymentDialogOpen(false);
+
+        // El retiro de un pedido ya existente no puede resguardarse como venta nueva:
+        // al sincronizar se duplicaría la venta y el cobro. Requiere conexión.
+        if (!navigator.onLine && activePickupOrder) {
+            restoreCheckout();
+            toast.error("Sin conexión: el retiro de pedidos requiere red. Reintentá cuando vuelva la conexión.");
+            return;
+        }
+
+        // Si estamos sin conexión directa a internet, encolamos inmediatamente en modo contingencia
+        if (!navigator.onLine) {
+            try {
+                enqueueOfflineSale(contingencySale);
+                refreshOfflineCount();
+                toast.warning("Sin red: Venta guardada en la cola offline de contingencia.");
+            } catch (storageError) {
+                restoreCheckout();
+                showErrorToast("No se pudo resguardar la venta; el carrito fue restaurado.", storageError);
+            }
+            return;
+        }
+
         setSuccessDialogOpen(true);
+
+        if (activePickupOrder) {
+            try {
+                setProcessing(true);
+                setLastInvoice(null);
+
+                const extraItems = previousCart
+                    .filter((item) => !item.isPrepared)
+                    .map((item) => ({
+                        product_id: item.id,
+                        quantity: item.quantity,
+                        unit_price: Number(item.sale_price),
+                    }));
+
+                const pickupResult = await api.checkoutPickupOrder(activePickupOrder.id, {
+                    recipient_name: selectedClient?.name || activePickupOrder.customer_name || "Cliente Mostrador",
+                    recipient_dni: selectedClient?.tax_id || undefined,
+                    delivery_notes: "Retiro y cobro en mostrador POS",
+                    shift_id: currentShift.id,
+                    invoice_type: invoiceType,
+                    point_of_sale: 1,
+                    payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
+                    extra_items: extraItems.length > 0 ? extraItems : undefined,
+                });
+
+                orderCommitted = true;
+                setLastOrderId(activePickupOrder.id);
+                if (pickupResult.invoice) {
+                    setLastInvoice(pickupResult.invoice);
+                }
+                const completedOrderId = activePickupOrder.id;
+                setActivePickupOrder(null);
+                void loadPickupCount();
+
+                toast.success(`Retiro y cobro de pedido #${completedOrderId.slice(0, 8)} registrado con éxito`);
+            } catch (error) {
+                restoreCheckout();
+                showErrorToast("Error al procesar el retiro y cobro del pedido", error);
+            } finally {
+                setProcessing(false);
+            }
+            return;
+        }
 
         try {
             setProcessing(true);
             setLastInvoice(null);
 
-            const orderPayload: Parameters<typeof api.createOrder>[0] = {
+            // One server transaction: sale + stock + invoice (if requested) + cash-shift payments.
+            // Either everything is recorded or nothing is, and a retry with the same key is safe.
+            const result = await api.posCheckout({
+                idempotency_key: checkoutIdempotencyKey,
+                shift_id: currentShift.id,
                 customer_name: selectedClient?.name || "Consumidor final",
+                ...(previousClientId ? { client_id: previousClientId } : {}),
                 payment_method: primaryPaymentMethod,
+                payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
                 items: previousCart.map((item) => ({
                     product_id: item.id,
                     quantity: item.quantity,
+                    unit_price: Number(item.sale_price),
                 })),
-            };
-            if (previousClientId) orderPayload.client_id = previousClientId;
-
-            const order = await api.createOrder(orderPayload);
-            setLastOrderId(order.id);
-
-            if (previousEmitInvoice) {
-                try {
-                    const invoicePayload: Record<string, unknown> = {
-                        order_id: order.id,
-                        customer_name: selectedClient?.name || "Consumidor final",
-                        invoice_type: invoiceType,
-                        point_of_sale: 1,
-                        payment_method: primaryPaymentMethod,
-                        payments: positiveSplits.map((line) => ({ method: line.method, amount: line.amount })),
-                        items: previousCart.map((item) => ({
-                            product_id: item.id,
-                            description: item.name,
-                            quantity: item.quantity,
-                            unit_price: item.sale_price,
-                            vat_rate: item.vat_rate != null ? Number(item.vat_rate) : 21.00,
-                        })),
-                    };
-                    if (previousClientId) invoicePayload.client_id = previousClientId;
-                    const invoice = await api.createInvoice(invoicePayload);
-                    setLastInvoice(invoice);
-                } catch (invoiceError) {
-                    showErrorToast("Venta guardada, pero falló la factura", invoiceError);
-                }
-            }
-
-            for (const line of positiveSplits) {
-                await api.addShiftPayment(currentShift.id, {
-                    order_id: order.id,
-                    payment_method: line.method,
-                    amount: line.amount,
-                    type: "sale",
-                });
-            }
+                emit_invoice: previousEmitInvoice,
+                invoice_type: invoiceType,
+                point_of_sale: 1,
+            });
+            orderCommitted = true;
+            setLastOrderId(result.order_id);
+            if (result.invoice) setLastInvoice(result.invoice);
 
             toast.success("Venta registrada con éxito");
         } catch (error) {
-            // 2. Rollback state to prior values on checkout error
-            setProducts(previousProducts);
-            setCart(previousCart);
-            setSelectedClientId(previousClientId);
-            setEmitInvoice(previousEmitInvoice);
-            setPaymentSplits(previousPaymentSplits);
-            setSuccessDialogOpen(false);
-            setPaymentDialogOpen(true);
-            showErrorToast("Error al procesar la venta. El carrito ha sido restaurado.", error);
+            // Una respuesta de red puede perderse después del commit. Si alguna etapa ya
+            // fue confirmada, reintentamos todo con la misma clave idempotente.
+            const errorMessage = error instanceof Error ? error.message.toLowerCase() : "";
+            const isNetworkError = !navigator.onLine || ["fetch", "network", "timeout"].some((term) => errorMessage.includes(term));
+            const isUncertainServerFailure = isApiError(error) && error.status >= 500;
+            if (isNetworkError || isUncertainServerFailure || orderCommitted) {
+                try {
+                    enqueueOfflineSale(contingencySale);
+                    refreshOfflineCount();
+                    setSuccessDialogOpen(false);
+                    toast.warning("Checkout incompleto: quedó resguardado para reintento seguro.");
+                } catch (storageError) {
+                    if (!orderCommitted) restoreCheckout();
+                    showErrorToast(
+                        orderCommitted
+                            ? "La venta fue creada, pero no pudo guardarse el reintento. Revísala en el historial."
+                            : "No se pudo resguardar la venta; el carrito fue restaurado.",
+                        storageError,
+                    );
+                }
+            } else {
+                // Rollback state to prior values on non-network validation error
+                restoreCheckout();
+                showErrorToast("Error al procesar la venta. El carrito ha sido restaurado.", error);
+            }
         } finally {
             setProcessing(false);
         }
@@ -375,29 +649,21 @@ export default function POSPage() {
 
     return (
         <div className="space-y-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        className="w-full gap-2 sm:w-auto"
-                        onClick={() => navigate("/")}
-                    >
-                        <ArrowLeft className="h-4 w-4" />
-                        Volver al menú principal
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        className="w-full gap-2 sm:w-auto border-blue-800/30 bg-blue-950/20 text-blue-400 hover:bg-blue-950/40 hover:text-blue-300"
-                        onClick={() => setHistoryDialogOpen(true)}
-                    >
-                        <History className="h-4 w-4" />
-                        Historial de Ventas / Reimprimir
-                    </Button>
-                </div>
-                <p className="text-sm text-muted-foreground">Terminal de venta</p>
-            </div>
+            <POSHeader
+                onBack={() => navigate("/")}
+                onOpenHistory={() => setHistoryDialogOpen(true)}
+                parkedCartsCount={parkedCarts.length}
+                onOpenParkedCarts={() => setParkedDialogOpen(true)}
+                pickupOrdersCount={pickupOrdersCount}
+                onOpenPickupOrders={() => setPickupDialogOpen(true)}
+                offlineQueueCount={offlineQueueCount}
+                syncingOffline={syncingOffline}
+                onSyncOffline={() => void handleSyncOffline()}
+                theme={theme}
+                onToggleTheme={toggleTheme}
+                isOnline={isOnline}
+            />
+
 
             <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2fr)_380px]">
                 <div className="space-y-4">
@@ -411,6 +677,7 @@ export default function POSPage() {
                         filteredProducts={filteredProducts}
                         onAddToCart={addToCart}
                         onScanSubmit={handleCatalogScan}
+                        cart={cart}
                     />
                 </div>
 
@@ -424,10 +691,13 @@ export default function POSPage() {
                         cart={cart}
                         onRemoveFromCart={removeFromCart}
                         onUpdateQuantity={updateQuantity}
+                        onClearCart={() => setCart([])}
                         subtotal={subtotal}
                         taxLabel={taxLabel}
                         taxAmount={taxAmount}
                         grandTotal={grandTotal}
+                        activePickupOrder={activePickupOrder}
+                        onCancelPickup={handleCancelPickup}
                         onOpenPaymentDialog={() => {
                             setPaymentSplits((current) => {
                                 const currentTotal = roundMoney(current.reduce((sum, line) => sum + Number(line.amount || 0), 0));
@@ -489,6 +759,27 @@ export default function POSPage() {
                 open={historyDialogOpen}
                 onOpenChange={setHistoryDialogOpen}
                 onPrint={handlePrint}
+            />
+
+            <ParkedCartsDialog
+                open={parkedDialogOpen}
+                onOpenChange={setParkedDialogOpen}
+                parkedCarts={parkedCarts}
+                hasActiveCart={cart.length > 0}
+                onParkCurrentCart={(label) => parkCurrentCart(label, selectedClientId || undefined)}
+                onRestoreCart={(id) => {
+                    const restored = restoreParkedCart(id);
+                    if (restored?.clientId) {
+                        setSelectedClientId(restored.clientId);
+                    }
+                }}
+                onDeleteCart={deleteParkedCart}
+            />
+
+            <POSPickupOrdersDialog
+                open={pickupDialogOpen}
+                onOpenChange={setPickupDialogOpen}
+                onSelectOrder={handleSelectPickupOrder}
             />
 
             {activePrintLayout === "a4" && selectedInvoice && (

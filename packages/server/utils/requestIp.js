@@ -1,7 +1,5 @@
+// req.ip already honours the TRUST_PROXY setting; reading X-Forwarded-For directly
+// would let any client forge the IP recorded in audit logs.
 export default function getRequestIp(req) {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded.length > 0) {
-        return forwarded.split(',')[0].trim();
-    }
     return req.ip;
 }

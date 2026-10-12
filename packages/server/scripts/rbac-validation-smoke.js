@@ -1,39 +1,14 @@
-import fs from 'fs';
-import path from 'path';
-import dotenv from 'dotenv';
-import jwt from 'jsonwebtoken';
-import { fileURLToPath } from 'url';
+import '../config/loadEnv.js';
+import { closeSmokeAuth, tokensForRoles } from './smoke-auth.js';
+import { ensureSmokeServer } from './smoke-runner-helper.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootEnvPath = path.resolve(__dirname, '../../../.env');
-dotenv.config({ path: rootEnvPath });
-
-const baseUrl = process.env.SMOKE_API_URL || `http://localhost:${process.env.PORT || 3001}`;
+let baseUrl = process.env.SMOKE_API_URL || `http://localhost:${process.env.PORT || 3001}`;
 const jwtSecret = process.env.JWT_SECRET;
+let serverCleanup = null;
 
 if (!jwtSecret) {
     console.error('SMOKE ERROR: JWT_SECRET is not configured.');
     process.exit(1);
-}
-
-const roleIds = {
-    admin: '00000000-0000-0000-0000-00000000000a',
-    manager: '00000000-0000-0000-0000-00000000000b',
-    cashier: '00000000-0000-0000-0000-00000000000c',
-    warehouse: '00000000-0000-0000-0000-00000000000d'
-};
-
-function tokenForRole(role) {
-    return jwt.sign(
-        {
-            id: roleIds[role],
-            email: `smoke+${role}@test.local`,
-            role
-        },
-        jwtSecret,
-        { expiresIn: '1h' }
-    );
 }
 
 async function request(method, endpoint, token, body) {
@@ -75,18 +50,23 @@ function summarizeBody(body) {
 async function ensureHealth() {
     const health = await fetch(`${baseUrl}/api/health`);
     if (health.status !== 200) {
-        console.error(`Health check failed: ${health.status}`);
-        process.exit(1);
+        throw new Error(`Health check failed: ${health.status}`);
     }
 }
 
 async function run() {
+    const serverInstance = await ensureSmokeServer(baseUrl);
+    baseUrl = serverInstance.baseUrl;
+    serverCleanup = serverInstance.cleanup;
+
     await ensureHealth();
 
-    const admin = tokenForRole('admin');
-    const manager = tokenForRole('manager');
-    const cashier = tokenForRole('cashier');
-    const warehouse = tokenForRole('warehouse');
+    const {
+        admin,
+        manager,
+        cashier,
+        warehouse
+    } = await tokensForRoles(['admin', 'manager', 'cashier', 'warehouse'], jwtSecret);
 
     const tests = [
         {
@@ -183,6 +163,53 @@ async function run() {
             endpoint: '/api/invoice-items',
             token: admin,
             expected: 400
+        },
+        {
+            name: 'manager can list POS exceptions',
+            method: 'GET',
+            endpoint: '/api/pos/exceptions',
+            token: manager,
+            expected: 200
+        },
+        {
+            name: 'cashier cannot list POS exceptions',
+            method: 'GET',
+            endpoint: '/api/pos/exceptions',
+            token: cashier,
+            expected: 403
+        },
+        {
+            name: 'cashier cannot review POS exceptions',
+            method: 'POST',
+            endpoint: '/api/pos/exceptions/1/review',
+            token: cashier,
+            expected: 403,
+            body: { decision: 'approved' }
+        },
+        {
+            name: 'warehouse cannot run a POS checkout',
+            method: 'POST',
+            endpoint: '/api/pos/checkout',
+            token: warehouse,
+            expected: 403,
+            body: {
+                idempotency_key: '11111111-1111-4111-8111-111111111111',
+                shift_id: '11111111-1111-4111-8111-111111111111',
+                payments: [{ method: 'cash', amount: 1 }],
+                items: [{ product_id: '11111111-1111-4111-8111-111111111111', quantity: 1 }]
+            }
+        },
+        {
+            name: 'POS checkout rejects a payload without shift',
+            method: 'POST',
+            endpoint: '/api/pos/checkout',
+            token: cashier,
+            expected: 400,
+            body: {
+                idempotency_key: '11111111-1111-4111-8111-111111111111',
+                payments: [{ method: 'cash', amount: 1 }],
+                items: [{ product_id: '11111111-1111-4111-8111-111111111111', quantity: 1 }]
+            }
         }
     ];
 
@@ -203,14 +230,18 @@ async function run() {
     }
 
     if (failures > 0) {
-        console.error(`Smoke failed with ${failures} failing checks.`);
-        process.exit(1);
+        throw new Error(`Smoke failed with ${failures} failing checks.`);
     }
 
     console.log('Smoke passed: all RBAC/validation checks succeeded.');
 }
 
-run().catch((err) => {
-    console.error('Smoke execution error:', err.message);
-    process.exit(1);
-});
+run()
+    .catch((err) => {
+        console.error('Smoke execution error:', err.message);
+        process.exitCode = 1;
+    })
+    .finally(async () => {
+        if (serverCleanup) await serverCleanup();
+        await closeSmokeAuth();
+    });

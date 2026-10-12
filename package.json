@@ -1,6 +1,9 @@
 {
   "name": "wsm-antigravity",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "version": "1.0.0",
   "type": "module",
   "workspaces": [
@@ -12,19 +15,33 @@
     "dev:all": "concurrently \"npm run server\" \"npm run dev\"",
     "build:common": "npm -w @wsm/common run build",
     "build": "npm -w @wsm/client run build",
-    "lint": "npm -w @wsm/client run lint",
+    "lint": "npm -w @wsm/client run lint && npm -w @wsm/server run lint",
+    "typecheck": "npm -w @wsm/common run build && npm -w @wsm/client run typecheck",
     "test": "npm -w @wsm/client run test",
     "test:client": "npm -w @wsm/client run test",
-    "test:server": "npm -w @wsm/server run test",
-    "validate": "npm -w @wsm/common run build && npm -w @wsm/server run test && npm -w @wsm/client run lint && npm -w @wsm/client run test && npm -w @wsm/client run build",
+    "test:server": "node scripts/qa-runner.js unit",
+    "test:coverage": "node scripts/qa-runner.js coverage",
+    "test:isolated": "node scripts/qa-runner.js unit",
+    "test:coverage:isolated": "node scripts/qa-runner.js coverage",
+    "test:qa-guards": "node --test scripts/qa-runner.test.js",
+    "validate": "npm -w @wsm/common run build && npm run test:qa-guards && npm run test:server && npm -w @wsm/server run lint && npm -w @wsm/client run lint && npm -w @wsm/client run typecheck && npm -w @wsm/client run test && npm -w @wsm/client run build",
     "smoke:rbac": "npm -w @wsm/server run smoke:rbac",
     "smoke:integrity": "npm -w @wsm/server run smoke:integrity",
+    "smoke:commercial": "npm -w @wsm/server run smoke:commercial",
+    "db:backup": "npm -w @wsm/server run db:backup --",
+    "db:restore": "npm -w @wsm/server run db:restore --",
+    "preflight:integrity": "npm -w @wsm/server run preflight:integrity",
+    "preflight:env": "npm -w @wsm/server run preflight:env --",
+    "qa:bootstrap": "node scripts/qa-bootstrap.js",
+    "qa:integration": "node scripts/qa-runner.js integration",
+    "qa:smoke:rbac": "node scripts/qa-runner.js rbac",
+    "qa:smoke:integrity": "node scripts/qa-runner.js integrity",
+    "qa:preflight:integrity": "node scripts/qa-runner.js preflight",
+    "preflight:staging": "npm run validate && npm run preflight:integrity && npm run smoke:rbac && npm run smoke:integrity && npm run smoke:commercial",
     "audit": "npm audit --workspaces"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
-  },
-  "dependencies": {
-    "puppeteer": "^24.37.5"
+    "concurrently": "^9.2.1",
+    "puppeteer": "^25.7.0"
   }
 }

@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback } from "react"
 import { api } from "@/services/api"
-import type { CompanySettings, SystemSettings, User, Product, FailedSync } from "@/types"
+import type { CompanySettings, SystemSettings, User } from "@/types"
 import type { AuditLogEntry, PaginationMeta, UserCreateInput, UserFormValues, UserUpdateInput } from "@/types/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
-import { Building2, Users, Settings2, Loader2, History, ReceiptText, Store } from "lucide-react"
+import { Building2, Users, Settings2, Loader2, History, ReceiptText } from "lucide-react"
 import { UserForm } from "@/components/users/UserForm"
 import { toast } from "sonner"
 import { useAuth } from "@/context/AuthContext"
 import { showErrorToast } from "@/lib/errorHandling"
 import { DEFAULT_COMPANY_SETTINGS, normalizeCompanySettings } from "@/lib/companySettings"
+import { isApiError } from "@/services/httpClient"
+import { Navigate, useSearchParams } from "react-router-dom"
 
 // Extracted Tab Components
 import { CompanySettingsTab } from "@/components/settings/CompanySettingsTab"
@@ -17,7 +19,6 @@ import { BillingSettingsTab } from "@/components/settings/BillingSettingsTab"
 import { UsersManagementTab } from "@/components/settings/UsersManagementTab"
 import { AuditLogTab } from "@/components/settings/AuditLogTab"
 import { SystemSettingsTab } from "@/components/settings/SystemSettingsTab"
-import { TiendanubeSettingsTab } from "@/components/settings/TiendanubeSettingsTab"
 
 const buildSystemSettings = (settings: CompanySettings): SystemSettings => ({
     regional: {
@@ -31,9 +32,17 @@ const buildSystemSettings = (settings: CompanySettings): SystemSettings => ({
 })
 
 const AUDIT_PAGE_SIZE = 20
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001"
 
 export default function SettingsPage() {
+    const [searchParams] = useSearchParams()
+    if (searchParams.get("tab") === "tiendanube") {
+        return <Navigate to="/online-store?tab=connection" replace />
+    }
+    return <SettingsContent />
+}
+
+function SettingsContent() {
+    const [searchParams, setSearchParams] = useSearchParams()
     const { user: currentUser } = useAuth()
     const [company, setCompany] = useState<CompanySettings | null>(null)
     const [system, setSystem] = useState<SystemSettings | null>(null)
@@ -46,24 +55,6 @@ export default function SettingsPage() {
     const [saving, setSaving] = useState(false)
     const [testingConnection, setTestingConnection] = useState(false)
     const [connectionLogs, setConnectionLogs] = useState<string[]>([])
-
-    // Tienda Nube State
-    const [tiendanubeProducts, setTiendanubeProducts] = useState<Product[]>([])
-    const [tiendanubeLoading, setTiendanubeLoading] = useState(false)
-    const [tiendanubeSaving, setTiendanubeSaving] = useState(false)
-    const [tiendanubeModifications, setTiendanubeModifications] = useState<Record<string, {
-        tiendanube_sync_enabled: boolean
-        tiendanube_product_id: string
-        tiendanube_variant_id: string
-    }>>({})
-    const [syncingTN, setSyncingTN] = useState(false)
-    const [autoLinkingTN, setAutoLinkingTN] = useState(false)
-
-    // Failed Syncs State
-    const [failedSyncs, setFailedSyncs] = useState<FailedSync[]>([])
-    const [failedSyncsLoading, setFailedSyncsLoading] = useState(false)
-    const [processingSyncId, setProcessingSyncId] = useState<string | null>(null)
-    const [processingAllSyncs, setProcessingAllSyncs] = useState(false)
 
     // User Form State
     const [userFormOpen, setUserFormOpen] = useState(false)
@@ -131,48 +122,6 @@ export default function SettingsPage() {
         }
     }, [auditPage, auditPagination?.totalPages])
 
-    const loadTiendanubeProducts = useCallback(async () => {
-        setTiendanubeLoading(true)
-        try {
-            const response = await api.inventory.getProducts()
-            setTiendanubeProducts(response)
-        } catch (error) {
-            showErrorToast("Error al cargar productos para Tienda Nube", error)
-        } finally {
-            setTiendanubeLoading(false)
-        }
-    }, [])
-
-    useEffect(() => {
-        void loadTiendanubeProducts()
-    }, [loadTiendanubeProducts])
-
-    const handleSaveTiendaNubeLinks = async () => {
-        const modifiedProducts = Object.entries(tiendanubeModifications).map(([id, mods]) => ({
-            id,
-            tiendanube_sync_enabled: mods.tiendanube_sync_enabled,
-            tiendanube_product_id: mods.tiendanube_product_id,
-            tiendanube_variant_id: mods.tiendanube_variant_id
-        }))
-
-        if (modifiedProducts.length === 0) {
-            toast.info("No hay cambios para guardar.")
-            return
-        }
-
-        setTiendanubeSaving(true)
-        try {
-            await api.inventory.bulkUpdateTiendaNube(modifiedProducts)
-            toast.success("Vinculación de productos actualizada")
-            setTiendanubeModifications({})
-            await loadTiendanubeProducts()
-        } catch (error) {
-            showErrorToast("Error al guardar vinculación de productos", error)
-        } finally {
-            setTiendanubeSaving(false)
-        }
-    }
-
     const handleTestConnection = async () => {
         if (!company || !company.billing) {
             toast.error("Guarde o complete los datos antes de probar la conexión")
@@ -180,20 +129,12 @@ export default function SettingsPage() {
         }
 
         setTestingConnection(true)
-        setConnectionLogs(["[SYS] Inicializando módulo de comunicación...", "[SYS] Cargando parámetros temporales de la pantalla..."])
+        setConnectionLogs(["[SYS] Inicializando verificación...", "[SYS] Usando las credenciales guardadas de forma segura en el servidor..."])
 
         try {
             const result = await api.testAfipConnection(company.billing!)
             
-            const currentLogs: string[] = []
-            for (let i = 0; i < result.logs.length; i++) {
-                await new Promise(resolve => setTimeout(resolve, 300))
-                const logLine = result.logs[i]
-                if (logLine) {
-                    currentLogs.push(logLine)
-                    setConnectionLogs([...currentLogs])
-                }
-            }
+            setConnectionLogs(result.logs)
 
             if (result.success) {
                 toast.success("¡Prueba de conexión con AFIP Exitosa!")
@@ -201,8 +142,16 @@ export default function SettingsPage() {
                 toast.error("La prueba de conexión con AFIP falló.")
             }
         } catch (error) {
-            setConnectionLogs(prev => [...prev, `[CRITICAL ERROR] Error de red o comunicación: ${String(error)}`])
-            toast.error("Error al testear la conexión.")
+            const body = isApiError(error) && error.body && typeof error.body === "object"
+                ? error.body as { logs?: unknown; message?: unknown }
+                : null
+            const serverLogs = Array.isArray(body?.logs)
+                ? body.logs.filter((line): line is string => typeof line === "string")
+                : []
+            setConnectionLogs(serverLogs.length > 0
+                ? serverLogs
+                : ["[ERROR] No fue posible completar la verificación con ARCA."])
+            toast.error(typeof body?.message === "string" ? body.message : "Error al verificar la conexión.")
         } finally {
             setTestingConnection(false)
         }
@@ -265,73 +214,6 @@ export default function SettingsPage() {
             setUserLoading(false)
         }
     }
-
-    const handleSyncTN = async () => {
-        setSyncingTN(true)
-        try {
-            const res = await api.syncTiendanubeOrders()
-            toast.success(`Sincronización manual completada. Se importaron ${res.syncedCount} pedidos faltantes.`)
-        } catch (error) {
-            showErrorToast("Error al sincronizar con Tienda Nube", error)
-        } finally {
-            setSyncingTN(false)
-        }
-    }
-
-    const handleAutoLinkTN = async () => {
-        setAutoLinkingTN(true)
-        try {
-            const res = await api.autoLinkTiendanubeCatalog()
-            toast.success(`Vinculación completada con éxito. Variantes leídas de Tienda Nube: ${res.totalVariantsFound}. Enlazadas localmente: ${res.linkedCount}.`)
-            await loadTiendanubeProducts()
-        } catch (error) {
-            showErrorToast("Error al auto-vincular catálogo", error)
-        } finally {
-            setAutoLinkingTN(false)
-        }
-    }
-
-    const loadFailedSyncs = useCallback(async () => {
-        setFailedSyncsLoading(true)
-        try {
-            const res = await api.getFailedSyncs()
-            setFailedSyncs(res)
-        } catch (error) {
-            showErrorToast("Error al cargar cola de reintentos", error)
-        } finally {
-            setFailedSyncsLoading(false)
-        }
-    }, [])
-
-    const handleRetrySync = async (id: string) => {
-        setProcessingSyncId(id)
-        try {
-            await api.retryFailedSync(id)
-            toast.success("Sincronización reintentada con éxito")
-            await loadFailedSyncs()
-        } catch (error) {
-            showErrorToast("Error al reintentar sincronización", error)
-        } finally {
-            setProcessingSyncId(null)
-        }
-    }
-
-    const handleRetryAllSyncs = async () => {
-        setProcessingAllSyncs(true)
-        try {
-            await api.retryAllFailedSyncs()
-            toast.success("Cola de reintentos ejecutada")
-            await loadFailedSyncs()
-        } catch (error) {
-            showErrorToast("Error al procesar la cola de reintentos", error)
-        } finally {
-            setProcessingAllSyncs(false)
-        }
-    }
-
-    useEffect(() => {
-        void loadFailedSyncs()
-    }, [loadFailedSyncs])
 
     const handleUpdateUser = async (data: UserFormValues) => {
         if (!editingUser) return
@@ -405,7 +287,11 @@ export default function SettingsPage() {
                 </div>
             </div>
 
-            <Tabs defaultValue="company" className="space-y-4">
+            <Tabs
+                value={["company", "users", "system", "billing", "audit"].includes(searchParams.get("tab") || "") ? searchParams.get("tab")! : "company"}
+                onValueChange={(tab) => setSearchParams(tab === "company" ? {} : { tab }, { replace: true })}
+                className="space-y-4"
+            >
                 <TabsList className="h-auto w-full justify-start gap-2 overflow-x-auto p-1">
                     <TabsTrigger value="company" className="flex shrink-0 gap-2"><Building2 className="h-4 w-4" /> Empresa</TabsTrigger>
                     <TabsTrigger value="users" className="flex shrink-0 gap-2"><Users className="h-4 w-4" /> Usuarios</TabsTrigger>
@@ -414,7 +300,6 @@ export default function SettingsPage() {
                     {currentUser?.role === 'admin' && (
                         <TabsTrigger value="audit" className="flex shrink-0 gap-2"><History className="h-4 w-4" /> Auditoría</TabsTrigger>
                     )}
-                    <TabsTrigger value="tiendanube" className="flex shrink-0 gap-2"><Store className="h-4 w-4" /> Tienda Nube</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="company">
@@ -469,31 +354,6 @@ export default function SettingsPage() {
                     />
                 </TabsContent>
 
-                <TabsContent value="tiendanube">
-                    <TiendanubeSettingsTab
-                        company={company}
-                        setCompany={setCompany}
-                        onSaveCompany={handleSaveCompany}
-                        saving={saving}
-                        onSyncTN={handleSyncTN}
-                        syncingTN={syncingTN}
-                        onAutoLinkTN={handleAutoLinkTN}
-                        autoLinkingTN={autoLinkingTN}
-                        tiendanubeProducts={tiendanubeProducts}
-                        tiendanubeLoading={tiendanubeLoading}
-                        tiendanubeSaving={tiendanubeSaving}
-                        onSaveTiendaNubeLinks={handleSaveTiendaNubeLinks}
-                        tiendanubeModifications={tiendanubeModifications}
-                        setTiendanubeModifications={setTiendanubeModifications}
-                        apiBaseUrl={API_BASE_URL}
-                        failedSyncs={failedSyncs}
-                        failedSyncsLoading={failedSyncsLoading}
-                        processingSyncId={processingSyncId}
-                        processingAllSyncs={processingAllSyncs}
-                        onRetrySync={handleRetrySync}
-                        onRetryAllSyncs={handleRetryAllSyncs}
-                    />
-                </TabsContent>
             </Tabs>
 
             <UserForm

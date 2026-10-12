@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext"
 import { api } from "@/services/api"
 import type { Order } from "@/types"
 import { queryKeys } from "@/lib/queryKeys"
+import { formatMoney } from "@/lib/formatters"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -29,6 +30,7 @@ import { ManifestDialog } from "@/components/orders/ManifestDialog"
 // Helpers and Types
 import { orderHasShortage, renderStatusBadge } from "@/components/orders/helpers"
 import type { OrderFilter } from "@/types/orders"
+import { hasPermission, PERMISSIONS } from "@wsm/common"
 
 const EMPTY_ORDERS: Order[] = []
 const ORDERS_PAGE_SIZE = 20
@@ -37,6 +39,10 @@ export default function OrdersPage() {
     const navigate = useNavigate()
     const queryClient = useQueryClient()
     const { user } = useAuth()
+    const canSell = hasPermission(user?.role, PERMISSIONS.ORDERS_SELL)
+    const canPick = hasPermission(user?.role, PERMISSIONS.ORDERS_PICK)
+    const canDispatch = hasPermission(user?.role, PERMISSIONS.ORDERS_DISPATCH)
+    const canInvoice = hasPermission(user?.role, PERMISSIONS.INVOICES_MANAGE)
 
     const [search, setSearch] = useState("")
     const [filter, setFilter] = useState<OrderFilter>("all")
@@ -80,11 +86,13 @@ export default function OrdersPage() {
     const productsQuery = useQuery({
         queryKey: queryKeys.products.all,
         queryFn: () => api.getProducts(),
+        enabled: canSell,
     })
 
     const clientsQuery = useQuery({
         queryKey: queryKeys.clients.all,
         queryFn: () => api.getClients(),
+        enabled: canSell,
     })
 
     const updateOrderStatusMutation = useMutation({
@@ -102,8 +110,8 @@ export default function OrdersPage() {
     const currentOrdersPage = Number(ordersPagination?.page ?? ordersPage)
     const products = productsQuery.data ?? []
     const clients = clientsQuery.data ?? []
-    const loading = ordersQuery.isLoading || productsQuery.isLoading || clientsQuery.isLoading
-    const hasLoadError = ordersQuery.isError || productsQuery.isError || clientsQuery.isError
+    const loading = ordersQuery.isLoading || (canSell && (productsQuery.isLoading || clientsQuery.isLoading))
+    const hasLoadError = ordersQuery.isError || (canSell && (productsQuery.isError || clientsQuery.isError))
 
     const filteredOrders = useMemo(() => {
         const query = search.trim().toLowerCase()
@@ -196,9 +204,18 @@ export default function OrdersPage() {
     }
 
     async function cancelOrder(order: Order) {
+        const confirmed = window.confirm(
+            "¿Cancelar este pedido? La deuda pendiente se anulará. Si ya recibió cobros, el dinero quedará como saldo a favor del cliente hasta devolverlo o aplicarlo."
+        )
+        if (!confirmed) return
         try {
-            await updateOrderStatusMutation.mutateAsync({ orderId: order.id, status: "cancelled" })
-            toast.success("Pedido cancelado")
+            const cancelled = await updateOrderStatusMutation.mutateAsync({ orderId: order.id, status: "cancelled" })
+            const creditAmount = Number(cancelled.cancellation_credit_amount || 0)
+            toast.success("Pedido cancelado", {
+                description: creditAmount > 0
+                    ? `La deuda se anuló y ${formatMoney(creditAmount)} quedó como saldo a favor del cliente.`
+                    : "La deuda pendiente fue anulada sin generar saldo a favor."
+            })
         } catch {
             // El manejo global de React Query ya informa el error.
         }
@@ -211,10 +228,12 @@ export default function OrdersPage() {
                     <h2 className="text-3xl font-bold tracking-tight">Pedidos de venta</h2>
                     <p className="text-muted-foreground">Gestión de ciclo comercial desde alta hasta entrega.</p>
                 </div>
-                <Button className="w-full gap-2 sm:w-auto" onClick={() => setCreateOpen(true)}>
-                    <Plus className="h-4 w-4" />
-                    Nuevo pedido
-                </Button>
+                {canSell ? (
+                    <Button className="w-full gap-2 sm:w-auto" onClick={() => setCreateOpen(true)}>
+                        <Plus className="h-4 w-4" />
+                        Nuevo pedido
+                    </Button>
+                ) : null}
             </div>
 
             <Card>
@@ -258,8 +277,7 @@ export default function OrdersPage() {
                                 onClick={() => {
                                     void Promise.all([
                                         ordersQuery.refetch(),
-                                        productsQuery.refetch(),
-                                        clientsQuery.refetch(),
+                                        ...(canSell ? [productsQuery.refetch(), clientsQuery.refetch()] : []),
                                     ])
                                 }}
                             >
@@ -309,11 +327,12 @@ export default function OrdersPage() {
                                     filteredOrders.map((order) => (
                                         <TableRow key={order.id}>
                                             <TableCell className="w-10">
-                                                {order.shipping_method === "delivery" &&
+                                                {canDispatch && order.shipping_method === "delivery" &&
                                                 (order.status === "packed" || order.status === "dispatched") ? (
                                                     <input
                                                         type="checkbox"
-                                                        className="h-4 w-4 rounded border-slate-350 accent-primary cursor-pointer"
+                                                        aria-label={`Seleccionar pedido ${order.id} para hoja de ruta`}
+                                                        className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
                                                         checked={selectedOrderIds.includes(order.id)}
                                                         onChange={() => toggleOrderSelection(order.id)}
                                                     />
@@ -341,11 +360,11 @@ export default function OrdersPage() {
                                                 </div>
                                             </TableCell>
                                             <TableCell>{renderStatusBadge(order.status, order)}</TableCell>
-                                            <TableCell className="text-right">
-                                                ${Number(order.total_amount || 0).toLocaleString("es-AR")}
+                                            <TableCell className="text-right font-mono font-medium">
+                                                {formatMoney(order.total_amount)}
                                             </TableCell>
                                             <TableCell>
-                                                {order.invoice_id ? (
+                                                {canInvoice && order.invoice_id ? (
                                                     <Button
                                                         size="sm"
                                                         variant="outline"
@@ -364,9 +383,9 @@ export default function OrdersPage() {
                                                         <Eye className="mr-1 h-4 w-4" />
                                                         Detalle
                                                     </Button>
-                                                    {order.status === "pending" ||
+                                                    {canPick && (order.status === "pending" ||
                                                     order.status === "picking" ||
-                                                    (order.status === "packed" && orderHasShortage(order)) ? (
+                                                    (order.status === "packed" && orderHasShortage(order))) ? (
                                                         <Button
                                                             size="sm"
                                                             variant="outline"
@@ -376,19 +395,19 @@ export default function OrdersPage() {
                                                             {order.status === "packed" ? "Ver faltante" : "Picking"}
                                                         </Button>
                                                     ) : null}
-                                                    {order.status === "packed" ? (
+                                                    {canDispatch && order.status === "packed" ? (
                                                         <Button size="sm" variant="outline" onClick={() => openDispatch(order)}>
                                                             <Truck className="mr-1 h-4 w-4" />
                                                             Despachar
                                                         </Button>
                                                     ) : null}
-                                                    {order.status === "dispatched" ? (
+                                                    {canDispatch && order.status === "dispatched" ? (
                                                         <Button size="sm" variant="outline" onClick={() => openDeliver(order)}>
                                                             <Package className="mr-1 h-4 w-4" />
                                                             Entregar
                                                         </Button>
                                                     ) : null}
-                                                    {(order.status === "packed" ||
+                                                    {canInvoice && (order.status === "packed" ||
                                                         order.status === "dispatched" ||
                                                         order.status === "delivered" ||
                                                         order.status === "completed") &&
@@ -398,9 +417,9 @@ export default function OrdersPage() {
                                                             Facturar
                                                         </Button>
                                                     ) : null}
-                                                    {order.status === "pending" ||
+                                                    {canSell && (order.status === "pending" ||
                                                     order.status === "picking" ||
-                                                    order.status === "packed" ? (
+                                                    order.status === "packed") && !order.invoice_id ? (
                                                         <Button
                                                             size="sm"
                                                             variant="destructive"
@@ -486,7 +505,7 @@ export default function OrdersPage() {
 
             {/* Floating Selection Bar */}
             {selectedOrderIds.length > 0 && (
-                <div className="fixed bottom-6 left-1/2 z-[45] -translate-x-1/2 flex items-center justify-between gap-4 rounded-full border border-primary/25 bg-slate-900 px-6 py-3 text-white shadow-2xl animate-in slide-in-from-bottom duration-300 no-print print:hidden">
+                <div className="fixed bottom-6 left-1/2 z-[45] -translate-x-1/2 flex items-center justify-between gap-4 rounded-full border border-border bg-popover px-6 py-3 text-popover-foreground shadow-2xl animate-in slide-in-from-bottom duration-300 no-print print:hidden">
                     <span className="text-sm font-semibold">
                         {selectedOrderIds.length}{" "}
                         {selectedOrderIds.length === 1 ? "pedido seleccionado" : "pedidos seleccionados"}
@@ -494,7 +513,7 @@ export default function OrdersPage() {
                     <div className="flex gap-2">
                         <Button
                             size="sm"
-                            className="rounded-full bg-primary hover:bg-primary/95 text-white"
+                            className="rounded-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
                             onClick={() => setManifestDialogOpen(true)}
                         >
                             Generar Hoja de Ruta
@@ -502,7 +521,7 @@ export default function OrdersPage() {
                         <Button
                             size="sm"
                             variant="ghost"
-                            className="rounded-full hover:bg-slate-800 text-slate-400 hover:text-white"
+                            className="rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
                             onClick={() => setSelectedOrderIds([])}
                         >
                             Limpiar

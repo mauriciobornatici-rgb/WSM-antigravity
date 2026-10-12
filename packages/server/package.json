@@ -5,15 +5,25 @@
     "type": "module",
     "scripts": {
         "start": "node index.js",
-        "dev": "nodemon index.js",
+        "dev": "node --watch index.js",
+        "lint": "eslint .",
         "test": "node --test",
+        "test:coverage": "node --experimental-test-coverage --test-coverage-lines=90 --test-coverage-branches=90 --test-coverage-functions=90 --test",
         "smoke:rbac": "node scripts/rbac-validation-smoke.js",
         "smoke:integrity": "node scripts/integrity-validation-smoke.js",
-        "seed:bulk": "node scripts/seed-bulk.js"
+        "preflight:integrity": "node scripts/preflight-referential-integrity.js",
+        "preflight:env": "node scripts/preflight-env.js",
+        "smoke:commercial": "node scripts/commercial-lifecycle-smoke.js",
+        "db:backup": "node scripts/backup-database.js",
+        "db:restore": "node scripts/backup-database.js --restore",
+        "migrate": "node scripts/run-migrations.js",
+        "seed:bulk": "node scripts/seed-bulk.js",
+        "seed:smoke": "node scripts/seed-smoke-users.js"
     },
     "dependencies": {
         "@afipsdk/afip.js": "^1.2.3",
         "@wsm/common": "*",
+        "axios": "^1.19.0",
         "bcrypt": "^6.0.0",
         "cors": "^2.8.6",
         "dotenv": "^17.2.3",
@@ -26,7 +36,9 @@
         "zod": "^4.4.3"
     },
     "devDependencies": {
+        "@eslint/js": "^9.39.2",
         "@faker-js/faker": "^10.4.0",
-        "nodemon": "^3.1.11"
+        "eslint": "^9.39.2",
+        "globals": "^16.5.0"
     }
 }

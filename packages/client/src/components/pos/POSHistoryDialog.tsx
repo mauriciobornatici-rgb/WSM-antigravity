@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { api } from "@/services/api";
 import { showErrorToast } from "@/lib/errorHandling";
 import type { Invoice, InvoiceItem } from "@/types/api";
+import { formatMoney } from "@/lib/formatters";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -185,16 +186,16 @@ export function POSHistoryDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="w-[96vw] max-w-6xl h-[90vh] flex flex-col p-6 bg-slate-900 border-slate-800 text-slate-100">
-                <DialogHeader className="flex flex-row items-center justify-between border-b border-slate-800 pb-3">
-                    <DialogTitle className="flex items-center gap-2 text-xl font-bold text-white">
-                        <Receipt className="h-6 w-6 text-blue-500" />
+            <DialogContent className="w-[96vw] max-w-6xl max-h-[92vh] flex flex-col p-6 bg-card border-border text-card-foreground">
+                <DialogHeader className="flex flex-row items-center justify-between border-b border-border pb-3">
+                    <DialogTitle className="flex items-center gap-2 text-xl font-bold">
+                        <Receipt className="h-6 w-6 text-primary" />
                         Historial de Ventas Recientes
                     </DialogTitle>
                     <Button 
                         variant="ghost" 
                         size="sm" 
-                        className="text-slate-400 hover:text-white"
+                        className="text-muted-foreground hover:text-foreground"
                         onClick={() => void loadInvoices()}
                         disabled={loadingList}
                     >
@@ -206,21 +207,21 @@ export function POSHistoryDialog({
                 {/* Filters Row */}
                 <div className="flex flex-col sm:flex-row gap-3 py-3 items-center justify-between">
                     <div className="relative w-full sm:max-w-xs">
-                        <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+                        <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                         <Input
                             placeholder="Buscar por cliente, nro o total..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="pl-9 bg-slate-950 border-slate-800 text-slate-100 placeholder:text-slate-500 focus-visible:ring-blue-500"
+                            className="pl-9 bg-background border-input text-foreground placeholder:text-muted-foreground focus-visible:ring-primary"
                         />
                     </div>
                     
-                    <div className="flex bg-slate-950 p-1 rounded-md border border-slate-800 self-stretch sm:self-auto">
+                    <div className="flex bg-muted/50 p-1 rounded-md border border-border self-stretch sm:self-auto">
                         <Button
                             size="sm"
                             variant={dateFilter === "today" ? "secondary" : "ghost"}
                             onClick={() => setDateFilter("today")}
-                            className={`text-xs px-4 ${dateFilter === "today" ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white"}`}
+                            className={`text-xs px-4 ${dateFilter === "today" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                         >
                             <Calendar className="h-3 w-3 mr-1.5" />
                             Hoy
@@ -229,7 +230,7 @@ export function POSHistoryDialog({
                             size="sm"
                             variant={dateFilter === "week" ? "secondary" : "ghost"}
                             onClick={() => setDateFilter("week")}
-                            className={`text-xs px-4 ${dateFilter === "week" ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white"}`}
+                            className={`text-xs px-4 ${dateFilter === "week" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                         >
                             Última Semana
                         </Button>
@@ -237,7 +238,7 @@ export function POSHistoryDialog({
                             size="sm"
                             variant={dateFilter === "all" ? "secondary" : "ghost"}
                             onClick={() => setDateFilter("all")}
-                            className={`text-xs px-4 ${dateFilter === "all" ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white"}`}
+                            className={`text-xs px-4 ${dateFilter === "all" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                         >
                             Todos
                         </Button>
@@ -247,27 +248,27 @@ export function POSHistoryDialog({
                 {/* Main Content Grid */}
                 <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-6 min-h-0">
                     {/* Left Column: List of Invoices */}
-                    <div className="md:col-span-7 flex flex-col border border-slate-800 rounded-lg bg-slate-950 overflow-hidden">
+                    <div className="md:col-span-7 flex flex-col border border-border rounded-lg bg-card overflow-hidden">
                         <div className="flex-1 overflow-y-auto">
                             {loadingList ? (
-                                <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-2">
-                                    <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                                <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2 py-12">
+                                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
                                     Cargando historial de ventas...
                                 </div>
                             ) : filteredInvoices.length === 0 ? (
-                                <div className="h-full flex flex-col items-center justify-center text-slate-500 p-6 text-center gap-2">
-                                    <Receipt className="h-12 w-12 text-slate-700" />
-                                    <p className="font-semibold text-slate-400">No se encontraron ventas</p>
+                                <div className="h-full flex flex-col items-center justify-center text-muted-foreground p-6 text-center gap-2 py-12">
+                                    <Receipt className="h-12 w-12 text-muted-foreground/50" />
+                                    <p className="font-semibold text-foreground">No se encontraron ventas</p>
                                     <p className="text-xs max-w-xs">Intenta modificando los filtros de búsqueda o fecha.</p>
                                 </div>
                             ) : (
                                 <Table>
-                                    <TableHeader className="bg-slate-900/60 sticky top-0 backdrop-blur-sm z-10 border-b border-slate-800">
-                                        <TableRow className="border-slate-850 hover:bg-transparent">
-                                            <TableHead className="text-slate-400 font-semibold py-3 pl-4">Fecha</TableHead>
-                                            <TableHead className="text-slate-400 font-semibold">Comprobante</TableHead>
-                                            <TableHead className="text-slate-400 font-semibold">Cliente</TableHead>
-                                            <TableHead className="text-slate-400 font-semibold text-right pr-4">Total</TableHead>
+                                    <TableHeader className="bg-muted/40 sticky top-0 backdrop-blur-sm z-10 border-b border-border">
+                                        <TableRow className="border-border hover:bg-transparent">
+                                            <TableHead className="text-muted-foreground font-semibold py-3 pl-4">Fecha</TableHead>
+                                            <TableHead className="text-muted-foreground font-semibold">Comprobante</TableHead>
+                                            <TableHead className="text-muted-foreground font-semibold">Cliente</TableHead>
+                                            <TableHead className="text-muted-foreground font-semibold text-right pr-4">Total</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -277,23 +278,23 @@ export function POSHistoryDialog({
                                                 <TableRow
                                                     key={invoice.id}
                                                     onClick={() => void handleSelectInvoice(invoice)}
-                                                    className={`border-slate-850 cursor-pointer transition-colors ${
+                                                    className={`border-border cursor-pointer transition-colors ${
                                                         isSelected 
-                                                            ? "bg-blue-600/10 hover:bg-blue-600/15 text-white" 
-                                                            : "hover:bg-slate-900/40 text-slate-300"
+                                                            ? "bg-primary/10 hover:bg-primary/15 text-foreground" 
+                                                            : "hover:bg-muted/50 text-foreground"
                                                     }`}
                                                 >
                                                     <TableCell className="py-3.5 pl-4 font-sans text-xs">
                                                         <div className="flex flex-col">
                                                             <span>{formatDate(invoice.issue_date).split(", ")[0]}</span>
-                                                            <span className="text-slate-500 text-[10px] mt-0.5">
+                                                            <span className="text-muted-foreground text-[10px] mt-0.5">
                                                                 {formatDate(invoice.issue_date).split(", ")[1] || ""}
                                                             </span>
                                                         </div>
                                                     </TableCell>
                                                     <TableCell className="font-mono text-xs">
                                                         <div className="flex flex-col gap-1 items-start">
-                                                            <span className="font-bold text-slate-200">
+                                                            <span className="font-bold text-foreground">
                                                                 {getInvoiceLabel(invoice)}
                                                             </span>
                                                             {getStatusBadge(invoice)}
@@ -302,11 +303,8 @@ export function POSHistoryDialog({
                                                     <TableCell className="font-sans text-xs font-medium max-w-[150px] truncate">
                                                         {String(invoice.client_name || invoice.customer_name || "Consumidor final")}
                                                     </TableCell>
-                                                    <TableCell className="font-mono text-xs font-bold text-right pr-4 text-emerald-400">
-                                                        ${Number(invoice.total_amount).toLocaleString("es-AR", { 
-                                                            minimumFractionDigits: 2,
-                                                            maximumFractionDigits: 2
-                                                        })}
+                                                    <TableCell className="font-mono text-xs font-bold text-right pr-4 text-emerald-600 dark:text-emerald-400">
+                                                        {formatMoney(invoice.total_amount)}
                                                     </TableCell>
                                                 </TableRow>
                                             );
@@ -315,24 +313,24 @@ export function POSHistoryDialog({
                                 </Table>
                             )}
                         </div>
-                        <div className="p-3 border-t border-slate-800 bg-slate-900/40 text-[11px] text-slate-500 flex justify-between">
+                        <div className="p-3 border-t border-border bg-muted/30 text-[11px] text-muted-foreground flex justify-between">
                             <span>Mostrando {filteredInvoices.length} de {invoices.length} ventas</span>
                             <span>WSM ERP Sports</span>
                         </div>
                     </div>
 
                     {/* Right Column: Active Invoice Detail & Print actions */}
-                    <div className="md:col-span-5 flex flex-col border border-slate-800 rounded-lg bg-slate-950 overflow-hidden">
+                    <div className="md:col-span-5 flex flex-col border border-border rounded-lg bg-card overflow-hidden">
                         {selectedInvoice ? (
                             <div className="flex-1 flex flex-col min-h-0">
                                 {/* Detail Header */}
-                                <div className="p-4 border-b border-slate-850 bg-slate-900/40 space-y-2">
+                                <div className="p-4 border-b border-border bg-muted/20 space-y-2">
                                     <div className="flex justify-between items-start">
                                         <div className="space-y-1">
-                                            <span className="text-[10px] uppercase tracking-wider font-bold text-blue-400">
+                                            <span className="text-[10px] uppercase tracking-wider font-bold text-primary">
                                                 Detalle de Venta
                                             </span>
-                                            <h3 className="text-base font-mono font-bold text-white">
+                                            <h3 className="text-base font-mono font-bold text-foreground">
                                                 {getInvoiceLabel(selectedInvoice)}
                                             </h3>
                                         </div>
@@ -343,35 +341,35 @@ export function POSHistoryDialog({
                                 {/* Detail Contents */}
                                 <div className="flex-1 overflow-y-auto p-4 space-y-4 font-sans text-sm">
                                     {/* Quick Info Grid */}
-                                    <div className="grid grid-cols-2 gap-3 text-xs border-b border-slate-900 pb-3">
+                                    <div className="grid grid-cols-2 gap-3 text-xs border-b border-border pb-3">
                                         <div className="space-y-1">
-                                            <p className="text-slate-500 flex items-center gap-1">
+                                            <p className="text-muted-foreground flex items-center gap-1">
                                                 <User className="h-3 w-3" /> Cliente
                                             </p>
-                                            <p className="font-semibold text-slate-200 truncate">
+                                            <p className="font-semibold text-foreground truncate">
                                                 {String(selectedInvoice.client_name || selectedInvoice.customer_name || "Consumidor final")}
                                             </p>
                                         </div>
                                         <div className="space-y-1">
-                                            <p className="text-slate-500 flex items-center gap-1">
+                                            <p className="text-muted-foreground flex items-center gap-1">
                                                 <Clock className="h-3 w-3" /> Fecha y Hora
                                             </p>
-                                            <p className="font-semibold text-slate-200">
+                                            <p className="font-semibold text-foreground">
                                                 {formatDate(selectedInvoice.issue_date)}
                                             </p>
                                         </div>
                                         {!!selectedInvoice.client_tax_id && (
                                             <div className="space-y-1">
-                                                <p className="text-slate-500">CUIT / DNI</p>
-                                                <p className="font-mono text-slate-200">{String(selectedInvoice.client_tax_id)}</p>
+                                                <p className="text-muted-foreground">CUIT / DNI</p>
+                                                <p className="font-mono text-foreground">{String(selectedInvoice.client_tax_id)}</p>
                                             </div>
                                         )}
                                         {selectedInvoice.payment_method && (
                                             <div className="space-y-1">
-                                                <p className="text-slate-500 flex items-center gap-1">
+                                                <p className="text-muted-foreground flex items-center gap-1">
                                                     <CreditCard className="h-3 w-3" /> Medio de Pago
                                                 </p>
-                                                <p className="font-semibold text-slate-200 uppercase">
+                                                <p className="font-semibold text-foreground uppercase">
                                                     {selectedInvoice.payment_method === "cash" ? "Efectivo" : 
                                                      selectedInvoice.payment_method === "debit_card" ? "Débito" :
                                                      selectedInvoice.payment_method === "credit_card" ? "Crédito" :
@@ -385,41 +383,41 @@ export function POSHistoryDialog({
 
                                     {/* Items Table */}
                                     <div className="space-y-2">
-                                        <h4 className="text-xs font-semibold text-slate-400">Productos Vendidos</h4>
+                                        <h4 className="text-xs font-semibold text-muted-foreground">Productos Vendidos</h4>
                                         
                                         {loadingItems ? (
-                                            <div className="py-8 flex flex-col items-center justify-center text-slate-500 gap-2">
-                                                <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+                                            <div className="py-8 flex flex-col items-center justify-center text-muted-foreground gap-2">
+                                                <Loader2 className="h-5 w-5 animate-spin text-primary" />
                                                 <span className="text-xs">Cargando ítems...</span>
                                             </div>
                                         ) : !selectedInvoice.items || selectedInvoice.items.length === 0 ? (
-                                            <div className="py-4 text-center text-xs text-slate-500">
+                                            <div className="py-4 text-center text-xs text-muted-foreground">
                                                 No hay ítems cargados
                                             </div>
                                         ) : (
-                                            <div className="border border-slate-900 rounded bg-slate-950 overflow-hidden text-xs">
+                                            <div className="border border-border rounded bg-card overflow-hidden text-xs">
                                                 <Table>
-                                                    <TableHeader className="bg-slate-900/30">
-                                                        <TableRow className="border-slate-900 hover:bg-transparent">
-                                                            <TableHead className="text-[10px] text-slate-500 py-1.5">Desc</TableHead>
-                                                            <TableHead className="text-[10px] text-slate-500 text-center py-1.5">Cant</TableHead>
-                                                            <TableHead className="text-[10px] text-slate-500 text-right py-1.5">P.Unit</TableHead>
-                                                            <TableHead className="text-[10px] text-slate-500 text-right py-1.5 pr-2">Total</TableHead>
+                                                    <TableHeader className="bg-muted/40">
+                                                        <TableRow className="border-border hover:bg-transparent">
+                                                            <TableHead className="text-[10px] text-muted-foreground py-1.5">Desc</TableHead>
+                                                            <TableHead className="text-[10px] text-muted-foreground text-center py-1.5">Cant</TableHead>
+                                                            <TableHead className="text-[10px] text-muted-foreground text-right py-1.5">P.Unit</TableHead>
+                                                            <TableHead className="text-[10px] text-muted-foreground text-right py-1.5 pr-2">Total</TableHead>
                                                         </TableRow>
                                                     </TableHeader>
                                                     <TableBody>
                                                         {selectedInvoice.items.map((item, idx) => (
-                                                            <TableRow key={idx} className="border-slate-900 hover:bg-transparent text-slate-300">
+                                                            <TableRow key={idx} className="border-border hover:bg-transparent text-foreground">
                                                                 <TableCell className="py-2 max-w-[120px] truncate">
                                                                     <div className="flex flex-col">
-                                                                        <span className="font-medium text-slate-200">{String(item.description || item.product_name)}</span>
-                                                                        {item.sku && <span className="text-[9px] text-slate-500 font-mono mt-0.5">{item.sku}</span>}
+                                                                        <span className="font-medium text-foreground">{String(item.description || item.product_name)}</span>
+                                                                        {item.sku && <span className="text-[9px] text-muted-foreground font-mono mt-0.5">{item.sku}</span>}
                                                                     </div>
                                                                 </TableCell>
                                                                 <TableCell className="text-center font-bold font-mono py-2">{item.quantity}</TableCell>
-                                                                <TableCell className="text-right font-mono py-2">${Number(item.unit_price).toFixed(2)}</TableCell>
+                                                                <TableCell className="text-right font-mono py-2">{formatMoney(item.unit_price)}</TableCell>
                                                                 <TableCell className="text-right font-mono py-2 pr-2 font-semibold">
-                                                                    ${Number((item.total_line != null ? item.total_line : (item.quantity * item.unit_price))).toFixed(2)}
+                                                                    {formatMoney(item.total_line != null ? item.total_line : (item.quantity * item.unit_price))}
                                                                 </TableCell>
                                                             </TableRow>
                                                         ))}
@@ -433,25 +431,25 @@ export function POSHistoryDialog({
                                     {selectedInvoice.invoice_type !== "TK" && (
                                         <div className="space-y-2">
                                             {selectedInvoice.cae ? (
-                                                <div className="rounded-md border border-emerald-500/10 bg-emerald-500/5 p-3 text-xs space-y-1 font-mono">
-                                                    <div className="flex justify-between text-emerald-400">
+                                                <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs space-y-1 font-mono">
+                                                    <div className="flex justify-between text-emerald-600 dark:text-emerald-400">
                                                         <span>CAE AFIP:</span>
                                                         <span className="font-bold">{String(selectedInvoice.cae)}</span>
                                                     </div>
                                                     {selectedInvoice.cae_expiration_date && (
-                                                        <div className="flex justify-between text-slate-500 text-[10px]">
+                                                        <div className="flex justify-between text-muted-foreground text-[10px]">
                                                             <span>Vto. CAE:</span>
                                                             <span>{new Date(selectedInvoice.cae_expiration_date as string).toLocaleDateString("es-AR")}</span>
                                                         </div>
                                                     )}
                                                 </div>
                                             ) : (
-                                                <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-xs flex flex-col gap-2">
-                                                    <div className="flex items-start gap-1.5 text-amber-500">
+                                                <div className="rounded-md border border-amber-500/20 bg-amber-500/10 p-3 text-xs flex flex-col gap-2">
+                                                    <div className="flex items-start gap-1.5 text-amber-600 dark:text-amber-400">
                                                         <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                                                         <div className="space-y-0.5 font-sans">
                                                             <p className="font-semibold">Requiere CAE de AFIP</p>
-                                                            <p className="text-[10px] text-slate-400">Esta factura A/B requiere autorización fiscal de validez legal.</p>
+                                                            <p className="text-[10px] text-muted-foreground">Esta factura A/B requiere autorización fiscal de validez legal.</p>
                                                         </div>
                                                     </div>
                                                     <Button 
@@ -472,68 +470,65 @@ export function POSHistoryDialog({
                                     )}
 
                                     {/* Totals Summary */}
-                                    <div className="space-y-1.5 rounded-md border border-slate-900 bg-slate-950/60 p-3 text-xs font-mono">
+                                    <div className="space-y-1.5 rounded-md border border-border bg-muted/30 p-3 text-xs font-mono">
                                         {selectedInvoice.net_amount != null && (
-                                            <p className="flex justify-between text-slate-400">
+                                            <p className="flex justify-between text-muted-foreground">
                                                 <span>Neto Gravado:</span>
-                                                <span>${Number(selectedInvoice.net_amount).toFixed(2)}</span>
+                                                <span>{formatMoney(Number(selectedInvoice.net_amount))}</span>
                                             </p>
                                         )}
                                         {selectedInvoice.vat_amount != null && (
-                                            <p className="flex justify-between text-slate-400">
+                                            <p className="flex justify-between text-muted-foreground">
                                                 <span>IVA Liquidado:</span>
-                                                <span>${Number(selectedInvoice.vat_amount).toFixed(2)}</span>
+                                                <span>{formatMoney(Number(selectedInvoice.vat_amount))}</span>
                                             </p>
                                         )}
-                                        <p className="flex justify-between border-t border-slate-900 pt-1.5 text-sm font-bold">
-                                            <span className="text-slate-300">TOTAL:</span>
-                                            <span className="text-emerald-400 text-base">
-                                                ${Number(selectedInvoice.total_amount).toLocaleString("es-AR", { 
-                                                    minimumFractionDigits: 2,
-                                                    maximumFractionDigits: 2
-                                                })}
+                                        <p className="flex justify-between border-t border-border pt-1.5 text-sm font-bold">
+                                            <span className="text-foreground">TOTAL:</span>
+                                            <span className="text-emerald-600 dark:text-emerald-400 text-base font-mono">
+                                                {formatMoney(selectedInvoice.total_amount)}
                                             </span>
                                         </p>
                                     </div>
                                 </div>
 
                                 {/* Actions footer */}
-                                <div className="p-4 border-t border-slate-850 bg-slate-900/30 flex flex-col gap-2">
+                                <div className="p-4 border-t border-border bg-muted/20 flex flex-col gap-2">
                                     <Button 
                                         variant="outline" 
-                                        className="w-full flex items-center justify-center gap-2 border-slate-800 bg-slate-900 text-slate-200 hover:bg-slate-800 hover:text-white" 
+                                        className="w-full flex items-center justify-center gap-2 border-border bg-card text-card-foreground hover:bg-muted font-medium" 
                                         onClick={() => onPrint('thermal', selectedInvoice)}
                                         disabled={loadingItems}
                                     >
-                                        <Printer className="h-4 w-4 text-slate-400" />
+                                        <Printer className="h-4 w-4 text-primary" />
                                         Reimprimir Ticket Térmico (80mm)
                                     </Button>
                                     
                                     {selectedInvoice.invoice_type !== "TK" && (
                                         <Button 
                                             variant="outline" 
-                                            className="w-full flex items-center justify-center gap-2 border-slate-800 bg-slate-900 text-slate-200 hover:bg-slate-800 hover:text-white" 
+                                            className="w-full flex items-center justify-center gap-2 border-border bg-card text-card-foreground hover:bg-muted font-medium" 
                                             onClick={() => onPrint('a4', selectedInvoice)}
                                             disabled={loadingItems}
                                         >
-                                            <Printer className="h-4 w-4 text-slate-400" />
+                                            <Printer className="h-4 w-4 text-primary" />
                                             Reimprimir Factura A4 (Detallada)
                                         </Button>
                                     )}
                                 </div>
                             </div>
                         ) : (
-                            <div className="flex-1 flex flex-col items-center justify-center text-slate-500 p-6 text-center gap-2">
-                                <Receipt className="h-10 w-10 text-slate-800" />
-                                <span className="font-semibold text-slate-400">Ninguna venta seleccionada</span>
+                            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-6 text-center gap-2">
+                                <Receipt className="h-10 w-10 text-muted-foreground/40" />
+                                <span className="font-semibold text-foreground">Ninguna venta seleccionada</span>
                                 <span className="text-xs">Elige una venta de la lista de la izquierda para ver su detalle e imprimir.</span>
                             </div>
                         )}
                     </div>
                 </div>
 
-                <div className="flex justify-end border-t border-slate-800 pt-4 mt-4">
-                    <Button type="button" onClick={() => onOpenChange(false)} className="bg-blue-600 text-white hover:bg-blue-500 px-6 font-semibold">
+                <div className="flex justify-end border-t border-border pt-4 mt-4">
+                    <Button type="button" onClick={() => onOpenChange(false)} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6 font-semibold">
                         Cerrar Historial
                     </Button>
                 </div>

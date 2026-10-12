@@ -10,9 +10,7 @@ interface ClientTotalsCardsProps {
     };
 }
 
-const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(value || 0));
-};
+import { formatMoney } from "@/lib/formatters";
 
 export function ClientTotalsCards({ accountTotals }: ClientTotalsCardsProps) {
     return (

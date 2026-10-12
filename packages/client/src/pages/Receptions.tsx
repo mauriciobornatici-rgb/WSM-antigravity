@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { QualityCheckDialog, type QualityCheckItemInput } from "@/components/receptions/QualityCheckDialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, RotateCcw, Download } from "lucide-react";
+import { Plus, RotateCcw, Download, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
 import type { QualityCheckCreateInput } from "@/types/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { formatMoney } from "@/lib/formatters";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PendingOrdersSection } from "@/components/receptions/PendingOrdersSection";
 import { ReceptionForm } from "@/components/receptions/ReceptionForm";
@@ -13,6 +14,7 @@ import { ReceptionsHistorySection } from "@/components/receptions/ReceptionsHist
 import { ReturnForm } from "@/components/receptions/ReturnForm";
 import { SupplierReturnsSection } from "@/components/receptions/SupplierReturnsSection";
 import { SupplierInvoiceForm, type SupplierInvoicePayload } from "@/components/suppliers/SupplierInvoiceForm";
+import { PrintableBarcodeLabelsDialog } from "@/components/receptions/PrintableBarcodeLabelsDialog";
 import type {
     PendingReceptionOrder,
     ReceptionRecord,
@@ -60,6 +62,7 @@ export default function ReceptionsPage() {
     const [isQcDialogOpen, setIsQcDialogOpen] = useState(false);
     const [selectedQcReception, setSelectedQcReception] = useState<ReceptionRecord | null>(null);
     const [isQcSubmitting, setIsQcSubmitting] = useState(false);
+    const [printingReception, setPrintingReception] = useState<ReceptionRecord | null>(null);
 
     const pendingOrdersQuery = useQuery({
         queryKey: queryKeys.purchaseOrders.pendingReception,
@@ -306,18 +309,35 @@ export default function ReceptionsPage() {
         <div className="space-y-6 p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-slate-900">Mercadería entrante</h1>
-                    <p className="mt-1 text-slate-600">Gestión de recepciones, devoluciones y facturas de compra.</p>
+                    <h1 className="text-3xl font-bold text-foreground">Mercadería entrante</h1>
+                    <p className="mt-1 text-muted-foreground">Gestión de recepciones, devoluciones y facturas de compra.</p>
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row w-full sm:w-auto">
                     <button
                         onClick={handleExportLibroIVACompras}
-                        className="flex w-full items-center justify-center gap-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-300 px-4 py-2 hover:bg-slate-200 transition sm:w-auto font-medium"
+                        className="flex w-full items-center justify-center gap-2 rounded-lg bg-muted text-foreground border border-border px-4 py-2 hover:bg-muted/80 transition sm:w-auto font-medium"
                     >
                         <Download className="h-5 w-5" />
                         Exportar Libro IVA
                     </button>
+
+                    <button
+                        onClick={() => {
+                            const latest = receptions[0] || (receptionsQuery.data && receptionsQuery.data[0]);
+                            if (latest) {
+                                setPrintingReception(latest);
+                            } else {
+                                toast.info("No hay recepciones registradas para etiquetar");
+                            }
+                        }}
+                        className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-card-foreground transition hover:bg-muted font-medium sm:w-auto"
+                        title="Imprimir lote de etiquetas de códigos de barras EAN-13"
+                    >
+                        <Tag className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                        Imprimir Etiquetas
+                    </button>
+
                     <button
                         onClick={() => {
                             if (activeTab === "returns") {
@@ -344,11 +364,11 @@ export default function ReceptionsPage() {
                 </div>
             </div>
 
-            <div className="flex gap-1 overflow-x-auto border-b border-slate-200">
+            <div className="flex gap-1 overflow-x-auto border-b border-border">
                 <button
                     onClick={() => setActiveTab("pending")}
                     className={`shrink-0 px-6 py-3 text-sm font-medium ${
-                        activeTab === "pending" ? "border-b-2 border-blue-600 text-blue-600" : "text-slate-600 hover:text-slate-800"
+                        activeTab === "pending" ? "border-b-2 border-primary text-primary font-bold" : "text-muted-foreground hover:text-foreground"
                     }`}
                 >
                     Pedidos pendientes
@@ -429,6 +449,7 @@ export default function ReceptionsPage() {
                         setSelectedQcReception(reception);
                         setIsQcDialogOpen(true);
                     }}
+                    onPrintLabels={(reception) => setPrintingReception(reception)}
                 />
             ) : null}
 
@@ -467,20 +488,20 @@ export default function ReceptionsPage() {
                                                 {!inv.reception_number && !inv.po_number && <span className="text-slate-400 italic">Directa</span>}
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 text-right text-slate-900 dark:text-slate-100 font-mono whitespace-nowrap">
-                                            ${Number(inv.net_amount).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        <td className="px-6 py-4 text-right text-foreground font-mono whitespace-nowrap">
+                                            {formatMoney(inv.net_amount)}
                                         </td>
-                                        <td className="px-6 py-4 text-right text-slate-900 dark:text-slate-100 font-mono whitespace-nowrap">
-                                            ${Number(inv.vat_amount).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        <td className="px-6 py-4 text-right text-foreground font-mono whitespace-nowrap">
+                                            {formatMoney(inv.vat_amount)}
                                         </td>
-                                        <td className="px-6 py-4 text-right text-slate-900 dark:text-slate-100 font-bold text-emerald-600 dark:text-emerald-400 font-mono whitespace-nowrap">
-                                            ${Number(inv.total_amount).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        <td className="px-6 py-4 text-right font-bold text-emerald-600 dark:text-emerald-400 font-mono whitespace-nowrap">
+                                            {formatMoney(inv.total_amount)}
                                         </td>
                                     </tr>
                                 ))}
                                 {(supplierInvoicesQuery.data || []).length === 0 && (
                                     <tr>
-                                        <td colSpan={7} className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
+                                        <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
                                             No hay facturas de proveedor registradas.
                                         </td>
                                     </tr>
@@ -540,6 +561,14 @@ export default function ReceptionsPage() {
                 }}
                 onSubmit={handleQcSubmit}
                 submitting={isQcSubmitting}
+            />
+
+            <PrintableBarcodeLabelsDialog
+                open={Boolean(printingReception)}
+                onOpenChange={(open) => {
+                    if (!open) setPrintingReception(null);
+                }}
+                reception={printingReception}
             />
         </div>
     );

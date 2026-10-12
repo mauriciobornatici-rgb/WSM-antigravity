@@ -6,6 +6,7 @@ import { queryKeys } from "@/lib/queryKeys"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Order } from "@/types"
@@ -105,10 +106,10 @@ export function DispatchDialog({ open, onOpenChange, order }: DispatchDialogProp
                             </div>
                             <div className="space-y-2">
                                 <Label>Fecha estimada</Label>
-                                <Input
-                                    type="date"
+                                <ArgentinaDateInput
                                     value={estimatedDelivery}
-                                    onChange={(event) => setEstimatedDelivery(event.target.value)}
+                                    onChange={setEstimatedDelivery}
+                                    ariaLabel="Fecha estimada de entrega"
                                 />
                             </div>
                         </div>

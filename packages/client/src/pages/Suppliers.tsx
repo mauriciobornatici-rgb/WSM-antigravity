@@ -9,10 +9,12 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Plus, Search, Truck, Phone, Mail, MapPin, Star, CreditCard, DollarSign, Pencil, Trash2 } from "lucide-react"
+import { Plus, Search, Truck, Phone, Mail, MapPin, Star, CreditCard, DollarSign, Pencil, Trash2, Download } from "lucide-react"
 import { toast } from "sonner"
 import { SupplierPaymentForm } from "@/components/suppliers/SupplierPaymentForm"
 import { showErrorToast } from "@/lib/errorHandling"
+import { convertToCSV, downloadCSV } from "@/lib/exportUtils"
+import { formatMoney } from "@/lib/formatters"
 import type { SupplierPaymentCreateInput, SupplierUpsertInput } from "@/types/api"
 
 export default function SuppliersPage() {
@@ -104,7 +106,6 @@ export default function SuppliersPage() {
         s.category.toLowerCase().includes(searchQuery.toLowerCase())
     )
 
-
     const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null)
     const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>([])
     const [supplierOrders, setSupplierOrders] = useState<PurchaseOrder[]>([])
@@ -135,7 +136,6 @@ export default function SuppliersPage() {
             await api.createSupplierPayment(data)
             toast.success('Pago registrado', { description: 'El pago ha sido registrado exitosamente' })
             setShowPaymentForm(false)
-            // Reload supplier details and refresh suppliers list
             if (selectedSupplier) {
                 await loadSupplierDetails(selectedSupplier.id)
             }
@@ -145,13 +145,12 @@ export default function SuppliersPage() {
             throw error
         }
     }
-    // Load extra details when a supplier is selected
+
     useEffect(() => {
         if (selectedSupplier) {
             void loadSupplierDetails(selectedSupplier.id)
         }
     }, [selectedSupplier, loadSupplierDetails])
-
 
     return (
         <div className="p-6 space-y-6">
@@ -160,13 +159,46 @@ export default function SuppliersPage() {
                     <h1 className="text-3xl font-bold tracking-tight">Proveedores</h1>
                     <p className="text-muted-foreground">Gestión de proveedores y socios comerciales.</p>
                 </div>
-                {/* Add Dialog Trigger... same as before */}
-                <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                    <DialogTrigger asChild>
-                        <Button className="w-full bg-blue-600 hover:bg-blue-700 sm:w-auto">
-                            <Plus className="mr-2 h-4 w-4" /> Nuevo Proveedor
-                        </Button>
-                    </DialogTrigger>
+                <div className="flex flex-wrap gap-2 sm:w-auto">
+                    <Button
+                        variant="outline"
+                        onClick={() => {
+                            if (filteredSuppliers.length === 0) {
+                                toast.error("No hay proveedores para exportar");
+                                return;
+                            }
+                            const csvData = filteredSuppliers.map(s => ({
+                                name: s.name,
+                                tax_id: s.tax_id,
+                                contact: s.contact_name || "",
+                                email: s.email || "",
+                                phone: s.phone || "",
+                                category: s.category || "",
+                                balance: s.account_balance || 0
+                            }));
+                            const headers = [
+                                { key: "name" as const, label: "Razón Social" },
+                                { key: "tax_id" as const, label: "CUIT / DNI" },
+                                { key: "contact" as const, label: "Contacto" },
+                                { key: "email" as const, label: "Email" },
+                                { key: "phone" as const, label: "Teléfono" },
+                                { key: "category" as const, label: "Categoría" },
+                                { key: "balance" as const, label: "Saldo Pendiente" }
+                            ];
+                            const csv = convertToCSV(csvData, headers);
+                            downloadCSV(`proveedores_wsm_${new Date().toISOString().substring(0, 10)}.csv`, csv);
+                            toast.success("Listado de proveedores exportado a CSV");
+                        }}
+                        className="w-full gap-2 sm:w-auto text-emerald-600 border-emerald-200 hover:bg-emerald-50/50"
+                    >
+                        <Download className="h-4 w-4" /> Exportar CSV
+                    </Button>
+                    <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+                        <DialogTrigger asChild>
+                            <Button className="w-full bg-blue-600 hover:bg-blue-700 sm:w-auto">
+                                <Plus className="mr-2 h-4 w-4" /> Nuevo Proveedor
+                            </Button>
+                        </DialogTrigger>
                     <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[500px]">
                         <DialogHeader>
                             <DialogTitle>Agregar Nuevo Proveedor</DialogTitle>
@@ -197,7 +229,7 @@ export default function SuppliersPage() {
                             </div>
                             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                 <div className="space-y-2">
-                                    <Label>Correo electronico</Label>
+                                    <Label>Correo electrónico</Label>
                                     <Input value={newSupplier.email} onChange={e => setNewSupplier({ ...newSupplier, email: e.target.value })} />
                                 </div>
                                 <div className="space-y-2">
@@ -215,6 +247,7 @@ export default function SuppliersPage() {
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
+                </div>
             </div>
 
             {/* Supplier Details Dialog */}
@@ -241,9 +274,9 @@ export default function SuppliersPage() {
                                                 <CardTitle className="text-sm font-medium text-muted-foreground">Saldo Pendiente</CardTitle>
                                             </CardHeader>
                                             <CardContent>
-                                                <div className="text-2xl font-bold flex items-center gap-2">
-                                                    <DollarSign className="h-5 w-5 text-green-600" />
-                                                    ${(selectedSupplier.account_balance || 0).toLocaleString()}
+                                                <div className="text-2xl font-bold flex items-center gap-2 text-foreground">
+                                                    <DollarSign className="h-5 w-5 text-green-600 dark:text-green-400" />
+                                                    {formatMoney(selectedSupplier.account_balance)}
                                                 </div>
                                                 <p className="text-xs text-muted-foreground mt-1">A favor del proveedor</p>
                                             </CardContent>
@@ -253,17 +286,17 @@ export default function SuppliersPage() {
                                                 <CardTitle className="text-sm font-medium text-muted-foreground">Pagos Realizados</CardTitle>
                                             </CardHeader>
                                             <CardContent>
-                                                <div className="text-2xl font-bold flex items-center gap-2">
-                                                    <CreditCard className="h-5 w-5 text-blue-600" />
-                                                    ${supplierPayments.reduce((acc, p) => acc + Number(p.amount), 0).toLocaleString()}
+                                                <div className="text-2xl font-bold flex items-center gap-2 text-foreground">
+                                                    <CreditCard className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                                                    {formatMoney(supplierPayments.reduce((acc, p) => acc + Number(p.amount), 0))}
                                                 </div>
                                                 <p className="text-xs text-muted-foreground mt-1">{supplierPayments.length} transacciones</p>
                                             </CardContent>
                                         </Card>
                                     </div>
 
-                                    <div className="mt-6 border rounded-lg">
-                                        <div className="flex flex-col gap-2 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="mt-6 border border-border rounded-lg">
+                                        <div className="flex flex-col gap-2 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
                                             <h4 className="text-sm font-semibold">Movimientos de Cuenta (Libro Mayor)</h4>
                                             <Button onClick={() => setShowPaymentForm(true)} size="sm">
                                                 <Plus className="h-4 w-4 mr-2" />
@@ -277,31 +310,32 @@ export default function SuppliersPage() {
                                         ) : supplierTransactions.length > 0 ? (
                                             <div className="overflow-x-auto">
                                                 <Table className="min-w-[680px]">
-                                                <TableHeader>
-                                                    <TableRow>
-                                                        <TableHead>Fecha</TableHead>
-                                                        <TableHead>Descripción</TableHead>
-                                                        <TableHead className="text-right">Haber (Deuda)</TableHead>
-                                                        <TableHead className="text-right">Debe (Pago)</TableHead>
-                                                    </TableRow>
-                                                </TableHeader>
-                                                <TableBody>
-                                                    {supplierTransactions.map(t => (
-                                                        <TableRow key={t.id}>
-                                                            <TableCell>{new Date(t.date).toLocaleDateString()} {new Date(t.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</TableCell>
-                                                            <TableCell>
-                                                                <div className="font-medium text-xs">{t.description}</div>
-                                                                {t.reference_id && <div className="text-[10px] text-muted-foreground font-mono">{t.reference_id}</div>}
-                                                            </TableCell>
-                                                            <TableCell className="text-right text-red-600 font-medium">
-                                                                {t.type === 'purchase' ? `$${Number(t.amount).toLocaleString()}` : '-'}
-                                                            </TableCell>
-                                                            <TableCell className="text-right text-green-600 font-medium">
-                                                                {t.type === 'expense' ? `$${Number(t.amount).toLocaleString()}` : '-'}
-                                                            </TableCell>
+                                                    <TableHeader>
+                                                        <TableRow>
+                                                            <TableHead>Fecha</TableHead>
+                                                            <TableHead>Descripción</TableHead>
+                                                            <TableHead className="text-right">Haber (Deuda)</TableHead>
+                                                            <TableHead className="text-right">Debe (Pago)</TableHead>
                                                         </TableRow>
-                                                    ))}
-                                                </TableBody>
+                                                    </TableHeader>
+                                                    <TableBody>
+                                                        {supplierTransactions.map(t => (
+                                                            <TableRow key={t.id}>
+                                                                <TableCell>{new Date(t.date).toLocaleDateString()} {new Date(t.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</TableCell>
+                                                                <TableCell>
+                                                                    <div className="font-medium text-xs text-foreground">{t.description}</div>
+                                                                    {t.reference_id && <div className="text-[10px] text-muted-foreground font-mono">{t.reference_id}</div>}
+                                                                </TableCell>
+                                                                <TableCell className="text-right text-red-600 dark:text-red-400 font-medium">
+                                                                    {t.type === 'purchase' ? formatMoney(t.amount) : '-'}
+                                                                </TableCell>
+                                                                <TableCell className="text-right text-green-600 dark:text-green-400 font-medium">
+                                                                    {/* Payments and returns (adjustments) both reduce what we owe the supplier. */}
+                                                                    {t.type === 'expense' || t.type === 'adjustment' ? formatMoney(t.amount) : '-'}
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        ))}
+                                                    </TableBody>
                                                 </Table>
                                             </div>
                                         ) : (
@@ -331,32 +365,32 @@ export default function SuppliersPage() {
                                 </TabsContent>
 
                                 <TabsContent value="orders" className="space-y-4 pt-4">
-                                    <div className="border rounded-md">
+                                    <div className="border border-border rounded-md">
                                         <div className="overflow-x-auto">
                                             <Table className="min-w-[520px]">
-                                            <TableHeader>
-                                                <TableRow>
-                                                    <TableHead>ID Orden</TableHead>
-                                                    <TableHead>Fecha</TableHead>
-                                                    <TableHead>Monto</TableHead>
-                                                    <TableHead>Estado</TableHead>
-                                                </TableRow>
-                                            </TableHeader>
-                                            <TableBody>
-                                                {supplierOrders.map(o => (
-                                                    <TableRow key={o.id}>
-                                                        <TableCell className="font-mono">{o.id}</TableCell>
-                                                        <TableCell>{new Date(o.order_date || o.date || Date.now()).toLocaleDateString()}</TableCell>
-                                                        <TableCell>${o.total_amount.toLocaleString()}</TableCell>
-                                                        <TableCell>
-                                                            <Badge variant={o.status === 'completed' || o.status === 'received' ? 'default' : 'outline'}>{o.status}</Badge>
-                                                        </TableCell>
+                                                <TableHeader>
+                                                    <TableRow>
+                                                        <TableHead>ID Orden</TableHead>
+                                                        <TableHead>Fecha</TableHead>
+                                                        <TableHead>Monto</TableHead>
+                                                        <TableHead>Estado</TableHead>
                                                     </TableRow>
-                                                ))}
-                                                {supplierOrders.length === 0 && (
-                                                    <TableRow><TableCell colSpan={4} className="text-center h-16">No hay órdenes registradas</TableCell></TableRow>
-                                                )}
-                                            </TableBody>
+                                                </TableHeader>
+                                                <TableBody>
+                                                    {supplierOrders.map(o => (
+                                                        <TableRow key={o.id}>
+                                                            <TableCell className="font-mono">{o.id}</TableCell>
+                                                            <TableCell>{new Date(o.order_date || o.date || Date.now()).toLocaleDateString()}</TableCell>
+                                                            <TableCell>${o.total_amount.toLocaleString()}</TableCell>
+                                                            <TableCell>
+                                                                <Badge variant={o.status === 'completed' || o.status === 'received' ? 'default' : 'outline'}>{o.status}</Badge>
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    ))}
+                                                    {supplierOrders.length === 0 && (
+                                                        <TableRow><TableCell colSpan={4} className="text-center h-16">No hay órdenes registradas</TableCell></TableRow>
+                                                    )}
+                                                </TableBody>
                                             </Table>
                                         </div>
                                     </div>
@@ -366,27 +400,27 @@ export default function SuppliersPage() {
                                     <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
                                         <div className="space-y-1">
                                             <Label className="text-muted-foreground">Razón Social</Label>
-                                            <p>{selectedSupplier.name}</p>
+                                            <p className="text-foreground">{selectedSupplier.name}</p>
                                         </div>
                                         <div className="space-y-1">
                                             <Label className="text-muted-foreground">CUIT / DNI</Label>
-                                            <p>{selectedSupplier.tax_id}</p>
+                                            <p className="text-foreground">{selectedSupplier.tax_id}</p>
                                         </div>
                                         <div className="space-y-1">
                                             <Label className="text-muted-foreground">Dirección</Label>
-                                            <p>{selectedSupplier.address}</p>
+                                            <p className="text-foreground">{selectedSupplier.address || "-"}</p>
                                         </div>
                                         <div className="space-y-1">
                                             <Label className="text-muted-foreground">Contacto</Label>
-                                            <p>{selectedSupplier.contact_name}</p>
+                                            <p className="text-foreground">{selectedSupplier.contact_name || "-"}</p>
                                         </div>
                                         <div className="space-y-1">
                                             <Label className="text-muted-foreground">Teléfono</Label>
-                                            <p>{selectedSupplier.phone}</p>
+                                            <p className="text-foreground">{selectedSupplier.phone || "-"}</p>
                                         </div>
                                         <div className="space-y-1">
-                                            <Label className="text-muted-foreground">Correo electronico</Label>
-                                            <p>{selectedSupplier.email}</p>
+                                            <Label className="text-muted-foreground">Correo electrónico</Label>
+                                            <p className="text-foreground">{selectedSupplier.email || "-"}</p>
                                         </div>
                                     </div>
                                 </TabsContent>
@@ -396,12 +430,12 @@ export default function SuppliersPage() {
                 </DialogContent>
             </Dialog>
 
-            <Card>
+            <Card className="border-border">
                 <CardHeader>
                     <div className="relative w-full max-w-sm">
                         <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                         <Input
-                            placeholder="Buscar por nombre, CUIT o categoria..."
+                            placeholder="Buscar por nombre, CUIT o categoría..."
                             className="pl-8"
                             value={searchQuery}
                             onChange={e => setSearchQuery(e.target.value)}
@@ -423,71 +457,69 @@ export default function SuppliersPage() {
                             No hay proveedores para los filtros aplicados.
                         </div>
                     ) : (
-                    <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-                        {filteredSuppliers.map((supplier) => (
-                            <Card key={supplier.id} className="overflow-hidden hover:shadow-md transition-shadow">
-                                <CardHeader className="pb-3 bg-slate-50 dark:bg-slate-900 border-b">
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <CardTitle className="text-lg flex items-center gap-2">
-                                                {supplier.name}
-                                                {supplier.active && <Badge variant="secondary" className="bg-green-100 text-green-700 text-[10px] h-5">Activo</Badge>}
-                                            </CardTitle>
-                                            <CardDescription className="font-mono text-xs mt-1">{supplier.tax_id}</CardDescription>
+                        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                            {filteredSuppliers.map((supplier) => (
+                                <Card key={supplier.id} className="overflow-hidden hover:shadow-md transition-shadow border-border">
+                                    <CardHeader className="pb-3 bg-muted/40 border-b border-border">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <CardTitle className="text-lg font-bold text-foreground flex items-center gap-2">
+                                                    {supplier.name}
+                                                    {supplier.active && <Badge variant="secondary" className="bg-green-500/15 text-green-600 dark:text-green-400 border border-green-500/20 text-[10px] h-5 font-semibold">Activo</Badge>}
+                                                </CardTitle>
+                                                <CardDescription className="font-mono text-xs mt-1 text-muted-foreground">{supplier.tax_id}</CardDescription>
+                                            </div>
+                                            <div className="flex items-center bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20 px-2 py-1 rounded-full text-xs font-bold">
+                                                <Star className="h-3 w-3 mr-1 fill-current" /> {supplier.rating}
+                                            </div>
                                         </div>
-                                        <div className="flex items-center bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full text-xs font-bold">
-                                            <Star className="h-3 w-3 mr-1 fill-current" /> {supplier.rating}
+                                    </CardHeader>
+                                    <CardContent className="pt-4 space-y-3 text-sm">
+                                        <div className="flex items-center text-muted-foreground">
+                                            <MapPin className="h-4 w-4 mr-2 shrink-0" />
+                                            <span className="truncate">{supplier.address || "-"}</span>
                                         </div>
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="pt-4 space-y-3 text-sm">
-                                    <div className="flex items-center text-muted-foreground">
-                                        <MapPin className="h-4 w-4 mr-2 shrink-0" />
-                                        <span className="truncate">{supplier.address}</span>
-                                    </div>
-                                    <div className="flex items-center text-muted-foreground">
-                                        <Truck className="h-4 w-4 mr-2 shrink-0" />
-                                        <span>{supplier.category}</span>
-                                    </div>
-                                    <div className="flex items-center text-muted-foreground">
-                                        <DollarSign className="h-4 w-4 mr-2 shrink-0 text-green-600" />
-                                        <span className="font-medium">Saldo: ${(supplier.account_balance || 0).toLocaleString()}</span>
-                                    </div>
-                                    <div className="pt-2 flex gap-2">
-                                        <Button variant="outline" size="sm" className="h-8" onClick={() => setEditingSupplier(supplier)}>
-                                            <Pencil className="h-3 w-3" />
-                                        </Button>
-                                        <Button variant="outline" size="sm" className="h-8 text-red-400 hover:text-red-300 hover:bg-red-950" onClick={() => setDeletingSupplier(supplier)}>
-                                            <Trash2 className="h-3 w-3" />
-                                        </Button>
-                                        <Button variant="outline" size="sm" className="h-8 flex-1" onClick={() => setSelectedSupplier(supplier)}>
-                                            <CreditCard className="h-3 w-3 mr-2" /> Ver Cuenta
-                                        </Button>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        {supplier.email && (
-                                            <Button variant="ghost" size="sm" className="h-8 flex-1 text-xs" asChild>
-                                                <a href={`mailto:${supplier.email}`}><Mail className="h-3 w-3 mr-2" /> Correo</a>
+                                        <div className="flex items-center text-muted-foreground">
+                                            <Truck className="h-4 w-4 mr-2 shrink-0" />
+                                            <span>{supplier.category || "General"}</span>
+                                        </div>
+                                        <div className="flex items-center text-muted-foreground">
+                                            <DollarSign className="h-4 w-4 mr-2 shrink-0 text-green-600 dark:text-green-400" />
+                                            <span className="font-medium text-foreground">Saldo: {formatMoney(supplier.account_balance)}</span>
+                                        </div>
+                                        <div className="pt-2 flex gap-2">
+                                            <Button variant="outline" size="sm" className="h-8" onClick={() => setEditingSupplier(supplier)}>
+                                                <Pencil className="h-3 w-3" />
                                             </Button>
-                                        )}
-                                        {supplier.phone && (
-                                            <Button variant="ghost" size="sm" className="h-8 flex-1 text-xs" asChild>
-                                                <a href={`tel:${supplier.phone}`}><Phone className="h-3 w-3 mr-2" /> Llamar</a>
+                                            <Button variant="outline" size="sm" className="h-8 text-red-500 hover:text-red-600 hover:bg-red-500/10" onClick={() => setDeletingSupplier(supplier)}>
+                                                <Trash2 className="h-3 w-3" />
                                             </Button>
-                                        )}
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        ))}
-                    </div>
+                                            <Button variant="outline" size="sm" className="h-8 flex-1" onClick={() => setSelectedSupplier(supplier)}>
+                                                <CreditCard className="h-3 w-3 mr-2" /> Ver Cuenta
+                                            </Button>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            {supplier.email && (
+                                                <Button variant="ghost" size="sm" className="h-8 flex-1 text-xs" asChild>
+                                                    <a href={`mailto:${supplier.email}`}><Mail className="h-3 w-3 mr-2" /> Correo</a>
+                                                </Button>
+                                            )}
+                                            {supplier.phone && (
+                                                <Button variant="ghost" size="sm" className="h-8 flex-1 text-xs" asChild>
+                                                    <a href={`tel:${supplier.phone}`}><Phone className="h-3 w-3 mr-2" /> Llamar</a>
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </CardContent>
+                                </Card>
+                            ))}
+                        </div>
                     )}
                 </CardContent>
-                <CardFooter className="bg-slate-50 dark:bg-slate-900 border-t py-4 text-xs text-muted-foreground">
+                <CardFooter className="bg-muted/40 border-t border-border py-4 text-xs text-muted-foreground">
                     Mostrando {filteredSuppliers.length} proveedores
                 </CardFooter>
             </Card>
-
-
 
             {/* Edit Supplier Dialog */}
             {editingSupplier && (
@@ -553,7 +585,7 @@ function EditSupplierDialog({ supplier, open, onOpenChange, onSubmit }: { suppli
                             <Input value={formData.contact_name} onChange={e => setFormData({ ...formData, contact_name: e.target.value })} />
                         </div>
                         <div className="space-y-2">
-                            <Label>Correo electronico</Label>
+                            <Label>Correo electrónico</Label>
                             <Input value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
                         </div>
                     </div>
@@ -582,11 +614,11 @@ function DeleteSupplierDialog({ supplier, open, onOpenChange, onConfirm }: { sup
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[425px]">
                 <DialogHeader>
-                    <DialogTitle className="text-red-400">Eliminar proveedor?</DialogTitle>
+                    <DialogTitle className="text-red-500">¿Eliminar proveedor?</DialogTitle>
                     <DialogDescription>
-                        Esta accion eliminara permanentemente al proveedor <strong>{supplier.name}</strong>.
+                        Esta acción eliminará permanentemente al proveedor <strong>{supplier.name}</strong>.
                         {supplier.account_balance > 0 && (
-                            <span className="block mt-2 text-yellow-400">
+                            <span className="block mt-2 text-amber-500">
                                 Aviso: este proveedor tiene un saldo pendiente de ${supplier.account_balance.toLocaleString()}
                             </span>
                         )}
@@ -603,4 +635,3 @@ function DeleteSupplierDialog({ supplier, open, onOpenChange, onConfirm }: { sup
         </Dialog>
     )
 }
-

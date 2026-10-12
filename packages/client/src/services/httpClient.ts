@@ -1,25 +1,15 @@
 /**
  * Centralized HTTP client with:
- * - Auth token injection
+ * - HttpOnly cookie authentication
  * - 401 auto-logout
  * - Consistent error handling
  * - No silent failures (always throws)
  */
 
-import { clearSessionStorage, getStoredToken, isTokenExpired } from "@/lib/authSession";
+import { clearSessionStorage } from "@/lib/authSession";
 import type { PaginationMeta } from "@/types/api";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
-
-const getAuthToken = (): string | null => {
-    const token = getStoredToken();
-    if (!token) return null;
-    if (isTokenExpired(token, 30_000)) {
-        clearSessionStorage();
-        return null;
-    }
-    return token;
-};
 
 /** Custom error class with HTTP status and parsed body */
 export class ApiError extends Error {
@@ -76,7 +66,7 @@ function parsePaginationMeta(headers: Headers): PaginationMeta | undefined {
 
 /**
  * Centralized fetch wrapper. All API calls go through here.
- * - Injects Authorization header automatically
+ * - Sends the HttpOnly session cookie without exposing it to JavaScript
  * - Handles 401 by clearing session and redirecting to login
  * - Parses JSON responses and throws typed ApiError on failure
  */
@@ -84,27 +74,20 @@ async function request<T = unknown>(
     endpoint: string,
     options: RequestInit = {}
 ): Promise<T> {
-    const token = getAuthToken();
-
-    if (!token && !endpoint.endsWith("/login") && getStoredToken()) {
-        clearSessionStorage();
-        window.location.href = "/login";
-        throw new ApiError("Sesion expirada", 401);
-    }
-
     const headers: Record<string, string> = {
         ...(options.body ? { "Content-Type": "application/json" } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...((options.headers as Record<string, string>) || {}),
     };
 
     const res = await fetch(`${API_URL}${endpoint}`, {
         ...options,
         headers,
+        credentials: "include",
     });
 
     // Auto-logout on 401 Unauthorized (except login)
-    if (res.status === 401 && !endpoint.endsWith("/login")) {
+    const isSessionEndpoint = endpoint.endsWith("/login") || endpoint.endsWith("/session") || endpoint.endsWith("/logout");
+    if (res.status === 401 && !isSessionEndpoint) {
         clearSessionStorage();
         window.location.href = "/login";
         throw new ApiError("Sesion expirada", 401);
@@ -131,26 +114,19 @@ async function requestWithMeta<T = unknown>(
     endpoint: string,
     options: RequestInit = {}
 ): Promise<{ data: T; pagination?: PaginationMeta }> {
-    const token = getAuthToken();
-
-    if (!token && !endpoint.endsWith("/login") && getStoredToken()) {
-        clearSessionStorage();
-        window.location.href = "/login";
-        throw new ApiError("Sesion expirada", 401);
-    }
-
     const headers: Record<string, string> = {
         ...(options.body ? { "Content-Type": "application/json" } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...((options.headers as Record<string, string>) || {}),
     };
 
     const res = await fetch(`${API_URL}${endpoint}`, {
         ...options,
         headers,
+        credentials: "include",
     });
 
-    if (res.status === 401 && !endpoint.endsWith("/login")) {
+    const isSessionEndpoint = endpoint.endsWith("/login") || endpoint.endsWith("/session") || endpoint.endsWith("/logout");
+    if (res.status === 401 && !isSessionEndpoint) {
         clearSessionStorage();
         window.location.href = "/login";
         throw new ApiError("Sesion expirada", 401);
@@ -197,6 +173,12 @@ export const httpClient = {
     put: <T = unknown>(endpoint: string, data?: unknown) =>
         request<T>(endpoint, {
             method: "PUT",
+            ...(data !== undefined ? { body: JSON.stringify(data) } : {}),
+        }),
+
+    patch: <T = unknown>(endpoint: string, data?: unknown) =>
+        request<T>(endpoint, {
+            method: "PATCH",
             ...(data !== undefined ? { body: JSON.stringify(data) } : {}),
         }),
 

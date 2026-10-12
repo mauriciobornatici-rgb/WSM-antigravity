@@ -180,6 +180,29 @@ class DashboardService {
             pickerLeaderboard
         };
     }
+
+    async getSizeColorAnalytics() {
+        try {
+            const [rows] = await pool.query(`
+                SELECT 
+                    COALESCE(NULLIF(p.category, ''), 'General') AS category,
+                    COALESCE(NULLIF(p.size, ''), 'Estándar') AS size,
+                    SUM(oi.quantity) AS units_sold
+                FROM order_items oi
+                JOIN products p ON oi.product_id = p.id
+                JOIN orders o ON oi.order_id = o.id
+                WHERE o.status != 'cancelled' AND o.deleted_at IS NULL
+                GROUP BY p.category, p.size
+                ORDER BY units_sold DESC
+                LIMIT 30
+            `);
+
+            return rows;
+        } catch (err) {
+            console.error('Error fetching size color analytics:', err);
+            return [];
+        }
+    }
 }
 
 export default new DashboardService();

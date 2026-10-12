@@ -1,7 +1,8 @@
-import { Download, Eye, FileCheck, Mail, Printer, ReceiptText } from "lucide-react"
+import { Download, Eye, FileCheck, Mail, Printer, ReceiptText, RefreshCw } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { formatMoney } from "@/lib/formatters"
 import { formatInvoiceNumber, getInvoiceStatusBadge } from "./invoiceUtils"
 import type { InvoiceView } from "./types"
 
@@ -10,7 +11,7 @@ type InvoicesTableProps = {
     loading: boolean
     onRefresh: () => void
     onPreview: (invoice: InvoiceView) => void
-    onSendEmail: (invoice: InvoiceView) => void
+    onSendEmail?: ((invoice: InvoiceView) => void) | undefined
     onPrint: (invoice: InvoiceView) => void
     onExportCSV: () => void
     onPrintThermal?: ((invoice: InvoiceView) => void) | undefined
@@ -36,7 +37,7 @@ export function InvoicesTable({
                         Exportar Libro IVA
                     </Button>
                     <Button className="w-full sm:w-auto" variant="outline" onClick={onRefresh} disabled={loading} title="Actualizar lista">
-                        <Download className="mr-2 h-4 w-4" />
+                        <RefreshCw className="mr-2 h-4 w-4" />
                         Actualizar
                     </Button>
                 </div>
@@ -50,7 +51,7 @@ export function InvoicesTable({
                             <TableHead>Comprobante</TableHead>
                             <TableHead>Cliente</TableHead>
                             <TableHead>CAE</TableHead>
-                            <TableHead>Importe total</TableHead>
+                            <TableHead className="text-right">Importe total</TableHead>
                             <TableHead>Estado</TableHead>
                             <TableHead className="text-right">Acciones</TableHead>
                         </TableRow>
@@ -63,9 +64,9 @@ export function InvoicesTable({
                                 </TableCell>
                                 <TableCell className="flex items-center gap-2 font-mono font-bold">
                                     {invoice.invoice_type === "TK" ? (
-                                        <ReceiptText className="h-4 w-4 text-slate-400" />
+                                        <ReceiptText className="h-4 w-4 text-muted-foreground" />
                                     ) : (
-                                        <FileCheck className="h-4 w-4 text-blue-400" />
+                                        <FileCheck className="h-4 w-4 text-primary" />
                                     )}
                                     {formatInvoiceNumber(invoice)}
                                 </TableCell>
@@ -75,22 +76,24 @@ export function InvoicesTable({
                                 </TableCell>
                                 <TableCell>
                                     {invoice.cae ? (
-                                        <span className="text-xs font-mono font-bold text-green-600">{invoice.cae}</span>
+                                        <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">{invoice.cae}</span>
                                     ) : (
                                         <span className="text-muted-foreground">-</span>
                                     )}
                                 </TableCell>
-                                <TableCell className="font-bold">
-                                    ${Number(invoice.total_amount || 0).toLocaleString("es-AR", { minimumFractionDigits: 2 })}
+                                <TableCell className="text-right font-mono font-bold">
+                                    {formatMoney(invoice.total_amount)}
                                 </TableCell>
                                 <TableCell>{getInvoiceStatusBadge(invoice.status, invoice.invoice_type)}</TableCell>
                                 <TableCell className="flex justify-end gap-1 text-right">
                                     <Button variant="ghost" size="sm" title="Ver detalles" onClick={() => onPreview(invoice)}>
                                         <Eye className="h-4 w-4" />
                                     </Button>
-                                    <Button variant="ghost" size="sm" title="Enviar por email" onClick={() => onSendEmail(invoice)}>
-                                        <Mail className="h-4 w-4 text-blue-500" />
-                                    </Button>
+                                    {onSendEmail ? (
+                                        <Button variant="ghost" size="sm" title="Enviar por email" onClick={() => onSendEmail(invoice)}>
+                                            <Mail className="h-4 w-4 text-blue-500" />
+                                        </Button>
+                                    ) : null}
                                     <Button variant="ghost" size="sm" title="Imprimir Factura A4" onClick={() => onPrint(invoice)}>
                                         <Printer className="h-4 w-4" />
                                     </Button>

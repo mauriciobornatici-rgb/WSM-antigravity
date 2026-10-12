@@ -1,13 +1,15 @@
-import { useAuth, type UserRole } from "@/context/AuthContext"
+import { useAuth } from "@/context/AuthContext"
 import { clearSessionStorage } from "@/lib/authSession"
 import { Navigate, useLocation } from "react-router-dom"
+import { hasPermission, type Permission } from "@wsm/common"
+import ErrorBoundary from "@/components/common/ErrorBoundary"
 
 interface ProtectedRouteProps {
     children: React.ReactNode
-    allowedRoles?: UserRole[]
+    permission?: Permission
 }
 
-export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
+export function ProtectedRoute({ children, permission }: ProtectedRouteProps) {
     const { user, isLoading } = useAuth()
     const location = useLocation()
 
@@ -24,7 +26,7 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
         return <Navigate to="/login" replace />
     }
 
-    if (allowedRoles && !allowedRoles.includes(user.role)) {
+    if (permission && !hasPermission(user.role, permission)) {
         return (
             <div className="h-screen w-screen flex flex-col items-center justify-center gap-4">
                 <h1 className="text-4xl font-bold">403</h1>
@@ -34,5 +36,10 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
         )
     }
 
-    return <>{children}</>
+    // A failing page must not take down the layout, the navigation or other screens.
+    return (
+        <ErrorBoundary scope="route" resetKey={location.pathname}>
+            {children}
+        </ErrorBoundary>
+    )
 }

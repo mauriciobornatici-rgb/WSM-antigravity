@@ -1,21 +1,79 @@
-import fs from 'fs/promises';
 import fsSync from 'fs';
-import path from 'path';
-import os from 'os';
-import crypto from 'crypto';
 import Afip from '@afipsdk/afip.js';
 import { decrypt } from '../utils/crypto.js';
+
+// ARCA (AFIP) VAT aliquot ids.
+const VAT_RATE_IDS = new Map([[0, 3], [2.5, 9], [5, 8], [10.5, 4], [21, 5], [27, 6]]);
+const VOUCHER_TYPES_WITHOUT_VAT = new Set([11, 13]); // Factura C / NC C (monotributo)
+
+const toCents = (value) => Math.round(Number(value || 0) * 100);
+
+/**
+ * Voucher amounts for ARCA from invoice lines, in integer cents so that
+ * ImpTotal = ImpNeto + ImpIVA and the sum of Iva[].Importe = ImpIVA exactly.
+ *
+ * Catalog prices are net (ADR-008). A line stored by the local invoice carries its
+ * own vat_amount and total_line: those are reported as-is so ARCA always matches
+ * what the customer was charged. A line without them is priced as net + VAT.
+ * A line with only total_line (gross) is split into net + VAT.
+ */
+export function buildVoucherAmounts(voucherType, invoiceItems) {
+    const byRate = new Map();
+    let totalCents = 0;
+    let netCents = 0;
+    let vatCents = 0;
+
+    for (const item of invoiceItems) {
+        const vatRate = item.vat_rate == null || item.vat_rate === '' ? 21 : Number(item.vat_rate);
+        if (!VAT_RATE_IDS.has(vatRate)) {
+            throw new Error(`Alícuota de IVA no soportada por ARCA: ${item.vat_rate}`);
+        }
+
+        let lineNet;
+        let lineVat;
+        if (item.total_line != null && item.vat_amount != null) {
+            lineVat = toCents(item.vat_amount);
+            lineNet = toCents(item.total_line) - lineVat;
+        } else if (item.total_line != null) {
+            const gross = toCents(item.total_line);
+            lineNet = Math.round(gross / (1 + vatRate / 100));
+            lineVat = gross - lineNet;
+        } else {
+            lineNet = toCents(Number(item.quantity) * Number(item.unit_price));
+            lineVat = Math.round(lineNet * vatRate / 100);
+        }
+
+        netCents += lineNet;
+        vatCents += lineVat;
+        totalCents += lineNet + lineVat;
+        const bucket = byRate.get(vatRate) || { base: 0, vat: 0 };
+        bucket.base += lineNet;
+        bucket.vat += lineVat;
+        byRate.set(vatRate, bucket);
+    }
+
+    if (VOUCHER_TYPES_WITHOUT_VAT.has(voucherType)) {
+        // Factura C does not discriminate VAT: the whole amount is reported as net.
+        return { roundedTotal: totalCents / 100, roundedNet: totalCents / 100, roundedVat: 0, ivaArray: [] };
+    }
+
+    const ivaArray = [...byRate.entries()].map(([rate, bucket]) => ({
+        Id: VAT_RATE_IDS.get(rate),
+        BaseImp: bucket.base / 100,
+        Importe: bucket.vat / 100,
+    }));
+    return { roundedTotal: totalCents / 100, roundedNet: netCents / 100, roundedVat: vatCents / 100, ivaArray };
+}
 
 class AfipService {
     constructor() {
         this.instances = new Map(); // Cache Afip instances by CUIT
         this.createdTempFiles = new Set();
 
-        // Register exit handlers to securely delete temporal keys and certs
+        // Temporal keys and certs are deleted on 'exit', which also fires at the end of
+        // the graceful shutdown in index.js. Signal handlers that call process.exit()
+        // here would abort that shutdown (open requests, pool close) immediately.
         process.on('exit', () => this.cleanupTempFilesSync());
-        process.on('SIGINT', () => { this.cleanupTempFilesSync(); process.exit(); });
-        process.on('SIGTERM', () => { this.cleanupTempFilesSync(); process.exit(); });
-        process.on('SIGHUP', () => { this.cleanupTempFilesSync(); process.exit(); });
     }
 
     cleanupTempFilesSync() {
@@ -50,24 +108,11 @@ class AfipService {
             return this.instances.get(cacheKey);
         }
 
-        // afip.js requiere los archivos en disco
-        const tmpDir = os.tmpdir();
-        const certFileName = `afip_cert_${cuit}_${isProduction}.crt`;
-        const keyFileName = `afip_key_${cuit}_${isProduction}.key`;
-        
-        const certPath = path.join(tmpDir, certFileName);
-        const keyPath = path.join(tmpDir, keyFileName);
-
-        await fs.writeFile(certPath, cert, { encoding: 'utf8', mode: 0o600 });
-        await fs.writeFile(keyPath, key, { encoding: 'utf8', mode: 0o600 });
-
-        this.createdTempFiles.add(certPath);
-        this.createdTempFiles.add(keyPath);
-
+        // Pass cert and key contents directly in memory without writing to disk
         const afip = new Afip({
             CUIT: parseInt(cuit, 10),
-            cert: certPath,
-            key: keyPath,
+            cert: cert,
+            key: key,
             production: isProduction
         });
 
@@ -111,68 +156,7 @@ class AfipService {
         const lastVoucher = await afip.ElectronicBilling.getLastVoucher(posNumber, voucherType);
         const nextVoucherNumber = lastVoucher + 1;
 
-        let totalAmount = 0;
-        let netAmount = 0;
-        let vatAmount = 0;
-        let ivaArray = [];
-
-        // Agrupar tasas de IVA
-        const ivaMap = {};
-
-        for (const item of invoiceItems) {
-            const qty = item.quantity;
-            const unitPrice = item.unit_price;
-            const vatRate = item.vat_rate || 21;
-            
-            const lineTotal = Number(qty * unitPrice);
-            
-            const vatRateId = vatRate === 21 ? 5 : (vatRate === 10.5 ? 4 : 3); // 5=21%, 4=10.5%, 3=0%
-            
-            if (voucherType === 1 || voucherType === 3) { // Facturas A discriminan IVA
-                const lineNet = lineTotal / (1 + (vatRate / 100));
-                const lineVat = lineTotal - lineNet;
-                
-                netAmount += lineNet;
-                vatAmount += lineVat;
-                totalAmount += lineTotal;
-
-                if (!ivaMap[vatRateId]) {
-                    ivaMap[vatRateId] = { BaseImp: 0, Importe: 0 };
-                }
-                ivaMap[vatRateId].BaseImp += lineNet;
-                ivaMap[vatRateId].Importe += lineVat;
-            } else {
-                // Facturas B o C no discriminan en el detalle hacia AFIP de igual manera, 
-                // pero si AFIP exige BaseImp e Importe para B, se debe informar
-                const lineNet = lineTotal / (1 + (vatRate / 100));
-                const lineVat = lineTotal - lineNet;
-                
-                netAmount += lineNet;
-                vatAmount += lineVat;
-                totalAmount += lineTotal;
-
-                if (voucherType === 6 || voucherType === 8) { // B discrimina internamente
-                    if (!ivaMap[vatRateId]) {
-                        ivaMap[vatRateId] = { BaseImp: 0, Importe: 0 };
-                    }
-                    ivaMap[vatRateId].BaseImp += lineNet;
-                    ivaMap[vatRateId].Importe += lineVat;
-                }
-            }
-        }
-
-        // Format to AFIP 2 decimals requirements
-        const roundedTotal = Math.round(totalAmount * 100) / 100;
-        const roundedNet = Math.round(netAmount * 100) / 100;
-        const roundedVat = Math.round(vatAmount * 100) / 100;
-
-        for (const k in ivaMap) {
-            ivaArray.push({
-                Id: parseInt(k, 10),
-                BaseImp: Math.round(ivaMap[k].BaseImp * 100) / 100,
-                Importe: Math.round(ivaMap[k].Importe * 100) / 100
-            });
-        }
+        const { roundedTotal, roundedNet, roundedVat, ivaArray } = buildVoucherAmounts(voucherType, invoiceItems);
 
         const date = new Date(Date.now() - ((new Date()).getTimezoneOffset() * 60000)).toISOString().split('T')[0].replace(/-/g, '');
 
@@ -196,7 +180,7 @@ class AfipService {
             'MonCotiz': 1
         };
 
-        if (ivaArray.length > 0 && roundedVat > 0) {
+        if (ivaArray.length > 0) {
             payload['Iva'] = ivaArray;
         }
 

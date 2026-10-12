@@ -187,6 +187,33 @@ export const qualityCheckSchema = z.object({
   defect_description: z.string().nullable().optional(),
   action_taken: z.enum(['approve', 'reject', 'return_to_supplier', 'discount']).optional(),
   notes: z.string().nullable().optional(),
+}).superRefine((data, ctx) => {
+  if (data.quantity_checked !== data.quantity_passed + data.quantity_failed) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['quantity_checked'],
+      message: 'La cantidad controlada debe coincidir con la suma de aprobadas y defectuosas',
+    });
+  }
+
+  const expectedResult = data.quantity_failed === 0
+    ? 'pass'
+    : data.quantity_passed === 0 ? 'fail' : 'conditional';
+  if (data.result !== expectedResult) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['result'],
+      message: `El resultado debe ser '${expectedResult}' para las cantidades informadas`,
+    });
+  }
+
+  if (data.quantity_failed > 0 && !data.defect_description?.trim()) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['defect_description'],
+      message: 'Debe detallar el defecto cuando existen unidades defectuosas',
+    });
+  }
 });
 
 // 6. Invoices (Customer)
@@ -221,6 +248,10 @@ export const manualInvoiceSchema = z.object({
   order_id: optionalUuidSchema,
   notes: z.string().nullable().optional(),
   payment_method: orderPaymentMethodSchema.optional(),
+  payments: z.array(z.object({
+    method: orderPaymentMethodSchema,
+    amount: z.coerce.number().positive(),
+  })).min(1).optional(),
   items: z.array(manualInvoiceItemSchema).min(1),
 }).refine(data => data.items.every(item => item.description || item.product_name || item.product_id), {
   message: "Debe ingresar descripción, product_name o product_id en cada ítem",
@@ -345,6 +376,7 @@ export const companySettingsUpdateSchema = z.object({
   integrations: z.object({
     tiendanube_access_token: z.string().nullable().optional(),
     tiendanube_store_id: z.string().nullable().optional(),
+    tiendanube_location_id: z.string().max(100).nullable().optional(),
     tiendanube_client_id: z.string().nullable().optional(),
     tiendanube_client_secret: z.string().nullable().optional(),
   }).optional(),
@@ -439,7 +471,10 @@ export const clientReturnCreateSchema = z.object({
     z.object({
       product_id: uuidSchema,
       quantity: z.coerce.number().int().min(1),
-      condition_status: z.enum(['sellable', 'damaged', 'used', 'open_box', 'other']).optional(),
+      condition_status: z.enum([
+        'sellable', 'damaged', 'used', 'open_box', 'other',
+        'loss', 'supplier_rma', 'rejected'
+      ]).optional(),
       unit_price: z.coerce.number().min(0).optional(),
     })
   ).min(1).optional(),
@@ -456,4 +491,25 @@ export const creditNoteCreateSchema = z.object({
   reference_type: z.enum(['return', 'warranty', 'discount', 'other', 'manual']).nullable().optional(),
   reference_id: optionalUuidSchema,
   notes: z.string().nullable().optional(),
+});
+
+// 15. Cycle counts / stock audits
+export const stockAuditScopeSchema = z.enum(['A', 'B', 'C', 'ALL']);
+
+export const stockAuditCreateSchema = z.object({
+  location_code: z.string().trim().min(1).max(100),
+  abc_class: stockAuditScopeSchema.default('ALL'),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
+
+export const stockAuditCountSchema = z.object({
+  code: z.string().trim().min(1).max(255),
+  quantity: z.coerce.number().int().min(0).max(999999999),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+
+export const stockAuditFiltersSchema = z.object({
+  status: z.enum(['in_progress', 'completed', 'adjusted', 'cancelled']).optional(),
+  abc_class: stockAuditScopeSchema.optional(),
+  location_code: z.string().trim().max(100).optional(),
 });

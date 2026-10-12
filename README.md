@@ -6,7 +6,7 @@ Monorepo con frontend React/Vite y backend Node/Express para gestión comercial,
 
 - Node.js 20+
 - MySQL 8+
-- Variables de entorno en `.env` (usar `.env.example` como base)
+- Variables de entorno en `.env.development`, `.env.staging` o `.env.production` (usar `.env.example` como base)
 
 ## Comandos principales
 
@@ -15,11 +15,16 @@ Monorepo con frontend React/Vite y backend Node/Express para gestión comercial,
 - `npm run server` inicia backend (`@wsm/server`)
 - `npm run dev:all` inicia frontend + backend
 - `npm run build` build de frontend
+- `npm run validate` ejecuta contratos compartidos, tests, lint, tipado y build
+- `npm run preflight:integrity` valida huérfanos antes de aplicar claves foráneas (solo lectura)
+- `npm run preflight:staging` ejecuta el gate local completo contra un backend de staging ya iniciado
 
 ## Continuidad de trabajo (importante)
 
 Para retomar tareas sin reanalizar todo el proyecto:
 
+- Guía de desarrollo y contexto canónico: [docs/development/README.md](docs/development/README.md)
+- Análisis y adaptación de Base Codex: [informe del 2026-09-06](docs/execution/ANALISIS_APP_Y_BASE_CODEX_2026-09-06.md)
 - Estado vivo: `docs/execution/STATE.md`
 - Plan maestro: `docs/execution/MASTER_PLAN.md`
 - Historial de ejecucion: `docs/execution/CHANGELOG_EXECUTION.md`
@@ -31,9 +36,10 @@ Separadas por paquete para evitar mezclar frontend y backend:
 
 - `packages/client/.env` o `packages/client/.env.development`
   - `VITE_API_URL`
-- `.env` en la raiz (backend `@wsm/server`)
+- `.env.<NODE_ENV>` en la raíz (backend `@wsm/server`)
   - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
   - `PORT`, `JWT_SECRET`, `NODE_ENV`, `CORS_ORIGINS`, `TRUST_PROXY`
+  - `ENV_FILE` permite seleccionar explícitamente otro archivo relativo a la raíz
 
 Referencia:
 
@@ -67,7 +73,7 @@ Crea cliente/proveedor temporales y valida soft-delete.
   - `$env:SMOKE_PRODUCT_ID='<uuid_product>'`
   - `npm run smoke:integrity`
 
-Valida creación de OC/recepción y bloqueo de doble aprobación.
+Valida creación de OC/recepción, bloqueo sin control de calidad, alta del control, aprobación y bloqueo del segundo intento.
 
 ### Flujo de caja (opcional)
 

@@ -74,6 +74,18 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                     <DialogDescription>Emite la factura y deja el saldo pendiente para cobrar luego.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
+                    <div className="flex flex-col gap-1 rounded-md border bg-muted/20 p-2.5 text-xs sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <span className="text-muted-foreground">Cliente: </span>
+                            <strong className="text-foreground">{order?.customer_name || order?.client_name || "Consumidor final"}</strong>
+                        </div>
+                        {order?.id ? (
+                            <div className="text-muted-foreground">
+                                Pedido: <span className="font-mono text-foreground font-semibold">#{order.id.slice(0, 8)}</span>
+                            </div>
+                        ) : null}
+                    </div>
+
                     <div className="grid gap-3 sm:grid-cols-2">
                         <div className="space-y-2">
                             <Label>Tipo de factura</Label>
@@ -91,15 +103,75 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                             </Select>
                         </div>
                     </div>
-                    <div className="space-y-2 rounded-md border bg-muted/30 p-3 text-sm">
+
+                    {/* Detalle de la venta */}
+                    <div className="space-y-2 rounded-md border p-3">
                         <div className="flex items-center justify-between">
-                            <span className="text-muted-foreground">Total factura</span>
-                            <strong className="text-foreground">
+                            <Label className="text-sm font-semibold">Detalle de la venta</Label>
+                            <span className="text-xs text-muted-foreground">
+                                {order?.items?.length || 0} {order?.items?.length === 1 ? "ítem" : "ítems"}
+                            </span>
+                        </div>
+                        <div className="max-h-56 overflow-y-auto rounded-md border">
+                            <table className="w-full text-left text-xs">
+                                <thead className="bg-muted/50 text-muted-foreground border-b sticky top-0">
+                                    <tr>
+                                        <th className="p-2 font-medium">Producto</th>
+                                        <th className="p-2 font-medium text-center">Cant.</th>
+                                        <th className="p-2 font-medium text-right">Precio Unit.</th>
+                                        <th className="p-2 font-medium text-right">Subtotal</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                    {order?.items && order.items.length > 0 ? (
+                                        order.items.map((item) => {
+                                            const billedQty = Number(item.picked_quantity || 0) > 0 ? Number(item.picked_quantity) : Number(item.quantity || 1)
+                                            const unitPrice = Number(item.unit_price || 0)
+                                            const subtotal = billedQty * unitPrice
+                                            return (
+                                                <tr key={item.id || item.product_id} className="hover:bg-muted/20">
+                                                    <td className="p-2">
+                                                        <span className="font-medium block text-foreground">{item.product_name || item.product_id}</span>
+                                                        {item.sku ? <span className="text-muted-foreground text-[11px]">{item.sku}</span> : null}
+                                                    </td>
+                                                    <td className="p-2 text-center font-medium">
+                                                        {billedQty}
+                                                        {Number(item.picked_quantity || 0) > 0 && Number(item.picked_quantity) !== Number(item.quantity) ? (
+                                                            <span className="block text-[10px] text-amber-600 dark:text-amber-400">
+                                                                (de {item.quantity} ped.)
+                                                            </span>
+                                                        ) : null}
+                                                    </td>
+                                                    <td className="p-2 text-right text-muted-foreground">
+                                                        ${unitPrice.toLocaleString("es-AR")}
+                                                    </td>
+                                                    <td className="p-2 text-right font-semibold text-foreground">
+                                                        ${subtotal.toLocaleString("es-AR")}
+                                                    </td>
+                                                </tr>
+                                            )
+                                        })
+                                    ) : (
+                                        <tr>
+                                            <td colSpan={4} className="p-3 text-center text-muted-foreground">
+                                                Sin productos detallados
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div className="space-y-2 rounded-md border bg-muted/30 p-3 text-sm">
+                        <div className="flex items-center justify-between text-base">
+                            <span className="text-muted-foreground font-medium">Total factura</span>
+                            <strong className="text-foreground text-lg">
                                 ${invoiceTotalAmount.toLocaleString("es-AR")}
                             </strong>
                         </div>
                         <p className="border-t pt-2 text-xs text-muted-foreground">
-                            No se registra cobro en este paso. El pago se carga luego en cuenta corriente (parcial o mixto).
+                            No se registra cobro en este paso. La factura se emite y el cobro se registra en <strong>Cobranzas</strong> (Caja/Efectivo, Tarjeta, Transferencia o Cta Cte).
                         </p>
                     </div>
                 </div>

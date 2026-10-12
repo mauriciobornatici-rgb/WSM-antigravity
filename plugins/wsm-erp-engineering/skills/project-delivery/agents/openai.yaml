@@ -1,0 +1,4 @@
+interface:
+  display_name: "Entrega WSM ERP"
+  short_description: "Implementa, valida y documenta cambios del ERP"
+  default_prompt: "Usa $project-delivery para implementar este cambio y dejar evidencia completa en la bitácora."

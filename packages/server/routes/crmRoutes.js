@@ -2,11 +2,12 @@ import express from 'express';
 import * as clientController from '../controllers/clientController.js';
 import * as supplierController from '../controllers/supplierController.js';
 import { validate, schemas } from '../middleware/validationMiddleware.js';
-import { authorizeRoles } from '../middleware/authMiddleware.js';
+import { authorizePermission } from '../middleware/authMiddleware.js';
+import { PERMISSIONS } from '@wsm/common';
 
 const router = express.Router();
-const clientRoles = authorizeRoles('admin', 'manager', 'cashier');
-const supplierRoles = authorizeRoles('admin', 'manager');
+const clientRoles = authorizePermission(PERMISSIONS.CLIENTS_MANAGE);
+const supplierRoles = authorizePermission(PERMISSIONS.SUPPLIERS_MANAGE);
 
 // Clients
 router.get('/clients', clientRoles, clientController.getClients);

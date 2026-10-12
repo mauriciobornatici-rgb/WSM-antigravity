@@ -5,6 +5,7 @@ import type { QueryParams } from "@/types/api"
 import type { Transaction } from "@/types"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { 
     Download, 
@@ -30,7 +31,6 @@ import { JournalEntriesTab } from "@/components/accounting/JournalEntriesTab"
 import { TrialBalanceTab } from "@/components/accounting/TrialBalanceTab"
 import { IncomeStatementTab } from "@/components/accounting/IncomeStatementTab"
 import { BalanceSheetTab } from "@/components/accounting/BalanceSheetTab"
-import { JournalEntryFormDialog } from "@/components/accounting/JournalEntryFormDialog"
 import { AccountFormDialog } from "@/components/accounting/AccountFormDialog"
 import { JournalEntryForm } from "@/components/accounting/JournalEntryForm"
 
@@ -71,9 +71,6 @@ export default function AccountingPage() {
     const [accountForm, setAccountForm] = useState<{code: string, name: string, type: string, active: boolean, isEdit: boolean}>({
         code: "", name: "", type: "asset", active: true, isEdit: false
     })
-
-    const [isEditEntryModalOpen, setIsEditEntryModalOpen] = useState(false)
-    const [editEntryId, setEditEntryId] = useState<string | null>(null)
 
     const loadData = useCallback(async () => {
         setIsLoading(true)
@@ -399,71 +396,6 @@ export default function AccountingPage() {
         }
     }
 
-    async function handleDeleteJournalEntry(id: string) {
-        if (!confirm("¿Estás seguro de ELIMINAR físicamente este asiento? Esta acción es irreversible.")) return
-        try {
-            await api.deleteJournalEntry(id)
-            toast.success("Asiento eliminado correctamente.")
-            void loadData()
-        } catch (error) {
-            showErrorToast("Error al eliminar asiento", error)
-        }
-    }
-
-    async function handleUpdateJournalEntry() {
-        if (!manualDesc.trim() || !isManualBalanced) {
-            toast.error("El asiento debe tener descripción y estar balanceado.")
-            return
-        }
-        if (!editEntryId) return
-
-        try {
-            setIsSubmittingManual(true)
-            const payload = {
-                date: manualDate,
-                description: manualDesc,
-                lines: manualLines.map(line => ({
-                    account_code: line.account_code,
-                    debit: Number(line.debit) || 0,
-                    credit: Number(line.credit) || 0,
-                    notes: line.notes || null
-                }))
-            }
-            await api.updateJournalEntry(editEntryId, payload)
-            toast.success("Asiento actualizado con éxito!")
-            setIsEditEntryModalOpen(false)
-            setEditEntryId(null)
-            void loadData()
-        } catch (error) {
-            showErrorToast("Error al actualizar asiento", error)
-        } finally {
-            setIsSubmittingManual(false)
-        }
-    }
-
-    function openEditEntryModal(entry: JournalEntry) {
-        setEditEntryId(entry.id)
-        setManualDate(entry.date.split("T")[0] || "")
-        setManualDesc(entry.description)
-        setManualLines(entry.lines.map(l => ({
-            account_code: l.account_code,
-            debit: Number(l.debit),
-            credit: Number(l.credit),
-            notes: l.notes || ""
-        })))
-        setIsEditEntryModalOpen(true)
-    }
-
-    function resetManualForm() {
-        setManualDate(new Date().toISOString().split("T")[0] || "")
-        setManualDesc("")
-        setManualLines([
-            { account_code: "", debit: 0, credit: 0, notes: "" },
-            { account_code: "", debit: 0, credit: 0, notes: "" }
-        ])
-        setEditEntryId(null)
-    }
-
     if (isLoading && transactions.length === 0) {
         return <div className="p-8 text-center text-lg font-medium text-slate-500">Cargando motor contable y saldos en caliente...</div>
     }
@@ -493,21 +425,23 @@ export default function AccountingPage() {
                     <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Auditar Período Fiscal:</span>
                     <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                         <div className="flex flex-col gap-1 w-full sm:w-36">
-                            <label className="text-[10px] uppercase font-bold text-slate-500">Desde</label>
-                            <input
-                                type="date"
+                            <label htmlFor="accounting-audit-from" className="text-[10px] uppercase font-bold text-slate-500">Desde</label>
+                            <ArgentinaDateInput
+                                id="accounting-audit-from"
                                 value={startDate}
-                                onChange={(e) => setStartDate(e.target.value)}
-                                className="h-9 px-3 rounded-md border border-slate-300 dark:border-slate-700 bg-transparent text-sm w-full outline-none focus:ring-1 focus:ring-blue-500"
+                                onChange={setStartDate}
+                                ariaLabel="Auditar desde"
+                                className="[&_input]:h-9"
                             />
                         </div>
                         <div className="flex flex-col gap-1 w-full sm:w-36">
-                            <label className="text-[10px] uppercase font-bold text-slate-500">Hasta</label>
-                            <input
-                                type="date"
+                            <label htmlFor="accounting-audit-to" className="text-[10px] uppercase font-bold text-slate-500">Hasta</label>
+                            <ArgentinaDateInput
+                                id="accounting-audit-to"
                                 value={endDate}
-                                onChange={(e) => setEndDate(e.target.value)}
-                                className="h-9 px-3 rounded-md border border-slate-300 dark:border-slate-700 bg-transparent text-sm w-full outline-none focus:ring-1 focus:ring-blue-500"
+                                onChange={setEndDate}
+                                ariaLabel="Auditar hasta"
+                                className="[&_input]:h-9"
                             />
                         </div>
                         <div className="flex items-end h-full pt-4 w-full sm:w-auto">
@@ -626,31 +560,7 @@ export default function AccountingPage() {
                 <TabsContent value="journal" className="space-y-4">
                     <JournalEntriesTab
                         journalEntries={journalEntries}
-                        onEditEntry={openEditEntryModal}
                         onReverseEntry={handleReverseJournalEntry}
-                        onDeleteEntry={handleDeleteJournalEntry}
-                    />
-
-                    <JournalEntryFormDialog
-                        isOpen={isEditEntryModalOpen}
-                        onOpenChange={(open) => {
-                            setIsEditEntryModalOpen(open)
-                            if (!open) resetManualForm()
-                        }}
-                        date={manualDate}
-                        onDateChange={setManualDate}
-                        description={manualDesc}
-                        onDescriptionChange={setManualDesc}
-                        lines={manualLines}
-                        chartAccounts={chartAccounts}
-                        onUpdateLine={handleUpdateManualLine}
-                        onAddLine={handleAddManualLine}
-                        onRemoveLine={handleRemoveManualLine}
-                        totalDebit={totalManualDebit}
-                        totalCredit={totalManualCredit}
-                        isBalanced={isManualBalanced}
-                        isSubmitting={isSubmittingManual}
-                        onSubmit={handleUpdateJournalEntry}
                     />
                 </TabsContent>
 

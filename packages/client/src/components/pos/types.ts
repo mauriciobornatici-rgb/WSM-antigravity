@@ -1,8 +1,8 @@
-import type { Client, Product, CompanySettings } from "@/types";
+import type { Client, Product, CompanySettings, Order } from "@/types";
 import type { CashRegister, CashShiftSummary, Invoice } from "@/types/api";
 
 export type POSProduct = Product & { stock: number };
-export type CartItem = POSProduct & { quantity: number };
+export type CartItem = POSProduct & { quantity: number; isPrepared?: boolean };
 export type PaymentMethod = "cash" | "debit_card" | "credit_card" | "qr" | "transfer" | "credit_account";
 export type InvoiceType = "A" | "B";
 export type PaymentSplit = { id: string; method: PaymentMethod; amount: number };
@@ -42,6 +42,7 @@ export type CartPanelProps = {
     cart: CartItem[];
     onRemoveFromCart: (productId: string) => void;
     onUpdateQuantity: (productId: string, delta: number) => void;
+    onClearCart?: () => void;
     subtotal: number;
     taxLabel: string;
     taxAmount: number;
@@ -49,6 +50,8 @@ export type CartPanelProps = {
     onOpenPaymentDialog: () => void;
     currentShift: CashShiftSummary | null;
     currentRegister: CashRegister | null;
+    activePickupOrder?: Order | null;
+    onCancelPickup?: () => void;
 };
 
 export type CheckoutSuccessDialogProps = {

@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
 import { showErrorToast } from "@/lib/errorHandling"
+import { formatMoney } from "@/lib/formatters"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -205,8 +206,8 @@ export function SupplierReturnsTab() {
                                                         {returnStatusLabel(row.status)}
                                                     </Badge>
                                                 </TableCell>
-                                                <TableCell className="text-right font-bold">
-                                                    ${total.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
+                                                <TableCell className="text-right font-mono font-bold">
+                                                    {formatMoney(total)}
                                                 </TableCell>
                                                 <TableCell className="text-right">
                                                     <div className="flex justify-end gap-2">
@@ -245,7 +246,7 @@ export function SupplierReturnsTab() {
 
             {/* Modal de Detalle */}
             <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl bg-card text-card-foreground border-border">
                     <DialogHeader>
                         <DialogTitle>Detalle de Devolución a Proveedor</DialogTitle>
                         <DialogDescription>Comprobante: {selectedReturn?.return_number}</DialogDescription>
@@ -272,11 +273,8 @@ export function SupplierReturnsTab() {
                                 </div>
                                 <div>
                                     <span className="font-semibold text-muted-foreground">Monto Total:</span>{" "}
-                                    <span className="font-bold">
-                                        $
-                                        {getReturnTotal(selectedReturn).toLocaleString("es-AR", {
-                                            minimumFractionDigits: 2,
-                                        })}
+                                    <span className="font-mono font-bold">
+                                        {formatMoney(getReturnTotal(selectedReturn))}
                                     </span>
                                 </div>
                             </div>
@@ -310,21 +308,14 @@ export function SupplierReturnsTab() {
                                                     <TableRow key={item.id}>
                                                         <TableCell>{item.product_name}</TableCell>
                                                         <TableCell className="font-mono text-xs">{item.sku}</TableCell>
-                                                        <TableCell className="text-right">
+                                                        <TableCell className="text-right font-mono">
                                                             {Number(item.quantity).toLocaleString("es-AR")}
                                                         </TableCell>
-                                                        <TableCell className="text-right">
-                                                            $
-                                                            {Number(item.unit_cost).toLocaleString("es-AR", {
-                                                                minimumFractionDigits: 2,
-                                                            })}
+                                                        <TableCell className="text-right font-mono">
+                                                            {formatMoney(item.unit_cost)}
                                                         </TableCell>
-                                                        <TableCell className="text-right font-bold">
-                                                            $
-                                                            {(Number(item.quantity) * Number(item.unit_cost)).toLocaleString(
-                                                                "es-AR",
-                                                                { minimumFractionDigits: 2 }
-                                                            )}
+                                                        <TableCell className="text-right font-mono font-bold">
+                                                            {formatMoney(Number(item.quantity) * Number(item.unit_cost))}
                                                         </TableCell>
                                                         <TableCell className="text-xs text-muted-foreground">
                                                             {item.reason || "-"}

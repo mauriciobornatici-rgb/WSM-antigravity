@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ArgentinaDateInput } from '@/components/common/ArgentinaDateInput';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FileText, DollarSign, Calendar } from 'lucide-react';
+import { FileText, DollarSign } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/services/api';
 import type { Supplier } from '@/types';
@@ -310,32 +311,24 @@ export function SupplierInvoiceForm({
                 {/* Issue Date */}
                 <div className="space-y-2">
                     <Label htmlFor="issueDate">Fecha de Emisión *</Label>
-                    <div className="relative">
-                        <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                            id="issueDate"
-                            type="date"
-                            value={issueDate}
-                            onChange={e => setIssueDate(e.target.value)}
-                            className="pl-9"
-                            required
-                        />
-                    </div>
+                    <ArgentinaDateInput
+                        id="issueDate"
+                        value={issueDate}
+                        onChange={setIssueDate}
+                        ariaLabel="Fecha de emisión"
+                        required
+                    />
                 </div>
 
                 {/* Due Date */}
                 <div className="space-y-2">
                     <Label htmlFor="dueDate">Fecha de Vencimiento (Opcional)</Label>
-                    <div className="relative">
-                        <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                            id="dueDate"
-                            type="date"
-                            value={dueDate}
-                            onChange={e => setDueDate(e.target.value)}
-                            className="pl-9"
-                        />
-                    </div>
+                    <ArgentinaDateInput
+                        id="dueDate"
+                        value={dueDate}
+                        onChange={setDueDate}
+                        ariaLabel="Fecha de vencimiento"
+                    />
                 </div>
             </div>
 

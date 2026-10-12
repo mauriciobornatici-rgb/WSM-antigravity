@@ -1,5 +1,7 @@
 # Tiendanube Ready Design
 
+> Documento histórico de preparación técnica. El alcance operativo que aquí figuraba fuera de bloque fue implementado el 2026-08-20 y se documenta en [`docs/TIENDANUBE_OPERATIONS.md`](../../TIENDANUBE_OPERATIONS.md).
+
 ## Objetivo
 
 Dejar la app preparada para conectar una tienda real de Tiendanube sin depender de supuestos inseguros o endpoints obsoletos.
@@ -59,4 +61,3 @@ El ERP guarda referencias externas (`external_source`, `external_id`) en `orders
   - sync manual usa `orders.external_source/external_id`.
 - Suite backend completa.
 - Lint/tests/build frontend si se toca UI.
-

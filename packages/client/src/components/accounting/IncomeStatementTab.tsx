@@ -1,5 +1,6 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
+import { formatMoney } from "@/lib/formatters"
 import type { IncomeStatementData } from "@/types/accounting"
 
 interface IncomeStatementTabProps {
@@ -8,7 +9,7 @@ interface IncomeStatementTabProps {
 
 export function IncomeStatementTab({ incomeStatement }: IncomeStatementTabProps) {
     return (
-        <Card className="border border-slate-100 shadow-sm">
+        <Card className="border-border shadow-sm">
             <CardHeader>
                 <CardTitle>Estado de Resultados Impositivo (Pérdidas y Ganancias)</CardTitle>
                 <CardDescription>Esquema devengado de rentabilidad basado en cuentas de ingresos y egresos del período.</CardDescription>
@@ -17,18 +18,18 @@ export function IncomeStatementTab({ incomeStatement }: IncomeStatementTabProps)
                 {incomeStatement ? (
                     <div className="space-y-6 max-w-3xl mx-auto">
                         {/* Revenues Section */}
-                        <div className="bg-green-500/5 dark:bg-green-500/10 border border-green-500/20 rounded-lg p-5">
-                            <h3 className="text-lg font-bold text-green-700 dark:text-green-400 mb-3 flex items-center justify-between">
+                        <div className="bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-5">
+                            <h3 className="text-lg font-bold text-emerald-700 dark:text-emerald-400 mb-3 flex items-center justify-between">
                                 <span>Ingresos Operativos</span>
-                                <span>${incomeStatement.total_revenues.toFixed(2)}</span>
+                                <span className="font-mono">+{formatMoney(incomeStatement.total_revenues)}</span>
                             </h3>
                             <Table>
                                 <TableBody>
                                     {incomeStatement.revenues.map((item) => (
-                                        <TableRow key={item.code} className="hover:bg-transparent border-green-500/10">
-                                            <TableCell className="text-sm font-semibold">{item.name}</TableCell>
-                                            <TableCell className="text-right font-bold text-green-600">
-                                                ${item.balance.toFixed(2)}
+                                        <TableRow key={item.code} className="hover:bg-transparent border-emerald-500/10">
+                                            <TableCell className="text-sm font-semibold text-foreground">{item.name}</TableCell>
+                                            <TableCell className="text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                                +{formatMoney(item.balance)}
                                             </TableCell>
                                         </TableRow>
                                     ))}
@@ -37,18 +38,18 @@ export function IncomeStatementTab({ incomeStatement }: IncomeStatementTabProps)
                         </div>
 
                         {/* Expenses Section */}
-                        <div className="bg-red-500/5 dark:bg-red-500/10 border border-red-500/20 rounded-lg p-5">
-                            <h3 className="text-lg font-bold text-red-700 dark:text-red-400 mb-3 flex items-center justify-between">
+                        <div className="bg-rose-500/5 dark:bg-rose-500/10 border border-rose-500/20 rounded-lg p-5">
+                            <h3 className="text-lg font-bold text-rose-700 dark:text-rose-400 mb-3 flex items-center justify-between">
                                 <span>Costos & Gastos Operativos</span>
-                                <span>-${incomeStatement.total_expenses.toFixed(2)}</span>
+                                <span className="font-mono">-{formatMoney(incomeStatement.total_expenses)}</span>
                             </h3>
                             <Table>
                                 <TableBody>
                                     {incomeStatement.expenses.map((item) => (
-                                        <TableRow key={item.code} className="hover:bg-transparent border-red-500/10">
-                                            <TableCell className="text-sm font-semibold">{item.name}</TableCell>
-                                            <TableCell className="text-right font-bold text-red-500">
-                                                -${item.balance.toFixed(2)}
+                                        <TableRow key={item.code} className="hover:bg-transparent border-rose-500/10">
+                                            <TableCell className="text-sm font-semibold text-foreground">{item.name}</TableCell>
+                                            <TableCell className="text-right font-mono font-bold text-rose-600 dark:text-rose-400">
+                                                -{formatMoney(item.balance)}
                                             </TableCell>
                                         </TableRow>
                                     ))}
@@ -60,14 +61,14 @@ export function IncomeStatementTab({ incomeStatement }: IncomeStatementTabProps)
                         <div
                             className={`rounded-lg p-5 border text-center ${
                                 incomeStatement.net_result >= 0
-                                    ? "bg-blue-500/10 border-blue-500/30 text-blue-700 dark:text-blue-400"
+                                    ? "bg-primary/10 border-primary/30 text-primary"
                                     : "bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-400"
                             }`}
                         >
-                            <h4 className="text-sm font-bold uppercase tracking-wider text-slate-500">
+                            <h4 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">
                                 Resultado Neto del Ejercicio
                             </h4>
-                            <div className="text-4xl font-extrabold mt-1">${incomeStatement.net_result.toFixed(2)}</div>
+                            <div className="text-4xl font-extrabold font-mono mt-1">{formatMoney(incomeStatement.net_result)}</div>
                             <p className="text-xs text-muted-foreground mt-2">
                                 {incomeStatement.net_result >= 0
                                     ? "Utilidad neta positiva devengada"
@@ -76,7 +77,7 @@ export function IncomeStatementTab({ incomeStatement }: IncomeStatementTabProps)
                         </div>
                     </div>
                 ) : (
-                    <p className="text-center text-slate-400 py-6">Calculando estructura contable...</p>
+                    <p className="text-center text-muted-foreground py-6">Calculando estructura contable...</p>
                 )}
             </CardContent>
         </Card>

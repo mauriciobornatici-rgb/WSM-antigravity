@@ -4,6 +4,7 @@ import { api } from "@/services/api";
 import type { Client, Order, Transaction } from "@/types";
 import type { Invoice } from "@/types/api";
 import { showErrorToast } from "@/lib/errorHandling";
+import { createClientUuid } from "@/lib/clientUuid";
 
 // Extracted Subcomponents
 import { ClientHeaderCard } from "@/components/clients/ClientHeaderCard";
@@ -15,6 +16,7 @@ import type { WarrantySummary } from "@/components/clients/ClientOrdersAndWarran
 import { ClientDocumentsCards } from "@/components/clients/ClientDocumentsCards";
 import type { InvoiceSummary, CreditNoteSummary, ReturnSummary, PaymentSummary } from "@/components/clients/ClientDocumentsCards";
 import { ClientPaymentDialog } from "@/components/clients/ClientPaymentDialog";
+import { PrintPortal } from "@/components/common/PrintPortal";
 
 function readText(value: unknown, fallback = "-"): string {
     return typeof value === "string" && value.trim().length > 0 ? value : fallback;
@@ -47,9 +49,7 @@ function paymentTypeLabel(type: string): string {
     }
 }
 
-const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(value || 0));
-};
+import { formatMoney } from "@/lib/formatters";
 
 
 function movementPrintTitle(movement: ClientMovement): string {
@@ -76,7 +76,7 @@ function parseMovements(
     }));
 
     const creditRows: ClientMovement[] = creditNotes.map((credit) => ({
-        id: String(credit.id || crypto.randomUUID()),
+        id: String(credit.id || createClientUuid()),
         date: String(credit.created_at || new Date().toISOString()),
         type: "credit_note",
         description: `Nota de credito ${String(credit.number || credit.id || "-")}`,
@@ -86,7 +86,7 @@ function parseMovements(
 
     const transactionRows: ClientMovement[] = transactions.flatMap<ClientMovement>((tx) => {
         const txType = String(tx.type || "").toLowerCase();
-        const txId = String(tx.id || crypto.randomUUID());
+        const txId = String(tx.id || createClientUuid());
         const txDescription = readText(tx.description, `Movimiento ${paymentTypeLabel(txType)}`);
         const txAmount = readNumber(tx.amount);
         const txReferenceId = String(tx.reference_id || "");
@@ -118,7 +118,7 @@ function parseMovements(
         }
 
         return [{
-            id: String(tx.id || crypto.randomUUID()),
+            id: String(tx.id || createClientUuid()),
             date: readDate(tx.date),
             type: "payment" as const,
             description: txDescription,
@@ -175,7 +175,7 @@ export default function ClientDetailPage() {
             setMovements(parseMovements(invoicesResponse, creditNotesResponse, transactionsResponse));
             setInvoices(
                 (invoicesResponse as Invoice[]).map((invoice) => ({
-                    id: String(invoice.id || crypto.randomUUID()),
+                    id: String(invoice.id || createClientUuid()),
                     issue_date: String(invoice.issue_date || invoice.created_at || new Date().toISOString()),
                     invoice_type: String(invoice.invoice_type || "B"),
                     point_of_sale: Number(invoice.point_of_sale || 1),
@@ -187,7 +187,7 @@ export default function ClientDetailPage() {
             );
             setCreditNotes(
                 creditNotesResponse.map((note) => ({
-                    id: String(note.id || crypto.randomUUID()),
+                    id: String(note.id || createClientUuid()),
                     number: String(note.number || note.id || "-"),
                     created_at: readDate(note.created_at),
                     amount: Math.abs(readNumber(note.amount)),
@@ -196,7 +196,7 @@ export default function ClientDetailPage() {
             );
             setWarranties(
                 warrantiesResponse.map((warranty) => ({
-                    id: String(warranty.id || crypto.randomUUID()),
+                    id: String(warranty.id || createClientUuid()),
                     created_at: String(warranty.created_at || new Date().toISOString()),
                     product_name: String(warranty.product_name || "-"),
                     issue_description: String(warranty.issue_description || "-"),
@@ -205,7 +205,7 @@ export default function ClientDetailPage() {
             );
             setReturns(
                 returnsResponse.map((row) => ({
-                    id: String(row.id || crypto.randomUUID()),
+                    id: String(row.id || createClientUuid()),
                     created_at: readDate(row.created_at),
                     reason: readText(row.reason),
                     status: readText(row.status, "pending"),
@@ -214,7 +214,7 @@ export default function ClientDetailPage() {
             );
             setPayments(
                 transactionsResponse.map((tx) => ({
-                    id: String(tx.id || crypto.randomUUID()),
+                    id: String(tx.id || createClientUuid()),
                     date: readDate(tx.date),
                     type: String(tx.type || ""),
                     description: readText(tx.description),
@@ -332,44 +332,46 @@ export default function ClientDetailPage() {
             />
         </div>
 
-        <div id="printable-client-document" className="hidden print:block">
-            {printMovement ? (
-                <div className="mx-auto max-w-[800px] p-8 text-black">
-                    <div className="mb-6 border-b border-black pb-4">
-                        <h1 className="text-2xl font-bold">{movementPrintTitle(printMovement)}</h1>
-                        <p className="text-sm">Emitido: {new Date(printMovement.date).toLocaleDateString("es-AR")}</p>
-                    </div>
-
-                    <div className="mb-6 grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                            <p className="font-semibold">Cliente</p>
-                            <p>{client.name}</p>
-                            <p>CUIT/DNI: {client.tax_id || "-"}</p>
-                            <p>Telefono: {client.phone || "-"}</p>
+        <PrintPortal>
+            <div id="printable-client-document" className="hidden print:block w-full max-w-[210mm] mx-auto">
+                {printMovement ? (
+                    <div className="mx-auto max-w-[800px] p-8 text-black bg-white">
+                        <div className="mb-6 border-b border-black pb-4">
+                            <h1 className="text-2xl font-bold">{movementPrintTitle(printMovement)}</h1>
+                            <p className="text-sm">Emitido: {new Date(printMovement.date).toLocaleDateString("es-AR")}</p>
                         </div>
-                        <div>
-                            <p className="font-semibold">Referencia</p>
-                            <p>ID mov.: {printMovement.id}</p>
-                            <p>Documento: {printMovement.document_id || "-"}</p>
-                            <p>Factura ref.: {printMovement.related_invoice_id || "-"}</p>
+
+                        <div className="mb-6 grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                                <p className="font-semibold">Cliente</p>
+                                <p>{client.name}</p>
+                                <p>CUIT/DNI: {client.tax_id || "-"}</p>
+                                <p>Telefono: {client.phone || "-"}</p>
+                            </div>
+                            <div>
+                                <p className="font-semibold">Referencia</p>
+                                <p>ID mov.: {printMovement.id}</p>
+                                <p>Documento: {printMovement.document_id || "-"}</p>
+                                <p>Factura ref.: {printMovement.related_invoice_id || "-"}</p>
+                            </div>
+                        </div>
+
+                        <div className="rounded border border-black p-4">
+                            <p className="mb-2 text-sm font-semibold">Detalle</p>
+                            <p className="mb-4 text-sm">{printMovement.description}</p>
+                            <div className="flex items-center justify-between border-t border-black pt-3">
+                                <span className="text-sm font-semibold">Importe</span>
+                                <span className="text-lg font-bold">{formatMoney(printMovement.amount)}</span>
+                            </div>
+                        </div>
+
+                        <div className="mt-8 text-xs">
+                            <p>Este comprobante fue generado por WSM SportsERP.</p>
                         </div>
                     </div>
-
-                    <div className="rounded border border-black p-4">
-                        <p className="mb-2 text-sm font-semibold">Detalle</p>
-                        <p className="mb-4 text-sm">{printMovement.description}</p>
-                        <div className="flex items-center justify-between border-t border-black pt-3">
-                            <span className="text-sm font-semibold">Importe</span>
-                            <span className="text-lg font-bold">{formatMoney(printMovement.amount)}</span>
-                        </div>
-                    </div>
-
-                    <div className="mt-8 text-xs">
-                        <p>Este comprobante fue generado por WSM SportsERP.</p>
-                    </div>
-                </div>
-            ) : null}
-        </div>
+                ) : null}
+            </div>
+        </PrintPortal>
         </>
     );
 }

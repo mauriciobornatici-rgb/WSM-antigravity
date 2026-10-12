@@ -46,7 +46,7 @@ export const approveReturn = catchAsync(async (req, res) => {
     const { id } = req.params;
     let result;
     try {
-        result = await returnsService.approveReturn(id, req.user?.id || null);
+        result = await returnsService.approveReturn(id, req.user?.id || null, getRequestIp(req));
     } catch (err) {
         if (err.errorCode === 'RETURN_NOT_FOUND') {
             return res.status(404).json({ error: 'not_found', message: 'Devolucion no encontrada' });
@@ -65,15 +65,6 @@ export const approveReturn = catchAsync(async (req, res) => {
         }
         throw err;
     }
-
-    await auditService.log({
-        user_id: req.user?.id || null,
-        action: 'APPROVE_CLIENT_RETURN',
-        entity_type: 'client_return',
-        entity_id: id,
-        new_values: result,
-        ip_address: getRequestIp(req)
-    });
 
     res.json({
         success: true,

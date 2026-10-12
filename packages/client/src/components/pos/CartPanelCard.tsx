@@ -1,7 +1,9 @@
-import { CreditCard, Plus, Trash2, UserPlus } from "lucide-react";
+import { CreditCard, Plus, Trash2, UserPlus, RotateCcw, Package } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { CartPanelProps } from "@/components/pos/types";
+import { formatMoney } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,6 +17,7 @@ export function CartPanelCard({
     cart,
     onRemoveFromCart,
     onUpdateQuantity,
+    onClearCart,
     subtotal,
     taxLabel,
     taxAmount,
@@ -22,16 +25,64 @@ export function CartPanelCard({
     onOpenPaymentDialog,
     currentShift,
     currentRegister,
+    activePickupOrder,
+    onCancelPickup,
 }: CartPanelProps) {
     return (
-        <Card className="border-blue-900/30 bg-gradient-to-b from-blue-950/30 to-background xl:sticky xl:top-4">
-            <CardHeader className="space-y-3 border-b border-blue-900/30">
-                <CardTitle>Carrito</CardTitle>
+        <Card className="border-blue-900/30 bg-gradient-to-b from-blue-950/30 to-background xl:sticky xl:top-4 shadow-sm">
+            <CardHeader className="space-y-3 border-b border-blue-900/30 pb-4">
+                <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg font-bold flex items-center gap-2">
+                        Carrito
+                        {cart.length > 0 && (
+                            <span className="text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full font-mono">
+                                {cart.reduce((s, i) => s + i.quantity, 0)} ítems
+                            </span>
+                        )}
+                    </CardTitle>
+                    {cart.length > 0 && onClearCart && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={onClearCart}
+                            className="h-7 text-xs text-muted-foreground hover:text-destructive gap-1 px-2"
+                            title="Vaciar carrito (F9)"
+                        >
+                            <RotateCcw className="h-3 w-3" />
+                            Vaciar <kbd className="hidden sm:inline-block text-[9px] bg-muted px-1 rounded font-mono">F9</kbd>
+                        </Button>
+                    )}
+                </div>
+
+                {activePickupOrder && (
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-700 dark:text-emerald-300 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                            <Package className="h-4 w-4 shrink-0 text-emerald-500" />
+                            <div className="min-w-0">
+                                <div className="font-bold truncate">Retiro de Pedido #{activePickupOrder.id.slice(0, 8)}</div>
+                                <div className="text-[11px] text-muted-foreground truncate">
+                                    {activePickupOrder.customer_name || activePickupOrder.client_name || "Cliente Mostrador"}
+                                </div>
+                            </div>
+                        </div>
+                        {onCancelPickup && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 text-[11px] text-destructive hover:text-destructive px-2 shrink-0"
+                                onClick={onCancelPickup}
+                            >
+                                Cancelar
+                            </Button>
+                        )}
+                    </div>
+                )}
+
                 <div className="space-y-2">
-                    <Label>Cliente</Label>
+                    <Label className="text-xs font-semibold">Cliente</Label>
                     <div className="flex gap-2">
                         <Select value={selectedClientId} onValueChange={onClientChange}>
-                            <SelectTrigger>
+                            <SelectTrigger className="h-9 text-sm">
                                 <SelectValue placeholder="Consumidor final" />
                             </SelectTrigger>
                             <SelectContent>
@@ -42,14 +93,19 @@ export function CartPanelCard({
                                 ))}
                             </SelectContent>
                         </Select>
-                        <Button variant="outline" size="icon" onClick={onOpenClientDialog} title="Crear cliente">
+                        <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={onOpenClientDialog} title="Crear cliente rápido">
                             <UserPlus className="h-4 w-4" />
                         </Button>
                     </div>
                     {selectedClient ? (
-                        <div className="rounded-md border bg-muted/20 p-2 text-xs">
-                            <div>{selectedClient.name}</div>
-                            <div className="text-muted-foreground">{selectedClient.tax_id}</div>
+                        <div className="rounded-md border bg-muted/20 p-2 text-xs flex justify-between items-center">
+                            <div>
+                                <div className="font-semibold">{selectedClient.name}</div>
+                                <div className="text-muted-foreground">{selectedClient.tax_id}</div>
+                            </div>
+                            <div className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20 px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1">
+                                <span>⭐</span> {selectedClient.loyalty_points || 0} pts
+                            </div>
                         </div>
                     ) : null}
                 </div>
@@ -57,44 +113,67 @@ export function CartPanelCard({
 
             <CardContent className="space-y-4 p-4 sm:p-5">
                 {cart.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Aun no agregaste productos.</p>
+                    <div className="py-8 text-center text-sm text-muted-foreground space-y-1">
+                        <p>Aún no agregaste productos.</p>
+                        <p className="text-xs text-muted-foreground/70">
+                            Presiona <kbd className="bg-muted px-1.5 py-0.5 rounded font-mono text-[10px]">F2</kbd> para buscar o escanea un código.
+                        </p>
+                    </div>
                 ) : (
                     <div className="max-h-[44vh] space-y-2 overflow-y-auto pr-1">
                         {cart.map((item) => (
-                            <div key={item.id} className="rounded-md border p-2">
+                            <div key={item.id} className="rounded-md border p-2 hover:border-primary/40 transition-colors bg-card/40">
                                 <div className="flex items-center justify-between gap-2">
                                     <div className="flex min-w-0 items-center gap-2">
-                                        {item.image_url ? (
+                                        {item.image_url || item.family_image_url ? (
                                             <img
-                                                src={item.image_url}
+                                                src={item.image_url || item.family_image_url || ""}
                                                 alt={item.name}
-                                                className="h-10 w-10 shrink-0 rounded-md object-cover"
+                                                className="h-10 w-10 shrink-0 rounded-md object-contain"
                                             />
                                         ) : (
-                                            <div className="h-10 w-10 shrink-0 rounded-md border bg-muted/30" />
+                                            <div className="h-10 w-10 shrink-0 rounded-md border bg-muted/30 flex items-center justify-center text-[10px] text-muted-foreground">
+                                                WSM
+                                            </div>
                                         )}
                                         <div className="min-w-0">
-                                            <div className="truncate font-medium">{item.name}</div>
+                                            <div className="truncate font-medium text-sm">{item.name}</div>
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                <div className="truncate text-[11px] font-medium text-primary">
+                                                    {[item.size ? `Talle ${item.size}` : "", item.color || ""].filter(Boolean).join(" · ") || "Producto sin variante"}
+                                                </div>
+                                                {item.isPrepared ? (
+                                                    <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 py-0 px-1 font-semibold">
+                                                        Preparado
+                                                    </Badge>
+                                                ) : activePickupOrder ? (
+                                                    <Badge variant="outline" className="text-[9px] bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30 py-0 px-1 font-semibold">
+                                                        Mostrador (+)
+                                                    </Badge>
+                                                ) : null}
+                                            </div>
+                                            <div className="truncate font-mono text-[10px] text-muted-foreground">SKU: {item.sku}</div>
                                             <div className="text-xs text-muted-foreground">
                                                 ${Number(item.sale_price).toLocaleString("es-AR")}
                                             </div>
                                         </div>
                                     </div>
-                                    <Button size="icon" variant="ghost" onClick={() => onRemoveFromCart(item.id)}>
-                                        <Trash2 className="h-4 w-4 text-red-500" />
+                                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => onRemoveFromCart(item.id)}>
+                                        <span className="sr-only">Quitar {item.name} del carrito</span>
+                                        <Trash2 className="h-4 w-4 text-destructive/80 hover:text-destructive" />
                                     </Button>
                                 </div>
-                                <div className="mt-2 flex items-center justify-between gap-2">
-                                    <div className="flex items-center gap-2">
-                                        <Button size="sm" variant="outline" onClick={() => onUpdateQuantity(item.id, -1)}>
+                                <div className="mt-2 flex items-center justify-between gap-2 pt-1 border-t border-border/40">
+                                    <div className="flex items-center gap-1.5">
+                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0" onClick={() => onUpdateQuantity(item.id, -1)}>
                                             -
                                         </Button>
-                                        <span className="w-8 text-center">{item.quantity}</span>
-                                        <Button size="sm" variant="outline" onClick={() => onUpdateQuantity(item.id, 1)}>
+                                        <span className="w-8 text-center font-mono text-sm font-semibold">{item.quantity}</span>
+                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0" onClick={() => onUpdateQuantity(item.id, 1)}>
                                             <Plus className="h-3 w-3" />
                                         </Button>
                                     </div>
-                                    <div className="text-sm font-semibold">
+                                    <div className="text-sm font-bold font-mono">
                                         ${(Number(item.sale_price) * item.quantity).toLocaleString("es-AR")}
                                     </div>
                                 </div>
@@ -103,37 +182,44 @@ export function CartPanelCard({
                     </div>
                 )}
 
-                <div className="space-y-1 rounded-md border bg-muted/20 p-3 text-sm">
-                    <div className="flex justify-between">
+                <div className="space-y-1.5 rounded-md border bg-muted/20 p-3 text-sm">
+                    <div className="flex justify-between text-muted-foreground">
                         <span>Subtotal</span>
-                        <span>${subtotal.toLocaleString("es-AR")}</span>
+                        <span className="font-mono">{formatMoney(subtotal)}</span>
                     </div>
-                    <div className="flex justify-between">
+                    <div className="flex justify-between text-muted-foreground text-xs">
                         <span>{taxLabel}</span>
-                        <span>${taxAmount.toLocaleString("es-AR")}</span>
+                        <span className="font-mono">{formatMoney(taxAmount)}</span>
                     </div>
-                    <div className="flex justify-between font-bold">
-                        <span>Total</span>
-                        <span>${grandTotal.toLocaleString("es-AR")}</span>
+                    <div className="flex justify-between font-bold text-base pt-1 border-t border-border/60">
+                        <span>Total a Pagar</span>
+                        <span className="font-mono text-primary text-lg">{formatMoney(grandTotal)}</span>
                     </div>
                 </div>
 
-                <Button className="w-full" onClick={onOpenPaymentDialog} disabled={cart.length === 0}>
-                    <CreditCard className="mr-2 h-4 w-4" />
-                    Cobrar
+                <Button
+                    className="w-full h-11 text-base font-bold shadow-md gap-2"
+                    onClick={onOpenPaymentDialog}
+                    disabled={cart.length === 0}
+                >
+                    <CreditCard className="h-5 w-5" />
+                    <span>Cobrar</span>
+                    <kbd className="hidden sm:inline-block rounded bg-primary-foreground/20 px-1.5 py-0.5 text-[11px] font-mono tracking-wider font-normal">
+                        F4
+                    </kbd>
                 </Button>
 
                 {!currentShift ? (
-                    <p className="text-xs text-red-600">
-                        Caja cerrada. Abrela en{" "}
-                        <Link to="/cash-management" className="underline">
-                            Gestion de caja
+                    <p className="text-xs text-destructive text-center bg-destructive/10 p-2 rounded border border-destructive/20 font-medium">
+                        Caja cerrada. Ábrela en{" "}
+                        <Link to="/cash-management" className="underline font-bold">
+                            Gestión de caja
                         </Link>
                         .
                     </p>
                 ) : null}
                 {currentRegister ? (
-                    <p className="text-xs text-muted-foreground">Caja activa: {currentRegister.name}</p>
+                    <p className="text-[11px] text-muted-foreground text-center">Caja activa: <span className="font-semibold text-foreground">{currentRegister.name}</span></p>
                 ) : null}
             </CardContent>
         </Card>

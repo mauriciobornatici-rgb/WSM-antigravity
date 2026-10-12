@@ -1,7 +1,9 @@
+import './loadEnv.js';
+
 const ALLOWED_NODE_ENVS = new Set(['development', 'staging', 'production']);
 
-function parseBooleanEnv(name, defaultValue = false) {
-    const raw = process.env[name];
+function parseBooleanEnv(environment, name, defaultValue = false) {
+    const raw = environment[name];
     if (raw == null || raw === '') return defaultValue;
 
     const normalized = String(raw).trim().toLowerCase();
@@ -10,8 +12,8 @@ function parseBooleanEnv(name, defaultValue = false) {
     throw new Error(`Invalid boolean value for ${name}: '${raw}'`);
 }
 
-function parsePortEnv(name, defaultValue) {
-    const raw = process.env[name];
+function parsePortEnv(environment, name, defaultValue) {
+    const raw = environment[name];
     const value = raw == null || raw === '' ? defaultValue : Number(raw);
 
     if (!Number.isInteger(value) || value <= 0 || value > 65535) {
@@ -20,8 +22,8 @@ function parsePortEnv(name, defaultValue) {
     return value;
 }
 
-function parsePositiveIntEnv(name, defaultValue) {
-    const raw = process.env[name];
+function parsePositiveIntEnv(environment, name, defaultValue) {
+    const raw = environment[name];
     if (raw == null || raw === '') return defaultValue;
     const value = Number(raw);
     if (!Number.isInteger(value) || value <= 0) {
@@ -58,12 +60,37 @@ function isLocalhostOrigin(origin) {
     }
 }
 
+function isValidHttpUrl(value, { requireHttps = false } = {}) {
+    try {
+        const url = new URL(value);
+        return requireHttps ? url.protocol === 'https:' : ['http:', 'https:'].includes(url.protocol);
+    } catch {
+        return false;
+    }
+}
+
+// Valores publicados en .env.example / docker-compose.staging.yml. Cualquiera que
+// los copie a un despliegue real permite forjar JWT o descifrar credenciales.
+const KNOWN_EXAMPLE_SECRETS = new Set([
+    'super_secret_jwt_key_at_least_32_characters_long_for_security',
+    'wsm_staging_secret_jwt_key_at_least_32_chars_long_2026',
+    '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    'wsm_secure_password_here',
+    'wsm_staging_password_2026',
+]);
+
+// Loopback o nombre de servicio sin dominio (p. ej. "db" en docker compose).
+export function isLocalDatabaseHost(host) {
+    const normalized = String(host || '127.0.0.1').trim().toLowerCase();
+    if (['localhost', '127.0.0.1', '::1', 'host.docker.internal'].includes(normalized)) return true;
+    if (normalized.startsWith('127.')) return true;
+    return !normalized.includes('.') && !normalized.includes(':');
+}
+
 let cachedConfig = null;
 
-export function getEnvConfig() {
-    if (cachedConfig) return cachedConfig;
-
-    const nodeEnv = String(process.env.NODE_ENV || 'development').trim().toLowerCase();
+export function buildEnvConfig(environment = process.env, warn = console.warn) {
+    const nodeEnv = String(environment.NODE_ENV || 'development').trim().toLowerCase();
     if (!ALLOWED_NODE_ENVS.has(nodeEnv)) {
         throw new Error(`Invalid NODE_ENV '${nodeEnv}'. Allowed: development, staging, production`);
     }
@@ -79,22 +106,28 @@ export function getEnvConfig() {
         isStaging,
         isProduction,
         isNonDevelopment,
-        port: parsePortEnv('PORT', 3001),
-        dbPort: parsePortEnv('DB_PORT', 3306),
-        jwtSecret: process.env.JWT_SECRET || '',
-        jwtExpiresIn: String(process.env.JWT_EXPIRES_IN || '8h').trim(),
-        corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS, isDevelopment ? ['http://localhost:5173'] : []),
-        trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
-        dbSsl: parseBooleanEnv('DB_SSL', false),
-        dbSslRejectUnauthorized: parseBooleanEnv('DB_SSL_REJECT_UNAUTHORIZED', true),
-        allowInsecureNonDev: parseBooleanEnv('ALLOW_INSECURE_NON_DEV', false),
-        apiRateLimitWindowMs: parsePositiveIntEnv('API_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+        port: parsePortEnv(environment, 'PORT', 3001),
+        dbPort: parsePortEnv(environment, 'DB_PORT', 3306),
+        dbHost: String(environment.DB_HOST || '127.0.0.1').trim(),
+        allowRemoteDb: parseBooleanEnv(environment, 'ALLOW_REMOTE_DB', false),
+        jwtSecret: environment.JWT_SECRET || '',
+        jwtExpiresIn: String(environment.JWT_EXPIRES_IN || '8h').trim(),
+        corsOrigins: parseCorsOrigins(environment.CORS_ORIGINS, isDevelopment ? ['http://localhost:5173'] : []),
+        trustProxy: parseTrustProxy(environment.TRUST_PROXY),
+        encryptionKey: environment.ENCRYPTION_KEY || '',
+        dbSsl: parseBooleanEnv(environment, 'DB_SSL', false),
+        dbSslRejectUnauthorized: parseBooleanEnv(environment, 'DB_SSL_REJECT_UNAUTHORIZED', true),
+        allowInsecureNonDev: parseBooleanEnv(environment, 'ALLOW_INSECURE_NON_DEV', false),
+        apiRateLimitWindowMs: parsePositiveIntEnv(environment, 'API_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
         apiRateLimitMax: parsePositiveIntEnv(
+            environment,
             'API_RATE_LIMIT_MAX',
             isDevelopment ? 1200 : isStaging ? 2000 : 500
         ),
-        loginRateLimitWindowMs: parsePositiveIntEnv('LOGIN_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
-        loginRateLimitMax: parsePositiveIntEnv('LOGIN_RATE_LIMIT_MAX', 8)
+        loginRateLimitWindowMs: parsePositiveIntEnv(environment, 'LOGIN_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+        loginRateLimitMax: parsePositiveIntEnv(environment, 'LOGIN_RATE_LIMIT_MAX', 8),
+        appBaseUrl: String(environment.APP_BASE_URL || (isDevelopment ? 'http://localhost:5173' : '')).trim(),
+        tiendanubeWebhookUrl: String(environment.TIENDANUBE_WEBHOOK_URL || '').trim()
     };
 
     const errors = [];
@@ -104,13 +137,29 @@ export function getEnvConfig() {
         errors.push('JWT_SECRET is required');
     }
 
+    if (config.isNonDevelopment && !config.encryptionKey) {
+        errors.push('ENCRYPTION_KEY is required in staging/production (used to encrypt integration credentials at rest)');
+    }
+    if (isDevelopment && !config.encryptionKey) {
+        warnings.push('ENCRYPTION_KEY is not set: integration credentials will fail to encrypt/decrypt. Generate one with node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+    }
+
     if (!config.jwtExpiresIn) {
         errors.push('JWT_EXPIRES_IN is required');
+    }
+    if (config.appBaseUrl && !isValidHttpUrl(config.appBaseUrl, { requireHttps: config.isNonDevelopment })) {
+        errors.push('APP_BASE_URL must be a valid HTTP URL (HTTPS in staging/production)');
+    }
+    if (config.tiendanubeWebhookUrl && !isValidHttpUrl(config.tiendanubeWebhookUrl, { requireHttps: config.isNonDevelopment })) {
+        errors.push('TIENDANUBE_WEBHOOK_URL must be a valid HTTP URL (HTTPS in staging/production)');
     }
 
     if (config.isNonDevelopment) {
         if (config.corsOrigins.length === 0) {
             errors.push('CORS_ORIGINS cannot be empty in staging/production');
+        }
+        if (!config.appBaseUrl) {
+            errors.push('APP_BASE_URL is required in staging/production');
         }
 
         if (!config.allowInsecureNonDev) {
@@ -128,6 +177,14 @@ export function getEnvConfig() {
             }
         }
 
+        if (config.isProduction || !config.allowInsecureNonDev) {
+            const exampleSecrets = ['JWT_SECRET', 'ENCRYPTION_KEY', 'DB_PASSWORD']
+                .filter((name) => KNOWN_EXAMPLE_SECRETS.has(String(environment[name] || '').trim()));
+            if (exampleSecrets.length > 0) {
+                errors.push(`${exampleSecrets.join(', ')} reuse a published example value; generate new secrets`);
+            }
+        }
+
         if (config.corsOrigins.some((origin) => isLocalhostOrigin(origin))) {
             warnings.push('CORS_ORIGINS includes localhost in non-development environment');
         }
@@ -138,13 +195,28 @@ export function getEnvConfig() {
     }
 
     if (warnings.length > 0) {
-        warnings.forEach((warning) => console.warn(`[env-warning] ${warning}`));
+        warnings.forEach((warning) => warn(`[env-warning] ${warning}`));
     }
 
     if (errors.length > 0) {
         throw new Error(`Environment validation failed:\n- ${errors.join('\n- ')}`);
     }
 
-    cachedConfig = config;
     return config;
+}
+
+// Arrancar el servidor ejecuta migraciones. En desarrollo solo se permite una DB
+// local salvo opt-in explicito, para que un .env apuntando a produccion no la migre.
+export function assertSafeDatabaseTarget(config) {
+    if (config.isDevelopment && !config.allowRemoteDb && !isLocalDatabaseHost(config.dbHost)) {
+        throw new Error(
+            `Refusing to start in development against non-local DB_HOST '${config.dbHost}': ` +
+            'startup runs migrations. Use a local database (ENV_FILE=.env.local) or set ALLOW_REMOTE_DB=true explicitly.'
+        );
+    }
+}
+
+export function getEnvConfig() {
+    if (!cachedConfig) cachedConfig = buildEnvConfig();
+    return cachedConfig;
 }

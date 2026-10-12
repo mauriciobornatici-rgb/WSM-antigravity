@@ -5,6 +5,7 @@ import { showErrorToast } from '@/lib/errorHandling';
 import type { Product, Supplier } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ArgentinaDateInput } from '@/components/common/ArgentinaDateInput';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -141,22 +142,22 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
 
                 <div className="space-y-2">
                     <Label htmlFor="orderDate">Fecha de orden *</Label>
-                    <Input
+                    <ArgentinaDateInput
                         id="orderDate"
-                        type="date"
                         value={orderDate}
-                        onChange={(e) => setOrderDate(e.target.value)}
+                        onChange={setOrderDate}
+                        ariaLabel="Fecha de orden"
                         required
                     />
                 </div>
 
                 <div className="space-y-2">
                     <Label htmlFor="expectedDelivery">Fecha de entrega esperada</Label>
-                    <Input
+                    <ArgentinaDateInput
                         id="expectedDelivery"
-                        type="date"
                         value={expectedDeliveryDate}
-                        onChange={(e) => setExpectedDeliveryDate(e.target.value)}
+                        onChange={setExpectedDeliveryDate}
+                        ariaLabel="Fecha de entrega esperada"
                     />
                 </div>
             </div>

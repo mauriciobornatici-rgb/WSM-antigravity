@@ -1,19 +1,21 @@
-import { Box, Pencil, Trash2 } from "lucide-react";
+import { Box, Move, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProductWithStock } from "@/lib/inventorySnapshot";
 import { TableSkeleton } from "@/components/common/Skeletons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { formatMoney } from "@/lib/formatters";
 
 type InventoryTableProps = {
     loading: boolean;
     products: ProductWithStock[];
     onEdit: (product: ProductWithStock) => void;
+    onRelocate: (product: ProductWithStock) => void;
     onDelete: (product: ProductWithStock) => void;
 };
 
-export function InventoryTable({ loading, products, onEdit, onDelete }: InventoryTableProps) {
+export function InventoryTable({ loading, products, onEdit, onRelocate, onDelete }: InventoryTableProps) {
     if (loading) {
         return <TableSkeleton columns={9} rows={8} />;
     }
@@ -21,7 +23,7 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
     return (
         <div className="overflow-hidden rounded-md border">
             <div className="overflow-x-auto">
-                <Table className="min-w-[1080px]">
+                <Table className="min-w-[1180px]">
                 <TableHeader>
                     <TableRow>
                         <TableHead>SKU</TableHead>
@@ -60,6 +62,14 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
                                         )}
                                         <div>
                                             <div className="font-medium">{product.name}</div>
+                                            {product.family_name ? (
+                                                <div className="text-xs font-medium text-primary">Familia: {product.family_name}</div>
+                                            ) : null}
+                                            {product.size || product.color ? (
+                                                <div className="text-xs text-muted-foreground">
+                                                    {[product.size ? `Talle ${product.size}` : "", product.color || ""].filter(Boolean).join(" · ")}
+                                                </div>
+                                            ) : null}
                                             <div className="text-xs text-muted-foreground">{product.location || "Sin ubicacion"}</div>
                                         </div>
                                     </div>
@@ -67,11 +77,11 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
                                 <TableCell>
                                     <Badge variant="secondary">{product.category}</Badge>
                                 </TableCell>
-                                <TableCell className="text-right">
-                                    ${Number(product.purchase_price || 0).toLocaleString("es-AR")}
+                                <TableCell className="text-right font-mono text-muted-foreground">
+                                    {formatMoney(product.purchase_price)}
                                 </TableCell>
-                                <TableCell className="text-right font-semibold text-emerald-600">
-                                    ${Number(product.sale_price || 0).toLocaleString("es-AR")}
+                                <TableCell className="text-right font-semibold font-mono text-emerald-600 dark:text-emerald-400">
+                                    {formatMoney(product.sale_price)}
                                 </TableCell>
                                 <TableCell className="text-right">
                                     <div className="inline-flex items-center gap-2">
@@ -91,11 +101,23 @@ export function InventoryTable({ loading, products, onEdit, onDelete }: Inventor
                                     </span>
                                 </TableCell>
                                 <TableCell className="text-right">
-                                    <div className="inline-flex gap-2">
-                                        <Button size="sm" variant="ghost" onClick={() => onEdit(product)}>
-                                            <Pencil className="h-4 w-4 text-blue-500" />
+                                    <div className="inline-flex items-center gap-1.5">
+                                        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => onEdit(product)}>
+                                            <Pencil className="h-3.5 w-3.5 text-blue-500" />
+                                            Editar
                                         </Button>
-                                        <Button size="sm" variant="ghost" onClick={() => onDelete(product)}>
+                                        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => onRelocate(product)}>
+                                            <Move className="h-3.5 w-3.5 text-indigo-500" />
+                                            Reubicar
+                                        </Button>
+                                        <Button
+                                            size="icon"
+                                            variant="ghost"
+                                            className="h-8 w-8"
+                                            aria-label={`Eliminar ${product.name}`}
+                                            title={`Eliminar ${product.name}`}
+                                            onClick={() => onDelete(product)}
+                                        >
                                             <Trash2 className="h-4 w-4 text-red-500" />
                                         </Button>
                                     </div>

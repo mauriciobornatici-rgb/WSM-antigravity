@@ -1,0 +1,2 @@
+# Referencia de compatibilidad: leer el archivo indicado, no duplicar sus reglas.
+canonical_budget: ../.agents/context/BUDGET.yaml

@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { api } from "@/services/api"
 import type { Client } from "@/types"
+import { formatMoney } from "@/lib/formatters"
+import { TableSkeleton } from "@/components/common/Skeletons"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -198,18 +200,20 @@ export default function ClientsPage() {
                             <TableBody>
                                 {loading ? (
                                     <TableRow>
-                                        <TableCell colSpan={6} className="h-24 text-center">Cargando clientes...</TableCell>
+                                        <TableCell colSpan={6} className="p-0">
+                                            <TableSkeleton columns={6} rows={5} />
+                                        </TableCell>
                                     </TableRow>
                                 ) : filteredClients.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={6} className="h-24 text-center">No se encontraron clientes.</TableCell>
+                                        <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No se encontraron clientes.</TableCell>
                                     </TableRow>
                                 ) : (
                                     filteredClients.map((client) => (
                                         <TableRow key={client.id}>
                                             <TableCell className="font-medium">
                                                 <div className="flex items-center gap-2">
-                                                    <div className="h-8 w-8 rounded-full bg-slate-800 flex items-center justify-center text-blue-400 font-bold">
+                                                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
                                                         {client.name.charAt(0)}
                                                     </div>
                                                     <div>
@@ -232,20 +236,20 @@ export default function ClientsPage() {
                                             <TableCell className="text-right">
                                                 <Badge variant={client.current_account_balance > 0 ? "secondary" : "outline"} className={cn(
                                                     "font-mono",
-                                                    client.current_account_balance > client.credit_limit ? "bg-red-900 text-red-200" : ""
+                                                    client.current_account_balance > client.credit_limit ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20" : ""
                                                 )}>
-                                                    {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(client.current_account_balance)}
+                                                    {formatMoney(client.current_account_balance)}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell className="text-right font-mono text-muted-foreground">
-                                                {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(client.credit_limit)}
+                                                {formatMoney(client.credit_limit)}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <div className="flex justify-end gap-2">
                                                     <Button size="sm" variant="ghost" onClick={() => setEditingClient(client)}>
-                                                        <Pencil className="h-4 w-4" />
+                                                        <Pencil className="h-4 w-4 text-primary" />
                                                     </Button>
-                                                    <Button size="sm" variant="ghost" className="text-red-400 hover:text-red-300 hover:bg-red-950" onClick={() => setDeletingClient(client)}>
+                                                    <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => setDeletingClient(client)}>
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
                                                     <Button size="sm" variant="ghost" onClick={() => navigate(`/clients/${client.id}`)}>Ver Detalles</Button>

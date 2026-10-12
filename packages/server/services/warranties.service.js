@@ -4,6 +4,7 @@ import pool from '../config/db.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
 import auditService from './audit.service.js';
 import afipService from './afip.service.js';
+import accountingService from './accounting.service.js';
 
 class WarrantiesService extends BaseService {
     constructor() {
@@ -220,6 +221,75 @@ class ReturnsService extends BaseService {
         }
     }
 
+    /**
+     * Net unit price of each returned product, never taken from the client (H4):
+     * the price it was sold at when the return references an order (and the returned
+     * quantity cannot exceed what was sold minus earlier returns), else the catalog price.
+     */
+    async _resolveReturnPrices(conn, data) {
+        const requestedByProduct = new Map();
+        for (const item of data.items) {
+            const quantity = Number(item.quantity);
+            if (!Number.isInteger(quantity) || quantity <= 0) {
+                throw this._buildDomainError('Cantidad inválida en la devolución', 'INVALID_QUANTITY', 400);
+            }
+            requestedByProduct.set(item.product_id, (requestedByProduct.get(item.product_id) || 0) + quantity);
+        }
+        const productIds = [...requestedByProduct.keys()];
+
+        if (!data.order_id) {
+            const [products] = await conn.query('SELECT id, sale_price FROM products WHERE id IN (?)', [productIds]);
+            const prices = new Map(products.map((product) => [product.id, Number(product.sale_price || 0)]));
+            for (const productId of productIds) {
+                if (!prices.has(productId)) {
+                    throw this._buildDomainError(`Producto no encontrado: ${productId}`, 'PRODUCT_NOT_FOUND', 404);
+                }
+            }
+            return prices;
+        }
+
+        // Serializes returns of the same order so two of them cannot both pass the check.
+        const [orders] = await conn.query('SELECT id FROM orders WHERE id = ? FOR UPDATE', [data.order_id]);
+        if (orders.length === 0) {
+            throw this._buildDomainError('Pedido no encontrado', 'ORDER_NOT_FOUND', 404);
+        }
+        const [sold] = await conn.query(
+            // Weighted average: the same product may appear on several lines at different prices.
+            `SELECT product_id, SUM(quantity) AS quantity,
+                    ROUND(SUM(quantity * unit_price) / NULLIF(SUM(quantity), 0), 2) AS unit_price
+             FROM order_items WHERE order_id = ? AND product_id IN (?)
+             GROUP BY product_id`,
+            [data.order_id, productIds]
+        );
+        const [returned] = await conn.query(
+            `SELECT ri.product_id, SUM(ri.quantity) AS quantity
+             FROM client_return_items ri
+             JOIN client_returns r ON r.id = ri.return_id
+             WHERE r.order_id = ? AND r.status NOT IN ('rejected', 'cancelled') AND ri.product_id IN (?)
+               -- a rejected unit was not refunded: it does not use up the returnable quantity
+               AND LOWER(COALESCE(ri.condition_status, '')) <> 'rejected'
+             GROUP BY ri.product_id`,
+            [data.order_id, productIds]
+        );
+        const soldByProduct = new Map(sold.map((row) => [row.product_id, row]));
+        const returnedByProduct = new Map(returned.map((row) => [row.product_id, Number(row.quantity || 0)]));
+
+        const prices = new Map();
+        for (const [productId, requested] of requestedByProduct) {
+            const soldRow = soldByProduct.get(productId);
+            const returnable = Number(soldRow?.quantity || 0) - (returnedByProduct.get(productId) || 0);
+            if (requested > returnable) {
+                throw this._buildDomainError(
+                    `No se puede devolver ${requested} unidad(es) del producto ${productId}: quedan ${Math.max(returnable, 0)} por devolver de ese pedido.`,
+                    'RETURN_EXCEEDS_SOLD',
+                    409
+                );
+            }
+            prices.set(productId, Number(soldRow.unit_price || 0));
+        }
+        return prices;
+    }
+
     async createReturn(data) {
         const conn = await pool.getConnection();
         try {
@@ -233,13 +303,14 @@ class ReturnsService extends BaseService {
             );
 
             if (data.items && data.items.length > 0) {
+                const unitPrices = await this._resolveReturnPrices(conn, data);
                 const values = data.items.map((item) => [
                     crypto.randomUUID(),
                     returnId,
                     item.product_id,
                     item.quantity,
                     item.condition_status || 'sellable',
-                    item.unit_price || 0
+                    unitPrices.get(item.product_id)
                 ]);
                 await conn.query(
                     `INSERT INTO client_return_items (id, return_id, product_id, quantity, condition_status, unit_price) VALUES ?`,
@@ -263,7 +334,7 @@ class ReturnsService extends BaseService {
         }
     }
 
-    async approveReturn(returnId, actorUserId) {
+    async approveReturn(returnId, actorUserId, ipAddress = null) {
         const conn = await pool.getConnection();
         try {
             await conn.beginTransaction();
@@ -292,14 +363,25 @@ class ReturnsService extends BaseService {
                 throw this._buildDomainError('La devolucion no tiene items', 'RETURN_WITHOUT_ITEMS', 400);
             }
 
-            let totalAmount = 0;
+            // The refund reverses what the customer paid: net price + VAT per line
+            // (ADR-008: stored prices are net), rounded per line like the sale invoice.
+            const [vatRows] = await conn.query(
+                'SELECT id, vat_rate FROM products WHERE id IN (?)',
+                [items.map((item) => item.product_id)]
+            );
+            const vatByProduct = new Map(vatRows.map((row) => [row.id, row.vat_rate == null ? 21 : Number(row.vat_rate)]));
+            let netCents = 0;
+            let vatCents = 0;
             for (const item of items) {
                 // If item is rejected, it does not contribute to the refund amount
-                if (String(item.condition_status).toLowerCase() !== 'rejected') {
-                    totalAmount += Number(item.quantity || 0) * Number(item.unit_price || 0);
-                }
+                if (String(item.condition_status).toLowerCase() === 'rejected') continue;
+                const lineNet = Math.round(Number(item.quantity || 0) * Number(item.unit_price || 0) * 100);
+                netCents += lineNet;
+                vatCents += Math.round(lineNet * (vatByProduct.get(item.product_id) ?? 21) / 100);
             }
-            totalAmount = Math.round((totalAmount + Number.EPSILON) * 100) / 100;
+            const netAmount = netCents / 100;
+            const vatAmount = vatCents / 100;
+            const totalAmount = (netCents + vatCents) / 100;
             
             // It's possible that a return ONLY has rejected items, then totalAmount = 0
             // If totalAmount is 0, we just approve it without creating a Credit Note.
@@ -380,6 +462,21 @@ class ReturnsService extends BaseService {
                         [totalAmount, returnRow.client_id]
                     );
                 }
+
+                await accountingService.createJournalEntry(conn, {
+                    date: new Date(),
+                    description: `Nota de crédito ${creditNoteNumber} - Devolución de cliente`,
+                    reference_type: 'client_return',
+                    reference_id: returnId,
+                    // Mirror of the sale entry (accounting.service): Clientes / Ventas + IVA Débito Fiscal.
+                    lines: [
+                        { account_code: '4.1.01.01', debit: netAmount, credit: 0, notes: 'Reversión de venta por devolución' },
+                        ...(vatAmount > 0
+                            ? [{ account_code: '2.1.02.02', debit: vatAmount, credit: 0, notes: 'Reversión de IVA Débito Fiscal' }]
+                            : []),
+                        { account_code: '1.1.03.01', debit: 0, credit: totalAmount, notes: 'Crédito a favor del cliente' }
+                    ]
+                });
             }
 
             await conn.query(
@@ -387,8 +484,7 @@ class ReturnsService extends BaseService {
                 [totalAmount, returnId]
             );
 
-            await conn.commit();
-            return {
+            const result = {
                 success: true,
                 return_id: returnId,
                 credit_note_id: creditNoteId,
@@ -397,6 +493,17 @@ class ReturnsService extends BaseService {
                 restocked_quantity: restockedTotal,
                 discarded_quantity: discardedTotal
             };
+            await auditService.log({
+                user_id: actorUserId,
+                action: 'APPROVE_CLIENT_RETURN',
+                entity_type: 'client_return',
+                entity_id: returnId,
+                old_values: { status: returnRow.status },
+                new_values: result,
+                ip_address: ipAddress
+            }, conn);
+            await conn.commit();
+            return result;
         } catch (error) {
             await conn.rollback();
             throw error;
@@ -442,49 +549,75 @@ class CreditNotesService extends BaseService {
 
         const cn = rows[0];
         if (cn.status === 'authorized') return cn;
-        
+
+        const previousStatus = cn.status;
+
+        // Atomic claim: only the caller that flips status -> 'authorizing' proceeds.
+        // This prevents two concurrent requests from both calling AFIP for the same
+        // credit note (AFIP would otherwise authorize the same voucher twice).
+        const [claimResult] = await pool.query(
+            `UPDATE credit_notes SET status = 'authorizing' WHERE id = ? AND status NOT IN ('authorized', 'authorizing')`,
+            [creditNoteId]
+        );
+        if (!claimResult || claimResult.affectedRows !== 1) {
+            const err = new Error('La Nota de Crédito ya está siendo autorizada por otra solicitud');
+            err.statusCode = 409;
+            err.status = 'fail';
+            err.errorCode = 'CREDIT_NOTE_ALREADY_AUTHORIZING';
+            throw err;
+        }
+
         let afipRes = null;
-        
-        // Consultar factura original si esta NC viene de una devolucion
-        if (cn.reference_type === 'return' && cn.reference_id) {
-            const [returns] = await pool.query('SELECT order_id FROM client_returns WHERE id = ?', [cn.reference_id]);
-            if (returns.length > 0 && returns[0].order_id) {
-                const [invoices] = await pool.query('SELECT * FROM invoices WHERE order_id = ? AND cae IS NOT NULL', [returns[0].order_id]);
-                if (invoices.length > 0) {
-                    // Factura validada en AFIP. Generar NC_A o NC_B
-                    const originalInvoice = invoices[0];
-                    const [settingsRows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
-                    const companySettings = settingsRows[0] || {};
-                    
-                    const invoiceData = {
-                        invoice_type: cn.credit_note_type === 'A' ? 'NC_A' : 'NC_B',
-                        client_tax_id: originalInvoice.client_tax_id || null,
-                        total_amount: cn.amount,
-                        invoice_number: cn.number
-                    };
-                    
-                    // Recuperar ítems reales de la devolución y sus tasas de IVA del catálogo de productos
-                    const [itemsRows] = await pool.query(`
-                        SELECT 
-                            ri.quantity, 
-                            ri.unit_price, 
-                            COALESCE(p.vat_rate, 21) AS vat_rate
-                        FROM client_return_items ri
-                        JOIN products p ON ri.product_id = p.id
-                        WHERE ri.return_id = ?
-                    `, [cn.reference_id]);
 
-                    const invoiceItems = itemsRows.length > 0 ? itemsRows : [
-                        { quantity: 1, unit_price: cn.amount, vat_rate: 21 }
-                    ];
+        try {
+            // Consultar factura original si esta NC viene de una devolucion
+            // (AFIP call happens outside any DB transaction).
+            if (cn.reference_type === 'return' && cn.reference_id) {
+                const [returns] = await pool.query('SELECT order_id FROM client_returns WHERE id = ?', [cn.reference_id]);
+                if (returns.length > 0 && returns[0].order_id) {
+                    const [invoices] = await pool.query('SELECT * FROM invoices WHERE order_id = ? AND cae IS NOT NULL', [returns[0].order_id]);
+                    if (invoices.length > 0) {
+                        // Factura validada en AFIP. Generar NC_A o NC_B
+                        const originalInvoice = invoices[0];
+                        const [settingsRows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
+                        const companySettings = settingsRows[0] || {};
 
-                    try {
-                        afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
-                    } catch (err) {
-                        throw new Error(`AFIP rechazó la Nota de Crédito: ${err.message}`);
+                        const invoiceData = {
+                            invoice_type: cn.credit_note_type === 'A' ? 'NC_A' : 'NC_B',
+                            client_tax_id: originalInvoice.client_tax_id || null,
+                            total_amount: cn.amount,
+                            invoice_number: cn.number
+                        };
+
+                        // Recuperar ítems reales de la devolución y sus tasas de IVA del catálogo de productos
+                        const [itemsRows] = await pool.query(`
+                            SELECT
+                                ri.quantity,
+                                ri.unit_price,
+                                COALESCE(p.vat_rate, 21) AS vat_rate
+                            FROM client_return_items ri
+                            JOIN products p ON ri.product_id = p.id
+                            WHERE ri.return_id = ?
+                              AND LOWER(COALESCE(ri.condition_status, '')) <> 'rejected'
+                        `, [cn.reference_id]);
+
+                        const invoiceItems = itemsRows.length > 0 ? itemsRows : [
+                            // cn.amount is the gross refund: split it into net + VAT.
+                            { total_line: cn.amount, vat_rate: 21 }
+                        ];
+
+                        try {
+                            afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
+                        } catch (err) {
+                            throw new Error(`AFIP rechazó la Nota de Crédito: ${err.message}`);
+                        }
                     }
                 }
             }
+        } catch (err) {
+            // Release the claim so the credit note can be retried later.
+            await pool.query('UPDATE credit_notes SET status = ? WHERE id = ?', [previousStatus, creditNoteId]);
+            throw err;
         }
 
         const cae = afipRes ? afipRes.cae : null;

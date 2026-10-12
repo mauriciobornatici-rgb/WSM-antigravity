@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Manual Oficial de Usuario e Instalación — WSM SportsERP</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 20mm 15mm 20mm 15mm;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            color: #1e293b;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            font-size: 11pt;
+            background-color: #ffffff;
+        }
+
+        /* Cover Page */
+        .cover-page {
+            page-break-after: always;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #ffffff;
+            padding: 40px;
+            box-sizing: border-box;
+            border-radius: 12px;
+        }
+
+        .cover-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .cover-badge {
+            background-color: #2563eb;
+            color: white;
+            font-weight: bold;
+            font-size: 20px;
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .cover-title {
+            font-size: 32pt;
+            font-weight: 800;
+            line-height: 1.2;
+            margin-top: 60px;
+            margin-bottom: 20px;
+            color: #ffffff;
+        }
+
+        .cover-subtitle {
+            font-size: 16pt;
+            color: #94a3b8;
+            font-weight: 400;
+            max-width: 600px;
+        }
+
+        .cover-footer {
+            border-top: 1px solid #334155;
+            padding-top: 20px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 10pt;
+            color: #94a3b8;
+        }
+
+        /* General Typography */
+        h1 {
+            font-size: 20pt;
+            color: #0f172a;
+            border-bottom: 2.5px solid #2563eb;
+            padding-bottom: 8px;
+            margin-top: 30px;
+            margin-bottom: 16px;
+            page-break-after: avoid;
+        }
+
+        h2 {
+            font-size: 14pt;
+            color: #1e3a8a;
+            margin-top: 24px;
+            margin-bottom: 12px;
+            page-break-after: avoid;
+        }
+
+        h3 {
+            font-size: 12pt;
+            color: #334155;
+            margin-top: 18px;
+            margin-bottom: 8px;
+            page-break-after: avoid;
+        }
+
+        p, ul, ol {
+            margin-bottom: 12px;
+        }
+
+        ul, ol {
+            padding-left: 24px;
+        }
+
+        li {
+            margin-bottom: 6px;
+        }
+
+        /* Highlight Boxes */
+        .callout {
+            border-left: 4px solid #2563eb;
+            background-color: #f8fafc;
+            padding: 12px 16px;
+            margin: 16px 0;
+            border-radius: 0 8px 8px 0;
+            font-size: 10.5pt;
+        }
+
+        .callout-title {
+            font-weight: bold;
+            color: #1e40af;
+            margin-bottom: 4px;
+        }
+
+        .callout-warning {
+            border-left-color: #eab308;
+            background-color: #fefce8;
+        }
+
+        .callout-warning .callout-title {
+            color: #854d0e;
+        }
+
+        .callout-tip {
+            border-left-color: #16a34a;
+            background-color: #f0fdf4;
+        }
+
+        .callout-tip .callout-title {
+            color: #166534;
+        }
+
+        /* Images */
+        .img-container {
+            margin: 20px 0;
+            text-align: center;
+            page-break-inside: avoid;
+        }
+
+        .img-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            border: 1px solid #cbd5e1;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .img-caption {
+            font-size: 9.5pt;
+            color: #64748b;
+            font-style: italic;
+            margin-top: 8px;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 10pt;
+            page-break-inside: avoid;
+        }
+
+        th, td {
+            border: 1px solid #cbd5e1;
+            padding: 8px 12px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f1f5f9;
+            color: #0f172a;
+            font-weight: bold;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f8fafc;
+        }
+
+        /* Steps */
+        .step-number {
+            display: inline-block;
+            background-color: #2563eb;
+            color: white;
+            font-weight: bold;
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            text-align: center;
+            line-height: 22px;
+            font-size: 10pt;
+            margin-right: 8px;
+        }
+
+        .badge-role {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 8.5pt;
+            font-weight: bold;
+            background-color: #e2e8f0;
+            color: #334155;
+        }
+
+        .page-break {
+            page-break-after: always;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- PORTADA -->
+    <div class="cover-page">
+        <div>
+            <div class="cover-header">
+                <div class="cover-badge">S</div>
+                <div style="font-size: 20pt; font-weight: bold;">WSM SportsERP</div>
+            </div>
+            <div class="cover-title">Manual Oficial de Usuario e Instalación</div>
+            <div class="cover-subtitle">Guía Paso a Paso desde la Configuración Inicial hasta el Control Operativo Experto y de Gestión Comercial</div>
+        </div>
+        <div class="cover-footer">
+            <div>Versión del Sistema: v1.0.0 (Edición Empresarial)</div>
+            <div>Publicación: Agosto 2026</div>
+        </div>
+    </div>
+
+    <!-- ÍNDICE -->
+    <h1>Índice de Contenidos</h1>
+    <ol style="font-weight: 500; font-size: 11pt; line-height: 1.8;">
+        <li>Introducción y Arquitectura Operativa</li>
+        <li>Inicio de Sesión y Configuración Inicial (AFIP / Tiendanube / Cajas)</li>
+        <li>Control de Inventario WMS y Trazabilidad por Talle / Color</li>
+        <li>Cadena de Abastecimiento: Compras y Proveedores</li>
+        <li>Recepción WMS con Control de Calidad (QC)</li>
+        <li>Operativa en Punto de Venta (POS) y Atajos de Teclado (`Ctrl + K`)</li>
+        <li>Picking WMS y Gestión de Pedidos</li>
+        <li>Facturación Electrónica AFIP y Cuentas Corrientes</li>
+        <li>Cobranzas y Libro Mayor de Clientes / Proveedores</li>
+        <li>Arqueo de Efectivo, Gestión de Turnos y Comprobante de Cierre Z</li>
+        <li>Garantías, Devoluciones y Asistencia Técnica</li>
+        <li>Contabilidad General, Asientos Automáticos y Libros Contables</li>
+        <li>Buenas Prácticas de Negocio para Comercios de Deportes</li>
+        <li>Propuesta de Oportunidades de Mejora y Optimización Futura</li>
+    </ol>
+
+    <div class="page-break"></div>
+
+    <!-- SECCIÓN 1 -->
+    <h1>1. Introducción y Arquitectura Operativa</h1>
+    <p>Bienvenido a <strong>WSM SportsERP</strong>, la solución integral de gestión empresarial diseñada específicamente para locales y cadenas de retail deportivo (calzado, indumentaria, accesorios y equipamiento).</p>
+    <p>El sistema unifica en una plataforma en tiempo real todas las áreas críticas de tu empresa:</p>
+    <ul>
+        <li><strong>WMS (Warehouse Management System):</strong> Gestión multicompartimento de inventario con trazabilidad física.</li>
+        <li><strong>POS (Point of Sale):</strong> Terminal táctil ultrarrápida para facturación en mostrador.</li>
+        <li><strong>Facturación AFIP:</strong> Emisión automática de comprobantes electrónicos A, B y C con CAE en línea.</li>
+        <li><strong>Integración Tiendanube:</strong> Sincronización omnicanal bidireccional de inventario y pedidos.</li>
+        <li><strong>Cuentas Corrientes & Finanzas:</strong> Control estricto del crédito concedido a clientes y deudas con proveedores.</li>
+        <li><strong>Contabilidad Centralizada:</strong> Generación automática de asientos en el Libro Diario.</li>
+    </ul>
+
+    <div class="callout callout-tip">
+        <div class="callout-title">💡 Formato Monetario Estándar de la Plataforma</div>
+        Todos los importes monetarios del sistema están estandarizados en pesos argentinos bajo la norma estricta <code>$ 000.000.000,00</code> (separador de miles por punto y decimales por coma) garantizando la máxima claridad visual en cobros, saldos y arqueos.
+    </div>
+
+    <!-- SECCIÓN 2 -->
+    <h1>2. Inicio de Sesión y Configuración Inicial</h1>
+    <p>Para ingresar por primera vez al sistema, accede desde tu navegador web a la dirección provista e introduce las credenciales asignadas por tu administrador.</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/01_login.png" alt="Pantalla de Inicio de Sesión">
+        <div class="img-caption">Figura 2.1 — Pantalla de autenticación y acceso seguro al sistema.</div>
+    </div>
+
+    <h3>Pasos de Ingreso:</h3>
+    <ol>
+        <li>Introduce tu <strong>Correo Electrónico</strong> (ej. <code>admin@sports.store</code>).</li>
+        <li>Ingresa tu <strong>Contraseña</strong> configurada.</li>
+        <li>Haz clic en el botón <strong>Iniciar Sesión</strong>.</li>
+    </ol>
+
+    <h2>Configuración de la Empresa y Datos Fiscales</h2>
+    <p>Una vez dentro del sistema, dirígete al menú lateral <strong>Configuración (`/settings`)</strong>. Este módulo requiere rol <span class="badge-role">Administrador</span>.</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/03_settings.png" alt="Configuración de Empresa">
+        <div class="img-caption">Figura 2.2 — Formulario de configuración de empresa, AFIP y Tiendanube.</div>
+    </div>
+
+    <h3>Parámetros Fundamentales a Completar:</h3>
+    <ul>
+        <li><strong>Razón Social y CUIT:</strong> Nombre legal de la empresa y CUIT sin guiones (ej. <code>30112233449</code>).</li>
+        <li><strong>Condición de IVA:</strong> Responsable Inscripto, Monotributo o Exento.</li>
+        <li><strong>Punto de Venta AFIP:</strong> Número de Punto de Venta habilitado en AFIP (ej. <code>0001</code>).</li>
+        <li><strong>Certificados AFIP (.CRT / .KEY):</strong> Carga del certificado digital de producción/homologación para facturación en línea.</li>
+        <li><strong>Credenciales Tiendanube:</strong> Token API y User ID para activar la sincronización automática de productos y pedidos e-commerce.</li>
+    </ul>
+
+    <div class="page-break"></div>
+
+    <!-- SECCIÓN 3 -->
+    <h1>3. Control de Inventario WMS y Trazabilidad</h1>
+    <p>El módulo de <strong>Inventario (`/inventory`)</strong> permite gestionar el catálogo de productos con atributos clave para comercios deportivos (Marca, Talle, Color, SKU, Código de Barras y Ubicación WMS).</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/04_inventory.png" alt="Inventario WMS">
+        <div class="img-caption">Figura 3.1 — Panel principal de Inventario WMS con catálogo y filtros.</div>
+    </div>
+
+    <h2>Creación de un Producto Deportivo</h2>
+    <ol>
+        <li>Presiona el botón <strong>+ Nuevo Producto</strong> en la esquina superior derecha.</li>
+        <li>Completa el <strong>Código SKU</strong> (ej: <code>NK-BOT-42-BLK</code>) y escanea o ingresa el <strong>Código de Barras EAN-13</strong>.</li>
+        <li>Asigna el <strong>Precio de Costo</strong> y el <strong>Precio de Venta</strong>. El sistema recalcula automáticamente el margen comercial y aplica la alícuota de IVA correspondiente.</li>
+        <li>Establece el <strong>Stock Mínimo</strong>: Alerta visual automática cuando las existencias desciendan del umbral crítico de seguridad.</li>
+    </ol>
+
+    <h2>Exportación a Excel / CSV</h2>
+    <p>Puedes descargar el catálogo completo en formato CSV haciendo clic en el botón <strong>Exportar CSV</strong>. El archivo generado incluye la marca de codificación <code>UTF-8 BOM</code> para su apertura perfecta en Microsoft Excel respetando tildes y caracteres especiales.</p>
+
+    <!-- SECCIÓN 4 -->
+    <h1>4. Cadena de Abastecimiento: Compras y Proveedores</h1>
+    <p>Gestionar eficientemente las compras a fabricantes (Nike, Adidas, Puma, etc.) asegura la disponibilidad de stock en temporadas clave.</p>
+
+    <h2>Padrón de Proveedores (`/suppliers`)</h2>
+    <p>En este panel administras las fichas técnicas de tus mayoristas, sus condiciones comerciales y el <strong>Saldo de Cuenta Corriente</strong> adeudado.</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/05_suppliers.png" alt="Padrón de Proveedores">
+        <div class="img-caption">Figura 4.1 — Tarjetas de proveedores y saldo consolidado en cuenta corriente.</div>
+    </div>
+
+    <h2>Generación de Órdenes de Compra (`/purchase-orders`)</h2>
+    <ol>
+        <li>Ve a <strong>Órdenes de Compra</strong> y haz clic en <strong>+ Nueva Orden de Compra</strong>.</li>
+        <li>Selecciona el proveedor de la lista y añade las cantidades por variante.</li>
+        <li>Al aprobar la orden, pasa a estado <em>Aprobada</em> quedando lista para su recepción en el depósito WMS.</li>
+    </ol>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/06_purchase_orders.png" alt="Órdenes de Compra">
+        <div class="img-caption">Figura 4.2 — Listado y estado de Órdenes de Compra enviadas a proveedores.</div>
+    </div>
+
+    <div class="page-break"></div>
+
+    <!-- SECCIÓN 5 -->
+    <h1>5. Recepción WMS con Control de Calidad (QC)</h1>
+    <p>Cuando el transporte entrega la mercadería enviada por el proveedor, la recepción física se registra mediante el módulo <strong>Recepciones (`/receptions`)</strong>.</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/07_receptions.png" alt="Recepciones WMS">
+        <div class="img-caption">Figura 5.1 — Control de ingreso de bultos y recepción física WMS.</div>
+    </div>
+
+    <h3>Pasos de Recepción y Control:</h3>
+    <ol>
+        <li>Abre el comprobante de recepción asociado a la Orden de Compra.</li>
+        <li>Ingresa la cantidad física recibida para cada SKU y la ubicación física en depósito (ej. <code>Estantería A-03</code>).</li>
+        <li>Si algún par de calzado o prenda presenta defectos de fábrica, registra el hallazgo en el <strong>Control de Calidad (QC)</strong> enviando las unidades afectadas a <em>Cuarentena</em>.</li>
+        <li>Al presionar <strong>Aprobar Recepción</strong>, el sistema incrementa inmediatamente el stock disponible y genera el asiento contable automático imputando la deuda en la cuenta corriente del proveedor.</li>
+    </ol>
+
+    <!-- SECCIÓN 6 -->
+    <h1>6. Operativa en Punto de Venta (POS) y Atajos</h1>
+    <p>La pantalla <strong>POS (`/pos`)</strong> está optimizada para la atención rápida en el mostrador del local comercial.</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/08_pos.png" alt="Punto de Venta POS">
+        <div class="img-caption">Figura 6.1 — Interfaz táctil POS de cobro y selección de productos.</div>
+    </div>
+
+    <div class="callout callout-tip">
+        <div class="callout-title">⚡ Atajo Global: Búsqueda Universal con Ctrl + K</div>
+        En cualquier pantalla de la aplicación puedes presionar la combinación de teclas <code>Ctrl + K</code> (o <code>Cmd + K</code> en Mac) para abrir la <strong>Paleta de Comandos</strong>. Te permite buscar productos en tiempo real por SKU, nombre o código de barras y saltar instantáneamente a cualquier módulo.
+    </div>
+
+    <h3>Pasos para Registrar una Venta en Mostrador:</h3>
+    <ol>
+        <li>Escanea el código de barras del producto o búscalo ingresando su talle/modelo.</li>
+        <li>Asigna el cliente (o selecciona <em>Consumidor Final</em> por defecto).</li>
+        <li>Haz clic en <strong>Cobrar</strong> para seleccionar el medio de pago: Efectivo, Tarjeta de Débito/Crédito, QR (Mercado Pago / MODO) o Cuenta Corriente.</li>
+        <li>Presiona <strong>Confirmar Venta</strong> para imprimir el ticket fiscal/comprobante de venta y descontar las existencias.</li>
+    </ol>
+
+    <div class="page-break"></div>
+
+    <!-- SECCIÓN 7 -->
+    <h1>7. Facturación Electrónica AFIP y Cuentas Corrientes</h1>
+    <p>El módulo <strong>Facturación (`/invoices`)</strong> gestiona la emisión y el estado de CAE otorgado por la AFIP para Facturas A, B y C.</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/10_invoices.png" alt="Facturación AFIP">
+        <div class="img-caption">Figura 7.1 — Listado de facturas autorizadas por AFIP con CAE y tipo de comprobante.</div>
+    </div>
+
+    <h2>Cobranzas de Clientes (`/collections`)</h2>
+    <p>Cuando un cliente registrado realiza compras a crédito (Cuenta Corriente), las facturas pendientes de cobro se gestionan en la pantalla de <strong>Cobranzas</strong>.</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/11_collections.png" alt="Cobranzas a Clientes">
+        <div class="img-caption">Figura 7.2 — Registro de recibos de cobro y cancelación de facturas a crédito.</div>
+    </div>
+
+    <h2>Pagos a Proveedores (`/supplier-payments`)</h2>
+    <p>Permite saldar las deudas pendientes por compras de mercadería mediante transferencias bancarias, cheques o efectivo, manteniendo actualizado el saldo de los fabricantes.</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/12_supplier_payments.png" alt="Pagos a Proveedores">
+        <div class="img-caption">Figura 7.3 — Emisión de órdenes de pago a proveedores.</div>
+    </div>
+
+    <h2>Libro Mayor de Cuentas Corrientes (`/current-accounts`)</h2>
+    <p>Visualización integrada del estado de cuenta de clientes y proveedores con el desglose cronológico de Débitos (Facturas) y Créditos (Pagos / Recibos).</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/13_current_accounts.png" alt="Libro Mayor Cuentas Corrientes">
+        <div class="img-caption">Figura 7.4 — Estado de cuenta corriente y libro mayor consolidado.</div>
+    </div>
+
+    <div class="page-break"></div>
+
+    <!-- SECCIÓN 8 -->
+    <h1>8. Arqueo, Control de Caja y Cierre Z</h1>
+    <p>El módulo <strong>Gestión de Cajas (`/cash-management`)</strong> garantiza el control de fondos y la auditoría de efectivo de cada turno de caja.</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/14_cash_management.png" alt="Gestión de Cajas">
+        <div class="img-caption">Figura 8.1 — Apertura, movimientos de caja chica y estado de turno activo.</div>
+    </div>
+
+    <h3>Secuencia Diaria de Caja:</h3>
+    <ol>
+        <li><strong>Apertura de Turno:</strong> Ingresa el saldo inicial (fondo de caja para cambio) al comenzar la jornada.</li>
+        <li><strong>Egresos / Ingresos Directos:</strong> Registra retiros de efectivo o gastos menores de caja chica con su correspondiente motivo.</li>
+        <li><strong>Cierre de Turno y Arqueo Físico:</strong> Al finalizar el día, el cajero cuenta el dinero físico presente en el cajón y declara el monto en el sistema.</li>
+        <li><strong>Generación del Comprobante Cierre Z:</strong> El sistema despliega el reporte consolidado <code>ZReportDialog</code> comparando el Saldo Esperado vs. Saldo Real Declarado, emitiendo el ticket térmico/A4 de Cierre Z de Caja.</li>
+    </ol>
+
+    <!-- SECCIÓN 9 -->
+    <h1>9. Garantías, Devoluciones y Asistencia Técnica</h1>
+    <p>En el rubro de artículos deportivos, las garantías por prendas o calzado defectuoso son comunes. El módulo <strong>Garantías (`/returns-warranties`)</strong> procesa estos casos con trazabilidad transparente.</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM%20Tienda%20Deportes/manual_images/15_returns_warranties.png" alt="Garantías y Devoluciones">
+        <div class="img-caption">Figura 9.1 — Solicitudes de devolución y seguimiento de garantías de fábrica.</div>
+    </div>
+
+    <!-- SECCIÓN 10 -->
+    <h1>10. Contabilidad General y Libros Contables</h1>
+    <p>El módulo de <strong>Contabilidad (`/accounting`)</strong> refleja automáticamente en el Plan de Cuentas todas las operaciones registradas por los módulos operativos (Compras, Ventas, Cobros, Pagos y Ajustes de Stock).</p>
+
+    <div class="img-container">
+        <img src="file:///c:/Dev/ERP/WSM Tienda Deportes/manual_images/16_accounting.png" alt="Módulo Contable">
+        <div class="img-caption">Figura 10.1 — Resumen contable, tarjetas de saldo y libro diario general.</div>
+    </div>
+
+    <div class="page-break"></div>
+
+    <!-- SECCIÓN 11 -->
+    <h1>11. Buenas Prácticas de Negocio para Comercios de Deportes</h1>
+    <p>Para maximizar la rentabilidad y la eficiencia operativa utilizando WSM SportsERP, se recomiendan los siguientes protocolos de gestión:</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Área de Trabajo</th>
+                <th>Operativa Sugerida</th>
+                <th>Beneficio Comercial</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Recepción de Calzado</strong></td>
+                <td>Verificar siempre la concordancia de talle de la caja física vs. la etiqueta de lengüeta antes de aprobar el remito WMS.</td>
+                <td>Evita la venta de pares dispares o errores de stock por curva de talles.</td>
+            </tr>
+            <tr>
+                <td><strong>Gestión de Stock Mínimo</strong></td>
+                <td>Revisar semanalmente el reporte de stock crítico en <code>/inventory</code> antes de emitir las Órdenes de Compra a proveedores.</td>
+                <td>Previene quiebres de stock en artículos de alta rotación (pelotas, botines de temporada).</td>
+            </tr>
+            <tr>
+                <td><strong>Ventas a Crédito (Cta Cte)</strong></td>
+                <td>Fijar un límite de crédito estricto y días máximos de gracia por cliente desde el panel de clientes.</td>
+                <td>Protege el flujo de caja impidiendo el endeudamiento excesivo de clientes morosos.</td>
+            </tr>
+            <tr>
+                <td><strong>Control de Caja al Cierre</strong></td>
+                <td>Exigir la impresión física del Cierre Z firmado por el cajero al finalizar cada turno.</td>
+                <td>Elimina sobrantes o faltantes injustificados de dinero en efectivo.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- SECCIÓN 12 -->
+    <h1>12. Propuesta de Oportunidades de Mejora y Optimización Futura</h1>
+    <p>Durante el análisis minucioso de la plataforma realizado para la confección de este manual, se han detectado las siguientes <strong>Oportunidades de Optimización</strong> recomendadas para potenciar el sistema a un nivel excepcional:</p>
+
+    <div class="callout callout-warning">
+        <div class="callout-title">📌 Propuesta de Mejoras Recomendadas</div>
+        <ol>
+            <li><strong>Impresión Masiva de Etiquetas de Código de Barras por Lote / Curva de Talles:</strong> Añadir un botón en <em>Recepciones WMS</em> que envíe directamente a la impresora térmica de etiquetas todos los códigos EAN-13 del lote ingresado.</li>
+            <li><strong>Fidelización de Clientes (Puntos y Descuentos Deportivos):</strong> Incorporar un programa de puntos por compras en el POS para incentivar el retorno de deportistas recurrentes.</li>
+            <li><strong>Dashboard Analítico de Talles de Mayor Rotación:</strong> Incluir un gráfico de calor que identifique los talles más vendidos por categoría para optimizar el presupuesto de compra con proveedores.</li>
+            <li><strong>Notificación Automática por WhatsApp de Cuentas Corrientes:</strong> Implementar envío de recordatorios de vencimiento de cuenta corriente vía WhatsApp con enlace de pago.</li>
+        </ol>
+    </div>
+
+</body>
+</html>

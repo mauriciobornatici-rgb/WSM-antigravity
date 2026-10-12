@@ -1,0 +1,4 @@
+interface:
+  display_name: "Migraciones seguras WSM"
+  short_description: "Evoluciona MySQL con integridad y recuperación"
+  default_prompt: "Usa $safe-database-migrations para diseñar y verificar esta evolución del esquema sin perder datos."

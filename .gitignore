@@ -13,6 +13,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.pnpm-store/
 dist
 dist-ssr
 *.local
@@ -31,3 +32,12 @@ dist-ssr
 *.zip
 *.corrupt.bak
 packages/server/uploads/
+playwright-report/
+test-results/
+backups/
+*.sql.gz
+
+# Claude Code: configuracion personal y bitacora local del hook
+.claude/settings.local.json
+CLAUDE.local.md
+.agents/context/BITACORA.md

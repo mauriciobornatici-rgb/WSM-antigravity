@@ -7,9 +7,13 @@ import type {
     Client,
     CompanySettings,
     InventoryItem,
+    WarehouseLocation,
     Order,
     OrderItem,
+    OrderItemAllocation,
     Product,
+    ProductCatalogOption,
+    ProductCatalogOptionType,
     PurchaseOrder,
     Supplier,
     SupplierPayment,
@@ -57,9 +61,12 @@ import type {
     BulkPaymentInput,
     BulkPaymentResponse,
     PendingInvoiceResponse,
+    FiscalSaleStatus,
     BulkSupplierPaymentInput,
     BulkSupplierPaymentResponse,
-    PendingSupplierInvoiceResponse
+    PendingSupplierInvoiceResponse,
+    CustomerCheck,
+    OutgoingCheck
 } from "@/types/api";
 import { httpClient, isApiError } from "./httpClient";
 
@@ -246,12 +253,77 @@ type ProductUpsertInput =
         status?: "active" | "inactive";
     };
 
+export type PosExceptionType = "price" | "stock_shortage";
+
+export type PosExceptionPriceDetails = {
+    source: "offline_pos";
+    role?: string;
+    lines: Array<{ product_id: string; catalog_price: number; unit_price: number }>;
+};
+
+export type PosExceptionStockShortageDetails = {
+    offline_captured_at?: string;
+    lines: Array<{ product_id: string; requested: number; shortage: number }>;
+};
+
+export type PosExceptionReview = {
+    decision: "approved" | "rejected";
+    notes: string | null;
+    order_id: string;
+    reviewed_by: string;
+    reviewed_at: string;
+};
+
+export type PosException = {
+    id: number;
+    type: PosExceptionType;
+    order_id: string;
+    customer_name: string | null;
+    total_amount: number | null;
+    user_id: string;
+    user_name: string;
+    created_at: string;
+    details: PosExceptionPriceDetails | PosExceptionStockShortageDetails | Record<string, unknown>;
+    review: PosExceptionReview | null;
+};
+
+export type PosExceptionReviewInput = {
+    decision: "approved" | "rejected";
+    notes?: string;
+};
+
+export type PosCheckoutInput = {
+    idempotency_key: string;
+    shift_id: string;
+    offline_captured_at?: string;
+    customer_name?: string;
+    client_id?: string;
+    payment_method?: string;
+    payments: Array<{ method: string; amount: number }>;
+    items: Array<{ product_id: string; quantity: number; unit_price?: number }>;
+    emit_invoice?: boolean;
+    invoice_type?: string;
+    point_of_sale?: number;
+};
+
+export type PosCheckoutResult = {
+    order_id: string;
+    total_amount: number;
+    invoice: Invoice | null;
+    shift_id: string;
+    expected_balance: number;
+    idempotent_replay: boolean;
+};
+
 type OrderCreateInput = {
+    idempotency_key?: string;
+    offline_captured_at?: string;
     client_id?: string;
     customer_name?: string;
     counter_user_id?: string;
     counter_name?: string;
     payment_method?: string;
+    payments?: Array<{ method: string; amount: number }>;
     shipping_method?: "pickup" | "delivery";
     shipping_address?: string;
     estimated_delivery?: string;
@@ -260,7 +332,7 @@ type OrderCreateInput = {
     delivery_notes?: string;
     notes?: string;
     total_amount?: number;
-    items: Array<{ product_id: string; quantity: number }>;
+    items: Array<{ product_id: string; quantity: number; unit_price?: number; vat_rate?: number }>;
     [key: string]: unknown;
 };
 
@@ -361,6 +433,12 @@ export const api = {
 
     deleteProduct: (id: string) =>
         httpClient.del<{ success: boolean; message?: string }>(`/api/products/${id}`),
+    getProductCatalogOptions: (filters?: { type?: ProductCatalogOptionType; parent_id?: string; include_inactive?: boolean }) =>
+        httpClient.get<ProductCatalogOption[]>(withQuery("/api/product-catalog-options", filters)),
+    createProductCatalogOption: (data: { type: ProductCatalogOptionType; name: string; parent_id?: string | null; sort_order?: number }) =>
+        httpClient.post<ProductCatalogOption>("/api/product-catalog-options", data),
+    updateProductCatalogOption: (id: string, data: { name?: string; parent_id?: string | null; active?: boolean; sort_order?: number }) =>
+        httpClient.put<ProductCatalogOption>(`/api/product-catalog-options/${id}`, data),
 
     // ==================== CLIENTS ====================
     getClients: () =>
@@ -398,15 +476,49 @@ export const api = {
     // ==================== INVENTORY ====================
     getInventory: () =>
         httpClient.get<InventoryItem[]>("/api/inventory"),
+    getWarehouseLocations: () =>
+        httpClient.get<WarehouseLocation[]>("/api/inventory/locations"),
+    createWarehouseLocation: (data: { code: string; name: string; description?: string }) =>
+        httpClient.post<WarehouseLocation>("/api/inventory/locations", data),
+    updateWarehouseLocation: (id: string, data: { code?: string; name?: string; description?: string | null; active?: boolean }) =>
+        httpClient.put<WarehouseLocation>(`/api/inventory/locations/${id}`, data),
+    getStockAuditDashboard: (filters?: { status?: import("@/types").StockAuditStatus; abc_class?: import("@/types").StockAuditScope; location_code?: string }) =>
+        httpClient.get<import("@/types").StockAuditDashboard>(withQuery("/api/inventory/audits/dashboard", filters)),
+    getStockAudit: (id: string) =>
+        httpClient.get<import("@/types").StockAuditSession>(`/api/inventory/audits/${id}`),
+    createStockAudit: (data: { location_code: string; abc_class: import("@/types").StockAuditScope; notes?: string | null }) =>
+        httpClient.post<import("@/types").StockAuditSession>("/api/inventory/audits", data),
+    countStockAuditItem: (id: string, data: { code: string; quantity: number; notes?: string | null }) =>
+        httpClient.post<import("@/types").StockAuditSession>(`/api/inventory/audits/${id}/counts`, data),
+    completeStockAudit: (id: string) =>
+        httpClient.post<import("@/types").StockAuditSession>(`/api/inventory/audits/${id}/complete`),
+    cancelStockAudit: (id: string) =>
+        httpClient.post<import("@/types").StockAuditSession>(`/api/inventory/audits/${id}/cancel`),
+    applyStockAuditAdjustments: (id: string) =>
+        httpClient.post<import("@/types").StockAuditSession>(`/api/inventory/audits/${id}/adjust`),
 
     // ==================== ORDERS ====================
-    getOrders: (filters?: { client_id?: string; status?: string; page?: number; limit?: number; offset?: number }) =>
+    getOrders: (filters?: { client_id?: string; status?: string; shipping_method?: string; page?: number; limit?: number; offset?: number }) =>
         httpClient.get<Order[]>(withQuery("/api/orders", filters)),
-    getOrdersPage: (filters?: { client_id?: string; status?: string; page?: number; limit?: number; offset?: number }) =>
+    getOrdersPage: (filters?: { client_id?: string; status?: string; shipping_method?: string; page?: number; limit?: number; offset?: number }) =>
         httpClient.getWithMeta<Order[]>(withQuery("/api/orders", filters)) as Promise<PaginatedResponse<Order[]>>,
 
     createOrder: (data: OrderCreateInput) =>
         httpClient.post<{ id: string; total_amount: number }>("/api/orders", data),
+
+    // Counter sale in one server transaction: sale + stock + optional invoice + cash-shift payments.
+    posCheckout: (data: PosCheckoutInput) =>
+        httpClient.post<PosCheckoutResult>("/api/pos/checkout", data),
+
+    // Offline POS sales that broke a rule (ADR-010): pending/reviewed exceptions for manager review.
+    getPosExceptions: (status?: "pending" | "reviewed", limit?: number) =>
+        httpClient.get<PosException[]>(withQuery("/api/pos/exceptions", { status, limit })),
+
+    reviewPosException: (id: number, data: PosExceptionReviewInput) =>
+        httpClient.post<{ id: number; decision: "approved" | "rejected"; notes: string | null }>(
+            `/api/pos/exceptions/${id}/review`,
+            data
+        ),
 
     updateOrderStatus: (id: string, status: string) =>
         httpClient.put<Order>(`/api/orders/${id}/status`, { status }),
@@ -456,10 +568,30 @@ export const api = {
         }
     ) => httpClient.post<Invoice>(`/api/orders/${orderId}/invoice`, data),
 
+    checkoutPickupOrder: (
+        orderId: string,
+        data: {
+            recipient_name?: string | undefined;
+            recipient_dni?: string | undefined;
+            delivery_notes?: string | undefined;
+            shift_id?: string | undefined;
+            invoice_type?: "A" | "B" | "C" | "TK" | undefined;
+            point_of_sale?: number | undefined;
+            payments?: Array<{ method: string; amount: number }> | undefined;
+            extra_items?: Array<{
+                product_id: string;
+                quantity: number;
+                unit_price?: number;
+            }> | undefined;
+            notes?: string | undefined;
+        }
+    ) => httpClient.post<{ order: Order; invoice: Invoice }>(`/api/orders/${orderId}/pickup-checkout`, data),
+
     getOrderSummary: (id: string) =>
         httpClient.get<{
             order: Order;
             items: OrderItem[];
+            allocations?: OrderItemAllocation[];
             summary: { total_items: number; total_picked: number; completion_percent: number };
             picking_session?: {
                 id: string;
@@ -477,6 +609,9 @@ export const api = {
     // ==================== DASHBOARD ====================
     getDashboardStats: () =>
         httpClient.get<DashboardStatsResponse>("/api/dashboard/stats"),
+
+    getSizeColorAnalytics: () =>
+        httpClient.get<Array<{ category: string; size: string; units_sold: number }>>("/api/dashboard/size-color-analytics"),
 
     // ==================== RETURNS ====================
     getReturns: (filters?: { supplier_id?: string; status?: string }) =>
@@ -535,7 +670,7 @@ export const api = {
         httpClient.put<{ success: boolean }>("/api/settings/company", settings),
 
     syncTiendanubeOrders: () =>
-        httpClient.post<{ success: boolean; syncedCount: number }>("/api/integrations/tiendanube/sync-orders"),
+        httpClient.post<{ success: boolean; syncedCount: number; skippedCount: number; failures: Array<{ externalId: string; message: string }>; pages: number }>("/api/integrations/tiendanube/sync-orders"),
 
     autoLinkTiendanubeCatalog: () =>
         httpClient.post<{ success: boolean; totalVariantsFound: number; linkedCount: number }>("/api/integrations/tiendanube/auto-link"),
@@ -549,6 +684,91 @@ export const api = {
     retryAllFailedSyncs: () =>
         httpClient.post<{ success: boolean; message: string }>("/api/integrations/tiendanube/failed-syncs/retry-all"),
 
+    getTiendanubeStatus: () =>
+        httpClient.get<import("@/types").TiendaNubeIntegrationStatus>("/api/integrations/tiendanube/status"),
+
+    getTiendanubeConfig: () =>
+        httpClient.get<import("@/types").TiendaNubeIntegrationConfig>("/api/integrations/tiendanube/config"),
+
+    updateTiendanubeConfig: (config: { clientId: string; clientSecret?: string; locationId: string }) =>
+        httpClient.patch<import("@/types").TiendaNubeIntegrationConfig>("/api/integrations/tiendanube/config", config),
+
+    getOnlineStoreOverview: () =>
+        httpClient.get<import("@/types/onlineStore").OnlineStoreOverview>("/api/integrations/tiendanube/operations/overview"),
+
+    getOnlineCatalog: (filters?: { page?: number; limit?: number; q?: string; visibility?: string; sync_status?: string }) =>
+        httpClient.getWithMeta<import("@/types/onlineStore").OnlineCatalogFamily[]>(
+            withQuery("/api/integrations/tiendanube/operations/catalog", filters)
+        ) as Promise<PaginatedResponse<import("@/types/onlineStore").OnlineCatalogFamily[]>>,
+
+    createOnlineProduct: (data: import("@/types/onlineStore").OnlineProductDraft) =>
+        httpClient.post<import("@/types/onlineStore").OnlineCatalogFamily>("/api/integrations/tiendanube/operations/catalog", {
+            ...data,
+            description: data.description?.trim() || null,
+            brand: data.brand?.trim() || null,
+            category: data.category?.trim() || null,
+            variants: data.variants.map((variant) => ({
+                ...variant,
+                sku: variant.sku.trim(),
+                barcode: variant.barcode?.trim() || null,
+                size: variant.size?.trim() || null,
+                color: variant.color?.trim() || null,
+                image_url: variant.image_url?.trim() || null,
+            })),
+        }),
+
+    updateOnlineProduct: (id: string, data: Partial<Pick<import("@/types/onlineStore").OnlineProductDraft, "name" | "description" | "brand" | "category" | "visibility">>) =>
+        httpClient.put<import("@/types/onlineStore").OnlineCatalogFamily>(`/api/integrations/tiendanube/operations/catalog/${id}`, data),
+
+    archiveOnlineProduct: (id: string) =>
+        httpClient.del<{ success: boolean }>(`/api/integrations/tiendanube/operations/catalog/${id}`),
+
+    publishOnlineProduct: (id: string) =>
+        httpClient.post<{ success: boolean; remoteProductId: string }>(`/api/integrations/tiendanube/operations/catalog/${id}/publish`),
+
+    importOnlineCatalog: (q?: string) =>
+        httpClient.post<{ success: boolean; processed: number; succeeded: number; failures: Array<{ id?: string; message: string }> }>(
+            "/api/integrations/tiendanube/operations/catalog/import", q ? { q } : {}
+        ),
+
+    getOnlineOrders: (filters?: { page?: number; limit?: number; q?: string; payment_status?: string; shipping_status?: string; from?: string; to?: string }) =>
+        httpClient.getWithMeta<import("@/types/onlineStore").OnlineOrder[]>(
+            withQuery("/api/integrations/tiendanube/operations/orders", filters)
+        ) as Promise<PaginatedResponse<import("@/types/onlineStore").OnlineOrder[]>>,
+
+    getOnlineCustomers: (filters?: { page?: number; limit?: number; q?: string }) =>
+        httpClient.getWithMeta<import("@/types/onlineStore").OnlineCustomer[]>(
+            withQuery("/api/integrations/tiendanube/operations/customers", filters)
+        ) as Promise<PaginatedResponse<import("@/types/onlineStore").OnlineCustomer[]>>,
+
+    getOnlineFulfillments: (filters?: { page?: number; limit?: number; q?: string; shipping_status?: string }) =>
+        httpClient.getWithMeta<import("@/types/onlineStore").OnlineFulfillment[]>(
+            withQuery("/api/integrations/tiendanube/operations/fulfillments", filters)
+        ) as Promise<PaginatedResponse<import("@/types/onlineStore").OnlineFulfillment[]>>,
+
+    syncOnlineFulfillments: () =>
+        httpClient.post<{ success: boolean; orders: number; synced: number; failures: Array<{ externalId: string; message: string }> }>(
+            "/api/integrations/tiendanube/operations/fulfillments/sync"
+        ),
+
+    updateOnlineFulfillment: (id: string, data: { status?: string; tracking_code?: string | null; tracking_url?: string | null; notify_customer?: boolean }) =>
+        httpClient.patch<import("@/types/onlineStore").OnlineFulfillment>(`/api/integrations/tiendanube/operations/fulfillments/${id}`, data),
+
+    createOnlineTrackingEvent: (id: string, data: { status: string; description: string; address?: string | null; happened_at?: string; estimated_delivery_at?: string | null }) =>
+        httpClient.post<Record<string, unknown>>(`/api/integrations/tiendanube/operations/fulfillments/${id}/tracking-events`, data),
+
+    getOnlineStoreAnalytics: () =>
+        httpClient.get<import("@/types/onlineStore").OnlineStoreAnalytics>("/api/integrations/tiendanube/operations/analytics"),
+
+    getOnlineSyncCenter: () =>
+        httpClient.get<import("@/types/onlineStore").OnlineSyncCenter>("/api/integrations/tiendanube/operations/sync-center"),
+
+    ensureTiendanubeWebhook: () =>
+        httpClient.post<{ success: boolean; configured: boolean; created?: boolean }>("/api/integrations/tiendanube/webhook/ensure"),
+
+    disconnectTiendanube: () =>
+        httpClient.post<{ success: boolean; removed: number }>("/api/integrations/tiendanube/disconnect"),
+
     testAfipConnection: (billing: NonNullable<CompanySettings["billing"]>) =>
         httpClient.post<{ success: boolean; logs: string[]; nextVoucherNumber: number }>("/api/settings/afip/test-connection", billing),
 
@@ -560,6 +780,12 @@ export const api = {
     // ==================== USERS & AUTH ====================
     login: (credentials: LoginCredentials) =>
         httpClient.post<LoginResponse>("/api/login", credentials),
+
+    getSession: () =>
+        httpClient.get<LoginResponse>("/api/session"),
+
+    logout: () =>
+        httpClient.post<void>("/api/logout"),
 
     getUsers: () =>
         httpClient.get<User[]>("/api/users"),
@@ -683,6 +909,9 @@ export const api = {
     getInvoices: (filters?: { client_id?: string; status?: string; start_date?: string; end_date?: string }) =>
         httpClient.get<Invoice[]>(withQuery("/api/invoices", filters)),
 
+    getInvoice: (id: string) =>
+        httpClient.get<Invoice>(`/api/invoices/${id}`),
+
     getInvoiceItems: (invoiceId: string) =>
         httpClient.get<InvoiceItem[]>(withQuery("/api/invoice-items", { invoice_id: invoiceId })),
 
@@ -698,9 +927,17 @@ export const api = {
     // ==================== COLLECTIONS (CUENTA CORRIENTE) ====================
     getPendingInvoices: (filters?: { client_id?: string }) =>
         httpClient.get<PendingInvoiceResponse[]>("/api/collections/pending-invoices" + (filters?.client_id ? `?client_id=${filters.client_id}` : "")),
+    getFiscalSalesStatus: () =>
+        httpClient.get<FiscalSaleStatus[]>("/api/collections/fiscal-status"),
 
     registerBulkInvoicePayments: (data: BulkPaymentInput) =>
         httpClient.post<BulkPaymentResponse>("/api/collections", data),
+    getCustomerChecks: (filters?: { status?: string }) =>
+        httpClient.get<CustomerCheck[]>(withQuery("/api/checks", filters)),
+    getCustomerCheck: (id: string) =>
+        httpClient.get<CustomerCheck>(`/api/checks/${id}`),
+    updateCustomerCheckStatus: (id: string, data: { status: CustomerCheck["status"]; notes?: string; delivered_to?: string }) =>
+        httpClient.put<CustomerCheck>(`/api/checks/${id}/status`, data),
 
     // ==================== SUPPLIER PAYMENTS (PAGOS PROVEEDORES) ====================
     getPendingSupplierInvoices: (filters?: { supplier_id?: string }) =>
@@ -708,6 +945,13 @@ export const api = {
 
     registerBulkSupplierPayments: (data: BulkSupplierPaymentInput) =>
         httpClient.post<BulkSupplierPaymentResponse>("/api/supplier-payments/bulk", data),
+
+    getOutgoingChecks: (filters?: { status?: string }) =>
+        httpClient.get<OutgoingCheck[]>(withQuery("/api/outgoing-checks", filters)),
+    getOutgoingCheck: (id: string) =>
+        httpClient.get<OutgoingCheck>(`/api/outgoing-checks/${id}`),
+    updateOutgoingCheckStatus: (id: string, data: { status: OutgoingCheck["status"]; notes?: string }) =>
+        httpClient.put<OutgoingCheck>(`/api/outgoing-checks/${id}/status`, data),
 
 
 
@@ -764,14 +1008,8 @@ export const api = {
     createManualJournalEntry: (data: ManualJournalEntryInput) =>
         httpClient.post<GenericRecord>("/api/accounting/journal-entries", data),
 
-    updateJournalEntry: (id: string, data: GenericRecord) =>
-        httpClient.put<GenericRecord>(`/api/accounting/journal-entries/${id}`, data),
-
     reverseJournalEntry: (id: string) =>
         httpClient.post<GenericRecord>(`/api/accounting/journal-entries/${id}/reverse`),
-
-    deleteJournalEntry: (id: string) =>
-        httpClient.del<GenericRecord>(`/api/accounting/journal-entries/${id}`),
 
     // ==================== WMS TRANSFER ====================
     transferStock: (data: { product_id: string; from_location: string; to_location: string; quantity: number }) =>

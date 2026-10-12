@@ -1,12 +1,21 @@
 import express from 'express';
 import * as inventoryController from '../controllers/inventoryController.js';
+import * as stockAuditController from '../controllers/stockAuditController.js';
 import { validate, schemas, validateZod, zodSchemas } from '../middleware/validationMiddleware.js';
-import { authorizeRoles } from '../middleware/authMiddleware.js';
+import { authorizePermission } from '../middleware/authMiddleware.js';
+import { PERMISSIONS } from '@wsm/common';
 
 const router = express.Router();
-const inventoryReadRoles = authorizeRoles('admin', 'manager', 'warehouse', 'cashier');
-const inventoryWriteRoles = authorizeRoles('admin', 'manager', 'warehouse');
-const advancedInventoryRoles = authorizeRoles('admin', 'manager', 'warehouse');
+const inventoryReadRoles = authorizePermission(PERMISSIONS.PRODUCTS_READ);
+const inventoryWriteRoles = authorizePermission(PERMISSIONS.INVENTORY_MANAGE);
+const advancedInventoryRoles = authorizePermission(PERMISSIONS.INVENTORY_MANAGE);
+const stockCountRoles = authorizePermission(PERMISSIONS.INVENTORY_COUNT);
+const stockAdjustRoles = authorizePermission(PERMISSIONS.INVENTORY_ADJUST);
+
+// Normalized product catalog masters
+router.get('/product-catalog-options', inventoryReadRoles, inventoryController.getProductCatalogOptions);
+router.post('/product-catalog-options', inventoryWriteRoles, inventoryController.createProductCatalogOption);
+router.put('/product-catalog-options/:id', inventoryWriteRoles, validate(schemas.idParam), inventoryController.updateProductCatalogOption);
 
 // Products
 router.get('/products', inventoryReadRoles, validateZod(zodSchemas.productFilters), inventoryController.getProducts);
@@ -19,7 +28,19 @@ router.get('/products/:id/movements', inventoryReadRoles, validate(schemas.idPar
 
 // Inventory summary
 router.get('/inventory', inventoryReadRoles, inventoryController.getInventory);
+router.get('/inventory/locations', inventoryReadRoles, inventoryController.getWarehouseLocations);
+router.post('/inventory/locations', inventoryWriteRoles, inventoryController.createWarehouseLocation);
+router.put('/inventory/locations/:id', inventoryWriteRoles, validate(schemas.idParam), inventoryController.updateWarehouseLocation);
 router.post('/inventory/transfer', inventoryWriteRoles, inventoryController.transferStock);
+
+// Mobile cycle counts and controlled stock reconciliation
+router.get('/inventory/audits/dashboard', stockCountRoles, validateZod(zodSchemas.stockAuditFilters), stockAuditController.getStockAuditDashboard);
+router.get('/inventory/audits/:id', stockCountRoles, validate(zodSchemas.idParam), stockAuditController.getStockAudit);
+router.post('/inventory/audits', stockCountRoles, validateZod(zodSchemas.stockAuditCreate), stockAuditController.createStockAudit);
+router.post('/inventory/audits/:id/counts', stockCountRoles, validateZod(zodSchemas.stockAuditCount), stockAuditController.countStockAuditItem);
+router.post('/inventory/audits/:id/complete', stockCountRoles, validate(zodSchemas.idParam), stockAuditController.completeStockAudit);
+router.post('/inventory/audits/:id/cancel', stockCountRoles, validate(zodSchemas.idParam), stockAuditController.cancelStockAudit);
+router.post('/inventory/audits/:id/adjust', stockAdjustRoles, validate(zodSchemas.idParam), stockAuditController.applyStockAuditAdjustments);
 
 // Movements (legacy + explicit alias)
 router.get('/movements', inventoryReadRoles, validate(schemas.inventoryMovementFilters), inventoryController.getMovements);

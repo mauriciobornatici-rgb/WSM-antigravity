@@ -43,7 +43,6 @@ export default function InvoicesPage() {
         unit_price: 0,
         vat_rate: getTaxRatePercentage(DEFAULT_COMPANY_SETTINGS),
     })
-    const emailFeatureEnabled = import.meta.env.VITE_ENABLE_INVOICE_EMAIL === "true"
     const invoiceIdFilter = (searchParams.get("invoice_id") || "").trim()
     const visibleInvoices = useMemo(() => {
         if (!invoiceIdFilter) return invoices
@@ -115,20 +114,6 @@ export default function InvoicesPage() {
         }
     }
 
-    const handleSendEmail = (invoice: InvoiceView) => {
-        // TODO: Integrar con endpoint backend real de envío de comprobantes.
-        if (!emailFeatureEnabled) {
-            toast.info("Envío por email en modo simulación", {
-                description: `No hay integración activa. Destinatario estimado: ${invoice.client_snapshot?.email || "cliente sin email"}.`,
-            })
-            return
-        }
-
-        toast.warning("Integración de email pendiente", {
-            description: "Activaste la feature flag, pero aún falta implementar el endpoint de envío.",
-        })
-    }
-
     const handleOpenPreview = async (invoice: InvoiceView) => {
         try {
             if (invoice.items && invoice.items.length > 0) {
@@ -147,16 +132,30 @@ export default function InvoicesPage() {
         }
     }
 
+    const prepareAndPrint = async (invoice: InvoiceView, layout: "a4" | "thermal") => {
+        try {
+            const items = invoice.items?.length ? invoice.items : await api.getInvoiceItems(invoice.id)
+            setSelectedInvoice({ ...invoice, items: items as InvoiceItem[] })
+            setActivePrintLayout(layout)
+            await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+            window.print()
+            const cleanup = () => {
+                setActivePrintLayout(null)
+                window.removeEventListener("afterprint", cleanup)
+            }
+            window.addEventListener("afterprint", cleanup)
+            setTimeout(cleanup, 1000)
+        } catch (error) {
+            showErrorToast("No se pudo preparar el comprobante para imprimir", error)
+        }
+    }
+
     const handlePrintInvoice = (invoice: InvoiceView) => {
-        setActivePrintLayout("a4")
-        setSelectedInvoice(invoice)
-        setTimeout(() => window.print(), 200)
+        void prepareAndPrint(invoice, "a4")
     }
 
     const handlePrintThermal = (invoice: InvoiceView) => {
-        setActivePrintLayout("thermal")
-        setSelectedInvoice(invoice)
-        setTimeout(() => window.print(), 200)
+        void prepareAndPrint(invoice, "thermal")
     }
 
     const handleExportLibroIVA = () => {
@@ -254,7 +253,7 @@ export default function InvoicesPage() {
     const companyAddress = getCompanyAddressLine(companySettings)
 
     return (
-        <div className="space-y-6 p-6 print:hidden">
+        <div className="space-y-6 p-6">
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Historial de ventas</h1>
@@ -279,7 +278,6 @@ export default function InvoicesPage() {
                 loading={loading}
                 onRefresh={loadData}
                 onPreview={handleOpenPreview}
-                onSendEmail={handleSendEmail}
                 onPrint={handlePrintInvoice}
                 onExportCSV={handleExportLibroIVA}
                 onPrintThermal={handlePrintThermal}
@@ -313,10 +311,11 @@ export default function InvoicesPage() {
                 companyTaxId={companyTaxId}
                 companyAddress={companyAddress}
                 taxRateLabel={taxRateLabel}
-                onSendEmail={handleSendEmail}
                 onClose={() => setIsPreviewOpen(false)}
                 onAuthorize={handleAuthorizeInvoice}
                 companySettings={companySettings}
+                onPrint={handlePrintInvoice}
+                onPrintThermal={handlePrintThermal}
             />
 
             {activePrintLayout === "a4" && selectedInvoice && (

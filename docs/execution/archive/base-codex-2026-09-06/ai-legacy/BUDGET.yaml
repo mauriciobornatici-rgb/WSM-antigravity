@@ -1,0 +1,52 @@
+version: 1.1
+
+# Modo operativo para WSM SportsERP: balanced por defecto
+mode: balanced
+
+bootstrap:
+  max_fraction_of_first_task_effort: 0.10
+  install_dependencies_for_kit: false
+  create_external_resources: false
+
+context:
+  search_before_read: true
+  avoid_full_repository_reads: true
+  large_output_strategy: artifact_and_summary
+  tool_result_target_bytes: 8192
+  checkpoint_on:
+    - meaningful_milestone
+    - blocker
+    - approval_boundary
+    - context_pressure
+
+iteration:
+  max_same_failure_retries: 2
+  max_replans_before_blocked: 2
+  keep_next_actions: 3
+  require_observable_progress: true
+  ask_only_material_questions: true
+  max_bootstrap_questions: 3
+
+models:
+  default_strategy: least_expensive_capable_mode
+  allow_one_complexity_escalation: true
+  extra_llm_review: only_for_high_impact_or_non_deterministic_output
+  default_agent_count: 1
+  multi_agent: only_for_independent_bounded_high_value_work
+  return_to_single_agent_after_delegation: true
+
+verification:
+  prefer_deterministic_checks: true
+  run_fast_checks_during_iteration: true
+  run_full_checks_at_completion: true
+  completion_requires_evidence: true
+  disclose_skipped_checks: true
+
+approval_required:
+  - destructive_change
+  - database_migration_execution
+  - external_api_production_call
+  - credential_use_or_transfer
+  - meaningful_dependency_install
+  - material_scope_or_cost_increase
+  - constitutional_rule_change_after_bootstrap

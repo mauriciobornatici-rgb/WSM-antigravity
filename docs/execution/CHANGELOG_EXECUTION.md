@@ -1,5 +1,89 @@
 # Execution Changelog
 
+## 2026-08-20
+
+### Centro operativo Tiendanube
+
+- Se creó `Tienda online` como módulo de primer nivel con catálogo servidor/paginado, altas y bajas multivariante, pedidos, compradores, domicilios, envíos múltiples, tracking, clientes, centro de sincronización y análisis.
+- Se eliminó Tiendanube de Configuración general y se trasladaron credenciales, OAuth, Location ID, webhooks, diagnóstico y desconexión a `Tienda online > Configuración`.
+- Se agregó un contrato backend específico para esa configuración técnica, evitando leer o reescribir la configuración completa de empresa/ARCA al actualizar la integración.
+- Backend ampliado con modelo operacional, endpoints validados, permisos `ONLINE_STORE_READ/MANAGE`, rate limiting de API, reintento 429, webhooks de productos/pedidos/clientes/fulfillments/app e idempotencia compatible con eventos repetidos.
+- Migraciones nuevas `033`-`036`; se preservaron checksums ejecutados y se alineó el esquema histórico de productos/movimientos detectado durante la prueba real.
+- Se corrigieron opcionales vacíos del alta, mensajes de validación por campo, accesibilidad de variantes/diálogos y autofill indebido de credenciales Tiendanube.
+- Evidencia y runbook: `docs/TIENDANUBE_OPERATIONS.md`.
+
+## 2026-08-16
+
+### Auditoría integral + remediación de hallazgos críticos/altos
+
+- Seguridad / secretos
+  - `packages/server/utils/crypto.js`
+    - `ENCRYPTION_KEY` ahora es obligatoria (hard-fail). Se eliminó el fallback silencioso a texto plano: si el dato no descifra con la clave actual se intenta la clave legacy default (para valores pre-rotación) y si tampoco, se lanza error explícito.
+  - `packages/server/config/env.js`
+    - Validación de `ENCRYPTION_KEY` en arranque (error en staging/production, warning en development).
+  - `packages/server/scripts/set-admin-password.js` & `reset-pwd.js`
+    - Sin contraseñas hardcodeadas: toman `<email> <password>` por CLI, validan política de password e incrementan `token_version` (revoca sesiones).
+  - `.env` (no versionado): `DB_SSL=true` para la BD remota, `ENCRYPTION_KEY` y `JWT_SECRET` rotados. Pendiente humano: rotar `DB_PASSWORD` desde el panel de Hostinger.
+  - `.env.example`: documentada `ENCRYPTION_KEY`.
+- Transaccionalidad / integridad
+  - `packages/server/domains/sales/InvoiceAuthorizationUseCase.js`
+    - Todo el flujo dentro de una TX con `SELECT ... FOR UPDATE` sobre la factura: dos autorizaciones concurrentes ya no pueden duplicar el llamado a AFIP. 404 correcto si no existe.
+  - `packages/server/services/audit.service.js` (+ call sites en `sales.service.js`, `finance.service.js`, `CreateOrderUseCase.js`)
+    - `auditService.log(data, executor)` acepta la conexión de la TX: el audit entry ahora committea/rolbackea junto con la operación monetaria.
+- Integración Tienda Nube
+  - `packages/server/controllers/integrationController.js`
+    - Webhook procesa ANTES de responder: ante fallo responde 500 para que Tienda Nube re-entregue (la tabla de eventos mantiene idempotencia). Sin rawBody → 500 explícito (no se re-serializa el body, que rompía la firma). OAuth callback actualiza el `id` real de `company_settings` (antes hardcodeado a 1).
+  - `packages/server/routes/integrationRoutes.js`
+    - Syncs manuales y cola de reintentos restringidos a `admin` (`authorizeRoles`).
+- Fix fiscal (frontend)
+  - `packages/client/src/components/invoices/AfipQrImage.tsx` [NEW]
+    - QR generado localmente con `qrcode` (sin api.qrserver.com): la impresión fiscal funciona sin internet.
+  - `InvoiceDocument.tsx`, `PrintableThermalTicket.tsx`, `CreditNoteDocument.tsx`, `PrintableThermalCreditNote.tsx`
+    - Usan `afipQr.ts` (payload RG 4892 con `ctz` correcto, NC_A/NC_B mapeados a 3/8). Se eliminaron ~120 líneas duplicadas y los QR "decorativos" falsos. `DEFAULT_CAE_EXPIRATION_DATE` ahora se calcula por render (no quedaba vencido tras días abierta la app).
+- Performance / BD
+  - `packages/server/migrations/026_add_relational_query_indexes.sql` [NEW]
+    - Índices secundarios para joins/filtros frecuentes (order_items, invoice_items, movements, barcode POS, audit_logs, supplier/receptions/returns). Aplicada a la BD remota.
+  - `packages/server/tools/backup_db.js`
+    - `--single-transaction --routines --triggers --events`, password vía `MYSQL_PWD` (fuera del listado de procesos), soporte `--ssl`, retención de 10 backups.
+- Dependencias / higiene
+  - `axios` declarado en `@wsm/server` (era dependencia fantasma); `npm audit fix` → 0 vulnerabilidades (react-router, express-rate-limit, qs, etc.); `puppeteer` movido a devDependencies de la raíz.
+  - Commits del trabajo pendiente de 2026-08-04 (dominios DDD, tests, migraciones 024/025, theme/palette/hooks, manual de usuario) que estaba sin versionar (~2 meses). Des-trackeados artefactos generados (`playwright-report`).
+- Tests: server 82/82 OK, client 20/20 OK, lint OK, build OK.
+
+## 2026-08-04
+
+### Added / Security & Refactoring
+- `packages/server/domains/sales/InvoiceAuthorizationUseCase.js` [NEW]
+  - Extracted invoice authorization, AFIP CAE request orchestration, and automatic sales/CMV journal entries.
+- `packages/server/domains/sales/CreateOrderUseCase.js` [NEW]
+  - Extracted order creation, stock reservation and marketplace integration payload handling.
+- `packages/server/domains/procurement/GoodsReceptionService.js` [NEW]
+  - Extracted goods reception approval, quality control segregation to Quarantine, batch/expiry updates and PO status updates.
+- `packages/server/domains/procurement/PurchaseOrderService.js` [NEW]
+  - Extracted Purchase Orders sequence generation, retrieval, and transaction-safe creation logic.
+- `packages/server/domains/procurement/SupplierReturnService.js` [NEW]
+  - Extracted supplier return approval, stock decrement, accounting entries and ledger adjustments.
+- `packages/server/domains/procurement/SupplierPaymentService.js` [NEW]
+  - Extracted supplier payments recording, ledger balance reduction and cash expense transaction logging.
+- `packages/client/src/context/ThemeContextObject.ts` [NEW], `ThemeContext.tsx` [NEW] & `packages/client/src/hooks/useTheme.ts` [NEW]
+  - Created global theme context provider supporting persistent Dark (Modo Noche) and Light (Modo Día) modes.
+- `packages/client/src/layout/AppLayout.tsx` & `packages/client/src/pages/POS.tsx`
+  - Integrated header Theme Toggle buttons (Sun / Moon) with high contrast CSS token mappings.
+- `packages/client/src/hooks/usePOSHotkeys.ts` [NEW]
+  - Implemented keyboard shortcuts for point of sale operation (F2, F4, F8, Esc).
+- `packages/client/src/components/invoices/InvoiceDocument.tsx` & `PrintableThermalTicket.tsx`
+  - Integrated real AFIP RG 4892 QR Code image rendering for scan verification.
+- `packages/server/test/crypto.test.js` [NEW]
+  - Created unit tests for AES-256-GCM encryption, decryption, and legacy plain text fallback.
+- `packages/client/src/lib/pickingUtils.ts` [NEW] & `packages/client/src/lib/pickingUtils.test.ts` [NEW]
+  - Extracted picking domain logic and added 5 Vitest unit tests.
+- `packages/server/services/afip.service.js`
+  - Injected `.crt` and `.key` credentials directly in memory into `@afipsdk/afip.js`, eliminating temp file writing to OS `/tmp`.
+- `packages/server/controllers/settingsController.js`
+  - Protected existing encrypted credentials from partial settings payloads.
+- `packages/server/services/sales.service.js`, `packages/server/services/inventory.service.js` & `packages/server/controllers/procurementController.js`
+  - Delegated complex workflows to standalone domain use cases.
+
 ## 2026-06-15
 
 ### Changed

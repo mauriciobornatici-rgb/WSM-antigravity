@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Calendar, Loader2, Package, Truck, User } from "lucide-react";
 import { api } from "@/services/api";
 import type { PurchaseOrder } from "@/types";
+import type { AuditLogEntry } from "@/types/api";
 import { showErrorToast } from "@/lib/errorHandling";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,12 +49,17 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
     const [order, setOrder] = useState<PurchaseOrder | null>(null);
     const [loading, setLoading] = useState(true);
     const [updating, setUpdating] = useState(false);
+    const [timeline, setTimeline] = useState<AuditLogEntry[]>([]);
 
     const loadOrder = useCallback(async () => {
         try {
             setLoading(true);
-            const response = await api.getPurchaseOrder(orderId);
+            const [response, auditRows] = await Promise.all([
+                api.getPurchaseOrder(orderId),
+                api.getAuditLogs({ entity_type: "purchase_order", entity_id: orderId, limit: 100 }).catch(() => []),
+            ]);
             setOrder(response);
+            setTimeline(auditRows);
         } catch (error) {
             showErrorToast("Error al cargar detalles de la orden", error);
             setOrder(null);
@@ -186,12 +192,25 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
                 </div>
             ) : null}
 
+            <div className="rounded-lg border p-4">
+                <h3 className="text-sm font-semibold">Trazabilidad de la orden</h3>
+                <p className="mt-1 text-xs text-muted-foreground">“Marcar enviada” habilita el circuito de recepción y registra el cambio. No despacha correo al proveedor.</p>
+                <div className="mt-3 space-y-2">
+                    {timeline.length === 0 ? <p className="text-xs text-muted-foreground">Sin eventos registrados.</p> : timeline.map((event) => (
+                        <div key={event.id} className="flex flex-col gap-1 rounded border bg-muted/20 p-2 text-xs sm:flex-row sm:items-center sm:justify-between">
+                            <span className="font-medium">{event.action.replaceAll("_", " ")}</span>
+                            <span className="text-muted-foreground">{new Date(event.created_at).toLocaleString("es-AR")} · {event.user_name || event.user_email || "Sistema"}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
             <div className="flex flex-col gap-4 border-t pt-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex flex-col gap-2 sm:flex-row">
                     {order.status === "draft" ? (
                         <>
                             <Button onClick={() => void handleStatusUpdate("sent")} disabled={updating} className="bg-green-600 hover:bg-green-700">
-                                Aprobar orden
+                                Marcar enviada
                             </Button>
                             <Button onClick={() => void handleStatusUpdate("cancelled")} disabled={updating} variant="destructive">
                                 Cancelar

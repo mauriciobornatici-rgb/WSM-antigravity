@@ -11,10 +11,12 @@ type InvoicePreviewDialogProps = {
     companyTaxId: string
     companyAddress: string
     taxRateLabel: string
-    onSendEmail: (invoice: InvoiceView) => void
+    onSendEmail?: ((invoice: InvoiceView) => void) | undefined
     onClose: () => void
     onAuthorize?: (invoice: InvoiceView) => void | Promise<void>
     companySettings?: CompanySettings
+    onPrint?: (invoice: InvoiceView) => void
+    onPrintThermal?: (invoice: InvoiceView) => void
 }
 
 export function InvoicePreviewDialog({
@@ -29,6 +31,8 @@ export function InvoicePreviewDialog({
     onClose,
     onAuthorize,
     companySettings,
+    onPrint,
+    onPrintThermal,
 }: InvoicePreviewDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -43,10 +47,12 @@ export function InvoicePreviewDialog({
                         companyTaxId={companyTaxId}
                         companyAddress={companyAddress}
                         taxRateLabel={taxRateLabel}
-                        onSendEmail={onSendEmail}
+                        {...(onSendEmail ? { onSendEmail } : {})}
                         onClose={onClose}
                         onAuthorize={onAuthorize}
                         companySettings={companySettings}
+                        {...(onPrint ? { onPrint } : {})}
+                        {...(onPrintThermal ? { onPrintThermal } : {})}
                     />
                 ) : (
                     <div className="flex h-64 items-center justify-center">

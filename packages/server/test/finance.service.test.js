@@ -144,3 +144,253 @@ test('registerInvoicePayments successfully registers payments, updates invoice/o
     // Clients update
     assert.ok(updates.some((c) => c.sql.includes('UPDATE clients') && c.sql.includes('current_account_balance')));
 });
+
+test('registerBulkInvoicePayments collects an uninvoiced credit-account order without creating a fiscal invoice', async (t) => {
+    const queryCalls = [];
+    mockPool(t, async (sql, params) => {
+        queryCalls.push({ sql, params });
+        if (sql.includes('FROM orders o') && sql.includes('receivable_amount')) {
+            return [[{
+                id: 'order-1',
+                client_id: 'client-1',
+                client_name: 'Pedro',
+                receivable_amount: 60000,
+                payment_method: 'credit_account'
+            }]];
+        }
+        if (sql.includes('SELECT COALESCE(SUM(amount)')) {
+            return [[{ paid_amount: 0 }]];
+        }
+        return [[]];
+    });
+
+    const originalLog = auditService.log;
+    const originalCreateJournalEntry = accountingService.createJournalEntry;
+    auditService.log = async () => {};
+    accountingService.createJournalEntry = async () => {};
+    t.after(() => {
+        auditService.log = originalLog;
+        accountingService.createJournalEntry = originalCreateJournalEntry;
+    });
+
+    const result = await financeService.registerBulkInvoicePayments({
+        clientId: 'client-1',
+        allocations: [{
+            documentId: 'order-1',
+            documentType: 'order',
+            payments: [{ method: 'transfer', amount: 60000 }]
+        }]
+    }, 'user-1');
+
+    assert.equal(result.total_paid, 60000);
+    assert.equal(result.invoices[0].documentType, 'order');
+    assert.equal(result.invoices[0].payment_status, 'paid');
+    assert.ok(queryCalls.some((call) => call.sql.includes('INSERT INTO transactions')));
+    assert.ok(queryCalls.some((call) => call.sql.includes('UPDATE orders SET payment_status')));
+    assert.equal(queryCalls.some((call) => call.sql.includes('INSERT INTO invoices')), false);
+});
+
+test('getCustomerChecks normalizes portfolio amounts and allocation counters', async (t) => {
+    mockPool(t, async (sql) => {
+        if (sql.includes('FROM customer_checks cc')) {
+            return [[{
+                id: 'check-1',
+                amount: '1250.50',
+                allocated_amount: '750.25',
+                invoice_count: '2',
+                status: 'received'
+            }]];
+        }
+        return [[]];
+    });
+
+    const result = await financeService.getCustomerChecks({ status: 'received' });
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0].amount, 1250.5);
+    assert.equal(result[0].allocated_amount, 750.25);
+    assert.equal(result[0].invoice_count, 2);
+});
+
+test('getCustomerCheck returns its event and invoice-allocation trace', async (t) => {
+    mockPool(t, async (sql) => {
+        if (sql.includes('FROM customer_check_events')) {
+            return [[{ id: 'event-1', status: 'received' }]];
+        }
+        if (sql.includes('FROM customer_check_allocations')) {
+            return [[{ id: 'allocation-1', invoice_id: 'invoice-1', amount: 500 }]];
+        }
+        if (sql.includes('FROM customer_checks cc')) {
+            return [[{ id: 'check-1', amount: 500, status: 'received' }]];
+        }
+        return [[]];
+    });
+
+    const result = await financeService.getCustomerCheck('check-1');
+
+    assert.equal(result.id, 'check-1');
+    assert.equal(result.events[0].id, 'event-1');
+    assert.equal(result.allocations[0].invoice_id, 'invoice-1');
+});
+
+test('updateCustomerCheckStatus requires a recipient when a cheque is endorsed', async (t) => {
+    mockPool(t, async (sql) => {
+        if (sql.includes('SELECT * FROM customer_checks')) {
+            return [[{ id: 'check-1', status: 'received', delivered_to: null }]];
+        }
+        return [[]];
+    });
+
+    await assert.rejects(
+        () => financeService.updateCustomerCheckStatus('check-1', { status: 'endorsed' }, 'user-1'),
+        (error) => {
+            assert.equal(error.statusCode, 400);
+            assert.equal(error.errorCode, 'CHECK_DELIVERY_RECIPIENT_REQUIRED');
+            return true;
+        }
+    );
+});
+
+test('updateCustomerCheckStatus records clearance once and returns the complete trace', async (t) => {
+    const queryCalls = [];
+    mockPool(t, async (sql, params) => {
+        queryCalls.push({ sql, params });
+        if (sql.includes('SELECT * FROM customer_checks')) {
+            return [[{
+                id: 'check-1',
+                status: 'deposited',
+                cleared_at: null,
+                delivered_to: null,
+                notes: null,
+                amount: 500,
+                check_number: '123',
+                bank_name: 'Banco QA'
+            }]];
+        }
+        if (sql.includes('FROM customer_check_events')) {
+            return [[{ id: 'event-1', status: 'cleared', notes: 'Acreditado' }]];
+        }
+        if (sql.includes('FROM customer_check_allocations')) {
+            return [[{ id: 'allocation-1', invoice_id: 'invoice-1', amount: 500 }]];
+        }
+        if (sql.includes('FROM customer_checks cc')) {
+            return [[{ id: 'check-1', amount: 500, status: 'cleared' }]];
+        }
+        return [[]];
+    });
+
+    const originalLog = auditService.log;
+    const originalCreateJournalEntry = accountingService.createJournalEntry;
+    let journalEntryCount = 0;
+    auditService.log = async () => {};
+    accountingService.createJournalEntry = async () => { journalEntryCount += 1; };
+    t.after(() => {
+        auditService.log = originalLog;
+        accountingService.createJournalEntry = originalCreateJournalEntry;
+    });
+
+    const result = await financeService.updateCustomerCheckStatus(
+        'check-1',
+        { status: 'cleared', notes: 'Acreditado' },
+        'user-1'
+    );
+
+    assert.equal(result.status, 'cleared');
+    assert.equal(journalEntryCount, 1);
+    assert.ok(queryCalls.some((call) => call.sql.includes('cleared_at = NOW()')));
+    assert.ok(queryCalls.some((call) => call.sql.includes('INSERT INTO customer_check_events')));
+});
+
+test('registerBulkSupplierPayments creates and allocates a traceable own cheque', async (t) => {
+    const queryCalls = [];
+    mockPool(t, async (sql, params) => {
+        queryCalls.push({ sql, params });
+        if (sql.includes('SELECT * FROM supplier_invoices')) {
+            return [[{ id: 'supplier-invoice-1', supplier_id: 'supplier-1', total_amount: 1000, invoice_number: 'A-1' }]];
+        }
+        if (sql.includes('FROM supplier_payments') && sql.includes('SUM(amount)')) {
+            return [[{ paid_amount: 0 }]];
+        }
+        if (sql.includes('SELECT id, amount FROM outgoing_checks')) {
+            return [[]];
+        }
+        return [[]];
+    });
+
+    const originalLog = auditService.log;
+    const originalCreateJournalEntry = accountingService.createJournalEntry;
+    auditService.log = async () => {};
+    accountingService.createJournalEntry = async () => {};
+    t.after(() => {
+        auditService.log = originalLog;
+        accountingService.createJournalEntry = originalCreateJournalEntry;
+    });
+
+    const result = await financeService.registerBulkSupplierPayments({
+        supplierId: 'supplier-1',
+        allocations: [{
+            invoiceId: 'supplier-invoice-1',
+            payments: [{
+                method: 'check',
+                amount: 1000,
+                check: {
+                    source_type: 'own',
+                    issuer_name: 'WSM Deportes',
+                    bank_name: 'Banco QA',
+                    check_number: 'OWN-001',
+                    issue_date: '2026-08-21',
+                    due_date: '2026-09-21',
+                    instrument_amount: 1000
+                }
+            }]
+        }]
+    }, 'user-1');
+
+    assert.equal(result.total_paid, 1000);
+    assert.ok(queryCalls.some((call) => call.sql.includes('INSERT INTO outgoing_checks')));
+    assert.ok(queryCalls.some((call) => call.sql.includes('INSERT INTO outgoing_check_allocations')));
+    assert.ok(queryCalls.some((call) => call.sql.includes('outgoing_check_id')));
+});
+
+test('getOutgoingChecks normalizes amounts and status portfolio counters', async (t) => {
+    mockPool(t, async (sql) => {
+        if (sql.includes('FROM outgoing_checks oc')) {
+            return [[{ id: 'outgoing-1', amount: '2500.50', allocated_amount: '2500.50', invoice_count: '2', status: 'delivered' }]];
+        }
+        return [[]];
+    });
+
+    const result = await financeService.getOutgoingChecks({ status: 'delivered' });
+    assert.equal(result[0].amount, 2500.5);
+    assert.equal(result[0].allocated_amount, 2500.5);
+    assert.equal(result[0].invoice_count, 2);
+});
+
+test('updateOutgoingCheckStatus persists the bank clearance event', async (t) => {
+    const queryCalls = [];
+    mockPool(t, async (sql, params) => {
+        queryCalls.push({ sql, params });
+        if (sql.includes('SELECT * FROM outgoing_checks')) {
+            return [[{ id: 'outgoing-1', status: 'delivered', notes: null }]];
+        }
+        if (sql.includes('FROM outgoing_check_events')) {
+            return [[{ id: 'event-1', status: 'cleared' }]];
+        }
+        if (sql.includes('FROM outgoing_check_allocations')) {
+            return [[]];
+        }
+        if (sql.includes('FROM outgoing_checks oc')) {
+            return [[{ id: 'outgoing-1', status: 'cleared', amount: 1000 }]];
+        }
+        return [[]];
+    });
+
+    const originalLog = auditService.log;
+    auditService.log = async () => {};
+    t.after(() => { auditService.log = originalLog; });
+
+    const result = await financeService.updateOutgoingCheckStatus('outgoing-1', { status: 'cleared', notes: 'Débito confirmado' }, 'user-1');
+    assert.equal(result.status, 'cleared');
+    assert.ok(queryCalls.some((call) => call.sql.includes('cleared_at = NOW()')));
+    assert.ok(queryCalls.some((call) => call.sql.includes('INSERT INTO outgoing_check_events')));
+});

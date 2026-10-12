@@ -98,7 +98,7 @@ export default function PurchaseOrdersPage() {
     async function handleApprove(orderId: string) {
         try {
             await approveOrderMutation.mutateAsync(orderId);
-            toast.success("Orden enviada a proveedor");
+            toast.success("Orden marcada como enviada", { description: "Se habilitó la recepción y quedó trazada internamente. No se envió un email automático." });
         } catch {
             // El manejo global de React Query ya informa el error.
         }
@@ -249,7 +249,7 @@ export default function PurchaseOrdersPage() {
                                                 disabled={approveOrderMutation.isPending}
                                                 className="rounded bg-green-50 dark:bg-green-500/10 px-2 py-1 text-xs font-semibold uppercase tracking-wider text-green-700 dark:text-green-400 transition hover:bg-green-100 dark:hover:bg-green-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-2"
                                             >
-                                                Enviar
+                                                Marcar enviada
                                             </button>
                                         ) : null}
                                         <button
