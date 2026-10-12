@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import mysql from 'mysql2/promise';
 import { assertSafeDatabaseTarget, buildEnvConfig, isLocalDatabaseHost } from '../config/env.js';
 import { loadEnvironment } from '../config/loadEnv.js';
@@ -52,32 +54,37 @@ function replaceEnvironment(values = {}) {
 test('environment loader selects explicit, environment and legacy files predictably', () => {
     const loaded = [];
     const warnings = [];
+    // An absolute root valid on every OS: CI runs on Linux, developers on Windows.
+    const root = path.resolve(os.tmpdir(), 'erp');
     const options = {
-        rootDirectory: 'C:\\erp',
+        rootDirectory: root,
         load: (file) => loaded.push(file),
         warn: (message) => warnings.push(message),
     };
 
+    const explicitFile = path.join(root, 'secrets', 'prod.env');
     const explicit = loadEnvironment({
         ...options,
-        environment: { NODE_ENV: 'production', ENV_FILE: 'secrets\\prod.env' },
-        exists: (file) => file.endsWith('secrets\\prod.env'),
+        environment: { NODE_ENV: 'production', ENV_FILE: path.join('secrets', 'prod.env') },
+        exists: (file) => file === explicitFile,
     });
-    assert.equal(explicit, 'C:\\erp\\secrets\\prod.env');
+    assert.equal(explicit, explicitFile);
 
+    const stagingFile = path.join(root, '.env.staging');
     const environmentFile = loadEnvironment({
         ...options,
         environment: { NODE_ENV: 'staging' },
-        exists: (file) => file.endsWith('.env.staging'),
+        exists: (file) => file === stagingFile,
     });
-    assert.equal(environmentFile, 'C:\\erp\\.env.staging');
+    assert.equal(environmentFile, stagingFile);
 
+    const legacyFile = path.join(root, '.env');
     const legacy = loadEnvironment({
         ...options,
         environment: { NODE_ENV: 'development' },
-        exists: (file) => file.endsWith('\\.env'),
+        exists: (file) => file === legacyFile,
     });
-    assert.equal(legacy, 'C:\\erp\\.env');
+    assert.equal(legacy, legacyFile);
     assert.ok(warnings.some((message) => message.includes('legacy .env')));
     assert.equal(loaded.length, 3);
 });
