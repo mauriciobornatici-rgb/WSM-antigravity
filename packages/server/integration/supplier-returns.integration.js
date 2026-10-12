@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 
 import { closePool, pool, seedProduct, uniqueId } from './helpers/qaDb.js';
 import supplierReturnService from '../domains/procurement/SupplierReturnService.js';
+import accountingService from '../services/accounting.service.js';
 
 test.after(async () => {
     await closePool();
@@ -60,4 +61,67 @@ test('a supplier return never consumes stock reserved for customer orders', asyn
     assert.deepEqual(await rowsOf(productId), [['General', 4, 3]]);
     const [[row]] = await pool.query('SELECT status FROM supplier_returns WHERE id = ?', [returnId]);
     assert.equal(row.status, 'draft');
+});
+
+async function postSupplierInvoice(supplierId, { net, vat, type = 'A' }) {
+    const invoiceId = crypto.randomUUID();
+    await pool.query(
+        `INSERT INTO supplier_invoices (id, invoice_number, invoice_type, supplier_id, issue_date, net_amount, vat_amount, total_amount)
+         VALUES (?, ?, ?, ?, CURDATE(), ?, ?, ?)`,
+        [invoiceId, uniqueId('FC'), type, supplierId, net, vat, net + vat]
+    );
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        await accountingService.createJournalEntry(connection, {
+            date: new Date(), description: 'Factura QA', reference_type: 'supplier_invoice', reference_id: invoiceId,
+            lines: [
+                { account_code: '1.1.04.01', debit: net, credit: 0 },
+                ...(vat > 0 ? [{ account_code: '1.1.05.02', debit: vat, credit: 0 }] : []),
+                { account_code: '2.1.01.01', debit: 0, credit: net + vat },
+            ],
+        });
+        await connection.commit();
+    } finally {
+        connection.release();
+    }
+}
+
+async function returnEntryLines(returnId) {
+    const [rows] = await pool.query(
+        `SELECT l.account_code, l.debit, l.credit
+         FROM journal_entries e JOIN journal_entry_lines l ON l.journal_entry_id = e.id
+         WHERE e.reference_type = 'supplier_return' AND e.reference_id = ?
+         ORDER BY l.debit DESC, l.account_code`,
+        [returnId]
+    );
+    return rows.map((row) => [row.account_code, Number(row.debit), Number(row.credit)]);
+}
+
+test('a supplier return mirrors the Factura A purchase: Proveedores gross / Mercadería + IVA CF, balance may go negative', async () => {
+    const productId = await seedProduct({ stock: [{ location: 'General', quantity: 5 }] });
+    const returnId = await seedSupplierReturn(productId, 3); // 3 × 10 = 30 net
+    const [[{ supplier_id: supplierId }]] = await pool.query('SELECT supplier_id FROM supplier_returns WHERE id = ?', [returnId]);
+    await postSupplierInvoice(supplierId, { net: 100, vat: 21 });
+
+    await supplierReturnService.approveSupplierReturn(returnId, null);
+
+    assert.deepEqual(await returnEntryLines(returnId), [
+        ['2.1.01.01', 36.3, 0],
+        ['1.1.04.01', 0, 30],
+        ['1.1.05.02', 0, 6.3],
+    ]);
+    const [[supplier]] = await pool.query('SELECT account_balance FROM suppliers WHERE id = ?', [supplierId]);
+    assert.equal(Number(supplier.account_balance), -36.3, 'no invoice debt was registered on the supplier row in this seed: the credit stays');
+});
+
+test('a supplier return to a Factura C supplier reverses no VAT', async () => {
+    const productId = await seedProduct({ stock: [{ location: 'General', quantity: 5 }] });
+    const returnId = await seedSupplierReturn(productId, 2);
+    const [[{ supplier_id: supplierId }]] = await pool.query('SELECT supplier_id FROM supplier_returns WHERE id = ?', [returnId]);
+    await postSupplierInvoice(supplierId, { net: 50, vat: 0, type: 'C' });
+
+    await supplierReturnService.approveSupplierReturn(returnId, null);
+
+    assert.deepEqual(await returnEntryLines(returnId), [['2.1.01.01', 20, 0], ['1.1.04.01', 0, 20]]);
 });

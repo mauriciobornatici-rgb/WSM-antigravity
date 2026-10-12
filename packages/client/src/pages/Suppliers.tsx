@@ -330,7 +330,8 @@ export default function SuppliersPage() {
                                                                     {t.type === 'purchase' ? formatMoney(t.amount) : '-'}
                                                                 </TableCell>
                                                                 <TableCell className="text-right text-green-600 dark:text-green-400 font-medium">
-                                                                    {t.type === 'expense' ? formatMoney(t.amount) : '-'}
+                                                                    {/* Payments and returns (adjustments) both reduce what we owe the supplier. */}
+                                                                    {t.type === 'expense' || t.type === 'adjustment' ? formatMoney(t.amount) : '-'}
                                                                 </TableCell>
                                                             </TableRow>
                                                         ))}

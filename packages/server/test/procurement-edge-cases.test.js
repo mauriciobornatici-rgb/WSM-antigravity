@@ -158,6 +158,8 @@ test('supplier return approval updates inventory, accounting, balance and audit'
         if (statement.includes('SELECT * FROM supplier_return_items')) return [[{ product_id: 'p', quantity: 2, unit_cost: 5, reason: '' }]];
         if (statement.startsWith('SELECT id, location, quantity, reserved_quantity')) return [[{ id: 'i', location: 'General', quantity: 2, reserved_quantity: 0 }]];
         if (statement.startsWith('UPDATE inventory')) return [{ affectedRows: 1 }];
+        // The supplier's last posted invoice: Factura A with 21 % VAT.
+        if (statement.includes('FROM supplier_invoices si')) return [[{ net_amount: 100, vat_amount: 21 }]];
         return [[]];
     });
     const originals = { audit: auditService.log, journal: accountingService.createJournalEntry };
@@ -170,8 +172,45 @@ test('supplier return approval updates inventory, accounting, balance and audit'
     });
     const result = await new SupplierReturnService().approveSupplierReturn('r', null);
     assert.equal(result.success, true);
-    assert.equal(journal.lines[0].debit, 10);
-    assert.ok(calls.some((call) => call.sql.includes('UPDATE suppliers')));
+    // Mirror of the purchase (ADR-011): Proveedores 12.10 / Mercadería 10.00 + IVA CF 2.10.
+    assert.deepEqual(journal.lines.map((line) => [line.account_code, line.debit, line.credit]), [
+        ['2.1.01.01', 12.1, 0],
+        ['1.1.04.01', 0, 10],
+        ['1.1.05.02', 0, 2.1],
+    ]);
+    const balance = calls.find((call) => call.sql.includes('UPDATE suppliers'));
+    assert.deepEqual(balance.params, [12.1, 's']);
+    assert.equal(balance.sql.includes('GREATEST'), false, 'a balance in our favour is not clamped to zero');
+    const transaction = calls.find((call) => call.sql.includes('INSERT INTO transactions'));
+    assert.match(transaction.sql, /'adjustment'/);
+});
+
+test('supplier return before any posted supplier invoice only moves stock (goods were never booked)', async (t) => {
+    const calls = [];
+    installConnection(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT * FROM supplier_returns')) return [[{ id: 'r2', status: 'draft', return_number: 'DR-2', supplier_id: 's' }]];
+        if (statement.includes('SELECT * FROM supplier_return_items')) return [[{ product_id: 'p', quantity: 1, unit_cost: 50, reason: '' }]];
+        if (statement.startsWith('SELECT id, location, quantity, reserved_quantity')) return [[{ id: 'i', location: 'General', quantity: 1, reserved_quantity: 0 }]];
+        if (statement.startsWith('UPDATE inventory')) return [{ affectedRows: 1 }];
+        if (statement.includes('FROM supplier_invoices si')) return [[]];
+        return [[]];
+    });
+    const originals = { audit: auditService.log, journal: accountingService.createJournalEntry };
+    let journalCalls = 0;
+    let audited;
+    auditService.log = async (payload) => { audited = payload; };
+    accountingService.createJournalEntry = async () => { journalCalls += 1; };
+    t.after(() => {
+        auditService.log = originals.audit;
+        accountingService.createJournalEntry = originals.journal;
+    });
+    await new SupplierReturnService().approveSupplierReturn('r2', null);
+    assert.equal(journalCalls, 0);
+    assert.equal(calls.some((call) => call.sql.includes('UPDATE suppliers')), false);
+    assert.match(String(audited.new_values.accounting), /not_posted/);
+    assert.ok(calls.some((call) => call.sql.includes('INSERT INTO inventory_movements')));
 });
 
 test('supplier return approval accepts missing historical cost without creating zero-value accounting', async (t) => {
