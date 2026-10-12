@@ -1,5 +1,22 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-003 — 2026-10-12 — `guardian-integridad` sobre ADR-012 (delta sin commitear de `codex/sql-out-of-controllers`)
+
+El guardián (opus) informó 5 hallazgos. El coordinador verificó cada uno en el código antes de corregir:
+
+- [x] Media-alta: aprobar una recepción pisaba el estado de la OC sin bloquearla. Una OC anulada se reabría a `partial`/`received` y entraba stock; una `received` retrocedía. Corregido así:
+  - la aprobación bloquea la OC antes que sus ítems (además saca el posible deadlock con `createReception`);
+  - responde 409 si la OC está anulada y nunca hace retroceder una `received`;
+  - una OC con mercadería recibida o en control de calidad no se puede anular.
+
+  Hay 4 tests MySQL, incluida una carrera real entre anular y aprobar.
+- [x] Media: una clave de NC reusada con otro cuerpo devolvía la NC anterior como éxito. Ahora responde 409 `idempotency_key_reused` con el número ya emitido, y el formulario rota la clave y avisa cuando la respuesta es un replay. 1 test MySQL y 4 unitarios.
+- [x] Baja: un `dist` desactualizado de `@wsm/common` descartaría la clave en silencio. Lo cubren el Dockerfile (compila common) y un test de contrato del schema dentro de `validate`.
+- [x] Baja: un solo reintento ante colisión. Ahora son hasta 3 intentos con clave, y sin clave no se reintenta. Hay test.
+- [x] Informativo: la transición al mismo estado escribía y auditaba ruido. Ahora no escribe nada.
+
+Evidencia: validate 0 (810 + 69), coverage 99,27 / 91,81 / 99,01, `qa:integration` 52/52 en tres corridas, RBAC OK.
+
 ## AUD-002 — 2026-09-26 — re-auditoría de integridad `d925dfa..f8a47df`
 
 `guardian-integridad` (opus): los cierres de AUD-001 se verificaron con sus gemelos; 5 hallazgos nuevos
@@ -35,7 +52,7 @@ coordinador antes de actuar. Resolución (commits posteriores a `d925dfa`):
 - [x] **Decisión del usuario:** excepción de precio offline — aceptada con revisión obligatoria (ADR-010/011).
 - [x] 409 `PRICE_OVERRIDE_NOT_ALLOWED` en vez del 403 del plan — aceptado (ADR-010): el caso típico es catálogo desactualizado en pantalla (conflicto de estado), el mensaje guía al cajero.
 - [ ] NC en `authorizing` si el proceso cae tras aprobar ARCA — queda para la fase H2 (recuperación consultando el último comprobante).
-- [ ] Cobertura por archivo nuevo ≥ 90 % — en curso; el gate global ya estaba rojo antes (H-02).
+- [x] Cobertura ≥ 90 % — gate global en verde desde `1ff2122` (Ola C); 2026-10-12: 99,13 / 91,78 / 98,88 %, y corre en CI (`test:coverage:isolated`).
 
 ## Actualización: correcciones autorizadas y QA local
 
@@ -106,12 +123,12 @@ presenta como cobertura exclusiva de código productivo ni de todo el repositori
 
 | ID | Severidad | Archivo/símbolo | Evidencia e impacto | Recomendación | Estado |
 |---|---|---|---|---|---|
-| H-01 | high | domains/sales/PickupOrderCheckoutUseCase.js:execute | Solo valida estado; acepta shipping_method=delivery y registra entrega | Guard sobre el pedido bloqueado, antes de mutaciones; test negativo delivery + positivo pickup | Abierto |
-| H-02 | high | server/package.json:test:coverage | Los tres porcentajes están por debajo de 90 %; validate no ejecuta este gate | Cubrir escenarios de negocio faltantes y añadir cobertura a CI tras resolver el fallo | Abierto |
-| H-03 | medium | .github/workflows/ci.yml | No hay jobs de cobertura, E2E, RBAC o MySQL | Añadir pruebas con datos efímeros y evidencia publicable | Propuesto |
+| H-01 | high | domains/sales/PickupOrderCheckoutUseCase.js:execute | Solo valida estado; acepta shipping_method=delivery y registra entrega | Guard sobre el pedido bloqueado, antes de mutaciones; test negativo delivery + positivo pickup | Corregido (2026-09-06; guard `shipping_method !== 'pickup'`) |
+| H-02 | high | server/package.json:test:coverage | Los tres porcentajes están por debajo de 90 %; validate no ejecuta este gate | Cubrir escenarios de negocio faltantes y añadir cobertura a CI tras resolver el fallo | Corregido (`1ff2122`; gate en CI) |
+| H-03 | medium | .github/workflows/ci.yml | No hay jobs de cobertura, E2E, RBAC o MySQL | Añadir pruebas con datos efímeros y evidencia publicable | Corregido (cobertura, E2E, RBAC e integración MySQL en CI; verde en PR #1) |
 | H-04 | medium | .agents/context/PROJECT.md y QUALITY.md anteriores | Backend descrito como TS y lint backend inexistente; ruta de migraciones incorrecta | Alinear documentación con scripts y rutas reales | Corregido documentalmente |
 | H-05 | medium | .ai/TASKS.md y docs/execution/STATE.md anteriores | Copia desactualizada, 89 KB de estado y afirmación 100/100 sin gate completo | Fuente canónica, enlaces y archivo histórico | Mitigado documentalmente |
-| H-06 | medium | Entorno de tests/smokes | Desarrollo usa DB remota; smoke necesita fixtures reales | Diseñar MySQL de pruebas y guard de aislamiento antes de integrar smokes | Abierto |
+| H-06 | medium | Entorno de tests/smokes | Desarrollo usa DB remota; smoke necesita fixtures reales | Diseñar MySQL de pruebas y guard de aislamiento antes de integrar smokes | Mitigado (`wsm_qa` + comandos `qa:*`; el servidor rechaza host remoto en desarrollo sin `ALLOW_REMOTE_DB`) |
 
 H-01 es una reproducción del caso de uso con mocks, no una explotación de la API
 ni una operación sobre datos reales. La ruta requiere canSell: el fallo se

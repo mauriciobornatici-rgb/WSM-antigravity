@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
+import { businessError } from '../utils/businessError.js';
 import auditService from './audit.service.js';
 import afipService from './afip.service.js';
 import accountingService from './accounting.service.js';
@@ -639,6 +640,136 @@ class CreditNotesService extends BaseService {
         const [updated] = await pool.query('SELECT * FROM credit_notes WHERE id = ?', [creditNoteId]);
         return updated[0];
     }
+
+    async createManualCreditNote(body, userId, ipAddress) {
+        // Simultaneous submissions with the same key collide on the unique index (or
+        // deadlock on its gap lock): the loser rolls back and retries, and then finds the
+        // winner's committed note, which it returns as a replay.
+        const maxAttempts = body?.idempotency_key ? 3 : 1;
+        for (let attempt = 1; ; attempt += 1) {
+            try {
+                return await this._issueManualCreditNote(body, userId, ipAddress);
+            } catch (err) {
+                const collided = err?.code === 'ER_DUP_ENTRY' || err?.code === 'ER_LOCK_DEADLOCK';
+                if (!collided || attempt >= maxAttempts) throw err;
+            }
+        }
+    }
+
+    async _issueManualCreditNote(body, userId, ipAddress) {
+        const id = crypto.randomUUID();
+        const allowedReferenceTypes = new Set(['return', 'warranty', 'discount', 'other']);
+        const requestedReferenceType = body.reference_type || 'other';
+        const referenceType = requestedReferenceType === 'manual'
+            ? 'other'
+            : (allowedReferenceTypes.has(requestedReferenceType) ? requestedReferenceType : 'other');
+        const notes = body.notes || body.reason || null;
+        const idempotencyKey = body.idempotency_key || null;
+
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            if (idempotencyKey) {
+                const [issued] = await connection.query(
+                    'SELECT * FROM credit_notes WHERE idempotency_key = ? FOR UPDATE',
+                    [idempotencyKey]
+                );
+                if (issued.length > 0) {
+                    const previous = issued[0];
+                    const samePayload = previous.client_id === body.client_id
+                        && Math.round(Number(previous.amount || 0) * 100) === Math.round(Number(body.amount || 0) * 100)
+                        && previous.reference_type === referenceType
+                        && (previous.reference_id ?? null) === (body.reference_id || null);
+                    if (!samePayload) {
+                        // The key belongs to a different note: answering it as a replay would
+                        // report a note that was never issued.
+                        throw businessError(409, {
+                            error: 'idempotency_key_reused',
+                            message: `Este intento ya emitió la nota ${previous.number}. Revisá el listado antes de emitir otra.`,
+                            credit_note_number: previous.number
+                        });
+                    }
+                    await connection.commit();
+                    return { ...creditNoteResult(previous), idempotent_replay: true };
+                }
+            }
+
+            const year = new Date().getFullYear();
+            const prefix = `NC-${year}-`;
+            const [rows] = await connection.query(
+                `SELECT MAX(CAST(SUBSTRING_INDEX(number, '-', -1) AS UNSIGNED)) AS max_seq
+             FROM credit_notes
+             WHERE number LIKE ?`,
+                [`${prefix}%`]
+            );
+            const maxExisting = Number(rows[0]?.max_seq || 0);
+            const seq = await nextDocumentSequence(connection, `credit_note:${year}`, maxExisting);
+            const number = `${prefix}${String(seq).padStart(4, '0')}`;
+
+            await connection.query(
+                `INSERT INTO credit_notes (
+                id, number, client_id, customer_name, reference_type, reference_id, amount, status, notes, idempotency_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?)`,
+                [
+                    id,
+                    number,
+                    body.client_id,
+                    body.customer_name || null,
+                    referenceType,
+                    body.reference_id || null,
+                    Number(body.amount || 0),
+                    notes,
+                    idempotencyKey
+                ]
+            );
+
+            const result = {
+                id,
+                number,
+                client_id: body.client_id,
+                customer_name: body.customer_name || null,
+                reference_type: referenceType,
+                reference_id: body.reference_id || null,
+                amount: Number(body.amount || 0),
+                notes,
+                status: 'issued'
+            };
+
+            // Audited inside the transaction: a credit note is never issued without its trace
+            // (and a failed audit no longer leaves an issued note behind for a retry to duplicate).
+            await auditService.log({
+                user_id: userId || null,
+                action: 'CREATE_CREDIT_NOTE',
+                entity_type: 'credit_note',
+                entity_id: id,
+                new_values: result,
+                ip_address: ipAddress
+            }, connection);
+
+            await connection.commit();
+            return result;
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+    }
+}
+
+function creditNoteResult(row) {
+    return {
+        id: row.id,
+        number: row.number,
+        client_id: row.client_id,
+        customer_name: row.customer_name ?? null,
+        reference_type: row.reference_type,
+        reference_id: row.reference_id ?? null,
+        amount: Number(row.amount || 0),
+        notes: row.notes ?? null,
+        status: row.status,
+    };
 }
 
 export const warrantiesService = new WarrantiesService();

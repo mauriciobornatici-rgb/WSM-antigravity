@@ -1,7 +1,8 @@
 import axios from 'axios';
 import crypto from 'node:crypto';
 import pool from '../config/db.js';
-import { decrypt } from '../utils/crypto.js';
+import { encrypt, decrypt } from '../utils/crypto.js';
+import auditService from './audit.service.js';
 
 export class TiendaNubeService {
     constructor({ db = pool, http = axios, env = process.env } = {}) {
@@ -1835,6 +1836,87 @@ export class TiendaNubeService {
             this.getFailedSyncs()
         ]);
         return { runs: runs[0], events: events[0], failedStock: failed };
+    }
+
+    async getOAuthClientId() {
+        const [rows] = await this.db.query('SELECT tiendanube_client_id FROM company_settings LIMIT 1');
+        return rows[0]?.tiendanube_client_id;
+    }
+
+    // Devuelve el id de la fila de ajustes y las credenciales OAuth (el secreto ya descifrado, solo para uso interno).
+    async getOAuthCredentials() {
+        const [rows] = await this.db.query('SELECT id, tiendanube_client_id, tiendanube_client_secret FROM company_settings LIMIT 1');
+        const settings = rows[0] || {};
+        return {
+            settingsId: rows[0]?.id,
+            clientId: settings.tiendanube_client_id,
+            clientSecret: decrypt(settings.tiendanube_client_secret)
+        };
+    }
+
+    async saveOAuthConnection(settingsId, accessToken, storeId) {
+        await this.db.query(
+            `UPDATE company_settings SET tiendanube_access_token = ?, tiendanube_store_id = ?,
+                tiendanube_connection_status = 'connected' WHERE id = ?`,
+            [encrypt(accessToken), storeId, settingsId]
+        );
+    }
+
+    async readConfig(executor = this.db, forUpdate = false) {
+        const [rows] = await executor.query(
+            `SELECT tiendanube_client_id, tiendanube_client_secret, tiendanube_location_id
+         FROM company_settings WHERE id = 1 LIMIT 1${forUpdate ? ' FOR UPDATE' : ''}`
+        );
+        const settings = rows[0] || {};
+        return {
+            clientId: settings.tiendanube_client_id || '',
+            clientSecretConfigured: Boolean(settings.tiendanube_client_secret),
+            locationId: settings.tiendanube_location_id || ''
+        };
+    }
+
+    async updateConfig({ clientId, clientSecret, locationId }, userId) {
+        const encryptedSecret = clientSecret?.trim() ? encrypt(clientSecret.trim()) : null;
+        const connection = await this.db.getConnection();
+        try {
+            await connection.beginTransaction();
+            const previous = await this.readConfig(connection, true);
+            await connection.query(
+                `INSERT INTO company_settings (
+                id, tiendanube_client_id, tiendanube_client_secret, tiendanube_location_id
+             ) VALUES (1, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                tiendanube_client_id = VALUES(tiendanube_client_id),
+                tiendanube_client_secret = COALESCE(VALUES(tiendanube_client_secret), tiendanube_client_secret),
+                tiendanube_location_id = VALUES(tiendanube_location_id)`,
+                [clientId, encryptedSecret, locationId]
+            );
+            const updated = await this.readConfig(connection);
+            await auditService.log({
+                user_id: userId || null,
+                action: 'UPDATE_TIENDANUBE_CONFIG',
+                entity_type: 'company_settings',
+                entity_id: '1',
+                old_values: previous,
+                new_values: updated
+            }, connection);
+            await connection.commit();
+            return updated;
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async markDisconnected() {
+        await this.db.query(
+            `UPDATE company_settings
+         SET tiendanube_access_token = NULL, tiendanube_store_id = NULL,
+             tiendanube_connection_status = 'disconnected'
+         WHERE id = 1`
+        );
     }
 }
 

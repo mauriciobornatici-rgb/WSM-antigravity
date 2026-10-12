@@ -5,6 +5,8 @@ import { toast } from "sonner"
 import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
 import { showErrorToast } from "@/lib/errorHandling"
+import { createClientUuid } from "@/lib/clientUuid"
+import { isApiError } from "@/services/httpClient"
 import { formatMoney } from "@/lib/formatters"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -22,6 +24,10 @@ import type { CreditNoteRow, ClientReturnRow } from "@/types/returns"
 
 const EMPTY_CREDIT_NOTES: CreditNoteRow[] = []
 const EMPTY_CLIENTS: Client[] = []
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null
+}
 
 type CreditNotesTabProps = {
     companySettings: CompanySettings
@@ -48,6 +54,9 @@ export function CreditNotesTab({
     const [clientId, setClientId] = useState("")
     const [amount, setAmount] = useState(0)
     const [reason, setReason] = useState("")
+    // One key per issuing attempt, kept across retries until the note is confirmed: a retry
+    // after a lost response returns the note already issued instead of creating another.
+    const [idempotencyKey, setIdempotencyKey] = useState(() => createClientUuid())
 
     const [previewOpen, setPreviewOpen] = useState(false)
     const [previewCreditNote, setPreviewCreditNote] = useState<CreditNoteRow | null>(null)
@@ -89,18 +98,31 @@ export function CreditNotesTab({
 
         try {
             const trimmedReason = reason.trim()
-            await createCreditNoteMutation.mutateAsync({
+            const created = await createCreditNoteMutation.mutateAsync({
+                idempotency_key: idempotencyKey,
                 client_id: clientId,
                 amount: Number(amount),
                 ...(trimmedReason ? { reason: trimmedReason, notes: trimmedReason } : {}),
                 reference_type: "manual",
             })
-            toast.success("Nota de crédito creada")
+            if (created.idempotent_replay) {
+                // A previous attempt whose response was lost had already issued it.
+                toast.info(`La nota ${String(created.number ?? "")} ya estaba emitida; no se creó otra`)
+            } else {
+                toast.success("Nota de crédito creada")
+            }
+            setIdempotencyKey(createClientUuid())
             setCreateOpen(false)
             setClientId("")
             setAmount(0)
             setReason("")
         } catch (error) {
+            if (isApiError(error) && isRecord(error.body) && error.body.error === "idempotency_key_reused") {
+                // That attempt already issued a different note: show it, and let the next
+                // save start a new attempt.
+                setIdempotencyKey(createClientUuid())
+                void queryClient.invalidateQueries({ queryKey: queryKeys.creditNotes.all })
+            }
             showErrorToast("No se pudo crear la nota de crédito", error)
         }
     }

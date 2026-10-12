@@ -236,7 +236,8 @@ test('createCreditNote numbers from the max existing sequence, inserts, commits 
     const select = tracked.calls.find((c) => c.statement.startsWith('SELECT MAX'));
     assert.deepEqual(select.params, [`NC-${year}-%`]);
     const insert = tracked.calls.find((c) => c.statement.startsWith('INSERT INTO credit_notes'));
-    assert.deepEqual(insert.params, [result.body.id, `NC-${year}-0005`, 'c1', 'Ana', 'warranty', 'w1', 25.5, 'nota']);
+    // Last param: idempotency_key (none sent by this caller).
+    assert.deepEqual(insert.params, [result.body.id, `NC-${year}-0005`, 'c1', 'Ana', 'warranty', 'w1', 25.5, 'nota', null]);
 
     assert.equal(audits.length, 1);
     assert.equal(audits[0][0].action, 'CREATE_CREDIT_NOTE');

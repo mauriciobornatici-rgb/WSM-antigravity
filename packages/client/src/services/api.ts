@@ -385,6 +385,7 @@ type WarrantyStatusUpdateInput = {
 };
 
 type CreditNoteCreateInput = {
+    idempotency_key?: string;
     client_id: string;
     amount: number;
     reason?: string;

@@ -2,6 +2,23 @@ import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import { nextDocumentSequence } from '../../utils/documentSequence.js';
+import { businessError } from '../../utils/businessError.js';
+
+export const PURCHASE_ORDER_STATUSES = Object.freeze(['draft', 'sent', 'partial', 'received', 'cancelled']);
+
+// Manual status changes only move forward (ADR-012). Cancelling is allowed only before
+// anything was received (see updatePurchaseOrderStatus); received and cancelled are final.
+const PURCHASE_ORDER_TRANSITIONS = Object.freeze({
+    draft: ['sent', 'cancelled'],
+    sent: ['partial', 'received', 'cancelled'],
+    partial: ['received'],
+    received: [],
+    cancelled: [],
+});
+
+export function canTransitionPurchaseOrder(from, to) {
+    return (PURCHASE_ORDER_TRANSITIONS[from] || []).includes(to);
+}
 
 export class PurchaseOrderService {
     async getTaxRate(connection) {
@@ -146,6 +163,102 @@ export class PurchaseOrderService {
         } catch (err) {
             await connection.rollback();
             throw err;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async getPurchaseOrder(id) {
+        const [orders] = await pool.query(`
+            SELECT po.*, s.name AS supplier_name
+            FROM purchase_orders po
+            LEFT JOIN suppliers s ON po.supplier_id = s.id
+            WHERE po.id = ?
+            LIMIT 1
+        `, [id]);
+
+        if (orders.length === 0) {
+            throw businessError(404, { error: 'not_found', message: 'Orden de compra no encontrada' });
+        }
+
+        const order = orders[0];
+        const [items] = await pool.query(`
+            SELECT poi.*, p.name AS product_name, p.sku,
+                   COALESCE((
+                       SELECT SUM(ri.quantity_received)
+                       FROM reception_items ri
+                       JOIN receptions r ON r.id = ri.reception_id
+                       WHERE ri.po_item_id = poi.id AND r.status = 'pending_qc'
+                   ), 0) AS quantity_pending_qc
+            FROM purchase_order_items poi
+            LEFT JOIN products p ON poi.product_id = p.id
+            WHERE poi.purchase_order_id = ?
+        `, [id]);
+        order.items = items;
+        return order;
+    }
+
+    async updatePurchaseOrderStatus(id, status, userId, ipAddress = null) {
+        if (!PURCHASE_ORDER_STATUSES.includes(status)) {
+            throw businessError(400, { error: 'invalid_status', message: 'Estado de OC invalido' });
+        }
+
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [existing] = await connection.query('SELECT id, status FROM purchase_orders WHERE id = ? FOR UPDATE', [id]);
+            if (existing.length === 0) {
+                throw businessError(404, { error: 'not_found', message: 'Orden de compra no encontrada' });
+            }
+
+            const currentStatus = existing[0].status;
+            if (currentStatus === status) {
+                // Nothing changes: no write and no audit noise.
+                const [unchanged] = await connection.query('SELECT * FROM purchase_orders WHERE id = ?', [id]);
+                await connection.commit();
+                return unchanged[0];
+            }
+            if (!canTransitionPurchaseOrder(currentStatus, status)) {
+                throw businessError(409, {
+                    error: 'invalid_transition',
+                    message: `Una orden de compra en estado "${currentStatus}" no puede pasar a "${status}".`
+                });
+            }
+            if (status === 'cancelled') {
+                // Goods that already arrived (approved or still in quality control) belong to
+                // the order: it cannot be cancelled. The order row lock above serialises this
+                // check with createReception and processReceptionApproval.
+                const [blockers] = await connection.query(`
+                    SELECT
+                        (SELECT COUNT(*) FROM receptions WHERE purchase_order_id = ? AND status = 'pending_qc') AS pending_receptions,
+                        (SELECT COALESCE(SUM(quantity_received), 0) FROM purchase_order_items WHERE purchase_order_id = ?) AS received_qty
+                `, [id, id]);
+                const pendingReceptions = Number(blockers[0]?.pending_receptions || 0);
+                const receivedQty = Number(blockers[0]?.received_qty || 0);
+                if (pendingReceptions > 0 || receivedQty > 0) {
+                    throw businessError(409, {
+                        error: 'purchase_order_has_receptions',
+                        message: 'La orden ya tiene mercadería recibida o recepciones pendientes de control de calidad; no se puede anular.'
+                    });
+                }
+            }
+
+            await connection.query('UPDATE purchase_orders SET status = ? WHERE id = ?', [status, id]);
+            const [rows] = await connection.query('SELECT * FROM purchase_orders WHERE id = ?', [id]);
+            await auditService.log({
+                user_id: userId || null,
+                action: 'UPDATE_PURCHASE_ORDER_STATUS',
+                entity_type: 'purchase_order',
+                entity_id: id,
+                old_values: { status: currentStatus },
+                new_values: { status: rows[0]?.status || status },
+                ip_address: ipAddress
+            }, connection);
+            await connection.commit();
+            return rows[0];
+        } catch (error) {
+            await connection.rollback();
+            throw error;
         } finally {
             connection.release();
         }

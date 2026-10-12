@@ -98,6 +98,10 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
     }
 
     const items: PurchaseOrderItem[] = order.items ?? [];
+    // Goods already in (approved or in quality control) belong to the order: it can no longer be cancelled.
+    const hasArrivedGoods = items.some(
+        (item) => Number(item.quantity_received ?? item.received_quantity ?? 0) > 0 || Number(item.quantity_pending_qc ?? 0) > 0
+    );
 
     return (
         <div className="space-y-6">
@@ -217,10 +221,15 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
                             </Button>
                         </>
                     ) : null}
-                    {order.status === "sent" ? (
+                    {order.status === "sent" && !hasArrivedGoods ? (
                         <Button onClick={() => void handleStatusUpdate("cancelled")} disabled={updating} variant="destructive">
                             Anular orden
                         </Button>
+                    ) : null}
+                    {order.status === "sent" && hasArrivedGoods ? (
+                        <p className="text-sm text-muted-foreground">
+                            No se puede anular: ya llegó mercadería de esta orden (recibida o en control de calidad).
+                        </p>
                     ) : null}
                 </div>
 

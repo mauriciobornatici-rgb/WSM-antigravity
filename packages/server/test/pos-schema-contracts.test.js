@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { clientReturnCreateSchema, createOrderSchema, createProductSchema, manualInvoiceSchema, orderPaymentLineSchema } from '@wsm/common';
+import { clientReturnCreateSchema, createOrderSchema, createProductSchema, creditNoteCreateSchema, manualInvoiceSchema, orderPaymentLineSchema } from '@wsm/common';
+
+test('manual credit note contract preserves the idempotency key (ADR-012)', () => {
+    // Zod drops unknown keys: a stale @wsm/common build would silently disable idempotency.
+    const parsed = creditNoteCreateSchema.parse({
+        idempotency_key: '0a252ca9-9af2-455d-89d7-87150716f8ae',
+        client_id: '15f5fb57-8da7-4ce1-bd88-c7fc9da7a638',
+        amount: 100
+    });
+
+    assert.equal(parsed.idempotency_key, '0a252ca9-9af2-455d-89d7-87150716f8ae');
+});
 
 test('POS order contract preserves the idempotency key', () => {
     const parsed = createOrderSchema.parse({

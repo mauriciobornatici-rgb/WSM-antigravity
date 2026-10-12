@@ -1,10 +1,8 @@
 import axios from 'axios';
-import pool from '../config/db.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import tiendaNubeService from '../services/tiendanube.service.js';
 import salesService from '../services/sales.service.js';
-import { encrypt, decrypt } from '../utils/crypto.js';
 import { getEnvConfig } from '../config/env.js';
 import { applyPaginationHeaders } from '../utils/pagination.js';
 
@@ -19,8 +17,7 @@ function onlineStoreRedirect(params = {}) {
 }
 
 export const authorizeTiendaNube = catchAsync(async (req, res) => {
-    const [rows] = await pool.query('SELECT tiendanube_client_id FROM company_settings LIMIT 1');
-    const clientId = rows[0]?.tiendanube_client_id;
+    const clientId = await tiendaNubeService.getOAuthClientId();
 
     if (!clientId) {
         return res.status(400).send('Tienda Nube Client ID no esta configurado en la aplicacion.');
@@ -42,10 +39,7 @@ export const callbackTiendaNube = catchAsync(async (req, res) => {
 
     const oauthState = tiendaNubeService.verifyOAuthState(state);
 
-    const [rows] = await pool.query('SELECT id, tiendanube_client_id, tiendanube_client_secret FROM company_settings LIMIT 1');
-    const settings = rows[0] || {};
-    const clientId = settings.tiendanube_client_id;
-    const clientSecret = decrypt(settings.tiendanube_client_secret);
+    const { settingsId, clientId, clientSecret } = await tiendaNubeService.getOAuthCredentials();
 
     if (!clientId || !clientSecret) {
         return res.status(400).send('Las credenciales OAuth de Tienda Nube no estan configuradas.');
@@ -64,11 +58,7 @@ export const callbackTiendaNube = catchAsync(async (req, res) => {
             throw new Error('Tiendanube OAuth response did not include access_token and user_id');
         }
 
-        await pool.query(
-            `UPDATE company_settings SET tiendanube_access_token = ?, tiendanube_store_id = ?,
-                tiendanube_connection_status = 'connected' WHERE id = ?`,
-            [encrypt(access_token), user_id, rows[0].id]
-        );
+        await tiendaNubeService.saveOAuthConnection(settingsId, access_token, user_id);
 
         await auditService.log({
             user_id: oauthState.userId || null,
@@ -153,59 +143,13 @@ export const getTiendaNubeStatusController = catchAsync(async (req, res) => {
     res.json(status);
 });
 
-async function readTiendaNubeConfig(executor = pool, forUpdate = false) {
-    const [rows] = await executor.query(
-        `SELECT tiendanube_client_id, tiendanube_client_secret, tiendanube_location_id
-         FROM company_settings WHERE id = 1 LIMIT 1${forUpdate ? ' FOR UPDATE' : ''}`
-    );
-    const settings = rows[0] || {};
-    return {
-        clientId: settings.tiendanube_client_id || '',
-        clientSecretConfigured: Boolean(settings.tiendanube_client_secret),
-        locationId: settings.tiendanube_location_id || ''
-    };
-}
-
 export const getTiendaNubeConfigController = catchAsync(async (req, res) => {
-    res.json(await readTiendaNubeConfig());
+    res.json(await tiendaNubeService.readConfig());
 });
 
 export const updateTiendaNubeConfigController = catchAsync(async (req, res) => {
-    const { clientId, clientSecret, locationId } = req.body;
-    const encryptedSecret = clientSecret?.trim() ? encrypt(clientSecret.trim()) : null;
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
-        const previous = await readTiendaNubeConfig(connection, true);
-        await connection.query(
-            `INSERT INTO company_settings (
-                id, tiendanube_client_id, tiendanube_client_secret, tiendanube_location_id
-             ) VALUES (1, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE
-                tiendanube_client_id = VALUES(tiendanube_client_id),
-                tiendanube_client_secret = COALESCE(VALUES(tiendanube_client_secret), tiendanube_client_secret),
-                tiendanube_location_id = VALUES(tiendanube_location_id)`,
-            [clientId, encryptedSecret, locationId]
-        );
-        const updated = await readTiendaNubeConfig(connection);
-        await auditService.log({
-            user_id: req.user?.id || null,
-            action: 'UPDATE_TIENDANUBE_CONFIG',
-            entity_type: 'company_settings',
-            entity_id: '1',
-            old_values: previous,
-            new_values: updated
-        }, connection);
-        await connection.commit();
-        res.json(updated);
-    } catch (error) {
-        await connection.rollback();
-        throw error;
-    } finally {
-        connection.release();
-    }
+    res.json(await tiendaNubeService.updateConfig(req.body, req.user?.id));
 });
-
 export const ensureTiendaNubeWebhookController = catchAsync(async (req, res) => {
     const result = await tiendaNubeService.ensureOrderWebhook(getEnvConfig().tiendanubeWebhookUrl);
     await auditService.log({
@@ -232,12 +176,7 @@ export const disconnectTiendaNubeController = catchAsync(async (req, res) => {
         console.error('[TiendaNube Disconnect] Could not remove remote webhook:', error.message);
     }
 
-    await pool.query(
-        `UPDATE company_settings
-         SET tiendanube_access_token = NULL, tiendanube_store_id = NULL,
-             tiendanube_connection_status = 'disconnected'
-         WHERE id = 1`
-    );
+    await tiendaNubeService.markDisconnected();
     await auditService.log({
         user_id: req.user?.id || null,
         action: 'DISCONNECT_TIENDANUBE',
