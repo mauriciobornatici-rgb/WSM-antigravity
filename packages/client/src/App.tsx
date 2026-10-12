@@ -39,7 +39,9 @@ const NotFoundPage = lazy(() => import("@/pages/NotFound"));
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
-    onError: (error) => {
+    onError: (error, query) => {
+      // Background polls (e.g. menu badges) fail quietly instead of toasting every minute.
+      if (query.meta?.silentError) return
       showErrorToast("Error de consulta", error)
     },
   }),

@@ -10,8 +10,8 @@ sobre el código agregado, verificados por el coordinador y corregidos:
 - [x] F3 media — retiro de pedido sin red se encolaba como venta nueva (duplicado) — bloqueado con aviso al cajero.
 - [x] F4 baja — criterio offline distinto para reasignar turno — unificado en `isOfflineReplay`.
 - [x] F5 baja — unidades rechazadas consumían cupo de devolución — excluidas.
-- [ ] Decisión abierta: `offline_captured_at` declarado por el cliente habilita precio, faltante y reasignación; queda mitigado por revisión obligatoria (pantalla Excepciones POS). Prueba criptográfica de captura offline: evaluar si el usuario lo pide.
-- [ ] Para el contador (preexistente): devolución a proveedor asienta solo neto (sin IVA CF), `transactions.type='expense'` y saldo de proveedor con `GREATEST(…,0)`.
+- [x] Decisión abierta: `offline_captured_at` declarado por el cliente — **aceptado** por el usuario (ADR-011): revisión obligatoria en Excepciones POS + contador de pendientes en el menú (2026-10-12).
+- [x] Devolución a proveedor — corregido (ADR-011, `05e149a`): espeja la compra con IVA CF según la última factura asentada, sin recorte de saldo, transacción `adjustment`.
 
 Evidencia: unit 476/476, `qa:integration` 42/42, `validate` exit 0.
 
@@ -32,8 +32,8 @@ coordinador antes de actuar. Resolución (commits posteriores a `d925dfa`):
 - [x] `applyRemoteStatus` tragaba errores; regla "entregado sin picking" sin test — corregido: propaga (cola durable de webhooks reintenta); 2 tests MySQL.
 - [x] Script de reparación: clase B por pedido, B quedaba `pending`, carrera diagnóstico/reparación, "pagado" incompleto, liberaba reservas de asignaciones ajenas — corregidos los cinco, con 5 tests MySQL nuevos.
 - [x] TASKS/plan desactualizados; ediciones en `C:\Dev\Base claude` sin registro — actualizados (ADR-007 las registra: pedidas por el usuario).
-- [ ] **Decisión del usuario:** la excepción de precio offline la declara el cliente (`offline_captured_at`); hoy solo queda auditada (`source: offline_pos`).
-- [ ] 409 `PRICE_OVERRIDE_NOT_ALLOWED` en vez del 403 del plan — aceptado: el caso típico es catálogo desactualizado en pantalla (conflicto de estado), el mensaje guía al cajero.
+- [x] **Decisión del usuario:** excepción de precio offline — aceptada con revisión obligatoria (ADR-010/011).
+- [x] 409 `PRICE_OVERRIDE_NOT_ALLOWED` en vez del 403 del plan — aceptado (ADR-010): el caso típico es catálogo desactualizado en pantalla (conflicto de estado), el mensaje guía al cajero.
 - [ ] NC en `authorizing` si el proceso cae tras aprobar ARCA — queda para la fase H2 (recuperación consultando el último comprobante).
 - [ ] Cobertura por archivo nuevo ≥ 90 % — en curso; el gate global ya estaba rojo antes (H-02).
 

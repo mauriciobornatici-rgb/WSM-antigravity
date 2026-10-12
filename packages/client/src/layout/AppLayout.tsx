@@ -32,9 +32,25 @@ import {
 import { useTheme } from "@/hooks/useTheme";
 import { CommandPalette } from "@/components/common/CommandPalette";
 import { hasPermission, PERMISSIONS, type Permission } from "@wsm/common";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/services/api";
+import { queryKeys } from "@/lib/queryKeys";
 
 export default function AppLayout() {
     const { user, logout } = useAuth();
+
+    // Offline POS sales that broke a rule wait for a manager (ADR-011): keep the count visible.
+    const canReviewPosExceptions = hasPermission(user?.role, PERMISSIONS.ORDERS_PRICE_OVERRIDE);
+    const pendingPosExceptions = useQuery({
+        queryKey: queryKeys.posExceptions.byStatus("pending"),
+        queryFn: () => api.getPosExceptions("pending"),
+        enabled: canReviewPosExceptions,
+        refetchInterval: 60_000,
+        meta: { silentError: true },
+    });
+    const badgeByHref: Record<string, number> = {
+        "/pos-exceptions": pendingPosExceptions.data?.length ?? 0,
+    };
     const { theme, toggleTheme } = useTheme();
     const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
     const [collapsed, setCollapsed] = useState(() => (
@@ -138,12 +154,14 @@ export default function AppLayout() {
                             <div className="space-y-1">
                                 {sec.items.map((item) => {
                                     const isActive = isRouteActive(item.href);
+                                    const badge = badgeByHref[item.href] ?? 0;
+                                    const badgeLabel = badge >= 100 ? "99+" : String(badge);
                                     return (
                                         <Link
                                             key={item.href}
                                             to={item.href}
                                             className={cn(
-                                                "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group text-sm font-medium",
+                                                "relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group text-sm font-medium",
                                                 isActive
                                                     ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20 font-bold"
                                                     : "hover:bg-slate-800 text-slate-300 hover:text-white",
@@ -152,6 +170,17 @@ export default function AppLayout() {
                                         >
                                             <item.icon className={cn("h-4 w-4 shrink-0", isActive ? "text-white" : "text-slate-400 group-hover:text-white")} />
                                             {!collapsed && <span>{item.name}</span>}
+                                            {badge > 0 && (
+                                                <span
+                                                    className={cn(
+                                                        "rounded-full bg-amber-400 text-[10px] font-bold text-slate-900",
+                                                        collapsed ? "absolute right-1.5 top-1.5 h-2.5 w-2.5" : "ml-auto px-1.5 py-0.5"
+                                                    )}
+                                                >
+                                                    {!collapsed && badgeLabel}
+                                                    <span className="sr-only">{badgeLabel} pendientes de revisión</span>
+                                                </span>
+                                            )}
                                         </Link>
                                     );
                                 })}
