@@ -64,6 +64,37 @@ test('createReturn rejects a second return once the sold quantity for the order 
     );
 });
 
+test('a return of a registered client is approved with the credit note letter of the original invoice', async () => {
+    // Regression: approval read clients.tax_condition_id, a column that does not exist,
+    // so every return with a client failed with a 500.
+    const productId = await seedProduct({ salePrice: 100, stock: [{ location: 'QA-A', quantity: 10 }] });
+    const clientId = crypto.randomUUID();
+    await pool.query('INSERT INTO clients (id, name) VALUES (?, ?)', [clientId, `Cliente QA ${clientId.slice(0, 8)}`]);
+    const order = await posCounterSale(productId, 2);
+    await pool.query(
+        `INSERT INTO invoices (id, order_id, client_id, client_name, invoice_type, point_of_sale, invoice_number, net_amount, vat_amount, total_amount, status)
+         VALUES (?, ?, ?, 'Cliente QA', 'A', 99, FLOOR(RAND() * 1000000000), 200, 42, 242, 'issued')`,
+        [crypto.randomUUID(), order.id, clientId]
+    );
+
+    const created = await returnsService.createReturn({
+        order_id: order.id,
+        client_id: clientId,
+        reason: 'Falla',
+        items: [{ product_id: productId, quantity: 1 }],
+    });
+    const approved = await returnsService.approveReturn(created.id, null);
+
+    assert.equal(approved.success, true);
+    const [[creditNote]] = await pool.query(
+        'SELECT amount, credit_note_type, client_id FROM credit_notes WHERE reference_id = ?',
+        [created.id]
+    );
+    assert.equal(creditNote.credit_note_type, 'A');
+    assert.equal(creditNote.client_id, clientId);
+    assert.equal(Number(creditNote.amount), 121);
+});
+
 test('approving a return refunds gross (net + VAT) and creates a credit note for the full amount', async () => {
     const productId = await seedProduct({ salePrice: 100, stock: [{ location: 'QA-A', quantity: 10 }] });
     const order = await posCounterSale(productId, 2);

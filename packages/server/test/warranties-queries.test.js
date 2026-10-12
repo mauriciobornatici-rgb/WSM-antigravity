@@ -309,8 +309,10 @@ test('approveReturn creates a type A credit note, client credit and accounting e
         const statement = String(sql);
         calls.push({ sql: statement, params });
         if (statement.includes('SELECT * FROM client_returns')) return [[{
-            id: 'r', status: 'pending', client_id: 'c', customer_name: 'Empresa SA',
+            id: 'r', status: 'pending', client_id: 'c', customer_name: 'Empresa SA', order_id: 'o',
         }]];
+        // The credit note letter comes from the invoice it corrects (clients has no tax condition column).
+        if (statement.includes('SELECT invoice_type FROM invoices')) return [[{ invoice_type: 'A' }]];
         if (statement.includes('SELECT * FROM client_return_items')) return [[
             { product_id: 'p', quantity: 2, unit_price: 50, condition_status: 'sellable' },
             { product_id: 'rejected', quantity: 1, unit_price: 999, condition_status: 'rejected' },
@@ -320,7 +322,7 @@ test('approveReturn creates a type A credit note, client credit and accounting e
             { id: 'rejected', vat_rate: 21 },
         ]];
         if (statement.includes('SELECT billing_pos')) return [[{ billing_pos: '4' }]];
-        if (statement.includes('SELECT tax_condition_id')) return [[{ tax_condition_id: 'tc_RespInscripto' }]];
+        if (statement.includes('tax_condition_id')) throw new Error("Unknown column 'tax_condition_id' in 'field list'");
         return [[]];
     });
     const originals = {

@@ -19,7 +19,7 @@ export const createWarranty = catchAsync(async (req, res) => {
 
 export const updateWarrantyStatus = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const result = await warrantiesService.update(id, req.body);
+    const result = await warrantiesService.updateWarrantyStatus(id, req.body, req.user?.id || null, getRequestIp(req));
     res.json(result);
 });
 

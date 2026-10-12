@@ -12,6 +12,32 @@ class WarrantiesService extends BaseService {
         super('warranty_claims');
     }
 
+    // The status form sends `notes`; warranty_claims keeps them as resolution_notes
+    // (passing `notes` through to the generic update failed every status change).
+    async updateWarrantyStatus(id, body, userId = null, ipAddress = null) {
+        const [rows] = await pool.query('SELECT * FROM warranty_claims WHERE id = ?', [id]);
+        if (rows.length === 0) {
+            throw businessError(404, { error: 'not_found', message: 'Garantía no encontrada' });
+        }
+        const previous = rows[0];
+        const note = String(body.resolution_notes ?? body.notes ?? '').trim();
+        const changes = { status: body.status };
+        if (body.resolution_type !== undefined) changes.resolution_type = body.resolution_type;
+        if (note) changes.resolution_notes = note;
+
+        const result = await this.update(id, changes);
+        await auditService.log({
+            user_id: userId,
+            action: 'UPDATE_WARRANTY_STATUS',
+            entity_type: 'warranty_claim',
+            entity_id: id,
+            old_values: { status: previous.status, resolution_type: previous.resolution_type ?? null },
+            new_values: changes,
+            ip_address: ipAddress
+        });
+        return result;
+    }
+
     async getWarranties(filters = {}) {
         let query = `
             SELECT w.*, c.name AS client_name, p.name AS product_name, p.sku
@@ -412,18 +438,16 @@ class ReturnsService extends BaseService {
                     pointOfSale = Number(compRows[0].billing_pos) || 1;
                 }
 
+                // A credit note carries the same letter as the invoice it corrects (A→A, C→C).
+                // clients has no tax-condition column: reading one made every approval fail.
                 let creditNoteType = 'B';
-                if (returnRow.client_id) {
-                    const [clients] = await conn.query(
-                        'SELECT tax_condition_id FROM clients WHERE id = ?',
-                        [returnRow.client_id]
+                if (returnRow.order_id) {
+                    const [invoices] = await conn.query(
+                        'SELECT invoice_type FROM invoices WHERE order_id = ? AND deleted_at IS NULL LIMIT 1',
+                        [returnRow.order_id]
                     );
-                    if (clients.length > 0) {
-                        const condId = clients[0].tax_condition_id || '';
-                        if (condId === 'tc_RespInscripto' || condId.toLowerCase().includes('inscripto')) {
-                            creditNoteType = 'A';
-                        }
-                    }
+                    const invoiceType = String(invoices[0]?.invoice_type || '').toUpperCase();
+                    if (invoiceType === 'A' || invoiceType === 'C') creditNoteType = invoiceType;
                 }
 
                 await conn.query(

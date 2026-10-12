@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import auditService from './audit.service.js';
+import { businessError } from '../utils/businessError.js';
 import { normalizeProductImageUrl } from '../utils/imagePolicy.js';
 import goodsReceptionService from '../domains/procurement/GoodsReceptionService.js';
 
@@ -502,14 +503,14 @@ class InventoryService extends BaseService {
     async transferStock(productId, fromLocation, toLocation, quantity, userId) {
         const qty = Number(quantity);
         if (!qty || qty <= 0) {
-            throw new Error('La cantidad a transferir debe ser mayor a cero.');
+            throw businessError(400, { error: 'invalid_quantity', message: 'La cantidad a transferir debe ser mayor a cero.' });
         }
 
         const normalizedFrom = String(fromLocation || 'General').trim();
         const normalizedTo = String(toLocation || 'General').trim();
 
         if (normalizedFrom === normalizedTo) {
-            throw new Error('La ubicación de origen y destino no pueden ser iguales.');
+            throw businessError(400, { error: 'same_location', message: 'La ubicación de origen y destino no pueden ser iguales.' });
         }
 
         const connection = await pool.getConnection();
@@ -522,7 +523,7 @@ class InventoryService extends BaseService {
             );
 
             if (sourceRows.length === 0) {
-                throw new Error(`Stock insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: 0 (Físico: 0, Reservado: 0)`);
+                throw businessError(409, { error: 'insufficient_stock', message: `Stock insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: 0 (Físico: 0, Reservado: 0)` });
             }
 
             const physicalQty = sourceRows[0].quantity;
@@ -530,7 +531,7 @@ class InventoryService extends BaseService {
             const availableQty = physicalQty - reservedQty;
 
             if (availableQty < qty) {
-                throw new Error(`Stock disponible insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: ${availableQty} (Físico: ${physicalQty}, Reservado: ${reservedQty})`);
+                throw businessError(409, { error: 'insufficient_stock', message: `Stock disponible insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: ${availableQty} (Físico: ${physicalQty}, Reservado: ${reservedQty})` });
             }
 
             const sourceId = sourceRows[0].id;

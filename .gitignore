@@ -41,3 +41,5 @@ backups/
 .claude/settings.local.json
 CLAUDE.local.md
 .agents/context/BITACORA.md
+
+packages/server/scripts/simulation/resultado-*.json

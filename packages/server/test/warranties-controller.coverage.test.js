@@ -115,14 +115,42 @@ test('createWarranty propagates errors', async (t) => {
     await assert.rejects(runHandler(controller.createWarranty, { body: {} }), /nope/);
 });
 
-test('updateWarrantyStatus delegates id and body', async (t) => {
-    const calls = stub(t, warrantiesService, 'update', () => ({ ok: true }));
+test('updateWarrantyStatus delegates id, body, user and ip', async (t) => {
+    const calls = stub(t, warrantiesService, 'updateWarrantyStatus', () => ({ ok: true }));
     const result = await runHandler(controller.updateWarrantyStatus, {
         params: { id: 'w1' },
-        body: { status: 'resolved' }
+        body: { status: 'resolved' },
+        user: { id: 'u1' }
     });
     assert.deepEqual(result.body, { ok: true });
-    assert.deepEqual(calls[0], ['w1', { status: 'resolved' }]);
+    assert.deepEqual(calls[0].slice(0, 3), ['w1', { status: 'resolved' }, 'u1']);
+    assert.equal(typeof calls[0][3], 'string');
+});
+
+test('warranty status keeps the form notes as resolution notes and audits the change', async (t) => {
+    const previousQuery = pool.query;
+    pool.query = async () => [[{ id: 'w1', status: 'received', resolution_type: null }]];
+    t.after(() => { pool.query = previousQuery; });
+    const updates = stub(t, warrantiesService, 'update', (_id, data) => ({ id: 'w1', ...data }));
+    const audits = stub(t, auditService, 'log', () => {});
+
+    const result = await warrantiesService.updateWarrantyStatus('w1', { status: 'in_progress', notes: ' Revisión técnica ' }, 'u1', '10.0.0.1');
+
+    // `notes` is not a warranty_claims column: passing it through made every status change fail.
+    assert.deepEqual(updates[0][1], { status: 'in_progress', resolution_notes: 'Revisión técnica' });
+    assert.equal(result.status, 'in_progress');
+    assert.equal(audits[0][0].action, 'UPDATE_WARRANTY_STATUS');
+    assert.deepEqual(audits[0][0].old_values, { status: 'received', resolution_type: null });
+});
+
+test('warranty status of an unknown claim is a 404', async (t) => {
+    const previousQuery = pool.query;
+    pool.query = async () => [[]];
+    t.after(() => { pool.query = previousQuery; });
+    await assert.rejects(
+        () => warrantiesService.updateWarrantyStatus('missing', { status: 'closed' }),
+        (err) => err.statusCode === 404 && err.responseBody.error === 'not_found'
+    );
 });
 
 // ---- returns ----
