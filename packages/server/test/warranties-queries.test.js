@@ -466,7 +466,6 @@ test('authorizeCreditNote surfaces an AFIP rejection', async (t) => {
 
 test('authorizeCreditNote authorizes non-fiscal legacy notes without a CAE', async (t) => {
     const calls = [];
-    let lookup = 0;
     mockPool(t, async (sql, params) => {
         const statement = String(sql);
         calls.push({ sql: statement, params });
@@ -475,7 +474,6 @@ test('authorizeCreditNote authorizes non-fiscal legacy notes without a CAE', asy
         }
         if (statement.startsWith("UPDATE credit_notes SET status = 'authorizing'")) return [{ affectedRows: 1 }];
         if (statement.startsWith('SELECT * FROM credit_notes WHERE id = ?')) {
-            lookup += 1;
             return [[{ id: 'cn-legacy', status: 'authorized', cae: null }]];
         }
         return [[]];

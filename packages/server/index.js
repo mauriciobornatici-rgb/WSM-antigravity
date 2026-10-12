@@ -27,7 +27,7 @@ import traceabilityRouter from './routes/traceabilityRoutes.js';
 import globalErrorHandler from './middleware/errorMiddleware.js';
 import { authenticateToken, authorizePermission } from './middleware/authMiddleware.js';
 import { PERMISSIONS } from '@wsm/common';
-import { validate, schemas, validateZod, zodSchemas } from './middleware/validationMiddleware.js';
+import { validateZod, zodSchemas } from './middleware/validationMiddleware.js';
 import * as userController from './controllers/userController.js';
 import tiendaNubeService from './services/tiendanube.service.js';
 import salesService from './services/sales.service.js';

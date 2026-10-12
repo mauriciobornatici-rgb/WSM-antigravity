@@ -318,7 +318,7 @@ class AccountingService {
         const { start_date, end_date } = filters;
         
         // 1. Get initial balances before start_date
-        let initialBalMap = {};
+        const initialBalMap = {};
         if (start_date) {
             const [initialRows] = await connection.query(`
                 SELECT 

@@ -90,7 +90,7 @@ test('updateCompanySettings creates a complete encrypted configuration from an e
     const previousKey = process.env.ENCRYPTION_KEY;
     process.env.ENCRYPTION_KEY = 'settings-test-encryption-key';
     const calls = [];
-    const connection = mockPool(t, async (sql, params) => {
+    mockPool(t, async (sql, params) => {
         const statement = String(sql);
         calls.push({ sql: statement, params });
         if (statement.includes('FOR UPDATE')) return [[]];

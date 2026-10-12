@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { returnsService } from '../services/warranties.service.js';
-import auditService from '../services/audit.service.js';
 import { mockPool } from './helpers/mockDb.js';
 
 test('createReturn successfully persists a return document and its items, pricing from the order', async (t) => {

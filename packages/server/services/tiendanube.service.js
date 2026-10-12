@@ -1440,7 +1440,7 @@ export class TiendaNubeService {
         const remoteId = String(remote.id);
         const name = String(this.localizedText(remote.name, `Producto ${remoteId}`));
         const description = String(this.localizedText(remote.description, ''));
-        let [families] = await this.db.query(
+        const [families] = await this.db.query(
             `SELECT id FROM tiendanube_catalog_families WHERE remote_product_id = ? LIMIT 1`,
             [remoteId]
         );

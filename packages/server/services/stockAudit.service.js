@@ -311,7 +311,7 @@ class StockAuditService {
                 throw businessError('No se encontró un producto con ese SKU o código de barras.', 404, 'STOCK_AUDIT_PRODUCT_NOT_FOUND');
             }
 
-            let [itemRows] = await connection.query(
+            const [itemRows] = await connection.query(
                 'SELECT * FROM stock_audit_items WHERE audit_id = ? AND product_id = ? LIMIT 1 FOR UPDATE',
                 [auditId, product.id]
             );

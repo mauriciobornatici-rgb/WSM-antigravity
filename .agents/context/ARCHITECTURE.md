@@ -47,7 +47,7 @@ reescritura. Conservar el monorepo y extraer por dominio cuando un cambio lo req
 
 ## Límites
 
-No hay typecheck/lint del backend en los scripts actuales.
+El backend tiene ESLint (sin tipado estático; JSDoc/checkJs por dominio queda como opción).
 Los tests con mockPool no prueban locks, triggers o aislamiento real de MySQL.
 Arrancar index.js directamente inicializa DB y habilita workers;
 importar app para pruebas no llama startServer.

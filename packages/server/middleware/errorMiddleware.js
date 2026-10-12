@@ -2,7 +2,8 @@ import { getEnvConfig } from '../config/env.js';
 
 const env = getEnvConfig();
 
-const globalErrorHandler = (err, req, res, next) => {
+// Express recognises an error handler by its four parameters: _next must stay.
+const globalErrorHandler = (err, req, res, _next) => {
     console.error(JSON.stringify({
         timestamp: new Date().toISOString(),
         level: 'error',

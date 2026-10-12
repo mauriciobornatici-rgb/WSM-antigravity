@@ -10,7 +10,7 @@ Alto: datos, dinero, permisos, concurrencia o salida a producción.
 | R-02 | Alto | Cobertura81,23/88,82/73,98 %; gate90 falla | Ampliar escenarios por dominio; CI conserva bloqueo | Desarrollo + QA | Abierto |
 | R-03 | Alto | Los comandos operativos directos aún usan su entorno configurado | validate/test:server/test:coverage aislados por defecto; usar qa:* para smokes locales | Responsable técnico | Mitigado en QA |
 | R-04 | Medio | CI con cobertura/E2E/MySQL incorporado; no ejecutado remotamente | Comprobar workflow antes de integrar; cobertura sigue roja | QA/CI | Implementado localmente |
-| R-05 | Medio | Backend JavaScript sin lint/typecheck en scripts | Evaluar ESLint/JSDoc/checkJs por dominio sin migración masiva | Desarrollo backend | Propuesto |
+| R-05 | Bajo | Backend JavaScript sin tipado estático | ESLint en `validate` y CI (2026-10-12); cobertura 99/92/99 %; JSDoc/checkJs por dominio si hace falta | Desarrollo backend | Mitigado |
 | R-06 | Medio | Servicios/pantallas extensos; rendimiento de usuarios sin medir | Build normal inicial492,33kB; la cifra anterior incluía entorno development | Arquitectura/frontend | Abierto |
 | R-07 | Medio | Entorno local habilitado: Chromium y MySQL8.0.46 | E2E2/2, RBAC12/12, bootstrap42 migraciones; no cubre hardware ni E2E completo | QA | Desbloqueado |
 | R-08 | Medio | Memorias duplicadas y estado de 89 KB | Archivo histórico, estado breve y referencias canónicas | Coordinador | Mitigado documentalmente |

@@ -3,7 +3,6 @@ import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import auditService from './audit.service.js';
 import { normalizeProductImageUrl } from '../utils/imagePolicy.js';
-import accountingService from './accounting.service.js';
 import goodsReceptionService from '../domains/procurement/GoodsReceptionService.js';
 
 class InventoryService extends BaseService {

@@ -9,11 +9,13 @@ y los umbrales existentes se conservan. Ver [QA local](../../docs/development/QA
 |---|---|
 | npm run build:common | Contratos compartidos; obligatorio tras DTO/RBAC |
 | npm run typecheck | common + cliente; no tipado estático del backend JS |
-| npm run lint | ESLint del cliente |
+| npm run lint | ESLint del cliente (con jsx-a11y) y del servidor (`packages/server/eslint.config.js`) |
+| npm run qa:integration | 44 tests contra MySQL QA real (locks, concurrencia, contabilidad); también en CI |
+| npm -w @wsm/client run test:e2e | Playwright con API simulada: login, checkout POS, Excepciones POS |
 | npm run test:server | Runner aislado: node --test con DB127.0.0.1:1 y claves ficticias |
 | npm run test:qa-guards | Guardas de entorno y servidor HTTP de pruebas |
 | npm run test:client | Vitest del cliente |
-| npm run validate | common, guards, backend aislado, lint/tipos/tests/build cliente |
+| npm run validate | common, guards, backend aislado, lint servidor, lint/tipos/tests/build cliente |
 | npm run test:coverage | Backend aislado con gate90 en líneas/ramas/funciones |
 | npm run qa:bootstrap -- --allow-qa-bootstrap | Migraciones/fixtures solo en wsm_qa local; exige autorización de migraciones |
 | npm run qa:preflight:integrity | El mismo preflight referencial con destino QA fijo |

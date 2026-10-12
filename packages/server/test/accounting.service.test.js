@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import accountingService from '../services/accounting.service.js';
-import auditService from '../services/audit.service.js';
 import { mockPool } from './helpers/mockDb.js';
 
 test('createJournalEntry throws if description is missing or empty', async (t) => {

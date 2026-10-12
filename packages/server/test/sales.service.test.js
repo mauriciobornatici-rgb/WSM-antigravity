@@ -436,11 +436,9 @@ test('createManualInvoice computes granular Mixed-VAT and rounds line-by-line co
         // Validate insert query net and vat amounts
         const invoiceInsertCall = connectionCalls.find(c => c.sql.includes('INSERT INTO invoices'));
         assert.ok(invoiceInsertCall);
-        const [
-            id, order_id, client_id, client_name, client_tax_id, client_address, client_tax_condition,
-            invoice_type, point_of_sale, invoice_number,
-            net_amount, vat_amount, total_amount_param
-        ] = invoiceInsertCall.params;
+        // Columns 0-9: id, order_id, client_id, client_name, client_tax_id, client_address,
+        // client_tax_condition, invoice_type, point_of_sale, invoice_number; then the amounts.
+        const [net_amount, vat_amount, total_amount_param] = invoiceInsertCall.params.slice(10, 13);
 
         assert.equal(net_amount, 281.00); // 200 + 81
         assert.equal(vat_amount, 50.50); // 42.00 + 8.50

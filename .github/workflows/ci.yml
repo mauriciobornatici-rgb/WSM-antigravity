@@ -41,7 +41,7 @@ jobs:
       - name: Build Shared Contracts (@wsm/common)
         run: npm run build:common
 
-      - name: Lint Frontend (@wsm/client)
+      - name: Lint Frontend and Backend
         run: npm run lint
 
       - name: Typecheck Frontend & Contracts

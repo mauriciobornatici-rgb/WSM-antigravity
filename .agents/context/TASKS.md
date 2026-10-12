@@ -40,8 +40,10 @@ v2.1 por pedido del usuario). Decisiones de negocio en ADR-008 (precios de catá
 
 ## Próximos pasos
 
+- [x] ESLint del servidor (`packages/server/eslint.config.js`): 29 problemas → 0; en `npm run lint`, `validate` y CI. Ningún hallazgo era bug (imports/variables sobrantes).
+
 1. Confirmar CI verde del PR #1 tras el push.
-2. ESLint del servidor; sacar SQL de controladores por dominio (con la red de tests ya puesta).
+2. Sacar SQL de controladores por dominio (169 consultas; con la red de tests ya puesta).
 3. Usuario: correr los runbooks en producción tras el merge.
 2. I8: migración 045 (CHECK de inventario) — solo después de que el usuario corra la reparación en producción (AP2). Runbooks: `docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`.
 3. Fase H2 (numeración ARCA, recuperación de CAE y de NC en `authorizing`), ESLint del servidor, E2E de checkout.

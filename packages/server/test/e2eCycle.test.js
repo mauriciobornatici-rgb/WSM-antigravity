@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mockPool } from "./helpers/mockDb.js";
-import pool from "../config/db.js";
 import { SupplierPaymentService } from "../domains/procurement/SupplierPaymentService.js";
 import { GoodsReceptionService } from "../domains/procurement/GoodsReceptionService.js";
 import { CreateOrderUseCase } from "../domains/sales/CreateOrderUseCase.js";

@@ -5,7 +5,6 @@ import auditService from './audit.service.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
 import financeService from './finance.service.js';
 import accountingService from './accounting.service.js';
-import afipService from './afip.service.js';
 import invoiceAuthorizationUseCase from '../domains/sales/InvoiceAuthorizationUseCase.js';
 import createOrderUseCase from '../domains/sales/CreateOrderUseCase.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
