@@ -28,12 +28,21 @@ v2.1 por pedido del usuario). Decisiones de negocio en ADR-008 (precios de catá
 - [x] `05e149a` devolución a proveedor espeja la compra (ADR-011) · `8967a7e` contador de excepciones POS en el menú.
 - [x] CI: `qa:integration` en el job mysql-qa; smoke RBAC con 5 casos de POS/excepciones (17/17).
 - [x] Evidencia: unit 477/477, cliente 69, `qa:integration` 44/44, preflight + smokes RBAC/integridad OK.
-- [ ] Push de `codex/hardening-100` + PR a `main` (aprobado por el usuario, ADR-011); cobertura del CI conocida en rojo (H-02).
+- [x] Push + PR https://github.com/mauriciobornatici-rgb/WSM-antigravity/pull/1 (vinculado a la sesión). CI: falla solo el job de cobertura (H-02, conocido).
+- [x] `8cc348b` / `70ce507` E2E Playwright: checkout POS (1 llamada, rechazo de precio restaura) y Excepciones POS (gerente/cajero). E2E 6/6.
+
+## Ola C — gate de cobertura (hecho)
+
+- [x] `1ff2122` 312 tests nuevos (4 implementadores sonnet, revisados): cobertura backend 99,25 / 91,92 / 98,93 % (antes 81,4 / 89,1 / 74,9). Gate 90 % en verde.
+- [x] Hallazgos de los implementadores verificados y corregidos: X-Request-Id antes de parsers/limitador; `status` del error siempre texto; `updateUser` protege al último admin activo y no edita borrados; código muerto en procurementController; supplier_id faltante → 400.
+- [x] Descartados con evidencia: NC por $0 (Zod exige `amount` positivo); tipo de movimiento de caja (Zod restringe a income/expense).
+- Evidencia: validate 0 (791 + 69), coverage 0, qa:integration 44/44, RBAC 17/17.
 
 ## Próximos pasos
 
-1. Ola C: gate de cobertura en verde (90 %) por dominio; ESLint del servidor; E2E de checkout.
-2. Usuario: correr los runbooks en producción tras el merge.
+1. Confirmar CI verde del PR #1 tras el push.
+2. ESLint del servidor; sacar SQL de controladores por dominio (con la red de tests ya puesta).
+3. Usuario: correr los runbooks en producción tras el merge.
 2. I8: migración 045 (CHECK de inventario) — solo después de que el usuario corra la reparación en producción (AP2). Runbooks: `docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`.
 3. Fase H2 (numeración ARCA, recuperación de CAE y de NC en `authorizing`), ESLint del servidor, E2E de checkout.
 

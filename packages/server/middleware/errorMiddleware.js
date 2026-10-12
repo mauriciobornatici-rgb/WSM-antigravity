@@ -13,8 +13,10 @@ const globalErrorHandler = (err, req, res, next) => {
         stack: err.stack
     }));
 
-    const statusCode = err.statusCode || 500;
-    const status = err.status || 'error';
+    // Library errors (e.g. body-parser) carry a numeric `status`; ours carry `statusCode`
+    // and a 'fail'/'error' `status`. The response contract always uses the string form.
+    const statusCode = err.statusCode || (Number.isInteger(err.status) ? err.status : 500);
+    const status = typeof err.status === 'string' ? err.status : (statusCode < 500 ? 'fail' : 'error');
     const safeMessage = (!env.isDevelopment && statusCode >= 500)
         ? 'Internal Server Error'
         : (err.message || 'Error interno del servidor');

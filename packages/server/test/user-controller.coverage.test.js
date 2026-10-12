@@ -332,9 +332,10 @@ test('createUser rolls back and releases on unexpected errors', async (t) => {
     assert.deepEqual(tracked.counts, { begin: 1, commit: 0, rollback: 1, release: 1 });
 });
 
-function updateConnection({ existing = [{ id: 'u1', role: 'cashier' }], dup = [], updated = [{ id: 'u1', name: 'New' }] } = {}) {
+function updateConnection({ existing = [{ id: 'u1', role: 'cashier', status: 'active' }], dup = [], updated = [{ id: 'u1', name: 'New' }], activeAdmins = [{ id: 'u1' }, { id: 'u2' }] } = {}) {
     return createTrackedConnection(async (statement) => {
-        if (statement.includes('FROM users WHERE id = ? FOR UPDATE')) return [existing];
+        if (statement.includes('FROM users WHERE id = ? AND deleted_at IS NULL FOR UPDATE')) return [existing];
+        if (statement.includes("role = 'admin' AND status = 'active'")) return [activeAdmins];
         if (statement.includes('AND id != ?')) return [dup];
         if (statement.startsWith('UPDATE users')) return [{}];
         return [updated];
@@ -476,4 +477,30 @@ test('deleteUser skips the admin count for non-admin roles and rolls back on err
     installPool(t, { tracked: failing });
     await assert.rejects(runHandler(controller.deleteUser, { params: { id: 'c1' } }), /boom/);
     assert.deepEqual(failing.counts, { begin: 1, commit: 0, rollback: 1, release: 1 });
+});
+
+test('updateUser refuses to demote or deactivate the last active admin', async (t) => {
+    for (const body of [
+        { name: 'Admin', email: 'a@x.com', role: 'manager', status: 'active' },
+        { name: 'Admin', email: 'a@x.com', role: 'admin', status: 'inactive' },
+    ]) {
+        const tracked = updateConnection({ existing: [{ id: 'u1', role: 'admin', status: 'active' }], activeAdmins: [{ id: 'u1' }] });
+        installPool(t, { tracked });
+        const result = await runHandler(controller.updateUser, { params: { id: 'u1' }, body });
+        assert.equal(result.status, 409);
+        assert.equal(result.body.error, 'last_admin');
+        assert.equal(tracked.calls.some((call) => call.statement.startsWith('UPDATE users')), false);
+        assert.deepEqual(tracked.counts, { begin: 1, commit: 0, rollback: 1, release: 1 });
+    }
+});
+
+test('updateUser lets an admin be demoted while another active admin remains', async (t) => {
+    const tracked = updateConnection({ existing: [{ id: 'u1', role: 'admin', status: 'active' }], activeAdmins: [{ id: 'u1' }, { id: 'u2' }] });
+    installPool(t, { tracked });
+    installAudit(t, async () => {});
+    const result = await runHandler(controller.updateUser, {
+        params: { id: 'u1' }, body: { name: 'Ex admin', email: 'a@x.com', role: 'manager', status: 'active' },
+    });
+    assert.equal(result.status, 200);
+    assert.ok(tracked.calls.some((call) => call.statement.startsWith('UPDATE users')));
 });

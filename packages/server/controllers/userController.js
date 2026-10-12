@@ -153,13 +153,28 @@ export const updateUser = catchAsync(async (req, res) => {
     try {
     await connection.beginTransaction();
 
+    // A deleted user is gone: it cannot be edited (or "revived" through status: 'active').
     const [existing] = await connection.query(
-        'SELECT id, name, email, role, status, created_at, last_login FROM users WHERE id = ? FOR UPDATE',
+        'SELECT id, name, email, role, status, created_at, last_login FROM users WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
         [id]
     );
     if (existing.length === 0) {
         await connection.rollback();
         return res.status(404).json({ error: 'not_found', message: 'Usuario no encontrado' });
+    }
+
+    // Same protection as deleteUser: demoting or deactivating the last active admin
+    // would lock everyone out of user and settings management.
+    const losesAdminAccess = existing[0].role === 'admin' && existing[0].status === 'active'
+        && (role !== 'admin' || status !== 'active');
+    if (losesAdminAccess) {
+        const [admins] = await connection.query(
+            "SELECT id FROM users WHERE role = 'admin' AND status = 'active' AND deleted_at IS NULL FOR UPDATE"
+        );
+        if (admins.length <= 1) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'last_admin', message: 'No se puede quitar el rol o desactivar al último administrador activo' });
+        }
     }
 
     const [dupEmail] = await connection.query('SELECT id FROM users WHERE email = ? AND id != ? FOR UPDATE', [email, id]);

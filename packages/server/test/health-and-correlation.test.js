@@ -54,6 +54,19 @@ test('Observability & Correlation ID Integration Suite', async (t) => {
         assert.match(res.headers.get('x-request-id'), /^[0-9a-f-]{36}$/i);
     });
 
+    await t.test('A malformed JSON body still answers with the client request id and a string status', async () => {
+        const res = await fetch(`${baseUrl}/api/login`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-request-id': 'trace-malformed-1' },
+            body: '{"email":',
+        });
+        assert.equal(res.status, 400);
+        assert.equal(res.headers.get('x-request-id'), 'trace-malformed-1');
+        const body = await res.json();
+        assert.equal(body.status, 'fail');
+        assert.equal(body.request_id, 'trace-malformed-1');
+    });
+
     await t.test('Tiendanube OAuth callback is reachable without an ERP session cookie', async () => {
         // It used to be rejected with 401 by the '/api'-wide authentication middleware.
         const res = await fetch(`${baseUrl}/api/integrations/tiendanube/callback`);

@@ -50,7 +50,42 @@ if (env.trustProxy !== undefined) {
 // Global Middleware
 app.use(helmet());
 
-// CORS â€” restrict to allowed origins (default: Vite dev server)
+// Request Logging & Correlation ID Middleware — redact sensitive query params.
+// Registered before body parsers and the rate limiter so malformed JSON, oversized
+// payloads and 429 responses also carry an X-Request-Id and reach the access log.
+app.use((req, res, next) => {
+    const incomingRequestId = req.headers['x-request-id'];
+    const requestId = typeof incomingRequestId === 'string' && REQUEST_ID_PATTERN.test(incomingRequestId)
+        ? incomingRequestId
+        : crypto.randomUUID();
+    const startedAt = process.hrtime.bigint();
+    req.id = requestId;
+    req.requestId = requestId;
+    res.setHeader('X-Request-Id', requestId);
+    res.setHeader('X-Request-ID', requestId);
+    const host = req.headers.host || 'localhost';
+    const url = new URL(req.originalUrl, `http://${host}`);
+    const sensitiveKeys = ['token', 'password', 'secret', 'key'];
+    for (const k of url.searchParams.keys()) {
+        if (sensitiveKeys.some(s => k.toLowerCase().includes(s))) {
+            url.searchParams.set(k, '***');
+        }
+    }
+    res.on('finish', () => {
+        const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+        console.log(JSON.stringify({
+            timestamp: new Date().toISOString(),
+            request_id: requestId,
+            method: req.method,
+            path: `${url.pathname}${url.search}`,
+            status: res.statusCode,
+            duration_ms: Math.round(durationMs * 100) / 100
+        }));
+    });
+    next();
+});
+
+// CORS — restrict to allowed origins (default: Vite dev server)
 const corsOrigins = env.corsOrigins;
 app.use(cors({
     origin: corsOrigins,
@@ -94,39 +129,6 @@ const limiter = rateLimit({
 
 // Apply rate limiting to all requests
 app.use('/api', limiter);
-
-// Request Logging & Correlation ID Middleware — redact sensitive query params
-app.use((req, res, next) => {
-    const incomingRequestId = req.headers['x-request-id'];
-    const requestId = typeof incomingRequestId === 'string' && REQUEST_ID_PATTERN.test(incomingRequestId)
-        ? incomingRequestId
-        : crypto.randomUUID();
-    const startedAt = process.hrtime.bigint();
-    req.id = requestId;
-    req.requestId = requestId;
-    res.setHeader('X-Request-Id', requestId);
-    res.setHeader('X-Request-ID', requestId);
-    const host = req.headers.host || 'localhost';
-    const url = new URL(req.originalUrl, `http://${host}`);
-    const sensitiveKeys = ['token', 'password', 'secret', 'key'];
-    for (const k of url.searchParams.keys()) {
-        if (sensitiveKeys.some(s => k.toLowerCase().includes(s))) {
-            url.searchParams.set(k, '***');
-        }
-    }
-    res.on('finish', () => {
-        const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
-        console.log(JSON.stringify({
-            timestamp: new Date().toISOString(),
-            request_id: requestId,
-            method: req.method,
-            path: `${url.pathname}${url.search}`,
-            status: res.statusCode,
-            duration_ms: Math.round(durationMs * 100) / 100
-        }));
-    });
-    next();
-});
 
 // Health Check & Documentation Endpoints
 app.get('/api/live', (req, res) => {

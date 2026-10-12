@@ -3,7 +3,6 @@ import pool from '../config/db.js';
 import catchAsync from '../utils/catchAsync.js';
 import inventoryService from '../services/inventory.service.js';
 import auditService from '../services/audit.service.js';
-import accountingService from '../services/accounting.service.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
 import getRequestIp from '../utils/requestIp.js';
 import purchaseOrderService from '../domains/procurement/PurchaseOrderService.js';
@@ -17,20 +16,6 @@ async function getTaxRate(connection) {
         return parseFloat(rows[0].tax_rate);
     }
     return 0.21;
-}
-
-async function nextPONumber(connection) {
-    const year = new Date().getFullYear();
-    const prefix = `PO-${year}-`;
-    const [rows] = await connection.query(
-        `SELECT MAX(CAST(SUBSTRING_INDEX(po_number, '-', -1) AS UNSIGNED)) AS max_seq
-         FROM purchase_orders
-         WHERE po_number LIKE ?`,
-        [`${prefix}%`]
-    );
-    const maxExisting = Number(rows[0]?.max_seq || 0);
-    const nextSeq = await nextDocumentSequence(connection, `purchase_order:${year}`, maxExisting);
-    return `${prefix}${String(nextSeq).padStart(3, '0')}`;
 }
 
 async function nextReceptionNumber(connection) {
@@ -59,29 +44,6 @@ async function nextSupplierReturnNumber(connection) {
     const maxExisting = Number(rows[0]?.max_seq || 0);
     const nextSeq = await nextDocumentSequence(connection, `supplier_return:${year}`, maxExisting);
     return `${prefix}${String(nextSeq).padStart(4, '0')}`;
-}
-
-async function decreaseInventory(connection, productId, quantityToRemove) {
-    const qty = Number(quantityToRemove || 0);
-    if (qty <= 0) return;
-
-    const [stockRows] = await connection.query(
-        'SELECT id, quantity FROM inventory WHERE product_id = ? AND quantity > 0 ORDER BY quantity DESC FOR UPDATE',
-        [productId]
-    );
-
-    let remaining = qty;
-    for (const row of stockRows) {
-        if (remaining <= 0) break;
-        const available = Number(row.quantity || 0);
-        const consume = Math.min(available, remaining);
-        await connection.query('UPDATE inventory SET quantity = quantity - ? WHERE id = ?', [consume, row.id]);
-        remaining -= consume;
-    }
-
-    if (remaining > 0) {
-        throw new Error('Stock insuficiente para procesar la devolucion');
-    }
 }
 
 export const getPurchaseOrders = catchAsync(async (req, res) => {
@@ -277,7 +239,7 @@ export const createReception = catchAsync(async (req, res) => {
             if (po.length > 0) effectiveSupplierId = po[0].supplier_id;
         }
         if (!effectiveSupplierId) {
-            throw new Error('supplier_id es obligatorio');
+            throw Object.assign(new Error('supplier_id es obligatorio'), { statusCode: 400, errorCode: 'SUPPLIER_REQUIRED' });
         }
 
         if (remito_number) {
