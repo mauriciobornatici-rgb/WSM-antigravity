@@ -49,10 +49,22 @@ test('supplier payments validate required supplier, lines and positive total', a
 
 test('supplier payments persist split lines, defaults, ledger impact and audit', async (t) => {
     const calls = [];
-    const { lifecycle } = installConnection(t, async (sql, params) => { calls.push({ sql: String(sql), params }); return [[]]; });
+    // The default method is cash: an open shift with enough cash must back it (ADR-014).
+    let cashOut = 0;
+    const { connection, lifecycle } = installConnection(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes("FROM cash_shifts WHERE id = ? AND status = 'open' FOR UPDATE")) return [[{ id: 'shift-1' }]];
+        if (statement.includes("FROM cash_shifts WHERE status = 'open'")) return [[{ id: 'shift-1' }]];
+        if (statement.includes('INSERT INTO shift_payments')) cashOut += params[2];
+        if (statement.includes('FROM shift_payments')) return [[{ inflow: 100, outflow: cashOut }]];
+        if (statement.includes('SELECT opening_balance')) return [[{ opening_balance: 0 }]];
+        return [[]];
+    });
     const originals = { audit: auditService.log };
     let audit;
-    auditService.log = async (payload) => { audit = payload; };
+    let auditExecutor;
+    auditService.log = async (payload, executor) => { audit = payload; auditExecutor = executor; lifecycle.push('audit'); };
     t.after(() => { auditService.log = originals.audit; });
     const result = await new SupplierPaymentService().createSupplierPayment({
         supplier_id: 's', notes: 'Pago QA', payments: [
@@ -64,8 +76,16 @@ test('supplier payments persist split lines, defaults, ledger impact and audit',
     assert.equal(result.ids.length, 2);
     assert.equal(audit.new_values.total, 15);
     assert.equal(audit.ip_address, '127.0.0.1');
-    assert.deepEqual(lifecycle, ['begin', 'commit', 'release']);
+    // The audit runs on the transaction connection, before the commit.
+    assert.equal(auditExecutor, connection);
+    assert.deepEqual(lifecycle, ['begin', 'audit', 'commit', 'release']);
     assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO supplier_payments')).length, 2);
+    // Only the cash line (5) leaves the drawer; the transfer (10) does not.
+    const drawer = calls.filter((call) => call.sql.includes('INSERT INTO shift_payments'));
+    assert.equal(drawer.length, 1);
+    assert.deepEqual([drawer[0].params[1], drawer[0].params[2]], ['shift-1', 5]);
+    assert.ok(drawer[0].sql.includes("'expense'"));
+    assert.ok(calls.some((call) => call.sql.startsWith('UPDATE cash_shifts SET expected_balance') && call.params[0] === 95));
 });
 
 test('supplier return inventory deduction handles no-op, multiple rows and insufficient stock', async () => {

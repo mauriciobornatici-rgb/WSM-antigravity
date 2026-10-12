@@ -37,9 +37,12 @@ export class InvoiceAuthorizationUseCase {
             const expirationDate = afipRes.cae_expiration_date;
             const finalInvoiceNumber = afipRes.invoice_number;
 
+            // Keep the point of sale ARCA actually authorized it under (the company's): a credit
+            // note later names this invoice by point of sale + number (ADR-014).
+            const authorizedPointOfSale = parseInt(companySettings?.billing_pos || 1, 10);
             await connection.query(
-                'UPDATE invoices SET status = "authorized", cae = ?, cae_expiration_date = ?, invoice_number = ? WHERE id = ?',
-                [cae, expirationDate, finalInvoiceNumber, invoiceId]
+                'UPDATE invoices SET status = "authorized", cae = ?, cae_expiration_date = ?, invoice_number = ?, point_of_sale = ? WHERE id = ?',
+                [cae, expirationDate, finalInvoiceNumber, authorizedPointOfSale, invoiceId]
             );
 
             const [updatedInvoiceRows] = await connection.query('SELECT * FROM invoices WHERE id = ?', [invoiceId]);

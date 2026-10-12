@@ -24,6 +24,10 @@ router.post('/cash-registers/:id/open', cashRoles, validate(schemas.cashShiftOpe
 router.post('/cash-shifts/:id/close', cashRoles, validate(schemas.cashShiftClose), financeController.closeShift);
 router.post('/cash-shifts/:id/payments', cashRoles, validate(schemas.shiftPayment), financeController.addShiftPayment);
 
+// Card/QR settlements (Tarjetas y QR a cobrar -> Banco)
+router.get('/card-settlements', accountingRoles, financeController.getCardSettlements);
+router.post('/card-settlements', accountingRoles, validate(schemas.cardSettlement), financeController.createCardSettlement);
+
 // Collections
 router.get('/collections/pending-invoices', collectionsRoles, financeController.getPendingInvoices);
 router.get('/collections/fiscal-status', collectionsRoles, financeController.getFiscalSalesStatus);

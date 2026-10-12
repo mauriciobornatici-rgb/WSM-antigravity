@@ -270,10 +270,12 @@ test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Fact
         const paymentRes = await supplierPaymentService.createSupplierPayment({
             supplier_id: memoryState.supplier.id,
             notes: "Pago total factura compra Nike 20 pares",
-            payments: [{ method: "bank_transfer", amount: 1210000, notes: "Transferencia Banco Galicia" }]
+            payments: [{ payment_method: "Transferencia", amount: 1210000, notes: "Transferencia Banco Galicia" }]
         }, "admin-1");
 
         assert.equal(paymentRes.success, true);
+        // A transfer never touches the cash drawer (ADR-014): only cash payments need an open shift.
+        assert.equal(executedQueries.some(q => q.sql.includes("INSERT INTO shift_payments")), false);
         // Cuenta corriente con el proveedor queda saldada
         memoryState.supplier.account_balance = 0;
         assert.equal(memoryState.supplier.account_balance, 0);

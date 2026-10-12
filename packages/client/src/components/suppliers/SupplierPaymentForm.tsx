@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ArgentinaDateInput } from '@/components/common/ArgentinaDateInput';
@@ -57,6 +59,18 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
 
     const totalAmount = paymentLines.reduce((acc, line) => acc + parseFloat(line.amount || '0'), 0);
 
+    // Cash leaves an open register (ADR-014): with more than one open, the user picks which.
+    const paysCash = paymentLines.some((line) => line.payment_method === 'Efectivo' && parseFloat(line.amount || '0') > 0);
+    const registersQuery = useQuery({
+        queryKey: ['cash-registers', 'for-supplier-payment'],
+        queryFn: () => api.getCashRegisters(),
+        enabled: paysCash,
+        meta: { silentError: true },
+    });
+    const openRegisters = (registersQuery.data ?? []).filter((register) => register.status === 'open');
+    const [cashRegisterId, setCashRegisterId] = useState('');
+    const needsRegisterChoice = paysCash && openRegisters.length > 1;
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
@@ -71,10 +85,16 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
             return;
         }
 
+        if (needsRegisterChoice && !cashRegisterId) {
+            toast.error("Elegí de qué caja sale el efectivo");
+            return;
+        }
+
         setSubmitting(true);
         try {
             const data: SupplierPaymentCreateInput = {
                 supplier_id: supplier.id,
+                ...(paysCash && cashRegisterId ? { cash_register_id: cashRegisterId } : {}),
                 payment_date: paymentDate,
                 payments: validLines.map(l => ({
                     amount: parseFloat(l.amount),
@@ -122,6 +142,26 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
                         <Plus className="h-4 w-4 mr-2" /> Agregar Método
                     </Button>
                 </div>
+                {paymentLines.some((line) => line.payment_method === 'Efectivo') ? (
+                    <p className="text-xs text-muted-foreground">
+                        El efectivo sale de la caja abierta y se descuenta de su arqueo: no hace falta registrarlo además como egreso de caja.
+                    </p>
+                ) : null}
+                {needsRegisterChoice ? (
+                    <div className="space-y-1.5">
+                        <Label htmlFor="supplier-payment-register">Caja de la que sale el efectivo</Label>
+                        <Select value={cashRegisterId} onValueChange={setCashRegisterId}>
+                            <SelectTrigger id="supplier-payment-register" className="h-9">
+                                <SelectValue placeholder="Elegí la caja" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {openRegisters.map((register) => (
+                                    <SelectItem key={register.id} value={register.id}>{register.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                ) : null}
 
                 <div className="space-y-3">
                     {paymentLines.map((line) => (

@@ -14,6 +14,14 @@ export const ACCOUNTS = Object.freeze({
     COGS: '5.1.01.01',
     GENERAL_EXPENSES: '5.1.02.01',
     INVENTORY_LOSSES: '5.1.02.02',
+    WARRANTY_COSTS: '5.1.02.03',
+    BANK_FEES: '5.1.02.04',
+});
+
+// Non-sellable locations used by the warranty flow (same names as StockLedger's list).
+export const LOCATIONS = Object.freeze({
+    QUARANTINE: 'Cuarentena',
+    SUPPLIER_RETURNS: 'Devoluciones a Proveedores',
 });
 
 const CARD_METHODS = new Set(['card', 'debit_card', 'credit_card', 'qr', 'tarjeta', 'debito', 'credito', 'mercadopago']);

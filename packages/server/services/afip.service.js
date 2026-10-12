@@ -8,6 +8,26 @@ const VOUCHER_TYPES_WITHOUT_VAT = new Set([11, 13]); // Factura C / NC C (monotr
 
 const toCents = (value) => Math.round(Number(value || 0) * 100);
 
+// Whether a voucher returned by ARCA lists the given invoice among its associated vouchers.
+// Unknown shape → false: better to request a new voucher than adopt another note's CAE.
+export function associatedVoucherMatches(voucherInfo, associated) {
+    const raw = voucherInfo?.CbtesAsoc?.CbteAsoc ?? voucherInfo?.CbtesAsoc;
+    const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+    return list.some((cbte) => Number(cbte?.PtoVta) === Number(associated.point_of_sale)
+        && Number(cbte?.Nro) === Number(associated.invoice_number));
+}
+
+// YYYYMMDD in local time, as ARCA expects dates.
+export function formatAfipDate(value) {
+    // A date-only string is already a calendar date: parsing it would read it as UTC
+    // and shift it a day back in Argentina.
+    const dateOnly = typeof value === 'string' && /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+    if (dateOnly) return `${dateOnly[1]}${dateOnly[2]}${dateOnly[3]}`;
+    const date = value instanceof Date ? value : new Date(value);
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
 /**
  * Voucher amounts for ARCA from invoice lines, in integer cents so that
  * ImpTotal = ImpNeto + ImpIVA and the sum of Iva[].Importe = ImpIVA exactly.
@@ -184,6 +204,17 @@ class AfipService {
             payload['Iva'] = ivaArray;
         }
 
+        // A credit note must name the invoice it corrects (comprobante asociado). CbteFch is
+        // optional and left out: the local issue date may differ from the authorized one.
+        const associated = invoiceData.associated_voucher;
+        if (associated) {
+            payload['CbtesAsoc'] = [{
+                'Tipo': this._getInvoiceType(associated.invoice_type),
+                'PtoVta': parseInt(associated.point_of_sale, 10),
+                'Nro': parseInt(associated.invoice_number, 10),
+            }];
+        }
+
         try {
             const res = await afip.ElectronicBilling.createVoucher(payload);
             return {
@@ -218,7 +249,12 @@ class AfipService {
                         
                         // Si el monto total y el documento del cliente coinciden con el último voucher emitido,
                         // asumimos que fue la petición de esta factura que llegó a AFIP pero cuyo response perdimos.
-                        if (afipTotal === localTotal && lastVoucherInfo.DocNro === localDocNumber) {
+                        // A credit note must also correct the same invoice: two notes of equal amount
+                        // to the same customer are common (e.g. consumer refunds), and adopting the
+                        // other one's CAE would leave this note never issued.
+                        const sameAssociation = !invoiceData.associated_voucher
+                            || associatedVoucherMatches(lastVoucherInfo, invoiceData.associated_voucher);
+                        if (afipTotal === localTotal && lastVoucherInfo.DocNro === localDocNumber && sameAssociation) {
                             console.log(`[AFIP Split-Brain] Recuperando comprobante previo coincidente: ${lastVoucherNumber}`);
                             afipRes = {
                                 cae: lastVoucherInfo.CodAutorizacion,

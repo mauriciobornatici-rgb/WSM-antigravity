@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { businessError } from '../utils/businessError.js';
 
 const roundMoney = (value) => Math.round(Number(value || 0) * 100) / 100;
 
@@ -25,6 +26,49 @@ export async function calculateShiftExpectedBalance(connection, shiftId) {
         expected_balance: roundMoney(openingBalance + inflow - outflow)
     };
 }
+
+/**
+ * Cash physically taken out of the drawer for a payment posted elsewhere (e.g. a supplier
+ * paid in cash, ADR-014): one 'expense' line in the open shift so the drawer count and the
+ * ledger agree, with no second posting. Runs in the caller's transaction.
+ */
+export async function recordDrawerOutflow(connection, { registerId = null, amount, referenceId = null }) {
+    // Find the open shift without locking (a locking scan over cash_shifts would lock every
+    // historical shift and stall the POS), then lock only that row and re-check it is open.
+    let shiftRows;
+    if (registerId) {
+        [shiftRows] = await connection.query(
+            "SELECT id FROM cash_shifts WHERE cash_register_id = ? AND status = 'open'",
+            [registerId]
+        );
+    } else {
+        [shiftRows] = await connection.query("SELECT id FROM cash_shifts WHERE status = 'open'");
+    }
+    if (shiftRows.length === 0) {
+        throw businessError(409, { error: 'no_open_cash_register', message: 'Para pagar en efectivo tiene que haber una caja abierta.' });
+    }
+    if (shiftRows.length > 1) {
+        throw businessError(409, { error: 'cash_register_required', message: 'Hay más de una caja abierta: elegí de cuál sale el efectivo.' });
+    }
+    const shiftId = shiftRows[0].id;
+    const [locked] = await connection.query("SELECT id FROM cash_shifts WHERE id = ? AND status = 'open' FOR UPDATE", [shiftId]);
+    if (locked.length === 0) {
+        throw businessError(409, { error: 'no_open_cash_register', message: 'La caja se cerró mientras se registraba el pago: abrila de nuevo.' });
+    }
+    const before = await calculateShiftExpectedBalance(connection, shiftId);
+    const outflow = roundMoney(amount);
+    if (outflow > before.expected_balance + 0.001) {
+        throw businessError(409, { error: 'insufficient_cash', message: `No hay efectivo suficiente en la caja (disponible ${before.expected_balance.toFixed(2)}).` });
+    }
+    await connection.query(
+        "INSERT INTO shift_payments (id, shift_id, order_id, payment_method, amount, type) VALUES (?, ?, NULL, 'cash', ?, 'expense')",
+        [crypto.randomUUID(), shiftId, outflow]
+    );
+    const summary = await calculateShiftExpectedBalance(connection, shiftId);
+    await connection.query('UPDATE cash_shifts SET expected_balance = ? WHERE id = ?', [summary.expected_balance, shiftId]);
+    return { shiftId, expected_balance: summary.expected_balance, referenceId };
+}
+
 
 function shiftNotOpenError() {
     const err = new Error('El turno de caja no existe o no está abierto.');

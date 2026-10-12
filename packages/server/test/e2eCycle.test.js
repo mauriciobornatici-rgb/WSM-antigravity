@@ -95,10 +95,12 @@ test("Circuito E2E Operativo Completo: Compra -> Stock -> Venta -> Cta Cte -> Co
         const res = await supplierPaymentService.createSupplierPayment({
             supplier_id: "sup-100",
             notes: "Pago parcial E2E",
-            payments: [{ method: "bank_transfer", amount: 300000, notes: "Transferencia bancaria" }]
+            payments: [{ payment_method: "Transferencia", amount: 300000, notes: "Transferencia bancaria" }]
         }, "user-100");
 
         assert.equal(res.success, true);
+        // A transfer never touches the cash drawer (ADR-014): only cash payments need an open shift.
+        assert.equal(executedQueries.some(q => q.sql.includes("INSERT INTO shift_payments")), false);
         assert.ok(res.ids.length > 0);
         assert.ok(executedQueries.some(q => q.sql.includes("INSERT INTO supplier_payments")));
         assert.ok(executedQueries.some(q => q.sql.toLowerCase().includes("suppliers")));

@@ -404,12 +404,30 @@ async function main() {
         await call('POST', '/api/cash-transactions', { register_id: ctx.register.id, type: 'expense', amount: 3000, reason: 'Flete local' });
         ctx.cashExpected -= 3000;
         check('Caja baja por gasto', await shiftExpected(), ctx.cashExpected);
+        // ADR-014: la NC manual corrige una factura del cliente
+        const noInvoice = await call('POST', '/api/credit-notes', { client_id: ctx.client.id, amount: 100 }).catch((e) => e);
+        check('NC manual sin factura asociada → 400', noInvoice.status, 400);
+        const tooMuch = await call('POST', '/api/credit-notes', { client_id: ctx.client.id, invoice_id: ctx.invoiceId, amount: 999999 }).catch((e) => e);
+        check('NC manual mayor que la factura → 409', tooMuch.status, 409);
         const key = uuid();
-        const nc = { idempotency_key: key, client_id: ctx.client.id, amount: 5450, reason: 'Bonificación por demora', reference_type: 'discount' };
+        const nc = { idempotency_key: key, client_id: ctx.client.id, invoice_id: ctx.invoiceId, amount: 5450, reason: 'Bonificación por demora', reference_type: 'discount' };
         const a = await call('POST', '/api/credit-notes', nc);
         const b = await call('POST', '/api/credit-notes', nc);
         check('NC manual: el reintento devuelve la misma nota', [b.number === a.number, Boolean(b.idempotent_replay)], [true, true]);
+        check('NC manual toma la letra de la factura (A)', (await q('SELECT credit_note_type, invoice_id FROM credit_notes WHERE id = ?', [a.id]))[0].credit_note_type, 'A');
         check('Saldo cta cte tras NC de 5.450', await clientBalance(ctx.client.id), 70000);
+        const unauth = await call('POST', `/api/credit-notes/${a.id}/authorize`, {}).catch((e) => e);
+        check('Autorizar NC de una factura sin CAE → 409 (no llega a ARCA)', unauth.status, 409);
+
+        // ADR-014: el pago en efectivo al proveedor sale de la caja abierta, un solo registro
+        await call('POST', '/api/supplier-payments', { supplier_id: ctx.supplier.id, payments: [{ amount: 10000, payment_method: 'Efectivo' }] });
+        ctx.cashExpected -= 10000;
+        check('Pago a proveedor en efectivo descuenta de la caja', await shiftExpected(), ctx.cashExpected);
+        check('Saldo proveedor tras pago en efectivo', await supplierBalance(), 310300);
+        const tooBig = await call('POST', '/api/supplier-payments', { supplier_id: ctx.supplier.id, payments: [{ amount: 9999999, payment_method: 'Efectivo' }] }).catch((e) => e);
+        check('Pagar en efectivo más de lo que hay en caja → 409', tooBig.status, 409);
+        const creditRefund = await call('POST', `/api/cash-shifts/${ctx.shift.id}/payments`, { amount: 10, payment_method: 'credit_account', type: 'refund' }).catch((e) => e);
+        check('Reintegro "a cuenta corriente" → 400', creditRefund.status, 400);
     });
 
     await step('14. Garantía: ingreso, envío al proveedor y reemplazo', async () => {
@@ -428,8 +446,29 @@ async function main() {
         results.push({ type: 'info', name: 'Movimientos de garantía', detail: mv });
         console.log('  info movimientos garantía:', JSON.stringify(mv));
         check('Garantía resuelta', (await q('SELECT status FROM warranty_claims WHERE id = ?', [w.id]))[0].status, 'resolved');
+        check('Garantía: defectuosa a Cuarentena → Devoluciones a Proveedores, reemplazo sale del stock vendible',
+            mv.map((m) => m.type).sort(), ['warranty_intake', 'warranty_replacement', 'warranty_to_supplier']);
         await verifyStock('Garantía', ctx.pids);
         if (!mv.length) results.push({ type: 'info', name: 'Garantía con reemplazo no mueve stock', detail: before });
+
+        // Ida y vuelta de estados no repite efectos
+        await call('PUT', `/api/warranties/${w.id}/status`, { status: 'closed', notes: 'Cierre' });
+        await call('PUT', `/api/warranties/${w.id}/status`, { status: 'resolved', notes: 'Reabierta' });
+        check('Reabrir y volver a resolver no entrega otra unidad', (await q('SELECT COUNT(*) n FROM inventory_movements WHERE reference_id = ?', [w.id]))[0].n, 3);
+        await verifyStock('Garantía tras ida y vuelta', ctx.pids);
+
+        // Garantía rechazada por el proveedor: la unidad defectuosa se da de baja
+        const w2 = await call('POST', '/api/warranties', { client_id: ctx.client.id, product_id: ctx.p1.id, issue_description: 'Suela despegada' });
+        for (const status of ['received', 'sent_to_supplier', 'supplier_rejected']) {
+            await call('PUT', `/api/warranties/${w2.id}/status`, { status });
+        }
+        const mv2 = await q('SELECT type, from_location, to_location, quantity FROM inventory_movements WHERE reference_id = ?', [w2.id]);
+        for (const m of mv2) {
+            if (m.from_location) move(ctx.p1.id, m.from_location, -Number(m.quantity));
+            if (m.to_location) move(ctx.p1.id, m.to_location, Number(m.quantity));
+        }
+        check('Garantía rechazada por el proveedor: ingreso, envío y baja', mv2.map((m) => m.type).sort(), ['warranty_intake', 'warranty_to_supplier', 'warranty_writeoff']);
+        await verifyStock('Garantía rechazada', ctx.pids);
     });
 
     await step('15. Pedido cancelado libera la reserva', async () => {
@@ -497,6 +536,16 @@ async function main() {
         check('Mayor Deudores = suma de cuentas corrientes de clientes', await ledgerDelta('receivables'), money(clientsSum));
         check('Mayor Caja = movimiento real de efectivo del turno', await ledgerDelta('cash'), money(ctx.cashExpected - 20000));
         check('Mayor Tarjetas y QR a cobrar = cobros con débito (24.200)', await ledgerDelta('cards'), 24200);
+        // ADR-014: acreditación del procesador con comisión
+        const bank0 = await ledger('1.1.02.01');
+        const over = await call('POST', '/api/card-settlements', { amount: 99999999 }).catch((e) => e);
+        check('Acreditar más que lo pendiente de tarjetas → 409', over.status, 409);
+        const settleKey = uuid();
+        await call('POST', '/api/card-settlements', { idempotency_key: settleKey, amount: 24200, fee_amount: 500, reference: `LOTE-${RUN}` });
+        const replay = await call('POST', '/api/card-settlements', { idempotency_key: settleKey, amount: 24200, fee_amount: 500 });
+        check('La acreditación repetida no se duplica', Boolean(replay.idempotent_replay), true);
+        check('Tras acreditar, Tarjetas a cobrar queda en 0 (variación de la corrida)', await ledgerDelta('cards'), 0);
+        check('El banco recibe lo liquidado menos la comisión (23.700)', money((await ledger('1.1.02.01')) - bank0), 23700);
         const [valued] = await q(
             `SELECT COALESCE(SUM(i.quantity * COALESCE(NULLIF(p.purchase_price, 0), p.cost_price, 0)), 0) AS v
              FROM inventory i JOIN products p ON p.id = i.product_id WHERE i.product_id IN (?)`, [ctx.pids]);

@@ -246,8 +246,12 @@ function creditNoteQueryMock({ maxSeq = 4, failInsert = false } = {}) {
             if (failInsert) throw new Error('insert failed');
             return [{}];
         }
+        // ADR-014: the note corrects a locked invoice of the same client, up to its balance.
+        if (statement.startsWith('SELECT * FROM invoices WHERE id')) {
+            return [[{ id: 'inv-1', client_id: 'c1', invoice_type: 'A', point_of_sale: 3, total_amount: 121, vat_amount: 21 }]];
+        }
+        if (statement.includes('AS credited FROM credit_notes')) return [[{ credited: 0 }]];
         // C2: the manual note is posted (sales + output VAT / receivables).
-        if (statement.startsWith('SELECT tax_rate FROM company_settings')) return [[{ tax_rate: 0.21 }]];
         if (statement.startsWith('INSERT INTO journal_entr')) return [{}];
         throw new Error(`Unexpected SQL: ${statement}`);
     };
@@ -262,6 +266,7 @@ test('createCreditNote numbers from the max existing sequence, inserts, commits 
     const result = await runHandler(controller.createCreditNote, {
         body: {
             client_id: 'c1',
+            invoice_id: 'inv-1',
             customer_name: 'Ana',
             reference_type: 'warranty',
             reference_id: 'w1',
@@ -282,8 +287,10 @@ test('createCreditNote numbers from the max existing sequence, inserts, commits 
     const select = tracked.calls.find((c) => c.statement.startsWith('SELECT MAX'));
     assert.deepEqual(select.params, [`NC-${year}-%`]);
     const insert = tracked.calls.find((c) => c.statement.startsWith('INSERT INTO credit_notes'));
-    // Last param: idempotency_key (none sent by this caller).
-    assert.deepEqual(insert.params, [result.body.id, `NC-${year}-0005`, 'c1', 'Ana', 'warranty', 'w1', 25.5, 'nota', null]);
+    // idempotency_key (none sent by this caller), then the corrected invoice, its letter and point of sale.
+    assert.deepEqual(insert.params, [result.body.id, `NC-${year}-0005`, 'c1', 'Ana', 'warranty', 'w1', 25.5, 'nota', null, 'inv-1', 'A', 3]);
+    assert.equal(result.body.invoice_id, 'inv-1');
+    assert.equal(result.body.credit_note_type, 'A');
 
     assert.equal(audits.length, 1);
     assert.equal(audits[0][0].action, 'CREATE_CREDIT_NOTE');
@@ -297,7 +304,7 @@ test('createCreditNote normalizes manual and unknown reference types, defaults a
     stub(t, auditService, 'log', () => undefined);
 
     const manual = await runHandler(controller.createCreditNote, {
-        body: { client_id: 'c1', reference_type: 'manual', reason: 'motivo' }
+        body: { client_id: 'c1', invoice_id: 'inv-1', reference_type: 'manual', reason: 'motivo' }
     });
     assert.equal(manual.body.reference_type, 'other');
     assert.equal(manual.body.notes, 'motivo');
@@ -308,16 +315,16 @@ test('createCreditNote normalizes manual and unknown reference types, defaults a
     assert.match(manual.body.number, /-0003$/);
 
     const unknown = await runHandler(controller.createCreditNote, {
-        body: { client_id: 'c1', reference_type: 'bogus' }
+        body: { client_id: 'c1', invoice_id: 'inv-1', reference_type: 'bogus' }
     });
     assert.equal(unknown.body.reference_type, 'other');
     assert.equal(unknown.body.notes, null);
 
-    const missing = await runHandler(controller.createCreditNote, { body: { client_id: 'c1' } });
+    const missing = await runHandler(controller.createCreditNote, { body: { client_id: 'c1', invoice_id: 'inv-1' } });
     assert.equal(missing.body.reference_type, 'other');
 
     const discount = await runHandler(controller.createCreditNote, {
-        body: { client_id: 'c1', reference_type: 'discount' }
+        body: { client_id: 'c1', invoice_id: 'inv-1', reference_type: 'discount' }
     });
     assert.equal(discount.body.reference_type, 'discount');
 });
@@ -329,7 +336,7 @@ test('createCreditNote tolerates an empty max-sequence result and no user', asyn
     });
     installPool(t, tracked);
     const audits = stub(t, auditService, 'log', () => undefined);
-    const result = await runHandler(controller.createCreditNote, { body: { client_id: 'c1' } });
+    const result = await runHandler(controller.createCreditNote, { body: { client_id: 'c1', invoice_id: 'inv-1' } });
     assert.equal(result.status, 200);
     assert.equal(audits[0][0].user_id, null);
 });
@@ -340,7 +347,7 @@ test('createCreditNote rolls back and releases when the insert fails, without au
     const audits = stub(t, auditService, 'log', () => undefined);
 
     await assert.rejects(
-        runHandler(controller.createCreditNote, { body: { client_id: 'c1', amount: 10 } }),
+        runHandler(controller.createCreditNote, { body: { client_id: 'c1', invoice_id: 'inv-1', amount: 10 } }),
         /insert failed/
     );
     assert.deepEqual(tracked.counts, { begin: 1, commit: 0, rollback: 1, release: 1 });

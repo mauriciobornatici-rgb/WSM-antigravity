@@ -387,6 +387,8 @@ type WarrantyStatusUpdateInput = {
 type CreditNoteCreateInput = {
     idempotency_key?: string;
     client_id: string;
+    /** Invoice the note corrects (ADR-014: required, ARCA needs the associated voucher). */
+    invoice_id: string;
     amount: number;
     reason?: string;
     reference_type?: "return" | "warranty" | "discount" | "other" | "manual";
@@ -653,6 +655,11 @@ export const api = {
     // ==================== CREDIT NOTES ====================
     getCreditNotes: (filters?: { client_id?: string }) =>
         httpClient.get<GenericRecord[]>(withQuery("/api/credit-notes", filters)),
+
+    getCardSettlements: () =>
+        httpClient.get<{ pending_balance: number; settlements: Array<{ id: string; amount: number; description: string; date: string }> }>("/api/card-settlements"),
+    createCardSettlement: (data: { idempotency_key: string; amount: number; fee_amount?: number; reference?: string | null }) =>
+        httpClient.post<{ id: string; amount: number; idempotent_replay?: boolean }>("/api/card-settlements", data),
 
     createCreditNote: (data: CreditNoteCreateInput) =>
         httpClient.post<GenericRecord>("/api/credit-notes", data),

@@ -52,6 +52,7 @@ export function CreditNotesTab({
 
     const [createOpen, setCreateOpen] = useState(false)
     const [clientId, setClientId] = useState("")
+    const [invoiceId, setInvoiceId] = useState("")
     const [amount, setAmount] = useState(0)
     const [reason, setReason] = useState("")
     // One key per issuing attempt, kept across retries until the note is confirmed: a retry
@@ -70,6 +71,14 @@ export function CreditNotesTab({
         queryKey: queryKeys.clients.all,
         queryFn: () => api.getClients(),
     })
+
+    // A credit note corrects one invoice of the client (ADR-014).
+    const clientInvoicesQuery = useQuery({
+        queryKey: ["invoices", "by-client", clientId],
+        queryFn: () => api.getInvoices({ client_id: clientId }),
+        enabled: createOpen && Boolean(clientId),
+    })
+    const clientInvoices = (clientInvoicesQuery.data ?? []).filter((invoice) => invoice.status !== "cancelled")
 
     const createCreditNoteMutation = useMutation({
         mutationFn: (payload: Parameters<typeof api.createCreditNote>[0]) => api.createCreditNote(payload),
@@ -91,8 +100,8 @@ export function CreditNotesTab({
     const hasLoadError = creditNotesQuery.isError || clientsQuery.isError
 
     async function handleCreateCreditNote() {
-        if (!clientId || amount <= 0) {
-            toast.error("Cliente y monto son obligatorios")
+        if (!clientId || !invoiceId || amount <= 0) {
+            toast.error("Cliente, factura y monto son obligatorios")
             return
         }
 
@@ -101,6 +110,7 @@ export function CreditNotesTab({
             const created = await createCreditNoteMutation.mutateAsync({
                 idempotency_key: idempotencyKey,
                 client_id: clientId,
+                invoice_id: invoiceId,
                 amount: Number(amount),
                 ...(trimmedReason ? { reason: trimmedReason, notes: trimmedReason } : {}),
                 reference_type: "manual",
@@ -114,6 +124,7 @@ export function CreditNotesTab({
             setIdempotencyKey(createClientUuid())
             setCreateOpen(false)
             setClientId("")
+            setInvoiceId("")
             setAmount(0)
             setReason("")
         } catch (error) {
@@ -261,8 +272,14 @@ export function CreditNotesTab({
                     <div className="space-y-3">
                         <div className="space-y-2">
                             <Label>Cliente</Label>
-                            <Select value={clientId} onValueChange={setClientId}>
-                                <SelectTrigger>
+                            <Select
+                                value={clientId}
+                                onValueChange={(value) => {
+                                    setClientId(value)
+                                    setInvoiceId("")
+                                }}
+                            >
+                                <SelectTrigger aria-label="Cliente">
                                     <SelectValue placeholder="Seleccionar" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -273,6 +290,36 @@ export function CreditNotesTab({
                                     ))}
                                 </SelectContent>
                             </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Factura que corrige</Label>
+                            <Select value={invoiceId} onValueChange={setInvoiceId} disabled={!clientId}>
+                                <SelectTrigger aria-label="Factura que corrige">
+                                    <SelectValue
+                                        placeholder={
+                                            !clientId
+                                                ? "Elegí primero el cliente"
+                                                : clientInvoicesQuery.isLoading
+                                                    ? "Cargando facturas…"
+                                                    : clientInvoices.length === 0
+                                                        ? "El cliente no tiene facturas"
+                                                        : "Seleccionar factura"
+                                        }
+                                    />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {clientInvoices.map((invoice) => (
+                                        <SelectItem key={invoice.id} value={invoice.id}>
+                                            {invoice.invoice_type ?? ""} {String(invoice.point_of_sale ?? 1).padStart(4, "0")}-
+                                            {String(invoice.invoice_number ?? "").padStart(8, "0")} · {formatMoney(invoice.total_amount)}
+                                            {invoice.cae ? "" : " · sin CAE"}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">
+                                La nota se autoriza en ARCA asociada a esta factura y no puede superar su saldo acreditable.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <Label>Monto</Label>

@@ -80,6 +80,23 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-014 — NC fiscal, efectivo desde la caja, garantías y tarjetas (usuario, 2026-10-12)
+- **NC:**
+  - Corrige una factura concreta del mismo cliente. Nunca supera lo acreditable de esa factura, sumando NC manuales y de devolución; las dos bloquean la factura.
+  - Toma la letra y la proporción de IVA de la factura.
+  - Se autoriza en ARCA con `CbtesAsoc` y la letra de la factura. Sin factura, o con factura sin CAE → 409. Factura TK → autorización local.
+  - La recuperación de una respuesta perdida de ARCA exige la misma factura asociada.
+  - La factura autorizada guarda el punto de venta real.
+  - No hay NC manual de tipo "devolución", ni NC sobre facturas anuladas.
+  - Migración 047 (`credit_notes.invoice_id`) y 048 (completa las NC de devolución viejas).
+- **Pago a proveedor en efectivo:** sale de una caja abierta, con un solo registro y sin doble asiento. Si hay más de una caja abierta, el usuario elige cuál; se exige efectivo suficiente.
+- **Garantías:**
+  - La unidad defectuosa entra a Cuarentena (Inventario / Costo de garantías 5.1.02.03) y pasa a "Devoluciones a Proveedores" al enviarla.
+  - Rechazada por el proveedor, garantía rechazada o reparada (unidad devuelta al cliente) → baja al costo del ingreso.
+  - Reembolsada o reemplazada → la unidad queda nuestra.
+  - El reemplazo se imputa a Costo de garantías. La devolución a proveedor toma primero de "Devoluciones a Proveedores".
+- **Tarjetas:** acreditación Banco neto + Comisiones (5.1.02.04) / Tarjetas y QR a cobrar, nunca mayor que lo pendiente e idempotente (pestaña Contabilidad › Tarjetas).
+
 ### ADR-013 — Contabilidad completa de pagos, caja, ajustes y devoluciones (usuario, 2026-10-12)
 El usuario aprobó corregir lo que encontró la simulación operativa. Desde ahora toda operación que mueve dinero o stock deja asiento.
 - **Medios de pago:** un solo mapa medio de pago → cuenta (`utils/paymentAccounts.js`). Tarjeta y QR van a "Tarjetas y QR a cobrar" (1.1.02.03, migración 046), no a Caja.
@@ -99,7 +116,7 @@ El usuario aprobó corregir lo que encontró la simulación operativa. Desde aho
 
 ### ADR-012 — Reglas de negocio de la revisión del refactor (usuario, 2026-10-12)
 - **Estados de orden de compra (cambio manual):** solo hacia adelante: borrador → enviada → parcial → recibida; cancelar solo antes de recibir algo (borrador o enviada). `recibida` y `cancelada` son finales. Otra transición → 409.
-- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 047 (la 046 agrega cuentas contables, ADR-013).
+- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 049 (046 y 047 agregan cuentas y la NC fiscal, 048 completa NC viejas; ADR-013/014).
 - **Aplicación (coordinador, tras la revisión del guardián):**
   - "Recibir algo" incluye la mercadería en control de calidad: una OC con recepciones `pending_qc` o cantidades recibidas no se puede anular (409 `purchase_order_has_receptions`). La UI oculta "Anular orden" en ese caso.
   - Aprobar una recepción bloquea la OC antes que sus ítems. Contra una OC anulada responde 409 (`purchase_order_cancelled`), y nunca hace retroceder una OC `received`.

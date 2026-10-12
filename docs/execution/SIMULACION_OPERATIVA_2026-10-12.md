@@ -72,6 +72,35 @@ Pendiente de decisión (ver TASKS): IVA de las NC manuales no fiscales; flujo ca
 pago a proveedor con efectivo del cajón; destino de la unidad defectuosa de una garantía;
 acreditación de tarjetas (1.1.02.03 → Banco).
 
+## Tercera tanda: NC fiscal, efectivo, garantías y tarjetas (ADR-014) — corregido
+
+Resultado: simulación con **137 controles OK**. La conciliación del mayor se mantiene e
+incluye la acreditación de tarjetas: Tarjetas a cobrar vuelve a 0 y el banco recibe 23.700
+(24.200 menos 500 de comisión). Se agregaron estos recorridos:
+- NC manual vinculada a factura y sus rechazos (sin factura, mayor que la factura, autorizar sin CAE).
+- Pago en efectivo a proveedor desde la caja, con rechazo si no hay efectivo suficiente.
+- Garantía reemplazada y garantía rechazada por el proveedor.
+
+Defecto fiscal encontrado y corregido: ninguna NC (tampoco las de devolución) enviaba a ARCA
+el comprobante asociado, que es obligatorio, y una NC "C" salía como "NC B".
+
+Revisión de `guardian-integridad`:
+- **2 altos, corregidos:** la unidad "fantasma" de una garantía reparada, y la recuperación de respuesta perdida de ARCA, que podía adoptar el CAE de otra NC del mismo importe.
+- **Medios y bajos técnicos, corregidos:**
+  - Tope de lo acreditable también en devoluciones.
+  - Completar `invoice_id` en NC viejas (migración 048).
+  - Punto de venta real en la factura autorizada; `CbteFch` omitido en el comprobante asociado.
+  - Bloqueo por fila del turno de caja.
+  - Selector de caja en las dos pantallas de pago.
+  - Costo del ingreso en la baja de garantía.
+  - Reparto de alícuotas sin líneas negativas.
+  - NC sobre factura anulada.
+  - Clave reusada en la acreditación de tarjetas.
+  - Fecha de acreditación.
+
+Evidencia: validate (837 + 69), coverage 98,22 / 91,08 / 97,85, `qa:integration` 65/65 ×3,
+RBAC OK, E2E 6/6.
+
 ## Hallazgos de la primera corrida (estado original)
 
 La contabilidad de compras, ventas, costo, cobros, devoluciones y NC por devolución es

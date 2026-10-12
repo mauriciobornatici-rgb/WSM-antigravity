@@ -3,7 +3,7 @@ import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
 import { businessError } from '../utils/businessError.js';
-import { ACCOUNTS } from '../utils/paymentAccounts.js';
+import { ACCOUNTS, LOCATIONS } from '../utils/paymentAccounts.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
 import auditService from './audit.service.js';
 import afipService from './afip.service.js';
@@ -34,19 +34,60 @@ class WarrantiesService extends BaseService {
 
             const resolutionType = 'resolution_type' in changes ? changes.resolution_type : previous.resolution_type;
             const replacesNow = changes.status === 'resolved' && resolutionType === 'replaced';
-            // Decided by the fact, not by the previous status: a claim moved out of
-            // "resolved" and back again must not hand out a second unit.
-            const [delivered] = await connection.query(
-                "SELECT id FROM inventory_movements WHERE reference_type = 'warranty_claim' AND reference_id = ? AND type = 'warranty_replacement' LIMIT 1",
+            // Every stock effect is decided by what already happened (the claim's movements),
+            // not by the previous status: moving a claim back and forth never repeats one.
+            const [movementRows] = await connection.query(
+                "SELECT type FROM inventory_movements WHERE reference_type = 'warranty_claim' AND reference_id = ?",
                 [id]
             );
-            const alreadyReplaced = delivered.length > 0;
+            const done = new Set(movementRows.map((row) => row.type));
+            const alreadyReplaced = done.has('warranty_replacement');
+            const productId = previous.product_id;
+            const unitCost = productId
+                ? (await accountingService.productUnitCosts(connection, [productId])).get(productId) || 0
+                : 0;
+            const effects = [];
+
+            // The defective unit the client hands in waits in quarantine: it is worth its cost
+            // while the supplier may still take it back (ADR-014).
+            if (changes.status === 'received' && productId && !done.has('warranty_intake')) {
+                await this._moveDefectiveUnit(connection, { claimId: id, productId, to: LOCATIONS.QUARANTINE, type: 'warranty_intake', unitCost, userId, reason: 'Garantía: unidad defectuosa recibida del cliente' });
+                await this._postWarranty(connection, id, 'Ingreso de unidad defectuosa en garantía', ACCOUNTS.INVENTORY, ACCOUNTS.WARRANTY_COSTS, unitCost);
+                done.add('warranty_intake');
+                effects.push('intake');
+            }
+            const unitIn = done.has('warranty_intake') && !done.has('warranty_writeoff');
+            if (changes.status === 'sent_to_supplier' && unitIn && !done.has('warranty_to_supplier')) {
+                await this._moveDefectiveUnit(connection, { claimId: id, productId, from: LOCATIONS.QUARANTINE, to: LOCATIONS.SUPPLIER_RETURNS, type: 'warranty_to_supplier', unitCost, userId, reason: 'Garantía: enviada al proveedor' });
+                done.add('warranty_to_supplier');
+                effects.push('to_supplier');
+            }
+            // The unit leaves our stock when it is no longer ours to recover: the supplier refused
+            // it, the claim was rejected (unit handed back), or it was repaired and handed back.
+            // A refunded or replaced claim keeps the defective unit (ours now) for the supplier.
+            const handedBack = changes.status === 'rejected'
+                || (changes.status === 'resolved' && resolutionType === 'repaired');
+            if ((changes.status === 'supplier_rejected' || handedBack) && unitIn) {
+                const from = done.has('warranty_to_supplier') ? LOCATIONS.SUPPLIER_RETURNS : LOCATIONS.QUARANTINE;
+                const reason = changes.status === 'supplier_rejected'
+                    ? 'Garantía rechazada por el proveedor: baja'
+                    : (changes.status === 'rejected' ? 'Garantía rechazada: unidad devuelta al cliente' : 'Garantía reparada: unidad devuelta al cliente');
+                // At the cost it came in with, so intake and write-off cancel exactly.
+                const [intake] = await connection.query(
+                    "SELECT unit_cost FROM inventory_movements WHERE reference_type = 'warranty_claim' AND reference_id = ? AND type = 'warranty_intake' LIMIT 1",
+                    [id]
+                );
+                const intakeCost = Number(intake[0]?.unit_cost ?? unitCost);
+                await this._moveDefectiveUnit(connection, { claimId: id, productId, from, type: 'warranty_writeoff', unitCost: intakeCost, userId, reason });
+                await this._postWarranty(connection, id, reason, ACCOUNTS.WARRANTY_COSTS, ACCOUNTS.INVENTORY, intakeCost);
+                effects.push('writeoff');
+            }
+
             let replacement = null;
             if (replacesNow && !alreadyReplaced) {
                 if (!previous.product_id) {
                     throw businessError(409, { error: 'warranty_without_product', message: 'La garantía no tiene producto para reemplazar.' });
                 }
-                const unitCost = (await accountingService.productUnitCosts(connection, [previous.product_id])).get(previous.product_id) || 0;
                 const locked = await stockLedger.lockSellableRows(connection, [previous.product_id]);
                 await stockLedger.consumeAvailable(connection, locked.get(previous.product_id) || [], {
                     productId: previous.product_id,
@@ -58,16 +99,7 @@ class WarrantiesService extends BaseService {
                     referenceType: 'warranty_claim',
                     unitCost,
                 });
-                await accountingService.createJournalEntryIfAny(connection, {
-                    date: new Date(),
-                    description: 'Reemplazo de producto por garantía',
-                    reference_type: 'warranty_claim',
-                    reference_id: id,
-                    lines: [
-                        { account_code: ACCOUNTS.GENERAL_EXPENSES, debit: unitCost, credit: 0, notes: 'Costo de reemplazo en garantía' },
-                        { account_code: ACCOUNTS.INVENTORY, debit: 0, credit: unitCost, notes: 'Unidad entregada al cliente' },
-                    ],
-                });
+                await this._postWarranty(connection, id, 'Reemplazo de producto por garantía', ACCOUNTS.WARRANTY_COSTS, ACCOUNTS.INVENTORY, unitCost);
                 replacement = { quantity: 1, unit_cost: unitCost };
             }
 
@@ -79,7 +111,7 @@ class WarrantiesService extends BaseService {
                 entity_type: 'warranty_claim',
                 entity_id: id,
                 old_values: { status: previous.status, resolution_type: previous.resolution_type ?? null },
-                new_values: { ...changes, ...(replacement ? { replacement } : {}) },
+                new_values: { ...changes, ...(replacement ? { replacement } : {}), ...(effects.length ? { stock_effects: effects } : {}) },
                 ip_address: ipAddress
             }, connection);
             const [updated] = await connection.query('SELECT * FROM warranty_claims WHERE id = ?', [id]);
@@ -91,6 +123,50 @@ class WarrantiesService extends BaseService {
         } finally {
             connection.release();
         }
+    }
+
+    async _postWarranty(connection, claimId, description, debitAccount, creditAccount, amount) {
+        await accountingService.createJournalEntryIfAny(connection, {
+            date: new Date(),
+            description,
+            reference_type: 'warranty_claim',
+            reference_id: claimId,
+            lines: [
+                { account_code: debitAccount, debit: amount, credit: 0, notes: description },
+                { account_code: creditAccount, debit: 0, credit: amount, notes: description },
+            ],
+        });
+    }
+
+    // Moves the claim's single defective unit between non-sellable locations (or in/out of
+    // stock), never below what is reserved, with a movement that records where it went.
+    async _moveDefectiveUnit(connection, { claimId, productId, from = null, to = null, type, unitCost, userId, reason }) {
+        if (from) {
+            const [taken] = await connection.query(
+                `UPDATE inventory SET quantity = quantity - 1
+                 WHERE product_id = ? AND location = ? AND quantity - reserved_quantity >= 1`,
+                [productId, from]
+            );
+            if (Number(taken?.affectedRows) !== 1) {
+                throw businessError(409, {
+                    error: 'warranty_unit_not_found',
+                    message: `La unidad de la garantía ya no está en ${from}: revisá el stock antes de continuar.`
+                });
+            }
+        }
+        if (to) {
+            await connection.query(
+                `INSERT INTO inventory (id, product_id, location, quantity) VALUES (?, ?, ?, 1)
+                 ON DUPLICATE KEY UPDATE quantity = quantity + 1`,
+                [crypto.randomUUID(), productId, to]
+            );
+        }
+        await connection.query(
+            `INSERT INTO inventory_movements (
+                id, type, product_id, from_location, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
+            ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, 'warranty_claim', ?, ?)`,
+            [crypto.randomUUID(), type, productId, from, to, unitCost, reason, claimId, userId || null]
+        );
     }
 
     async getWarranties(filters = {}) {
@@ -558,19 +634,37 @@ class ReturnsService extends BaseService {
                 // A credit note carries the same letter as the invoice it corrects (A→A, C→C).
                 // clients has no tax-condition column: reading one made every approval fail.
                 let creditNoteType = 'B';
+                let invoiceId = null;
                 if (returnRow.order_id) {
                     const [invoices] = await conn.query(
-                        'SELECT invoice_type FROM invoices WHERE order_id = ? AND deleted_at IS NULL LIMIT 1',
+                        'SELECT id, invoice_type, total_amount FROM invoices WHERE order_id = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE',
                         [returnRow.order_id]
                     );
+                    invoiceId = invoices[0]?.id || null;
                     const invoiceType = String(invoices[0]?.invoice_type || '').toUpperCase();
                     if (invoiceType === 'A' || invoiceType === 'C') creditNoteType = invoiceType;
+                    if (invoiceId) {
+                        // Same cap as a manual note (ADR-014): the notes on an invoice never exceed it.
+                        const [creditedRows] = await conn.query(
+                            `SELECT COALESCE(SUM(amount), 0) AS credited FROM credit_notes
+                             WHERE invoice_id = ? AND deleted_at IS NULL AND (status IS NULL OR status <> 'cancelled')`,
+                            [invoiceId]
+                        );
+                        const creditable = Math.round((Number(invoices[0].total_amount || 0) - Number(creditedRows[0]?.credited || 0)) * 100) / 100;
+                        if (totalAmount > creditable + 0.001) {
+                            throw businessError(409, {
+                                error: 'exceeds_invoice_balance',
+                                message: `La devolución supera lo que queda acreditable de la factura (${creditable.toFixed(2)}): ya tiene notas de crédito.`,
+                                creditable
+                            });
+                        }
+                    }
                 }
 
                 await conn.query(
                     `INSERT INTO credit_notes (
-                        id, number, client_id, point_of_sale, credit_note_type, customer_name, reference_type, reference_id, amount, status, notes
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'return', ?, ?, 'issued', ?)`,
+                        id, number, client_id, point_of_sale, credit_note_type, customer_name, reference_type, reference_id, amount, status, notes, invoice_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'return', ?, ?, 'issued', ?, ?)`,
                     [
                         creditNoteId,
                         creditNoteNumber,
@@ -580,7 +674,8 @@ class ReturnsService extends BaseService {
                         returnRow.customer_name || null,
                         returnId,
                         totalAmount,
-                        `Generada automaticamente por aprobacion de devolucion ${returnId}`
+                        `Generada automaticamente por aprobacion de devolucion ${returnId}`,
+                        invoiceId
                     ]
                 );
 
@@ -679,6 +774,64 @@ class CreditNotesService extends BaseService {
         return rows;
     }
 
+    // The invoice a note corrects: linked directly (ADR-014) or, for return notes issued
+    // before the link existed, through the return's order.
+    async _invoiceCorrectedBy(cn) {
+        if (cn.invoice_id) {
+            const [rows] = await pool.query('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL', [cn.invoice_id]);
+            return rows[0] || null;
+        }
+        if (cn.reference_type === 'return' && cn.reference_id) {
+            const [rows] = await pool.query(
+                `SELECT i.* FROM client_returns r JOIN invoices i ON i.order_id = r.order_id AND i.deleted_at IS NULL
+                 WHERE r.id = ? LIMIT 1`,
+                [cn.reference_id]
+            );
+            return rows[0] || null;
+        }
+        return null;
+    }
+
+    // Voucher lines: the returned items for a return note; otherwise the note's amount split
+    // across the invoice's VAT rates in the same proportion as the invoice.
+    async _creditNoteVoucherItems(cn, invoice) {
+        if (cn.reference_type === 'return' && cn.reference_id) {
+            const [itemsRows] = await pool.query(`
+                SELECT ri.quantity, ri.unit_price, COALESCE(p.vat_rate, 21) AS vat_rate
+                FROM client_return_items ri
+                JOIN products p ON ri.product_id = p.id
+                WHERE ri.return_id = ?
+                  AND LOWER(COALESCE(ri.condition_status, '')) <> 'rejected'
+            `, [cn.reference_id]);
+            if (itemsRows.length > 0) return itemsRows;
+        }
+        const [byRate] = await pool.query(
+            `SELECT vat_rate, SUM(total_line) AS gross, SUM(vat_amount) AS vat
+             FROM invoice_items WHERE invoice_id = ? GROUP BY vat_rate
+             ORDER BY gross ASC`,
+            [invoice.id]
+        );
+        const invoiceGross = byRate.reduce((sum, row) => sum + Number(row.gross || 0), 0);
+        const noteCents = Math.round(Number(cn.amount || 0) * 100);
+        if (byRate.length === 0 || invoiceGross <= 0) {
+            return [{ total_line: noteCents / 100, vat_rate: 21 }];
+        }
+        // In cents so the lines add up to the note exactly; the rounding remainder goes to the
+        // largest rate line (last, ordered by gross) so no line can turn negative.
+        let assigned = 0;
+        return byRate.map((row, index) => {
+            const share = Number(row.gross || 0) / invoiceGross;
+            const lineCents = index === byRate.length - 1 ? noteCents - assigned : Math.round(noteCents * share);
+            assigned += lineCents;
+            const vatShare = Number(row.gross) > 0 ? Number(row.vat || 0) / Number(row.gross) : 0;
+            return {
+                total_line: lineCents / 100,
+                vat_amount: Math.round(lineCents * vatShare) / 100,
+                vat_rate: Number(row.vat_rate),
+            };
+        });
+    }
+
     async authorizeCreditNote(creditNoteId, userId) {
         const [rows] = await pool.query('SELECT * FROM credit_notes WHERE id = ? AND deleted_at IS NULL', [creditNoteId]);
         if (rows.length === 0) {
@@ -712,48 +865,48 @@ class CreditNotesService extends BaseService {
         let afipRes = null;
 
         try {
-            // Consultar factura original si esta NC viene de una devolucion
+            // ADR-014: a credit note is authorized against the invoice it corrects
             // (AFIP call happens outside any DB transaction).
-            if (cn.reference_type === 'return' && cn.reference_id) {
-                const [returns] = await pool.query('SELECT order_id FROM client_returns WHERE id = ?', [cn.reference_id]);
-                if (returns.length > 0 && returns[0].order_id) {
-                    const [invoices] = await pool.query('SELECT * FROM invoices WHERE order_id = ? AND cae IS NOT NULL', [returns[0].order_id]);
-                    if (invoices.length > 0) {
-                        // Factura validada en AFIP. Generar NC_A o NC_B
-                        const originalInvoice = invoices[0];
-                        const [settingsRows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
-                        const companySettings = settingsRows[0] || {};
-
-                        const invoiceData = {
-                            invoice_type: cn.credit_note_type === 'A' ? 'NC_A' : 'NC_B',
-                            client_tax_id: originalInvoice.client_tax_id || null,
-                            total_amount: cn.amount,
-                            invoice_number: cn.number
-                        };
-
-                        // Recuperar ítems reales de la devolución y sus tasas de IVA del catálogo de productos
-                        const [itemsRows] = await pool.query(`
-                            SELECT
-                                ri.quantity,
-                                ri.unit_price,
-                                COALESCE(p.vat_rate, 21) AS vat_rate
-                            FROM client_return_items ri
-                            JOIN products p ON ri.product_id = p.id
-                            WHERE ri.return_id = ?
-                              AND LOWER(COALESCE(ri.condition_status, '')) <> 'rejected'
-                        `, [cn.reference_id]);
-
-                        const invoiceItems = itemsRows.length > 0 ? itemsRows : [
-                            // cn.amount is the gross refund: split it into net + VAT.
-                            { total_line: cn.amount, vat_rate: 21 }
-                        ];
-
-                        try {
-                            afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
-                        } catch (err) {
-                            throw new Error(`AFIP rechazó la Nota de Crédito: ${err.message}`);
-                        }
+            const originalInvoice = await this._invoiceCorrectedBy(cn);
+            if (!originalInvoice) {
+                throw businessError(409, {
+                    error: 'credit_note_without_invoice',
+                    message: 'La nota de crédito no está asociada a una factura: no puede autorizarse en ARCA.'
+                });
+            }
+            // A ticket is not an electronic voucher: its note is internal, nothing to send.
+            const invoiceLetter = String(originalInvoice.invoice_type || '').toUpperCase();
+            if (invoiceLetter !== 'TK') {
+                if (!originalInvoice.cae) {
+                    throw businessError(409, {
+                        error: 'invoice_not_authorized',
+                        message: 'Autorizá primero en ARCA la factura que corrige esta nota de crédito.'
+                    });
+                }
+                const [settingsRows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
+                const companySettings = settingsRows[0] || {};
+                // The note carries the letter of the invoice it corrects (ARCA rejects a mismatch),
+                // even if an older note was stored with another letter.
+                const noteLetter = ['A', 'B', 'C'].includes(invoiceLetter)
+                    ? invoiceLetter
+                    : (['A', 'B', 'C'].includes(cn.credit_note_type) ? cn.credit_note_type : 'B');
+                const invoiceData = {
+                    invoice_type: `NC_${noteLetter}`,
+                    client_tax_id: originalInvoice.client_tax_id || null,
+                    total_amount: cn.amount,
+                    invoice_number: cn.number,
+                    associated_voucher: {
+                        invoice_type: invoiceLetter,
+                        point_of_sale: originalInvoice.point_of_sale,
+                        invoice_number: originalInvoice.invoice_number,
+                        issue_date: originalInvoice.issue_date
                     }
+                };
+                const invoiceItems = await this._creditNoteVoucherItems(cn, originalInvoice);
+                try {
+                    afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
+                } catch (err) {
+                    throw new Error(`AFIP rechazó la Nota de Crédito: ${err.message}`);
                 }
             }
         } catch (err) {
@@ -821,7 +974,8 @@ class CreditNotesService extends BaseService {
                     const samePayload = previous.client_id === body.client_id
                         && Math.round(Number(previous.amount || 0) * 100) === Math.round(Number(body.amount || 0) * 100)
                         && previous.reference_type === referenceType
-                        && (previous.reference_id ?? null) === (body.reference_id || null);
+                        && (previous.reference_id ?? null) === (body.reference_id || null)
+                        && (previous.invoice_id ?? null) === (body.invoice_id || null);
                     if (!samePayload) {
                         // The key belongs to a different note: answering it as a replay would
                         // report a note that was never issued.
@@ -836,22 +990,48 @@ class CreditNotesService extends BaseService {
                 }
             }
 
-            if (referenceType === 'return' && body.reference_id) {
-                // An approved return issues its own note: a manual one on top would credit it twice.
-                const [credited] = await connection.query(
-                    `SELECT number FROM credit_notes
-                     WHERE reference_type = 'return' AND reference_id = ? AND deleted_at IS NULL
-                       AND (status IS NULL OR status <> 'cancelled')
-                     LIMIT 1`,
-                    [body.reference_id]
-                );
-                if (credited.length > 0) {
-                    throw businessError(409, {
-                        error: 'return_already_credited',
-                        message: `La devolución ya tiene su nota de crédito (${credited[0].number}).`
-                    });
-                }
+            if (referenceType === 'return') {
+                // A return issues its own note when approved: a manual one for it would credit it
+                // twice (before or after the approval).
+                throw businessError(409, {
+                    error: 'return_already_credited',
+                    message: 'Las devoluciones emiten su propia nota de crédito al aprobarse: no se carga una manual.'
+                });
             }
+
+            // ADR-014: a credit note corrects a specific invoice of the same client (ARCA requires
+            // the associated voucher). Its letter and VAT split come from that invoice, and the
+            // notes on an invoice can never add up to more than the invoice itself.
+            const gross = Math.round(Number(body.amount || 0) * 100) / 100;
+            if (!body.invoice_id) {
+                throw businessError(400, { error: 'invoice_required', message: 'Elegí la factura que corrige la nota de crédito.' });
+            }
+            const [invoiceRows] = await connection.query(
+                'SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+                [body.invoice_id]
+            );
+            const invoice = invoiceRows[0];
+            if (!invoice || invoice.client_id !== body.client_id) {
+                throw businessError(400, { error: 'invalid_invoice', message: 'La factura no existe o no es de este cliente.' });
+            }
+            if (String(invoice.status || '').toLowerCase() === 'cancelled') {
+                throw businessError(409, { error: 'invoice_cancelled', message: 'La factura está anulada: no admite notas de crédito.' });
+            }
+            const [creditedRows] = await connection.query(
+                `SELECT COALESCE(SUM(amount), 0) AS credited FROM credit_notes
+                 WHERE invoice_id = ? AND deleted_at IS NULL AND (status IS NULL OR status <> 'cancelled')`,
+                [invoice.id]
+            );
+            const creditable = Math.round((Number(invoice.total_amount || 0) - Number(creditedRows[0]?.credited || 0)) * 100) / 100;
+            if (gross > creditable) {
+                throw businessError(409, {
+                    error: 'exceeds_invoice_balance',
+                    message: `La nota supera lo acreditable de la factura (${creditable.toFixed(2)}).`,
+                    creditable
+                });
+            }
+            const invoiceLetter = String(invoice.invoice_type || '').toUpperCase();
+            const creditNoteType = ['A', 'B', 'C'].includes(invoiceLetter) ? invoiceLetter : 'B';
 
             const year = new Date().getFullYear();
             const prefix = `NC-${year}-`;
@@ -867,8 +1047,9 @@ class CreditNotesService extends BaseService {
 
             await connection.query(
                 `INSERT INTO credit_notes (
-                id, number, client_id, customer_name, reference_type, reference_id, amount, status, notes, idempotency_key
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?)`,
+                id, number, client_id, customer_name, reference_type, reference_id, amount, status, notes, idempotency_key,
+                invoice_id, credit_note_type, point_of_sale
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?)`,
                 [
                     id,
                     number,
@@ -876,9 +1057,12 @@ class CreditNotesService extends BaseService {
                     body.customer_name || null,
                     referenceType,
                     body.reference_id || null,
-                    Number(body.amount || 0),
+                    gross,
                     notes,
-                    idempotencyKey
+                    idempotencyKey,
+                    invoice.id,
+                    creditNoteType,
+                    Number(invoice.point_of_sale || 1)
                 ]
             );
 
@@ -889,18 +1073,18 @@ class CreditNotesService extends BaseService {
                 customer_name: body.customer_name || null,
                 reference_type: referenceType,
                 reference_id: body.reference_id || null,
-                amount: Number(body.amount || 0),
+                amount: gross,
                 notes,
-                status: 'issued'
+                status: 'issued',
+                invoice_id: invoice.id,
+                credit_note_type: creditNoteType
             };
 
             // A manual note lowers what the client owes like a return does: sales and output
-            // VAT go down by its net and VAT parts (amount is gross, company VAT rate).
-            const [taxRows] = await connection.query('SELECT tax_rate FROM company_settings WHERE id = 1');
-            const rawRate = taxRows[0]?.tax_rate == null ? 0.21 : Number(taxRows[0].tax_rate);
-            const rate = rawRate > 1 ? rawRate / 100 : rawRate;
-            const gross = Number(body.amount || 0);
-            const net = Math.round((gross / (1 + rate)) * 100) / 100;
+            // VAT go down in the same proportion as on the invoice it corrects.
+            const invoiceTotal = Number(invoice.total_amount || 0);
+            const vatShare = invoiceTotal > 0 ? Number(invoice.vat_amount || 0) / invoiceTotal : 0;
+            const net = Math.round((gross - gross * vatShare) * 100) / 100;
             await accountingService.createJournalEntryIfAny(connection, {
                 date: new Date(),
                 description: `Nota de crédito ${number} - ${notes || 'manual'}`,

@@ -144,6 +144,8 @@ export const supplierPaymentFiltersSchema = z.object({
 
 export const supplierPaymentCreateSchema = z.object({
   supplier_id: uuidSchema,
+  // Drawer the cash comes from when paying in cash and more than one register is open.
+  cash_register_id: optionalUuidSchema,
   payment_date: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
   payments: z.array(
@@ -407,6 +409,18 @@ export const cashTransactionSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
+// Card/QR settlement: the processor deposits in the bank what was collected, minus its fee.
+export const cardSettlementSchema = z.object({
+  idempotency_key: uuidSchema.optional(),
+  amount: z.coerce.number().positive(),
+  fee_amount: z.coerce.number().min(0).optional(),
+  settlement_date: z.string().nullable().optional(),
+  reference: z.string().trim().max(255).nullable().optional(),
+}).refine((data) => (data.fee_amount ?? 0) < data.amount, {
+  message: 'La comisión debe ser menor al monto acreditado',
+  path: ['fee_amount'],
+});
+
 export const cashShiftOpenSchema = z.object({
   opening_balance: z.coerce.number().min(0),
   opened_by: optionalUuidSchema,
@@ -488,6 +502,8 @@ export const creditNoteCreateSchema = z.object({
   // One key per issuing attempt: a retry with the same key returns the note already issued.
   idempotency_key: uuidSchema.optional(),
   client_id: uuidSchema,
+  // ADR-014: the invoice the note corrects (required by the service; ARCA needs the associated voucher).
+  invoice_id: optionalUuidSchema,
   amount: z.coerce.number().positive(),
   reason: z.string().nullable().optional(),
   reference_type: z.enum(['return', 'warranty', 'discount', 'other', 'manual']).nullable().optional(),

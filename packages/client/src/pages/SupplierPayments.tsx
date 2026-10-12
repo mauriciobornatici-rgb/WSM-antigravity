@@ -230,6 +230,18 @@ export default function SupplierPaymentsPage() {
         }
     };
 
+    // Cash leaves an open register (ADR-014): with more than one open, the user picks which.
+    const paysCash = paymentLines.some((line) => line.method === "cash" && Number(line.amount || 0) > 0);
+    const registersQuery = useQuery({
+        queryKey: ["cash-registers", "for-supplier-payment"],
+        queryFn: () => api.getCashRegisters(),
+        enabled: paysCash,
+        meta: { silentError: true },
+    });
+    const openRegisters = (registersQuery.data ?? []).filter((register) => register.status === "open");
+    const [cashRegisterId, setCashRegisterId] = useState("");
+    const needsRegisterChoice = paysCash && openRegisters.length > 1;
+
     function updatePaymentLine(lineId: string, patch: Partial<PaymentLine>) {
         setPaymentLines((prev) => prev.map((line) => (line.id === lineId ? { ...line, ...patch } : line)));
     }
@@ -286,6 +298,12 @@ export default function SupplierPaymentsPage() {
             };
             if (paymentNotes.trim()) {
                 payload.notes = paymentNotes.trim();
+            }
+            if (needsRegisterChoice && !cashRegisterId) {
+                throw new Error("Elegí de qué caja sale el efectivo");
+            }
+            if (paysCash && cashRegisterId) {
+                payload.cash_register_id = cashRegisterId;
             }
             return api.registerBulkSupplierPayments(payload);
         },
@@ -585,6 +603,27 @@ export default function SupplierPaymentsPage() {
                                             <Plus className="h-4 w-4" /> Agregar Método de Pago
                                         </Button>
                                     </div>
+
+                                    {paysCash ? (
+                                        <p className="text-xs text-muted-foreground">
+                                            El efectivo sale de la caja abierta y se descuenta de su arqueo.
+                                        </p>
+                                    ) : null}
+                                    {needsRegisterChoice ? (
+                                        <div className="space-y-1.5">
+                                            <Label htmlFor="bulk-payment-register" className="text-xs text-slate-400">Caja de la que sale el efectivo</Label>
+                                            <Select value={cashRegisterId} onValueChange={setCashRegisterId}>
+                                                <SelectTrigger id="bulk-payment-register">
+                                                    <SelectValue placeholder="Elegí la caja" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {openRegisters.map((register) => (
+                                                        <SelectItem key={register.id} value={register.id}>{register.name}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    ) : null}
 
                                     <div className="space-y-1.5">
                                         <Label className="text-xs text-slate-400">Notas u Observaciones</Label>

@@ -2,7 +2,9 @@ import pool from '../config/db.js';
 import crypto from 'crypto';
 import auditService from './audit.service.js';
 import accountingService from './accounting.service.js';
-import { receiptAccountFor, disbursementAccountFor } from '../utils/paymentAccounts.js';
+import { ACCOUNTS, receiptAccountFor, disbursementAccountFor } from '../utils/paymentAccounts.js';
+import { recordDrawerOutflow } from './cashShift.service.js';
+import { businessError } from '../utils/businessError.js';
 
 class FinanceService {
     _buildValidationError(message, errorCode = 'VALIDATION_ERROR') {
@@ -978,6 +980,10 @@ class FinanceService {
                     // Journal entry for bookkeeping
                     const checkSourceType = payment.check?.source_type === 'third_party' ? 'third_party' : 'own';
                     const cashAccount = disbursementAccountFor(payment.method, { thirdPartyCheck: checkSourceType === 'third_party' });
+                    if (cashAccount === ACCOUNTS.CASH) {
+                        // Cash leaves the drawer: recorded once, in the open shift (ADR-014).
+                        await recordDrawerOutflow(connection, { registerId: payload.cash_register_id || null, amount: payment.amount, referenceId: payId });
+                    }
 
 
                     await accountingService.createJournalEntry(connection, {
@@ -1031,6 +1037,94 @@ class FinanceService {
                 total_paid: totalPaid,
                 invoices: results
             };
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+    }
+
+    // Balance still to be deposited by card/QR processors, plus the latest settlements.
+    async getCardSettlements() {
+        const [[balanceRow]] = await pool.query(
+            'SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) AS pending FROM journal_entry_lines WHERE account_code = ?',
+            [ACCOUNTS.CARDS_TO_COLLECT]
+        );
+        const [settlements] = await pool.query(
+            `SELECT id, amount, description, reference_id, date FROM transactions
+             WHERE type = 'card_settlement' ORDER BY date DESC LIMIT 50`
+        );
+        return { pending_balance: this._roundMoney(balanceRow?.pending || 0), settlements };
+    }
+
+    // ADR-014: Tarjetas y QR a cobrar -> Banco (net deposit) + bank fees. Never more than
+    // what is pending; serialised on the account row so two settlements cannot both pass.
+    async createCardSettlement(payload, userId = null, ipAddress = null) {
+        const amount = this._roundMoney(payload.amount);
+        const fee = this._roundMoney(payload.fee_amount || 0);
+        const key = payload.idempotency_key || null;
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            await connection.query('SELECT code FROM chart_of_accounts WHERE code = ? FOR UPDATE', [ACCOUNTS.CARDS_TO_COLLECT]);
+            if (key) {
+                const [existing] = await connection.query(
+                    "SELECT id, amount FROM transactions WHERE type = 'card_settlement' AND reference_id = ? LIMIT 1",
+                    [key]
+                );
+                if (existing.length > 0) {
+                    if (Math.abs(Number(existing[0].amount || 0) - amount) > 0.001) {
+                        throw businessError(409, {
+                            error: 'idempotency_key_reused',
+                            message: 'Esta clave ya registró otra acreditación: revisá el listado antes de cargarla de nuevo.'
+                        });
+                    }
+                    await connection.commit();
+                    return { id: existing[0].id, amount: Number(existing[0].amount), idempotent_replay: true };
+                }
+            }
+            const [[balanceRow]] = await connection.query(
+                'SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) AS pending FROM journal_entry_lines WHERE account_code = ?',
+                [ACCOUNTS.CARDS_TO_COLLECT]
+            );
+            const pending = this._roundMoney(balanceRow?.pending || 0);
+            if (amount > pending + 0.001) {
+                throw businessError(409, {
+                    error: 'exceeds_pending_card_balance',
+                    message: `El monto supera lo pendiente de acreditar por tarjetas (${pending.toFixed(2)}).`,
+                    pending_balance: pending
+                });
+            }
+            const id = crypto.randomUUID();
+            const reference = payload.reference ? String(payload.reference).trim() : null;
+            await connection.query(
+                `INSERT INTO transactions (id, type, amount, description, payment_method, reference_id, date)
+                 VALUES (?, 'card_settlement', ?, ?, 'transfer', ?, ?)`,
+                [id, amount, `Acreditación de tarjetas${reference ? ` ${reference}` : ''}${fee > 0 ? ` (comisión ${fee.toFixed(2)})` : ''}`, key, payload.settlement_date || new Date()]
+            );
+            await accountingService.createJournalEntryIfAny(connection, {
+                // A date-only value is a calendar day: build it in local time (new Date('YYYY-MM-DD') is UTC).
+                date: payload.settlement_date ? new Date(`${String(payload.settlement_date).slice(0, 10)}T12:00:00`) : new Date(),
+                description: `Acreditación de tarjetas y QR${reference ? ` ${reference}` : ''}`,
+                reference_type: 'card_settlement',
+                reference_id: id,
+                lines: [
+                    { account_code: ACCOUNTS.BANK, debit: this._roundMoney(amount - fee), credit: 0, notes: 'Depósito neto del procesador' },
+                    { account_code: ACCOUNTS.BANK_FEES, debit: fee, credit: 0, notes: 'Comisión del procesador' },
+                    { account_code: ACCOUNTS.CARDS_TO_COLLECT, debit: 0, credit: amount, notes: 'Cobros con tarjeta/QR acreditados' }
+                ]
+            });
+            await auditService.log({
+                user_id: userId,
+                action: 'CREATE_CARD_SETTLEMENT',
+                entity_type: 'transaction',
+                entity_id: id,
+                new_values: { amount, fee_amount: fee, reference, pending_before: pending },
+                ip_address: ipAddress
+            }, connection);
+            await connection.commit();
+            return { id, amount, fee_amount: fee, pending_balance: this._roundMoney(pending - amount) };
         } catch (err) {
             await connection.rollback();
             throw err;

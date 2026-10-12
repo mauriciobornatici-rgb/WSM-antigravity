@@ -102,6 +102,15 @@ export const updateCustomerCheckStatus = catchAsync(async (req, res) => {
     res.json(row);
 });
 
+export const getCardSettlements = catchAsync(async (req, res) => {
+    res.json(await financeService.getCardSettlements());
+});
+
+export const createCardSettlement = catchAsync(async (req, res) => {
+    const result = await financeService.createCardSettlement(req.body, req.user?.id || null, getRequestIp(req));
+    res.status(result.idempotent_replay ? 200 : 201).json(result);
+});
+
 export const getOutgoingChecks = catchAsync(async (req, res) => {
     const rows = await financeService.getOutgoingChecks(req.query || {});
     res.json(rows);

@@ -54,7 +54,7 @@ si uno tiene una anomalía (p. ej. su reserva ya no existe), se informa y los de
    hace falta `ALLOW_REMOTE_DB=true` (guarda deliberada).
 6. Volvé a correr el diagnóstico: las clases A y B deben quedar en 0.
 7. Recomendado: un conteo cíclico de los productos con anomalías.
-8. Recién después se puede publicar la migración 047 (CHECK de inventario, Ola B I8).
+8. Recién después se puede publicar la migración 049 (CHECK de inventario, Ola B I8).
 
 ## Verificación hecha en QA
 

@@ -248,6 +248,9 @@ export const zodSchemas = {
     cashTransaction: z.object({
         body: commonSchemas.cashTransactionSchema
     }),
+    cardSettlement: z.object({
+        body: commonSchemas.cardSettlementSchema
+    }),
     cashShiftOpen: z.object({
         params: z.object({
             id: commonSchemas.uuidSchema

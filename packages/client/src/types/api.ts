@@ -154,6 +154,8 @@ export interface SupplierPaymentLineInput {
 
 export interface SupplierPaymentCreateInput {
     supplier_id: string;
+    /** Drawer the cash comes from when more than one register is open (ADR-014). */
+    cash_register_id?: string;
     payment_date: string;
     notes?: string;
     payments: SupplierPaymentLineInput[];
@@ -486,6 +488,8 @@ export type BulkSupplierPaymentInput = {
     supplierId: string;
     allocations: BulkSupplierPaymentAllocation[];
     notes?: string;
+    /** Drawer the cash comes from when more than one register is open (ADR-014). */
+    cash_register_id?: string;
 };
 
 export type BulkSupplierPaymentResponse = {

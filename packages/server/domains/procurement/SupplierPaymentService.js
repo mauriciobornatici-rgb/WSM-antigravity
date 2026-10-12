@@ -3,6 +3,7 @@ import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
 import { ACCOUNTS, disbursementAccountFor } from '../../utils/paymentAccounts.js';
+import { recordDrawerOutflow } from '../../services/cashShift.service.js';
 
 export class SupplierPaymentService {
     async getSupplierPayments(supplierId = null) {
@@ -67,6 +68,11 @@ export class SupplierPaymentService {
 
                 // Same posting as the invoice-by-invoice payment: the supplier debt goes down
                 // and so does the bank or cash account it was paid from.
+                const sourceAccount = disbursementAccountFor(method);
+                if (sourceAccount === ACCOUNTS.CASH) {
+                    // Cash leaves the drawer: recorded once, in the open shift (ADR-014).
+                    await recordDrawerOutflow(connection, { registerId: data.cash_register_id || null, amount, referenceId: id });
+                }
                 await accountingService.createJournalEntry(connection, {
                     date: new Date(),
                     description: `Pago a proveedor (${method})`,
@@ -74,7 +80,7 @@ export class SupplierPaymentService {
                     reference_id: id,
                     lines: [
                         { account_code: ACCOUNTS.SUPPLIERS, debit: amount, credit: 0, notes: 'Cancelación deuda proveedor' },
-                        { account_code: disbursementAccountFor(method), debit: 0, credit: amount, notes: payment.reference_number || 'Pago a proveedor' }
+                        { account_code: sourceAccount, debit: 0, credit: amount, notes: payment.reference_number || 'Pago a proveedor' }
                     ]
                 });
             }

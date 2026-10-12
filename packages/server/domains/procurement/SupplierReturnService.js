@@ -18,7 +18,9 @@ export class SupplierReturnService {
             `SELECT id, location, quantity, reserved_quantity
              FROM inventory
              WHERE product_id = ? AND quantity - reserved_quantity > 0
-             ORDER BY FIELD(location, 'Devoluciones a Proveedores', 'Cuarentena', 'Mermas') DESC,
+             -- FIELD() ranks by position and unknown locations get 0: listed in reverse so that
+             -- DESC tries 'Devoluciones a Proveedores' first, then Cuarentena, then Mermas.
+             ORDER BY FIELD(location, 'Mermas', 'Cuarentena', 'Devoluciones a Proveedores') DESC,
                       quantity - reserved_quantity DESC, id
              FOR UPDATE`,
             [item.product_id]
