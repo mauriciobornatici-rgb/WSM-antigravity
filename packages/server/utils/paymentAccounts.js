@@ -2,6 +2,8 @@
 // the "Caja Principal" account only holds what is physically in the cash drawer.
 export const ACCOUNTS = Object.freeze({
     CASH: '1.1.01.01',
+    TREASURY_CASH: '1.1.01.02',
+    VAT_CREDIT_21: '1.1.05.02',
     BANK: '1.1.02.01',
     CHECKS_TO_DEPOSIT: '1.1.02.02',
     CARDS_TO_COLLECT: '1.1.02.03',
@@ -27,6 +29,8 @@ export const LOCATIONS = Object.freeze({
 const CARD_METHODS = new Set(['card', 'debit_card', 'credit_card', 'qr', 'tarjeta', 'debito', 'credito', 'mercadopago']);
 const BANK_METHODS = new Set(['transfer', 'bank', 'transferencia', 'banco', 'deposito']);
 const CASH_METHODS = new Set(['cash', 'efectivo', 'caja']);
+// "Caja 2": treasury cash outside the POS drawer (ADR-015).
+const TREASURY_METHODS = new Set(['caja 2', 'caja2', 'treasury', 'efectivo caja 2', 'tesoreria', 'tesorería']);
 
 const normalize = (method) => String(method || '').trim().toLowerCase();
 
@@ -44,6 +48,7 @@ export function receiptAccountFor(method) {
 export function disbursementAccountFor(method, { thirdPartyCheck = false } = {}) {
     const m = normalize(method);
     if ((m === 'check' || m === 'cheque') && thirdPartyCheck) return ACCOUNTS.CHECKS_TO_DEPOSIT;
+    if (TREASURY_METHODS.has(m)) return ACCOUNTS.TREASURY_CASH;
     if (CASH_METHODS.has(m)) return ACCOUNTS.CASH;
     return ACCOUNTS.BANK;
 }

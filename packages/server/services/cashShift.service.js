@@ -3,17 +3,20 @@ import { businessError } from '../utils/businessError.js';
 
 const roundMoney = (value) => Math.round(Number(value || 0) * 100) / 100;
 
-export async function calculateShiftExpectedBalance(connection, shiftId) {
+// `locking`: read the latest committed rows (needed when the transaction already took an
+// older snapshot before locking the shift, e.g. recordDrawerMovement).
+export async function calculateShiftExpectedBalance(connection, shiftId, { locking = false } = {}) {
+    const lock = locking ? ' FOR SHARE' : '';
     const [payments] = await connection.query(`
         SELECT
-            COALESCE(SUM(CASE WHEN payment_method = 'cash' AND type IN ('sale', 'income') THEN amount ELSE 0 END), 0) AS inflow,
-            COALESCE(SUM(CASE WHEN payment_method = 'cash' AND type IN ('refund', 'expense') THEN amount ELSE 0 END), 0) AS outflow
+            COALESCE(SUM(CASE WHEN payment_method = 'cash' AND type IN ('sale', 'income', 'transfer_in') THEN amount ELSE 0 END), 0) AS inflow,
+            COALESCE(SUM(CASE WHEN payment_method = 'cash' AND type IN ('refund', 'expense', 'transfer_out') THEN amount ELSE 0 END), 0) AS outflow
         FROM shift_payments
-        WHERE shift_id = ?
+        WHERE shift_id = ?${lock}
     `, [shiftId]);
 
     const [shifts] = await connection.query(
-        'SELECT opening_balance FROM cash_shifts WHERE id = ? LIMIT 1',
+        `SELECT opening_balance FROM cash_shifts WHERE id = ? LIMIT 1${lock}`,
         [shiftId]
     );
     const openingBalance = shifts.length > 0 ? Number(shifts[0].opening_balance || 0) : 0;
@@ -32,7 +35,16 @@ export async function calculateShiftExpectedBalance(connection, shiftId) {
  * paid in cash, ADR-014): one 'expense' line in the open shift so the drawer count and the
  * ledger agree, with no second posting. Runs in the caller's transaction.
  */
-export async function recordDrawerOutflow(connection, { registerId = null, amount, referenceId = null }) {
+export async function recordDrawerOutflow(connection, { registerId = null, amount, referenceId = null, type = 'expense' }) {
+    return recordDrawerMovement(connection, { registerId, amount, referenceId, type, direction: 'out' });
+}
+
+// Cash put into the drawer from another fund (e.g. from "Caja 2", ADR-015).
+export async function recordDrawerInflow(connection, { registerId = null, amount, referenceId = null }) {
+    return recordDrawerMovement(connection, { registerId, amount, referenceId, type: 'transfer_in', direction: 'in' });
+}
+
+async function recordDrawerMovement(connection, { registerId, amount, referenceId, type, direction }) {
     // Find the open shift without locking (a locking scan over cash_shifts would lock every
     // historical shift and stall the POS), then lock only that row and re-check it is open.
     let shiftRows;
@@ -55,16 +67,16 @@ export async function recordDrawerOutflow(connection, { registerId = null, amoun
     if (locked.length === 0) {
         throw businessError(409, { error: 'no_open_cash_register', message: 'La caja se cerró mientras se registraba el pago: abrila de nuevo.' });
     }
-    const before = await calculateShiftExpectedBalance(connection, shiftId);
-    const outflow = roundMoney(amount);
-    if (outflow > before.expected_balance + 0.001) {
+    const before = await calculateShiftExpectedBalance(connection, shiftId, { locking: true });
+    const value = roundMoney(amount);
+    if (direction === 'out' && value > before.expected_balance + 0.001) {
         throw businessError(409, { error: 'insufficient_cash', message: `No hay efectivo suficiente en la caja (disponible ${before.expected_balance.toFixed(2)}).` });
     }
     await connection.query(
-        "INSERT INTO shift_payments (id, shift_id, order_id, payment_method, amount, type) VALUES (?, ?, NULL, 'cash', ?, 'expense')",
-        [crypto.randomUUID(), shiftId, outflow]
+        "INSERT INTO shift_payments (id, shift_id, order_id, payment_method, amount, type) VALUES (?, ?, NULL, 'cash', ?, ?)",
+        [crypto.randomUUID(), shiftId, value, type]
     );
-    const summary = await calculateShiftExpectedBalance(connection, shiftId);
+    const summary = await calculateShiftExpectedBalance(connection, shiftId, { locking: true });
     await connection.query('UPDATE cash_shifts SET expected_balance = ? WHERE id = ?', [summary.expected_balance, shiftId]);
     return { shiftId, expected_balance: summary.expected_balance, referenceId };
 }

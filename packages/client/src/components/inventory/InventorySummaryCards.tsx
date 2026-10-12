@@ -1,6 +1,7 @@
 import { Package, ShieldAlert, DollarSign, Layers } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatMoney } from "@/lib/formatters";
+import { grossPrice } from "@/lib/pricing";
 import type { ProductWithStock } from "@/lib/inventorySnapshot";
 
 interface InventorySummaryCardsProps {
@@ -12,9 +13,18 @@ export function InventorySummaryCards({ products }: InventorySummaryCardsProps) 
     const criticalCount = products.filter((p) => Number(p.stock_current ?? 0) <= Number(p.stock_min ?? 0)).length;
     const totalValuation = products.reduce((sum, p) => {
         const qty = Number(p.stock_current ?? p.stock_available ?? 0);
-        const cost = Number(p.purchase_price || p.sale_price || 0);
+        // Final cost (VAT included, ADR-015); without a cost the product is valued at 0, never at its sale price.
+        const cost = grossPrice(p.purchase_price, p.vat_rate);
         return sum + qty * cost;
     }, 0);
+    const netValuation = products.reduce((sum, p) => {
+        const qty = Number(p.stock_current ?? p.stock_available ?? 0);
+        return sum + qty * Number(p.purchase_price || 0);
+    }, 0);
+    const withoutCostCount = products.filter((p) => {
+        const qty = Number(p.stock_current ?? p.stock_available ?? 0);
+        return qty > 0 && !(Number(p.purchase_price) > 0);
+    }).length;
     const categoriesCount = new Set(products.map((p) => p.category).filter(Boolean)).size;
 
     return (
@@ -54,7 +64,13 @@ export function InventorySummaryCards({ products }: InventorySummaryCardsProps) 
                     <div>
                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Valorización Stock</p>
                         <p className="text-xl font-black text-foreground mt-0.5 font-mono">{formatMoney(totalValuation)}</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">Costo estimado total</p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">Costo estimado total (IVA incl.)</p>
+                        <p className="text-xs text-muted-foreground mt-0.5 font-mono">Neto: {formatMoney(netValuation)}</p>
+                        {withoutCostCount > 0 ? (
+                            <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mt-0.5">
+                                {withoutCostCount} {withoutCostCount === 1 ? "producto sin costo cargado" : "productos sin costo cargado"}
+                            </p>
+                        ) : null}
                     </div>
                     <div className="h-10 w-10 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
                         <DollarSign className="h-5 w-5" />

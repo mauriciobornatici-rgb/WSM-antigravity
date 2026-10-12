@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { CircleDashed, Package, FileText, Truck } from "lucide-react"
 import { api } from "@/services/api"
 import { formatMoney } from "@/lib/formatters"
+import { grossLineTotal, grossPrice } from "@/lib/pricing"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
@@ -180,13 +181,13 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                                     <TableHead>Producto</TableHead>
                                                     <TableHead className="text-right">Cantidad</TableHead>
                                                     <TableHead className="text-right">Preparado</TableHead>
-                                                    <TableHead className="text-right">Unitario</TableHead>
-                                                    <TableHead className="text-right">Subtotal</TableHead>
+                                                    <TableHead className="text-right">Unitario (IVA incl.)</TableHead>
+                                                    <TableHead className="text-right">Subtotal (IVA incl.)</TableHead>
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
                                                 {detailItems.map((item: OrderItem, idx: number) => {
-                                                    const subtotal = Number(item.quantity || 0) * Number(item.unit_price || 0)
+                                                    const subtotal = grossLineTotal(item.quantity, item.unit_price, item.vat_rate)
                                                     return (
                                                         <TableRow key={`${item.id}-${idx}`} className="border-border">
                                                             <TableCell className="font-mono font-bold text-xs">
@@ -210,7 +211,7 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                                                 </span>
                                                             </TableCell>
                                                             <TableCell className="text-right font-mono">
-                                                                {formatMoney(item.unit_price || 0)}
+                                                                {formatMoney(grossPrice(item.unit_price, item.vat_rate))}
                                                             </TableCell>
                                                             <TableCell className="text-right font-mono font-bold">
                                                                 {formatMoney(subtotal)}

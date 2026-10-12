@@ -99,6 +99,7 @@ export interface OrderItem {
     quantity: number
     picked_quantity?: number
     unit_price: number
+    vat_rate?: number
     picked?: boolean
 }
 
@@ -252,6 +253,7 @@ export interface PurchaseOrderItem {
     quantity?: number
     quantity_ordered?: number
     unit_cost: number
+    vat_rate?: number
     received_quantity?: number
     quantity_received?: number
     quantity_pending_qc?: number
@@ -359,6 +361,8 @@ export interface WarehouseLocation {
     name: string
     description?: string | null
     active: boolean
+    /** The counter (POS) sells from these locations first (ADR-015). */
+    is_sales_floor?: boolean
     sku_count?: number
     total_quantity?: number
 }

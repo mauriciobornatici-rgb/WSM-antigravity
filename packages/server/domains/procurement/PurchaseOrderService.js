@@ -69,7 +69,7 @@ export class PurchaseOrderService {
 
         const orderIds = orders.map((o) => o.id);
         const [allItems] = await pool.query(`
-            SELECT poi.*, p.name AS product_name, p.sku,
+            SELECT poi.*, p.name AS product_name, p.sku, p.vat_rate,
                    COALESCE((
                        SELECT SUM(ri.quantity_received)
                        FROM reception_items ri
@@ -183,7 +183,7 @@ export class PurchaseOrderService {
 
         const order = orders[0];
         const [items] = await pool.query(`
-            SELECT poi.*, p.name AS product_name, p.sku,
+            SELECT poi.*, p.name AS product_name, p.sku, p.vat_rate,
                    COALESCE((
                        SELECT SUM(ri.quantity_received)
                        FROM reception_items ri

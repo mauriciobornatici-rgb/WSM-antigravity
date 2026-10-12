@@ -1,5 +1,8 @@
 import type { CompanySettings } from "@/types"
 import type { ClientReturnRow, CreditNoteRow, ClientReturnItemRow } from "@/types/returns"
+import { formatMoney } from "@/lib/formatters"
+import { grossLineTotal, grossPrice } from "@/lib/pricing"
+import { splitCreditNoteAmount } from "./invoiceUtils"
 import { buildAfipQrUrl } from "./afipQr"
 import { AfipQrImage } from "./AfipQrImage"
 import { PrintPortal } from "@/components/common/PrintPortal"
@@ -31,6 +34,10 @@ export function PrintableThermalCreditNote({
     if (!creditNote) return null
 
     const cnType = creditNote.credit_note_type || "B"
+
+    // The credit amount is VAT-included: the net is split with the linked return's own rates (no hardcoded 21%).
+    const split = splitCreditNoteAmount(creditNote.amount, linkedReturn?.items)
+    const vatLabel = split.rate === null ? "" : ` (${split.rate}%)`
 
     const afipQrUrl = buildAfipQrUrl({
         emisorCuit: companyTaxId,
@@ -89,17 +96,17 @@ export function PrintableThermalCreditNote({
                             <div key={index} className="text-[10px] space-y-0.5 border-b border-dotted border-slate-200 pb-1 last:border-b-0">
                                 <div className="flex justify-between">
                                     <span className="truncate max-w-[200px]">{item.product_name || "Producto devuelto"}</span>
-                                    <span>${(Number(item.quantity) * Number(item.unit_price)).toFixed(2)}</span>
+                                    <span>{formatMoney(grossLineTotal(item.quantity, item.unit_price, item.vat_rate))}</span>
                                 </div>
                                 <div className="text-[9px] text-slate-500">
-                                    {item.quantity} x ${Number(item.unit_price).toFixed(2)} (IVA 21%)
+                                    {item.quantity} x {formatMoney(grossPrice(item.unit_price, item.vat_rate))} (IVA incl.)
                                 </div>
                             </div>
                         ))
                     ) : (
                         <div className="flex justify-between text-[10px]">
                             <span>{creditNote.notes || "Ajuste Comercial / Nota de Crédito Manual"}</span>
-                            <span>${Number(creditNote.amount).toFixed(2)}</span>
+                            <span>{formatMoney(creditNote.amount)}</span>
                         </div>
                     )}
                 </div>
@@ -107,17 +114,27 @@ export function PrintableThermalCreditNote({
 
             {/* Totals Section */}
             <div className="py-2 space-y-1 text-right text-[10px]">
-                <div className="flex justify-between">
-                    <span>Neto Acreditado:</span>
-                    <span>${(Number(creditNote.amount || 0) / 1.21).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                    <span>IVA (21%):</span>
-                    <span>${(Number(creditNote.amount || 0) - (Number(creditNote.amount || 0) / 1.21)).toFixed(2)}</span>
-                </div>
+                {cnType === "A" ? (
+                    <>
+                        <div className="flex justify-between">
+                            <span>Neto Acreditado:</span>
+                            <span>{formatMoney(split.net)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span>IVA{vatLabel}:</span>
+                            <span>{formatMoney(split.vat)}</span>
+                        </div>
+                    </>
+                ) : (
+                    // Ley 27.743 (Transparencia Fiscal al Consumidor): B shows the VAT contained in the final amount.
+                    <div className="flex justify-between">
+                        <span>IVA contenido:</span>
+                        <span>{formatMoney(split.vat)}</span>
+                    </div>
+                )}
                 <div className="flex justify-between text-sm font-black border-t border-dashed border-slate-400 pt-1.5 mt-1">
                     <span>TOTAL COMPENSADO:</span>
-                    <span>${Number(creditNote.amount || 0).toFixed(2)}</span>
+                    <span>{formatMoney(creditNote.amount || 0)}</span>
                 </div>
             </div>
 

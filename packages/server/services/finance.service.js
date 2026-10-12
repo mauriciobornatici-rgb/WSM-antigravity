@@ -5,6 +5,8 @@ import accountingService from './accounting.service.js';
 import { ACCOUNTS, receiptAccountFor, disbursementAccountFor } from '../utils/paymentAccounts.js';
 import { recordDrawerOutflow } from './cashShift.service.js';
 import { businessError } from '../utils/businessError.js';
+import { claimIdempotentRequest, saveIdempotentResponse } from '../utils/idempotency.js';
+import { ensureTreasuryFunds, lockTreasury } from './treasury.service.js';
 
 class FinanceService {
     _buildValidationError(message, errorCode = 'VALIDATION_ERROR') {
@@ -893,6 +895,17 @@ class FinanceService {
         try {
             await connection.beginTransaction();
 
+            // ADR-015: a double click or a lost response must not pay (nor take cash out) twice.
+            const { replay } = await claimIdempotentRequest(connection, 'supplier_payment_bulk', payload.idempotency_key, payload);
+            if (replay) {
+                await connection.commit();
+                return replay;
+            }
+            // Lock order (ADR-015): Caja 2 before any drawer shift, as in treasury transfers.
+            const usesTreasury = allocations.some((alloc) => (alloc.payments || [])
+                .some((p) => disbursementAccountFor(p.method) === ACCOUNTS.TREASURY_CASH));
+            if (usesTreasury) await lockTreasury(connection);
+
             let totalPaid = 0;
             const results = [];
 
@@ -983,6 +996,9 @@ class FinanceService {
                     if (cashAccount === ACCOUNTS.CASH) {
                         // Cash leaves the drawer: recorded once, in the open shift (ADR-014).
                         await recordDrawerOutflow(connection, { registerId: payload.cash_register_id || null, amount: payment.amount, referenceId: payId });
+                    } else if (cashAccount === ACCOUNTS.TREASURY_CASH) {
+                        // "Caja 2" (ADR-015): never spend more than it holds.
+                        await ensureTreasuryFunds(connection, payment.amount);
                     }
 
 
@@ -1031,12 +1047,14 @@ class FinanceService {
                 }
             }, connection);
 
-            await connection.commit();
-            return {
+            const response = {
                 success: true,
                 total_paid: totalPaid,
                 invoices: results
             };
+            await saveIdempotentResponse(connection, 'supplier_payment_bulk', payload.idempotency_key, response);
+            await connection.commit();
+            return response;
         } catch (err) {
             await connection.rollback();
             throw err;
@@ -1063,6 +1081,8 @@ class FinanceService {
     async createCardSettlement(payload, userId = null, ipAddress = null) {
         const amount = this._roundMoney(payload.amount);
         const fee = this._roundMoney(payload.fee_amount || 0);
+        const feeNet = this._roundMoney(fee / 1.21);
+        const feeVat = this._roundMoney(fee - feeNet);
         const key = payload.idempotency_key || null;
         const connection = await pool.getConnection();
         try {
@@ -1109,9 +1129,11 @@ class FinanceService {
                 description: `Acreditación de tarjetas y QR${reference ? ` ${reference}` : ''}`,
                 reference_type: 'card_settlement',
                 reference_id: id,
+                // ADR-015: the fee is invoiced by the processor with VAT 21%: its VAT is fiscal credit.
                 lines: [
                     { account_code: ACCOUNTS.BANK, debit: this._roundMoney(amount - fee), credit: 0, notes: 'Depósito neto del procesador' },
-                    { account_code: ACCOUNTS.BANK_FEES, debit: fee, credit: 0, notes: 'Comisión del procesador' },
+                    { account_code: ACCOUNTS.BANK_FEES, debit: feeNet, credit: 0, notes: 'Comisión del procesador (neto)' },
+                    { account_code: ACCOUNTS.VAT_CREDIT_21, debit: feeVat, credit: 0, notes: 'IVA crédito fiscal de la comisión' },
                     { account_code: ACCOUNTS.CARDS_TO_COLLECT, debit: 0, credit: amount, notes: 'Cobros con tarjeta/QR acreditados' }
                 ]
             });

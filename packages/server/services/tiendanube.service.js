@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import pool from '../config/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import auditService from './audit.service.js';
+import { lineAmounts, netFromGross } from '../utils/vatMath.js';
 
 export class TiendaNubeService {
     constructor({ db = pool, http = axios, env = process.env } = {}) {
@@ -344,9 +345,11 @@ export class TiendaNubeService {
                 continue;
             }
 
-            const [localProducts] = await this.db.query('SELECT id FROM products WHERE sku = ? LIMIT 1', [sku]);
+            const [localProducts] = await this.db.query('SELECT id, vat_rate FROM products WHERE sku = ? LIMIT 1', [sku]);
             if (localProducts.length > 0) {
-                const unitPrice = Number(product.price);
+                // The customer paid the final price (VAT included): order lines are net (ADR-015).
+                const paid = Number(product.price);
+                const unitPrice = Number.isFinite(paid) && paid >= 0 ? netFromGross(paid, localProducts[0].vat_rate) : NaN;
                 items.push({
                     product_id: localProducts[0].id,
                     quantity: Number(product.quantity || 1),
@@ -1122,7 +1125,7 @@ export class TiendaNubeService {
         const [variants] = await this.db.query(
             `SELECT v.id, v.family_id, v.remote_variant_id, v.sync_status, v.last_error,
                     p.id AS product_id, p.sku, p.barcode, p.name, p.size, p.color,
-                    p.sale_price, p.purchase_price, p.image_url, p.status,
+                    p.sale_price, p.vat_rate, p.purchase_price, p.image_url, p.status,
                     COALESCE(SUM(CASE WHEN i.location NOT IN ('Cuarentena', 'Devoluciones a Proveedores', 'Mermas')
                         THEN i.quantity - i.reserved_quantity ELSE 0 END), 0) AS stock
              FROM tiendanube_catalog_variants v
@@ -1131,7 +1134,7 @@ export class TiendaNubeService {
              WHERE v.family_id IN (${placeholders})
              GROUP BY v.id, v.family_id, v.remote_variant_id, v.sync_status, v.last_error,
                       p.id, p.sku, p.barcode, p.name, p.size, p.color,
-                      p.sale_price, p.purchase_price, p.image_url, p.status
+                      p.sale_price, p.vat_rate, p.purchase_price, p.image_url, p.status
              ORDER BY p.sku`,
             families.map((family) => family.id)
         );
@@ -1234,7 +1237,7 @@ export class TiendaNubeService {
         const [variants] = await this.db.query(
             `SELECT v.id, v.family_id, v.remote_variant_id, v.sync_status, v.last_error,
                     p.id AS product_id, p.sku, p.barcode, p.name, p.size, p.color,
-                    p.sale_price, p.purchase_price, p.image_url, p.status,
+                    p.sale_price, p.vat_rate, p.purchase_price, p.image_url, p.status,
                     COALESCE(SUM(CASE WHEN i.location NOT IN ('Cuarentena', 'Devoluciones a Proveedores', 'Mermas')
                         THEN i.quantity - i.reserved_quantity ELSE 0 END), 0) AS stock
              FROM tiendanube_catalog_variants v
@@ -1243,7 +1246,7 @@ export class TiendaNubeService {
              WHERE v.family_id = ?
              GROUP BY v.id, v.family_id, v.remote_variant_id, v.sync_status, v.last_error,
                       p.id, p.sku, p.barcode, p.name, p.size, p.color,
-                      p.sale_price, p.purchase_price, p.image_url, p.status
+                      p.sale_price, p.vat_rate, p.purchase_price, p.image_url, p.status
              ORDER BY p.sku`,
             [familyId]
         );
@@ -1325,7 +1328,8 @@ export class TiendaNubeService {
             variants: variants.map((variant) => ({
                 ...(variant.remote_variant_id ? { id: this.normalizeTiendanubeId(variant.remote_variant_id) } : {}),
                 sku: variant.sku,
-                price: Number(variant.sale_price || 0).toFixed(2),
+                // The store shows the final price: catalog prices are net (ADR-008/015).
+                price: lineAmounts(1, variant.sale_price, variant.vat_rate).gross.toFixed(2),
                 cost: Number(variant.purchase_price || 0).toFixed(2),
                 stock_management: true,
                 stock: Number(variant.stock || 0),
@@ -1494,7 +1498,9 @@ export class TiendaNubeService {
                         sizeIndex >= 0 ? values[sizeIndex] || null : null,
                         colorIndex >= 0 ? values[colorIndex] || null : null,
                         remote.brand || null, remote.images?.[0]?.src || null,
-                        Number(variant.cost || 0), Number(variant.cost || 0), Number(variant.price || 0),
+                        Number(variant.cost || 0), Number(variant.cost || 0),
+                        // Tiendanube prices are final (VAT included); the catalog stores net.
+                        netFromGross(variant.price, 21),
                         remoteId, String(variant.id)
                     ]
                 );

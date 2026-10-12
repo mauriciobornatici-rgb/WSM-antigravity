@@ -1,5 +1,24 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-004 — 2026-10-12 — `guardian-integridad` y `revisor-ux` sobre ADR-015 (delta sin commitear de `codex/simulacion-operativa`)
+
+El coordinador verificó cada hallazgo en el código antes de corregirlo:
+- [x] Alta: la NC de una devolución mandaba a ARCA ítems sin `total_line`/`vat_amount`. Ahora salen de `lineAmounts`.
+- [x] Alta: el saldo de Caja 2 se leía de una foto vieja de la transacción (REPEATABLE READ), lo que permitía dos gastos concurrentes por encima del saldo. Ahora se toma el lock de la cuenta y la suma se hace `FOR SHARE`. Hay test MySQL concurrente.
+- [x] Media: el saldo del cajón al sacar efectivo tenía el mismo problema; ahora se calcula con lock.
+- [x] Media: el precio vendido promedio de una devolución se redondeaba a 2 decimales; ahora a 4.
+- [x] Media: una venta offline encolada antes del cambio quedaba trabada por centavos. Ahora el último pago absorbe hasta 1 centavo por línea, con auditoría, y la caja y la factura usan el mismo monto.
+- [x] Baja: el precio pedido igual al del catálogo redondeado pierde los 4 decimales. Ahora se usa el del catálogo.
+- [x] Baja: orden de locks (Caja 2 antes que el turno), replay `FOR SHARE`, validación de la clave y clave obligatoria en traspasos.
+- [x] Baja: rótulos de `transfer_in`/`transfer_out` en el reporte Z. No hace falta cambio: el reporte solo muestra entradas y salidas totales, que ya los incluyen.
+- [x] UX (13 puntos):
+  - montos con `formatMoney`, "Total a pagar" con neto + IVA, y botones del carrito de 44 px con nombre;
+  - estados de carga y error, y confirmación, en Caja 2 y Tarjetas;
+  - saldo de Caja 2 en el pago a proveedor;
+  - las etiquetas de código de barras nunca imprimen el costo;
+  - Ley 27.743: "IVA contenido" en la factura B y el ticket, la A discriminada y la C sin IVA;
+  - factura manual validada.
+
 ## AUD-003 — 2026-10-12 — `guardian-integridad` sobre ADR-012 (delta sin commitear de `codex/sql-out-of-controllers`)
 
 El guardián (opus) informó 5 hallazgos. El coordinador verificó cada uno en el código antes de corregir:

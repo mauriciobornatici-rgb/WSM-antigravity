@@ -5,6 +5,8 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { api } from "@/services/api";
 import type { Product } from "@/types";
+import { formatMoney } from "@/lib/formatters";
+import { grossPrice } from "@/lib/pricing";
 import { useAuth } from "@/context/AuthContext";
 import { hasPermission, PERMISSIONS, type Permission } from "@wsm/common";
 
@@ -199,7 +201,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                                                 </div>
                                             </div>
                                             <div className="font-bold text-sm">
-                                                ${Number(prod.sale_price || 0).toLocaleString()}
+                                                {formatMoney(grossPrice(prod.sale_price, prod.vat_rate))} c/IVA
                                             </div>
                                         </button>
                                     );

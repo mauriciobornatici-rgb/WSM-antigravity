@@ -151,7 +151,8 @@ test('ADR-014: card settlements move the pending card balance to the bank, never
     ]);
     assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
     const settled = results.find((r) => r.status === 'fulfilled').value;
-    assert.deepEqual(await postedLines('card_settlement', settled.id), { '1.1.02.01': half, '1.1.02.03': -(half + 1), '5.1.02.04': 1 });
+    // ADR-015: the processor's fee (1, VAT included) splits into 0.83 net + 0.17 VAT fiscal credit.
+    assert.deepEqual(await postedLines('card_settlement', settled.id), { '1.1.02.01': half, '1.1.02.03': -(half + 1), '5.1.02.04': 0.83, '1.1.05.02': 0.17 });
 });
 
 test('U1: resolving a warranty by replacement takes one unit out of stock at cost, once', async () => {

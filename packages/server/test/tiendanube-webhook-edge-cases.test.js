@@ -146,7 +146,7 @@ test('shipping and order import handle existing orders, SKU failures and local c
     const service = new TiendaNubeService({ db: { query: async (sql, params) => {
         calls.push({ sql: String(sql), params });
         if (String(sql).startsWith('SELECT id FROM orders')) return mode === 'existing' ? [[{ id: 'local-order' }]] : [[]];
-        if (String(sql).startsWith('SELECT id FROM products')) return mode === 'create' ? [[{ id: 'local-product' }]] : [[]];
+        if (String(sql).startsWith('SELECT id, vat_rate FROM products')) return mode === 'create' ? [[{ id: 'local-product', vat_rate: 21 }]] : [[]];
         return [[]];
     } }, http: {} });
     service.persistOrderMetadata = async () => {};

@@ -117,7 +117,8 @@ test("Circuito E2E Operativo Completo: Compra -> Stock -> Venta -> Cta Cte -> Co
         }, "user-100");
 
         assert.ok(orderRes.id);
-        assert.equal(orderRes.total_amount, 240000);
+        // ADR-015: el pedido se cobra con IVA incluido (2 x 120.000 neto x 1,21).
+        assert.equal(orderRes.total_amount, 290400);
         assert.ok(executedQueries.some(q => q.sql.includes("INSERT INTO orders")));
     });
 

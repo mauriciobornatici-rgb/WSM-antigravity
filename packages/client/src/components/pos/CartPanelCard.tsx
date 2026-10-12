@@ -1,7 +1,8 @@
-import { CreditCard, Plus, Trash2, UserPlus, RotateCcw, Package } from "lucide-react";
+﻿import { CreditCard, Plus, Trash2, UserPlus, RotateCcw, Package } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { CartPanelProps } from "@/components/pos/types";
 import { formatMoney } from "@/lib/formatters";
+import { grossLineTotal, grossPrice } from "@/lib/pricing";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,7 +20,6 @@ export function CartPanelCard({
     onUpdateQuantity,
     onClearCart,
     subtotal,
-    taxLabel,
     taxAmount,
     grandTotal,
     onOpenPaymentDialog,
@@ -36,7 +36,7 @@ export function CartPanelCard({
                         Carrito
                         {cart.length > 0 && (
                             <span className="text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full font-mono">
-                                {cart.reduce((s, i) => s + i.quantity, 0)} ítems
+                                {cart.reduce((s, i) => s + i.quantity, 0)} Ã­tems
                             </span>
                         )}
                     </CardTitle>
@@ -93,7 +93,7 @@ export function CartPanelCard({
                                 ))}
                             </SelectContent>
                         </Select>
-                        <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={onOpenClientDialog} title="Crear cliente rápido">
+                        <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={onOpenClientDialog} title="Crear cliente rÃ¡pido">
                             <UserPlus className="h-4 w-4" />
                         </Button>
                     </div>
@@ -104,7 +104,7 @@ export function CartPanelCard({
                                 <div className="text-muted-foreground">{selectedClient.tax_id}</div>
                             </div>
                             <div className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20 px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1">
-                                <span>⭐</span> {selectedClient.loyalty_points || 0} pts
+                                <span>â­</span> {selectedClient.loyalty_points || 0} pts
                             </div>
                         </div>
                     ) : null}
@@ -114,13 +114,14 @@ export function CartPanelCard({
             <CardContent className="space-y-4 p-4 sm:p-5">
                 {cart.length === 0 ? (
                     <div className="py-8 text-center text-sm text-muted-foreground space-y-1">
-                        <p>Aún no agregaste productos.</p>
+                        <p>AÃºn no agregaste productos.</p>
                         <p className="text-xs text-muted-foreground/70">
-                            Presiona <kbd className="bg-muted px-1.5 py-0.5 rounded font-mono text-[10px]">F2</kbd> para buscar o escanea un código.
+                            Presiona <kbd className="bg-muted px-1.5 py-0.5 rounded font-mono text-[10px]">F2</kbd> para buscar o escanea un cÃ³digo.
                         </p>
                     </div>
                 ) : (
                     <div className="max-h-[44vh] space-y-2 overflow-y-auto pr-1">
+                        <p className="text-xs font-semibold text-muted-foreground">Precios con IVA</p>
                         {cart.map((item) => (
                             <div key={item.id} className="rounded-md border p-2 hover:border-primary/40 transition-colors bg-card/40">
                                 <div className="flex items-center justify-between gap-2">
@@ -140,7 +141,7 @@ export function CartPanelCard({
                                             <div className="truncate font-medium text-sm">{item.name}</div>
                                             <div className="flex items-center gap-1.5 flex-wrap">
                                                 <div className="truncate text-[11px] font-medium text-primary">
-                                                    {[item.size ? `Talle ${item.size}` : "", item.color || ""].filter(Boolean).join(" · ") || "Producto sin variante"}
+                                                    {[item.size ? `Talle ${item.size}` : "", item.color || ""].filter(Boolean).join(" Â· ") || "Producto sin variante"}
                                                 </div>
                                                 {item.isPrepared ? (
                                                     <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 py-0 px-1 font-semibold">
@@ -154,27 +155,44 @@ export function CartPanelCard({
                                             </div>
                                             <div className="truncate font-mono text-[10px] text-muted-foreground">SKU: {item.sku}</div>
                                             <div className="text-xs text-muted-foreground">
-                                                ${Number(item.sale_price).toLocaleString("es-AR")}
+                                                {formatMoney(grossPrice(item.sale_price, item.vat_rate))}
                                             </div>
                                         </div>
                                     </div>
-                                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => onRemoveFromCart(item.id)}>
-                                        <span className="sr-only">Quitar {item.name} del carrito</span>
+                                    <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-11 w-11 shrink-0"
+                                        aria-label={`Quitar ${item.name} del carrito`}
+                                        onClick={() => onRemoveFromCart(item.id)}
+                                    >
                                         <Trash2 className="h-4 w-4 text-destructive/80 hover:text-destructive" />
                                     </Button>
                                 </div>
                                 <div className="mt-2 flex items-center justify-between gap-2 pt-1 border-t border-border/40">
                                     <div className="flex items-center gap-1.5">
-                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0" onClick={() => onUpdateQuantity(item.id, -1)}>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="h-11 w-11 p-0"
+                                            aria-label={`Restar una unidad de ${item.name}`}
+                                            onClick={() => onUpdateQuantity(item.id, -1)}
+                                        >
                                             -
                                         </Button>
                                         <span className="w-8 text-center font-mono text-sm font-semibold">{item.quantity}</span>
-                                        <Button size="sm" variant="outline" className="h-7 w-7 p-0" onClick={() => onUpdateQuantity(item.id, 1)}>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="h-11 w-11 p-0"
+                                            aria-label={`Sumar una unidad de ${item.name}`}
+                                            onClick={() => onUpdateQuantity(item.id, 1)}
+                                        >
                                             <Plus className="h-3 w-3" />
                                         </Button>
                                     </div>
                                     <div className="text-sm font-bold font-mono">
-                                        ${(Number(item.sale_price) * item.quantity).toLocaleString("es-AR")}
+                                        {formatMoney(grossLineTotal(item.quantity, item.sale_price, item.vat_rate))}
                                     </div>
                                 </div>
                             </div>
@@ -183,18 +201,13 @@ export function CartPanelCard({
                 )}
 
                 <div className="space-y-1.5 rounded-md border bg-muted/20 p-3 text-sm">
-                    <div className="flex justify-between text-muted-foreground">
-                        <span>Subtotal</span>
-                        <span className="font-mono">{formatMoney(subtotal)}</span>
-                    </div>
-                    <div className="flex justify-between text-muted-foreground text-xs">
-                        <span>{taxLabel}</span>
-                        <span className="font-mono">{formatMoney(taxAmount)}</span>
-                    </div>
-                    <div className="flex justify-between font-bold text-base pt-1 border-t border-border/60">
-                        <span>Total a Pagar</span>
+                    <div className="flex justify-between font-bold text-base">
+                        <span>Total a pagar</span>
                         <span className="font-mono text-primary text-lg">{formatMoney(grandTotal)}</span>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                        Incluye neto {formatMoney(subtotal)} + IVA {formatMoney(taxAmount)}
+                    </p>
                 </div>
 
                 <Button
@@ -211,9 +224,9 @@ export function CartPanelCard({
 
                 {!currentShift ? (
                     <p className="text-xs text-destructive text-center bg-destructive/10 p-2 rounded border border-destructive/20 font-medium">
-                        Caja cerrada. Ábrela en{" "}
+                        Caja cerrada. Ãbrela en{" "}
                         <Link to="/cash-management" className="underline font-bold">
-                            Gestión de caja
+                            GestiÃ³n de caja
                         </Link>
                         .
                     </p>

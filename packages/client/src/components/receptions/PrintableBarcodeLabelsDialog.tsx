@@ -1,7 +1,8 @@
-import { Printer, Tag, MapPin, Layers } from "lucide-react";
+﻿import { Printer, Tag, MapPin, Layers } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { formatMoney } from "@/lib/formatters";
+import { grossPrice } from "@/lib/pricing";
 import type { ReceptionRecord } from "./types";
 import { PrintPortal } from "@/components/common/PrintPortal";
 
@@ -16,8 +17,8 @@ function LabelsItemsList({ items }: { items: ReceptionRecord["items"] }) {
     if (list.length === 0) {
         return (
             <div className="p-8 text-center text-muted-foreground bg-muted/20 rounded-lg">
-                <Tag className="h-10 w-10 mx-auto mb-2 opacity-40" />
-                <p>No hay ítems detallados en esta recepción para etiquetar.</p>
+                <Tag className="h-10 w-10 mx-auto mb-2 opacity-40" aria-hidden="true" />
+                <p>No hay Ã­tems detallados en esta recepciÃ³n para etiquetar.</p>
             </div>
         );
     }
@@ -31,8 +32,11 @@ function LabelsItemsList({ items }: { items: ReceptionRecord["items"] }) {
                 const size = item.size ? String(item.size) : null;
                 const color = item.color ? String(item.color) : null;
                 const category = item.category ? String(item.category) : null;
-                const location = String(item.location || item.warehouse_location || "Depósito Central / Rack A-1");
-                const price = Number(item.sale_price || item.unit_price || item.price || 0);
+                const location = String(item.location || item.warehouse_location || "DepÃ³sito Central / Rack A-1");
+                // Stored prices are net; the label shows the final (VAT-included) price (ADR-015).
+                // Never falls back to unit_price/cost: without a sale price the label prints no price.
+                const salePrice = Number(item.sale_price || 0);
+                const price = salePrice > 0 ? grossPrice(salePrice, item.vat_rate as number | string | null | undefined) : null;
                 const qty = Number(item.quantity_received || item.quantity || 1);
 
                 const detailParts = [
@@ -40,7 +44,7 @@ function LabelsItemsList({ items }: { items: ReceptionRecord["items"] }) {
                     color ? `Color: ${color}` : null,
                     category ? category : null,
                 ].filter(Boolean);
-                const detailText = detailParts.length > 0 ? detailParts.join(" | ") : "Estándar / Unisex";
+                const detailText = detailParts.length > 0 ? detailParts.join(" | ") : "EstÃ¡ndar / Unisex";
 
                 return (
                     <div
@@ -58,13 +62,13 @@ function LabelsItemsList({ items }: { items: ReceptionRecord["items"] }) {
                                 </span>
                             </div>
 
-                            {/* Detalle (Talle, Color, Categoría) */}
+                            {/* Detalle (Talle, Color, CategorÃ­a) */}
                             <div className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
                                 <Layers className="h-3 w-3 text-blue-500 shrink-0" />
                                 <span className="truncate">{detailText}</span>
                             </div>
 
-                            {/* Ubicación en Depósito */}
+                            {/* UbicaciÃ³n en DepÃ³sito */}
                             <div className="text-[11px] font-bold text-amber-700 dark:text-amber-400 mt-1 flex items-center gap-1 bg-amber-50 dark:bg-amber-950/30 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-900/50">
                                 <MapPin className="h-3 w-3 shrink-0" />
                                 <span className="truncate">Ubic: {location}</span>
@@ -96,7 +100,7 @@ function LabelsItemsList({ items }: { items: ReceptionRecord["items"] }) {
                         <div className="flex justify-between items-center pt-1 border-t border-border">
                             <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">WSM Sports</span>
                             <span className="font-mono font-black text-sm text-primary">
-                                {formatMoney(price)}
+                                {price !== null ? formatMoney(price) : ""}
                             </span>
                         </div>
                     </div>
@@ -126,13 +130,13 @@ export function PrintableBarcodeLabelsDialog({
                 <DialogHeader className="border-b border-border pb-4">
                     <div className="flex items-center gap-2 text-primary font-bold text-lg">
                         <Tag className="h-5 w-5" />
-                        <span>ROTULADO INDUSTRIAL — ETIQUETAS WMS</span>
+                        <span>ROTULADO INDUSTRIAL â€” ETIQUETAS WMS</span>
                     </div>
                     <DialogTitle className="text-xl font-black mt-1">
-                        {reception.reception_number} — {reception.supplier_name}
+                        {reception.reception_number} â€” {reception.supplier_name}
                     </DialogTitle>
                     <DialogDescription>
-                        Vista previa e impresión de etiquetas con Producto, Detalle, Ubicación de Depósito, Código de Barras y SKU.
+                        Vista previa e impresiÃ³n de etiquetas con Producto, Detalle, UbicaciÃ³n de DepÃ³sito, CÃ³digo de Barras y SKU.
                     </DialogDescription>
                 </DialogHeader>
 

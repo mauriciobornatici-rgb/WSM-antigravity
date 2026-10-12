@@ -153,6 +153,8 @@ export interface SupplierPaymentLineInput {
 }
 
 export interface SupplierPaymentCreateInput {
+    /** One key per payment attempt: a retry does not pay twice (ADR-015). */
+    idempotency_key?: string;
     supplier_id: string;
     /** Drawer the cash comes from when more than one register is open (ADR-014). */
     cash_register_id?: string;
@@ -479,9 +481,14 @@ export type FiscalSaleStatus = {
     fiscal_status: "authorized" | "pending_cae" | "not_invoiced";
 };
 
+/** Supplier payments also accept "treasury" (cash from Caja 2, ADR-015). */
+export type SupplierSettlementLineInput = Omit<InvoicePaymentLineInput, "method"> & {
+    method: InvoicePaymentLineInput["method"] | "treasury";
+};
+
 export type BulkSupplierPaymentAllocation = {
     invoiceId: string;
-    payments: InvoicePaymentLineInput[];
+    payments: SupplierSettlementLineInput[];
 };
 
 export type BulkSupplierPaymentInput = {
@@ -490,6 +497,8 @@ export type BulkSupplierPaymentInput = {
     notes?: string;
     /** Drawer the cash comes from when more than one register is open (ADR-014). */
     cash_register_id?: string;
+    /** One key per payment attempt: a retry does not pay twice (ADR-015). */
+    idempotency_key?: string;
 };
 
 export type BulkSupplierPaymentResponse = {

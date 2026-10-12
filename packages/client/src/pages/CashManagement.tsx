@@ -12,10 +12,16 @@ import { showErrorToast } from "@/lib/errorHandling";
 import { formatMoney } from "@/lib/formatters";
 import type { CashRegister, CashShiftSummary, ShiftCloseInput, ShiftOpenInput } from "@/types/api";
 import { ZReportDialog } from "@/components/cash/ZReportDialog";
+import { TreasuryPanel } from "@/components/cash/TreasuryPanel";
+import { useAuth } from "@/context/AuthContext";
+import { hasPermission, PERMISSIONS } from "@wsm/common";
 
 const BILL_DENOMINATIONS = [20000, 10000, 5000, 2000, 1000, 500, 200, 100];
 
 export default function CashManagementPage() {
+    const { user } = useAuth();
+    // "Caja 2" (treasury) is managed by whoever manages accounting (ADR-015).
+    const canManageTreasury = hasPermission(user?.role, PERMISSIONS.ACCOUNTING_MANAGE);
     const [registers, setRegisters] = useState<CashRegister[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedRegister, setSelectedRegister] = useState<CashRegister | null>(null);
@@ -187,6 +193,8 @@ export default function CashManagementPage() {
                     </Card>
                 ))}
             </div>
+
+            {canManageTreasury ? <TreasuryPanel /> : null}
 
             {/* Open Shift Dialog */}
             <Dialog open={isOpening} onOpenChange={setIsOpening}>

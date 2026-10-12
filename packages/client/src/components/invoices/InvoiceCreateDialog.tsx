@@ -1,5 +1,7 @@
 import { Plus } from "lucide-react"
 import type { Client } from "@/types"
+import { formatMoney } from "@/lib/formatters"
+import { grossLineTotal, grossPrice } from "@/lib/pricing"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -15,6 +17,7 @@ type InvoiceCreateDialogProps = {
     draftInvoice: DraftInvoice
     manualItem: DraftInvoiceItem
     total: number
+    isSubmitting?: boolean
     onDraftChange: (invoice: DraftInvoice) => void
     onManualItemChange: (item: DraftInvoiceItem) => void
     onAddItem: () => void
@@ -28,11 +31,13 @@ export function InvoiceCreateDialog({
     draftInvoice,
     manualItem,
     total,
+    isSubmitting = false,
     onDraftChange,
     onManualItemChange,
     onAddItem,
     onCreateInvoice,
 }: InvoiceCreateDialogProps) {
+    const quantityInvalid = !(manualItem.quantity > 0)
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogTrigger asChild>
@@ -95,8 +100,8 @@ export function InvoiceCreateDialog({
                                 <TableRow>
                                     <TableHead>Descripción</TableHead>
                                     <TableHead className="w-20">Cant.</TableHead>
-                                    <TableHead>Precio unit.</TableHead>
-                                    <TableHead className="text-right">Total</TableHead>
+                                    <TableHead>Precio unit. (IVA incl.)</TableHead>
+                                    <TableHead className="text-right">Total (IVA incl.)</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -104,9 +109,9 @@ export function InvoiceCreateDialog({
                                     <TableRow key={index}>
                                         <TableCell>{item.description}</TableCell>
                                         <TableCell>{item.quantity}</TableCell>
-                                        <TableCell>${item.unit_price}</TableCell>
+                                        <TableCell>{formatMoney(grossPrice(item.unit_price, item.vat_rate))}</TableCell>
                                         <TableCell className="text-right">
-                                            ${((item.quantity * item.unit_price) * (1 + item.vat_rate / 100)).toFixed(2)}
+                                            {formatMoney(grossLineTotal(item.quantity, item.unit_price, item.vat_rate))}
                                         </TableCell>
                                     </TableRow>
                                 ))}
@@ -117,6 +122,7 @@ export function InvoiceCreateDialog({
                         <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
                             <div className="col-span-1 sm:col-span-6">
                                 <Input
+                                    aria-label="Descripción del ítem"
                                     placeholder="Descripción..."
                                     value={manualItem.description}
                                     onChange={(event) =>
@@ -130,6 +136,9 @@ export function InvoiceCreateDialog({
                             <div className="col-span-1 sm:col-span-2">
                                 <Input
                                     type="number"
+                                    aria-label="Cantidad"
+                                    aria-invalid={quantityInvalid}
+                                    aria-describedby={quantityInvalid ? "manual-item-quantity-error" : undefined}
                                     value={manualItem.quantity}
                                     onChange={(event) =>
                                         onManualItemChange({
@@ -142,6 +151,8 @@ export function InvoiceCreateDialog({
                             <div className="col-span-1 sm:col-span-2">
                                 <Input
                                     type="number"
+                                    aria-label="Precio unitario final (IVA incluido)"
+                                    placeholder="Precio final c/IVA"
                                     value={manualItem.unit_price}
                                     onChange={(event) =>
                                         onManualItemChange({
@@ -152,17 +163,24 @@ export function InvoiceCreateDialog({
                                 />
                             </div>
                             <div className="col-span-1 sm:col-span-2">
-                                <Button variant="secondary" className="w-full" onClick={onAddItem}>
+                                <Button variant="secondary" className="w-full" onClick={onAddItem} disabled={quantityInvalid}>
                                     Agregar
                                 </Button>
                             </div>
                         </div>
+                        {quantityInvalid ? (
+                            <p id="manual-item-quantity-error" role="alert" className="text-sm font-medium text-destructive">
+                                La cantidad debe ser mayor a 0
+                            </p>
+                        ) : null}
                     </div>
 
-                    <div className="flex justify-end text-xl font-bold">Total: ${total.toFixed(2)}</div>
+                    <div className="flex justify-end text-xl font-bold">Total (IVA incl.): {formatMoney(total)}</div>
                 </div>
                 <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                    <Button onClick={onCreateInvoice}>Emitir factura</Button>
+                    <Button onClick={onCreateInvoice} disabled={isSubmitting}>
+                        {isSubmitting ? "Emitiendo..." : "Emitir factura"}
+                    </Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>

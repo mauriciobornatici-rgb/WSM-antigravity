@@ -3,6 +3,9 @@ import { AlertTriangle, ShieldCheck, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { CompanySettings } from "@/types"
 import type { ClientReturnRow, CreditNoteRow, ClientReturnItemRow } from "@/types/returns"
+import { formatMoney } from "@/lib/formatters"
+import { grossLineTotal, grossPrice, lineAmounts, vatRateOf } from "@/lib/pricing"
+import { splitCreditNoteAmount } from "./invoiceUtils"
 import { buildAfipQrUrl } from "./afipQr"
 import { AfipQrImage } from "./AfipQrImage"
 
@@ -39,6 +42,9 @@ export function CreditNoteDocument({
 }: CreditNoteDocumentProps) {
     const [authorizing, setAuthorizing] = useState(false)
     const cnType = creditNote.credit_note_type || "B"
+    const isNoteA = cnType === "A"
+    // The credit amount is VAT-included: the net is split with the linked return's own rates (no hardcoded 21%).
+    const split = splitCreditNoteAmount(creditNote.amount, linkedReturn?.items)
 
     const afipQrUrl = buildAfipQrUrl({
         emisorCuit: companyTaxId,
@@ -157,15 +163,19 @@ export function CreditNoteDocument({
                         <tr className="border-b border-slate-300 bg-slate-100 text-slate-700 text-xs uppercase font-bold">
                             <th className="p-4 pl-6">Código / Detalle</th>
                             <th className="p-4 text-center">Cant.</th>
-                            <th className="p-4 text-right">Precio Unitario</th>
+                            <th className="p-4 text-right">{isNoteA ? "Precio Unitario (neto)" : "Precio Unitario (IVA incl.)"}</th>
                             <th className="p-4 text-center">IVA</th>
-                            <th className="p-4 pr-6 text-right">Subtotal</th>
+                            <th className="p-4 pr-6 text-right">{isNoteA ? "Subtotal (neto)" : "Subtotal"}</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-sm text-slate-800">
                         {linkedReturn && linkedReturn.items && linkedReturn.items.length > 0 ? (
                             linkedReturn.items.map((item: ClientReturnItemRow, idx: number) => {
-                                const sub = Number(item.quantity || 0) * Number(item.unit_price || 0);
+                                // Stored unit prices are net (ADR-015). Type A is fiscal: net detail; B / C: final prices.
+                                const unit = isNoteA ? Number(item.unit_price || 0) : grossPrice(item.unit_price, item.vat_rate);
+                                const sub = isNoteA
+                                    ? lineAmounts(item.quantity, item.unit_price, item.vat_rate).net
+                                    : grossLineTotal(item.quantity, item.unit_price, item.vat_rate);
                                 return (
                                     <tr key={idx} className="hover:bg-slate-50/50">
                                         <td className="p-4 pl-6 font-medium">
@@ -173,9 +183,9 @@ export function CreditNoteDocument({
                                             <span className="block text-xs text-slate-500 font-mono">SKU: {item.sku || "N/D"}</span>
                                         </td>
                                         <td className="p-4 text-center">{item.quantity}</td>
-                                        <td className="p-4 text-right">${Number(item.unit_price || 0).toFixed(2)}</td>
-                                        <td className="p-4 text-center">21%</td>
-                                        <td className="p-4 pr-6 text-right font-semibold">${sub.toFixed(2)}</td>
+                                        <td className="p-4 text-right">{formatMoney(unit)}</td>
+                                        <td className="p-4 text-center">{vatRateOf(item.vat_rate)}%</td>
+                                        <td className="p-4 pr-6 text-right font-semibold">{formatMoney(sub)}</td>
                                     </tr>
                                 )
                             })
@@ -186,9 +196,9 @@ export function CreditNoteDocument({
                                     <span className="block text-xs text-slate-500 font-mono">Ref: {creditNote.reference_type}</span>
                                 </td>
                                 <td className="p-4 text-center">1</td>
-                                <td className="p-4 text-right">${Number(creditNote.amount || 0).toFixed(2)}</td>
-                                <td className="p-4 text-center">21%</td>
-                                <td className="p-4 pr-6 text-right font-semibold">${Number(creditNote.amount || 0).toFixed(2)}</td>
+                                <td className="p-4 text-right">{formatMoney(isNoteA ? split.net : Number(creditNote.amount || 0))}</td>
+                                <td className="p-4 text-center">{split.rate === null ? "-" : `${split.rate}%`}</td>
+                                <td className="p-4 pr-6 text-right font-semibold">{formatMoney(isNoteA ? split.net : Number(creditNote.amount || 0))}</td>
                             </tr>
                         )}
                     </tbody>
@@ -201,17 +211,27 @@ export function CreditNoteDocument({
                         <p>Observaciones: {creditNote.notes || "Sin observaciones adicionales."}</p>
                     </div>
                     <div className="space-y-2 text-right self-end max-w-sm ml-auto w-full text-xs">
-                        <div className="flex justify-between text-slate-600">
-                            <span>Subtotal Neto:</span>
-                            <span className="font-semibold">${(Number(creditNote.amount) / 1.21).toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between text-slate-600">
-                            <span>IVA Liquidado (21%):</span>
-                            <span className="font-semibold">${(Number(creditNote.amount) - (Number(creditNote.amount) / 1.21)).toFixed(2)}</span>
-                        </div>
+                        {isNoteA ? (
+                            <>
+                                <div className="flex justify-between text-slate-600">
+                                    <span>Subtotal Neto:</span>
+                                    <span className="font-semibold">{formatMoney(split.net)}</span>
+                                </div>
+                                <div className="flex justify-between text-slate-600">
+                                    <span>IVA Liquidado{split.rate === null ? "" : ` (${split.rate}%)`}:</span>
+                                    <span className="font-semibold">{formatMoney(split.vat)}</span>
+                                </div>
+                            </>
+                        ) : (
+                            // Ley 27.743 (Transparencia Fiscal al Consumidor): B shows the VAT contained in the final amount.
+                            <div className="flex justify-between text-slate-600">
+                                <span>IVA contenido:</span>
+                                <span className="font-semibold">{formatMoney(split.vat)}</span>
+                            </div>
+                        )}
                         <div className="flex justify-between border-t border-slate-300 pt-2 text-base font-black text-slate-900">
                             <span>TOTAL RECIBIDO:</span>
-                            <span>${Number(creditNote.amount).toFixed(2)}</span>
+                            <span>{formatMoney(creditNote.amount)}</span>
                         </div>
                     </div>
                 </div>

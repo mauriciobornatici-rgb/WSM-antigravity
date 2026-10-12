@@ -3,6 +3,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
+import { formatMoney } from "@/lib/formatters"
+import { grossLineTotal, grossPrice } from "@/lib/pricing"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -28,9 +30,9 @@ function getInvoiceTotal(order: Order): number {
     const items = order.items || []
     const picked = items
         .filter((item) => Number(item.picked_quantity || 0) > 0)
-        .reduce((sum, item) => sum + Number(item.picked_quantity || 0) * Number(item.unit_price || 0), 0)
+        .reduce((sum, item) => sum + grossLineTotal(item.picked_quantity, item.unit_price, item.vat_rate), 0)
     if (picked > 0) return picked
-    return items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_price || 0), 0)
+    return items.reduce((sum, item) => sum + grossLineTotal(item.quantity, item.unit_price, item.vat_rate), 0)
 }
 
 export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: InvoiceDialogProps) {
@@ -118,16 +120,16 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                                     <tr>
                                         <th className="p-2 font-medium">Producto</th>
                                         <th className="p-2 font-medium text-center">Cant.</th>
-                                        <th className="p-2 font-medium text-right">Precio Unit.</th>
-                                        <th className="p-2 font-medium text-right">Subtotal</th>
+                                        <th className="p-2 font-medium text-right">Precio Unit. (IVA incl.)</th>
+                                        <th className="p-2 font-medium text-right">Subtotal (IVA incl.)</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y">
                                     {order?.items && order.items.length > 0 ? (
                                         order.items.map((item) => {
                                             const billedQty = Number(item.picked_quantity || 0) > 0 ? Number(item.picked_quantity) : Number(item.quantity || 1)
-                                            const unitPrice = Number(item.unit_price || 0)
-                                            const subtotal = billedQty * unitPrice
+                                            const unitPrice = grossPrice(item.unit_price, item.vat_rate)
+                                            const subtotal = grossLineTotal(billedQty, item.unit_price, item.vat_rate)
                                             return (
                                                 <tr key={item.id || item.product_id} className="hover:bg-muted/20">
                                                     <td className="p-2">
@@ -143,10 +145,10 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                                                         ) : null}
                                                     </td>
                                                     <td className="p-2 text-right text-muted-foreground">
-                                                        ${unitPrice.toLocaleString("es-AR")}
+                                                        {formatMoney(unitPrice)}
                                                     </td>
                                                     <td className="p-2 text-right font-semibold text-foreground">
-                                                        ${subtotal.toLocaleString("es-AR")}
+                                                        {formatMoney(subtotal)}
                                                     </td>
                                                 </tr>
                                             )
@@ -167,7 +169,7 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                         <div className="flex items-center justify-between text-base">
                             <span className="text-muted-foreground font-medium">Total factura</span>
                             <strong className="text-foreground text-lg">
-                                ${invoiceTotalAmount.toLocaleString("es-AR")}
+                                {formatMoney(invoiceTotalAmount)}
                             </strong>
                         </div>
                         <p className="border-t pt-2 text-xs text-muted-foreground">

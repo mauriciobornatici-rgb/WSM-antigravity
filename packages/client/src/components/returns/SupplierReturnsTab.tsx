@@ -6,6 +6,7 @@ import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
 import { showErrorToast } from "@/lib/errorHandling"
 import { formatMoney } from "@/lib/formatters"
+import { grossLineTotal, grossPrice } from "@/lib/pricing"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -75,7 +76,7 @@ export function SupplierReturnsTab() {
     // Helper to calculate total amount of a return row
     const getReturnTotal = (row: SupplierReturnRow) => {
         if (!row.items) return 0
-        return row.items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_cost), 0)
+        return row.items.reduce((sum, item) => sum + grossLineTotal(item.quantity, item.unit_cost, item.vat_rate), 0)
     }
 
     const handleAddItem = () => {
@@ -180,7 +181,7 @@ export function SupplierReturnsTab() {
                                     <TableHead>Fecha</TableHead>
                                     <TableHead>Proveedor</TableHead>
                                     <TableHead>Estado</TableHead>
-                                    <TableHead className="text-right">Monto Total</TableHead>
+                                    <TableHead className="text-right">Monto Total (IVA incl.)</TableHead>
                                     <TableHead className="text-right">Acciones</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -272,7 +273,7 @@ export function SupplierReturnsTab() {
                                     </Badge>
                                 </div>
                                 <div>
-                                    <span className="font-semibold text-muted-foreground">Monto Total:</span>{" "}
+                                    <span className="font-semibold text-muted-foreground">Monto Total (IVA incl.):</span>{" "}
                                     <span className="font-mono font-bold">
                                         {formatMoney(getReturnTotal(selectedReturn))}
                                     </span>
@@ -297,8 +298,8 @@ export function SupplierReturnsTab() {
                                                 <TableHead>Producto</TableHead>
                                                 <TableHead>SKU</TableHead>
                                                 <TableHead className="text-right">Cantidad</TableHead>
-                                                <TableHead className="text-right">Costo Unit.</TableHead>
-                                                <TableHead className="text-right">Total</TableHead>
+                                                <TableHead className="text-right">Costo Unit. final (c/IVA)</TableHead>
+                                                <TableHead className="text-right">Total (IVA incl.)</TableHead>
                                                 <TableHead>Motivo</TableHead>
                                             </TableRow>
                                         </TableHeader>
@@ -312,10 +313,10 @@ export function SupplierReturnsTab() {
                                                             {Number(item.quantity).toLocaleString("es-AR")}
                                                         </TableCell>
                                                         <TableCell className="text-right font-mono">
-                                                            {formatMoney(item.unit_cost)}
+                                                            {formatMoney(grossPrice(item.unit_cost, item.vat_rate))}
                                                         </TableCell>
                                                         <TableCell className="text-right font-mono font-bold">
-                                                            {formatMoney(Number(item.quantity) * Number(item.unit_cost))}
+                                                            {formatMoney(grossLineTotal(item.quantity, item.unit_cost, item.vat_rate))}
                                                         </TableCell>
                                                         <TableCell className="text-xs text-muted-foreground">
                                                             {item.reason || "-"}
@@ -427,7 +428,7 @@ export function SupplierReturnsTab() {
                                             />
                                         </div>
                                         <div className="space-y-1 sm:col-span-2">
-                                            <Label className="text-xs">Costo Unitario ($)</Label>
+                                            <Label className="text-xs">Costo Unitario neto ($)</Label>
                                             <Input
                                                 type="number"
                                                 min="0"
@@ -436,6 +437,9 @@ export function SupplierReturnsTab() {
                                                 value={item.unit_cost}
                                                 onChange={(e) => handleItemChange(index, "unit_cost", Number(e.target.value))}
                                             />
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Costo final (c/IVA): {formatMoney(grossPrice(item.unit_cost, products.find((p) => p.id === item.product_id)?.vat_rate))}
+                                            </p>
                                         </div>
                                         <div className="space-y-1 sm:col-span-3">
                                             <Label className="text-xs">Motivo</Label>

@@ -67,11 +67,25 @@ export class PosCheckoutUseCase {
             );
             const replay = existing.length > 0;
             let order;
+            let payments = orderData.payments;
             if (replay) {
                 order = { id: existing[0].id, total_amount: Number(existing[0].total_amount || 0), invoice_id: existing[0].invoice_id };
+                // The payments stored with the order (an offline sale may have absorbed cents).
+                const [stored] = await connection.query(
+                    'SELECT payment_method AS method, amount, check_payload FROM order_payments WHERE order_id = ? ORDER BY created_at, id',
+                    [order.id]
+                );
+                if (stored.length > 0) {
+                    payments = stored.map((row) => ({
+                        method: row.method,
+                        amount: Number(row.amount),
+                        check: typeof row.check_payload === 'string' ? JSON.parse(row.check_payload) : row.check_payload || null,
+                    }));
+                }
             } else {
                 const created = await this.createOrderUseCase.execute(orderData, userId, actor, connection);
                 syncStock = created.syncStock;
+                payments = created.payments ?? orderData.payments;
                 order = { id: created.id, total_amount: created.total_amount, invoice_id: null };
             }
 
@@ -80,7 +94,7 @@ export class PosCheckoutUseCase {
                 invoice = await this.salesService.createInvoice(order.id, {
                     invoice_type: invoiceType,
                     point_of_sale: pointOfSale,
-                    payments: orderData.payments,
+                    payments,
                 }, userId, connection);
             } else if (order.invoice_id) {
                 const [invoices] = await connection.query('SELECT * FROM invoices WHERE id = ?', [order.invoice_id]);
@@ -90,7 +104,7 @@ export class PosCheckoutUseCase {
             const cash = await recordShiftSalePayments(connection, {
                 shiftId: shift.shiftId,
                 orderId: order.id,
-                payments: orderData.payments,
+                payments,
             });
 
             await this.auditService.log({

@@ -47,7 +47,11 @@ export function CardSettlementsTab() {
 
     const amountValue = Number(amount)
     const feeValue = Number(fee || 0)
-    const invalid = !(amountValue > 0) || feeValue < 0 || feeValue >= amountValue || amountValue > pending + 0.001
+    const feeTooHigh = amountValue > 0 && (feeValue < 0 || feeValue >= amountValue)
+    const amountTooHigh = amountValue > pending + 0.001
+    const invalid = !(amountValue > 0) || feeTooHigh || amountTooHigh
+    const loadFailed = query.isError
+    const settlements = query.data?.settlements ?? []
 
     return (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -55,7 +59,10 @@ export function CardSettlementsTab() {
                 <CardHeader>
                     <CardTitle className="text-lg">Acreditar cobros con tarjeta y QR</CardTitle>
                     <CardDescription>
-                        Pendiente de acreditar: <span className="font-semibold text-foreground">{formatMoney(pending)}</span>
+                        Pendiente de acreditar:{" "}
+                        <span className="font-semibold text-foreground">
+                            {query.isLoading ? "Cargando…" : loadFailed ? "No disponible" : formatMoney(pending)}
+                        </span>
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -66,27 +73,64 @@ export function CardSettlementsTab() {
                             if (!invalid) mutation.mutate()
                         }}
                     >
-                        <div className="space-y-1.5">
-                            <Label htmlFor="settlement-amount">Monto liquidado (bruto)</Label>
-                            <Input id="settlement-amount" type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
-                        </div>
-                        <div className="space-y-1.5">
-                            <Label htmlFor="settlement-fee">Comisión retenida</Label>
-                            <Input id="settlement-fee" type="number" min="0" step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} />
-                        </div>
-                        <div className="space-y-1.5">
-                            <Label htmlFor="settlement-reference">Referencia (lote / liquidación)</Label>
-                            <Input id="settlement-reference" value={reference} onChange={(e) => setReference(e.target.value)} />
-                        </div>
-                        {amountValue > 0 ? (
-                            <p className="text-sm text-muted-foreground" aria-live="polite">
-                                Ingresa al banco {formatMoney(Math.max(amountValue - feeValue, 0))}
-                                {amountValue > pending + 0.001 ? " · supera lo pendiente" : ""}
-                            </p>
+                        {loadFailed ? (
+                            <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                                <span>No se pudieron cargar las acreditaciones.</span>
+                                <Button type="button" variant="outline" size="sm" onClick={() => void query.refetch()}>
+                                    Reintentar
+                                </Button>
+                            </div>
                         ) : null}
-                        <Button type="submit" disabled={invalid || mutation.isPending} className="w-full sm:w-auto">
-                            Registrar acreditación
-                        </Button>
+                        <fieldset disabled={loadFailed || query.isLoading} className="min-w-0 space-y-3 border-0 p-0">
+                            <div className="space-y-1.5">
+                                <Label htmlFor="settlement-amount">Monto liquidado (bruto)</Label>
+                                <Input
+                                    id="settlement-amount"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={amount}
+                                    onChange={(e) => setAmount(e.target.value)}
+                                    aria-invalid={amountTooHigh}
+                                    aria-describedby={amountTooHigh ? "settlement-amount-error" : undefined}
+                                />
+                                {amountTooHigh ? (
+                                    <p id="settlement-amount-error" role="alert" className="text-sm font-medium text-destructive">
+                                        Supera lo pendiente de acreditar ({formatMoney(pending)})
+                                    </p>
+                                ) : null}
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="settlement-fee">Comisión retenida</Label>
+                                <Input
+                                    id="settlement-fee"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={fee}
+                                    onChange={(e) => setFee(e.target.value)}
+                                    aria-invalid={feeTooHigh}
+                                    aria-describedby={feeTooHigh ? "settlement-fee-error" : undefined}
+                                />
+                                {feeTooHigh ? (
+                                    <p id="settlement-fee-error" role="alert" className="text-sm font-medium text-destructive">
+                                        La comisión debe ser menor al monto
+                                    </p>
+                                ) : null}
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="settlement-reference">Referencia (lote / liquidación)</Label>
+                                <Input id="settlement-reference" value={reference} onChange={(e) => setReference(e.target.value)} />
+                            </div>
+                            {amountValue > 0 && !feeTooHigh && !amountTooHigh ? (
+                                <p className="text-sm text-muted-foreground" aria-live="polite">
+                                    Ingresa al banco {formatMoney(Math.max(amountValue - feeValue, 0))}
+                                </p>
+                            ) : null}
+                            <Button type="submit" disabled={invalid || mutation.isPending} className="w-full sm:w-auto">
+                                Registrar acreditación
+                            </Button>
+                        </fieldset>
                     </form>
                 </CardContent>
             </Card>
@@ -95,13 +139,25 @@ export function CardSettlementsTab() {
                     <CardTitle className="text-lg">Últimas acreditaciones</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    {(query.data?.settlements ?? []).length === 0 ? (
+                    {query.isLoading ? (
+                        <p className="text-sm text-muted-foreground">Cargando…</p>
+                    ) : loadFailed ? (
+                        <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-destructive">
+                            <span>No se pudieron cargar las acreditaciones.</span>
+                            <Button type="button" variant="outline" size="sm" onClick={() => void query.refetch()}>
+                                Reintentar
+                            </Button>
+                        </div>
+                    ) : settlements.length === 0 ? (
                         <p className="text-sm text-muted-foreground">Todavía no hay acreditaciones.</p>
                     ) : (
                         <ul className="divide-y text-sm">
-                            {(query.data?.settlements ?? []).map((row) => (
+                            {settlements.map((row) => (
                                 <li key={row.id} className="flex items-center justify-between gap-3 py-2">
-                                    <span className="min-w-0 truncate">{row.description}</span>
+                                    <span className="min-w-0 truncate" title={row.description}>
+                                        <span className="mr-2 text-muted-foreground">{new Date(row.date).toLocaleDateString("es-AR")}</span>
+                                        {row.description}
+                                    </span>
                                     <span className="shrink-0 font-mono">{formatMoney(row.amount)}</span>
                                 </li>
                             ))}

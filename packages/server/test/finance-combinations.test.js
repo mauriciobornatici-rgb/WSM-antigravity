@@ -209,6 +209,6 @@ test('supplier settlement selects cash, bank and third-party cheque accounts', a
     // Only the cash line takes money out of the drawer (as an 'expense' of the open shift).
     const drawer = calls.filter(({ sql }) => sql.includes('INSERT INTO shift_payments'));
     assert.equal(drawer.length, 1);
-    assert.deepEqual([drawer[0].params[1], drawer[0].params[2]], ['shift-1', 20]);
-    assert.ok(drawer[0].sql.includes("'expense'"));
+    // ADR-015: el tipo del movimiento viaja como parametro (4to), no como literal del SQL.
+    assert.deepEqual([drawer[0].params[1], drawer[0].params[2], drawer[0].params[3]], ['shift-1', 20, 'expense']);
 });

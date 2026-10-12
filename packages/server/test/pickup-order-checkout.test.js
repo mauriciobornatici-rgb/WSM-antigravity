@@ -69,6 +69,11 @@ function createMockConnection(options = {}) {
                     .map((row) => ({ ...row }))];
             }
 
+            // ADR-015: the counter channel asks which locations are sales floor (none in these fixtures).
+            if (normalizedSql === 'SELECT code FROM warehouse_locations WHERE is_sales_floor = 1 AND active = 1') {
+                return [(options.salesFloorCodes || []).map((code) => ({ code }))];
+            }
+
             if (normalizedSql.startsWith('SELECT i.*, c.tax_id AS client_tax_id')) {
                 return [state.invoices.filter((invoice) => invoice.id === params[0])];
             }

@@ -1,6 +1,7 @@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { formatMoney } from "@/lib/formatters";
+import { grossLineTotal, grossPrice } from "@/lib/pricing";
 import type { ProductWithStock } from "@/lib/inventorySnapshot";
 import type { Supplier } from "@/types";
 
@@ -48,7 +49,7 @@ export function InventoryProcureDialog({
                             const supplier = suppliers.find((s) => s.id === supplierId);
                             const poTotal = supplierItems.reduce((acc, item) => {
                                 const prod = products.find((p) => p.id === item.id);
-                                return acc + Number(prod?.purchase_price || 0) * item.quantity;
+                                return acc + grossLineTotal(item.quantity, prod?.purchase_price, prod?.vat_rate);
                             }, 0);
 
                             return (
@@ -63,13 +64,13 @@ export function InventoryProcureDialog({
                                                         {prod?.sku} - {prod?.name}
                                                     </span>
                                                     <span className="font-mono">
-                                                        Cant: {item.quantity} x {formatMoney(Number(prod?.purchase_price || 0))}
+                                                        Cant: {item.quantity} x {formatMoney(grossPrice(prod?.purchase_price, prod?.vat_rate))}
                                                     </span>
                                                 </div>
                                             );
                                         })}
                                         <div className="text-right font-bold text-foreground mt-1 border-t border-border/50 pt-1 border-dashed font-mono">
-                                            Subtotal PO: {formatMoney(poTotal)}
+                                            Subtotal PO (IVA incl.):{formatMoney(poTotal)}
                                         </div>
                                     </div>
                                 </div>

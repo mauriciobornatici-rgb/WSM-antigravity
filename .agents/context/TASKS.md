@@ -62,7 +62,7 @@ Bajos anotados (riesgos previos, no regresiones): borrado de proveedor sin lock 
 - [x] `ec8dfcd` simulación de punta a punta (`packages/server/scripts/simulation/simulacion-operativa.mjs`), D1 devolución con cliente (500), D2 estado de garantía (500), D3 transferencia sin stock (409).
 - [x] ADR-013: C1–C6, U1 y U2. La simulación da 116/116 y el mayor concilia con los submayores. El guardián encontró 7 puntos técnicos, todos corregidos. Migración 046 (cuentas) aplicada en la base local y en QA.
 - Evidencia: validate 0 (821 + 69), coverage 99,05/91,57/99,03, qa:integration 58/58 ×2, RBAC OK.
-- [x] ADR-014 (puntos 1-4 aprobados por el usuario): NC fiscal vinculada a factura, con CbtesAsoc en ARCA (defecto fiscal previo); efectivo a proveedores desde la caja; recorrido de la unidad defectuosa de garantía; acreditación de tarjetas. Migraciones 047 y 048, aplicadas en local y QA; el CHECK de inventario pasa a 049. El guardián encontró 2 altos y varios medios, todos los técnicos corregidos. Simulación 137/137; validate 0 (837 + 69); coverage 98,22/91,08/97,85; integración 65/65 ×3; RBAC y E2E OK.
+- [x] ADR-014 (puntos 1-4 aprobados por el usuario): NC fiscal vinculada a factura, con CbtesAsoc en ARCA (defecto fiscal previo); efectivo a proveedores desde la caja; recorrido de la unidad defectuosa de garantía; acreditación de tarjetas. Migraciones 047 y 048, aplicadas en local y QA; el CHECK de inventario pasa a 051. El guardián encontró 2 altos y varios medios, todos los técnicos corregidos. Simulación 137/137; validate 0 (837 + 69); coverage 98,22/91,08/97,85; integración 65/65 ×3; RBAC y E2E OK.
 - Pendiente de decisión del usuario:
   1. IVA de la comisión de tarjeta (¿crédito fiscal aparte?) y retenciones del procesador.
   2. Pagos en efectivo de tesorería fuera de un turno de POS.
@@ -70,11 +70,28 @@ Bajos anotados (riesgos previos, no regresiones): borrado de proveedor sin lock 
   4. Prioridad de ubicación del POS (U3).
   5. Probar en homologación de ARCA una NC con comprobante asociado antes de producción.
 
+- [x] ADR-015 (pedido del usuario): precios finales con IVA en pantalla y netos de 4 decimales en la base. Incluye:
+  - IVA de la comisión de tarjeta como crédito fiscal;
+  - Caja 2 (tesorería) con traspasos y pagos a proveedor;
+  - idempotencia de pagos y traspasos;
+  - el mostrador vende primero del salón y el pedido sale primero del depósito.
+  - Migraciones 049 y 050, aplicadas en local y QA.
+  - AUD-004: los hallazgos técnicos del guardián y los 13 puntos de UX quedaron corregidos.
+  - Evidencia: validate 0 (853 + 77); coverage 98,30/90,88/97,33; integración 69/69 ×3; RBAC OK; E2E 6/6; simulación 147/147.
+- Pendiente de decisión del usuario (ADR-015):
+  - quién carga el saldo inicial de Caja 2;
+  - traspasos sin control de saldo bancario;
+  - el gerente no ve Caja 2;
+  - IVA de la comisión siempre 21 % (retenciones y monotributo);
+  - envío y descuentos de Tiendanube;
+  - corrección de datos previos;
+  - centavos en devoluciones parciales.
+
 ## Próximos pasos
 
 1. Usuario: revisar y mergear PR #1; después re-apuntar PR #2 a `main`.
 2. Usuario: correr en producción los runbooks (`docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`) y aplicar la migración 045 con el despliegue.
-3. I8: migración 049 (CHECK de inventario) — solo después de la reparación en producción (AP2).
+3. I8: migración 051 (CHECK de inventario) — solo después de la reparación en producción (AP2).
 4. Fase H2: numeración ARCA, recuperación de CAE y de NC en `authorizing`.
 5. Riesgos bajos de arriba.
 

@@ -46,7 +46,7 @@ export class ReceptionService {
 
         const receptionIds = receptions.map((r) => r.id);
         const [allItems] = await pool.query(`
-            SELECT ri.*, p.name AS product_name, p.sku
+            SELECT ri.*, p.name AS product_name, p.sku, p.vat_rate
             FROM reception_items ri
             LEFT JOIN products p ON ri.product_id = p.id
             WHERE ri.reception_id IN (?)

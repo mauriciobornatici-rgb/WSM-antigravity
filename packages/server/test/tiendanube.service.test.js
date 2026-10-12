@@ -119,8 +119,8 @@ test('processWebhookEvent fetches full order by id and imports it with external 
             if (statement.includes('SELECT id FROM orders WHERE external_source')) {
                 return [[]];
             }
-            if (statement.includes('SELECT id FROM products WHERE sku = ?')) {
-                return [[{ id: 'local-product-1' }]];
+            if (statement.includes('SELECT id, vat_rate FROM products WHERE sku = ?')) {
+                return [[{ id: 'local-product-1', vat_rate: 21 }]];
             }
             if (statement.includes('UPDATE tiendanube_webhook_events')) {
                 return [{ affectedRows: 1 }];
@@ -142,7 +142,7 @@ test('processWebhookEvent fetches full order by id and imports it with external 
                     customer: { name: 'Cliente Tiendanube' },
                     payment_details: { method: 'credit_card' },
                     shipping_address: { address: 'Calle 1', number: '123', city: 'CABA' },
-                    products: [{ sku: 'BOT-PRO', quantity: 2 }]
+                    products: [{ sku: 'BOT-PRO', quantity: 2, price: '121.00' }]
                 }
             };
         }
@@ -170,7 +170,8 @@ test('processWebhookEvent fetches full order by id and imports it with external 
     assert.equal(createdOrders[0].external_source, 'tiendanube');
     assert.equal(createdOrders[0].external_id, '987654');
     assert.equal(createdOrders[0].customer_name, 'Cliente Tiendanube');
-    assert.deepEqual(createdOrders[0].items, [{ product_id: 'local-product-1', quantity: 2 }]);
+    // ADR-015: the price paid on Tiendanube includes VAT; the order line stores the net (121 / 1.21).
+    assert.deepEqual(createdOrders[0].items, [{ product_id: 'local-product-1', quantity: 2, unit_price: 100 }]);
 });
 
 test('processWebhookEvent skips duplicate webhook events before fetching order', async () => {
@@ -226,8 +227,8 @@ test('syncRecentOrders deduplicates against orders external refs', async () => {
                 assert.deepEqual(params, ['tiendanube', '555']);
                 return [[]];
             }
-            if (statement.includes('SELECT id FROM products WHERE sku = ?')) {
-                return [[{ id: 'local-product-1' }]];
+            if (statement.includes('SELECT id, vat_rate FROM products WHERE sku = ?')) {
+                return [[{ id: 'local-product-1', vat_rate: 21 }]];
             }
             if (statement.includes('INSERT INTO tiendanube_order_details') || statement.includes('UPDATE orders SET')) {
                 return [{ affectedRows: 1 }];
@@ -270,10 +271,10 @@ test('importOrderPayload throws error if any SKU is not linked locally', async (
             if (statement.includes('SELECT id FROM orders WHERE')) {
                 return [[]];
             }
-            if (statement.includes('SELECT id FROM products WHERE sku = ?')) {
+            if (statement.includes('SELECT id, vat_rate FROM products WHERE sku = ?')) {
                 // Mock: only 'SKU-OK' exists, 'SKU-BAD' doesn't exist
                 if (params[0] === 'SKU-OK') {
-                    return [[{ id: 'local-1' }]];
+                    return [[{ id: 'local-1', vat_rate: 21 }]];
                 }
                 return [[]];
             }

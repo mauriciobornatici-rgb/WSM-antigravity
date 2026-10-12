@@ -24,6 +24,10 @@ router.post('/cash-registers/:id/open', cashRoles, validate(schemas.cashShiftOpe
 router.post('/cash-shifts/:id/close', cashRoles, validate(schemas.cashShiftClose), financeController.closeShift);
 router.post('/cash-shifts/:id/payments', cashRoles, validate(schemas.shiftPayment), financeController.addShiftPayment);
 
+// "Caja 2" / treasury cash (ADR-015)
+router.get('/treasury', accountingRoles, financeController.getTreasury);
+router.post('/treasury/transfers', accountingRoles, validate(schemas.treasuryTransfer), financeController.createTreasuryTransfer);
+
 // Card/QR settlements (Tarjetas y QR a cobrar -> Banco)
 router.get('/card-settlements', accountingRoles, financeController.getCardSettlements);
 router.post('/card-settlements', accountingRoles, validate(schemas.cardSettlement), financeController.createCardSettlement);

@@ -1,12 +1,32 @@
 import { Badge } from "@/components/ui/badge"
+import { grossLineTotal, lineAmounts, vatRateOf } from "@/lib/pricing"
 import type { DraftInvoice, InvoiceView } from "./types"
 
 export const calculateDraftTotal = (invoice: DraftInvoice): number =>
-    invoice.items.reduce((acc, item) => {
-        const subtotal = item.quantity * item.unit_price
-        const vat = subtotal * (item.vat_rate / 100)
-        return acc + subtotal + vat
-    }, 0)
+    // Draft items hold the net unit price (what the server expects); the total is the VAT-included one.
+    invoice.items.reduce((acc, item) => acc + grossLineTotal(item.quantity, item.unit_price, item.vat_rate), 0)
+
+/**
+ * Net / VAT split of a VAT-included credit note amount, using the rates of the linked return items
+ * (never a hardcoded 21%). Mixed rates split the amount in proportion to each item's net share.
+ */
+export const splitCreditNoteAmount = (
+    amount: number,
+    items: Array<{ quantity: number; unit_price: number; vat_rate?: number | undefined }> = []
+): { net: number; vat: number; rate: number | null } => {
+    const total = Number(amount || 0)
+    const rates = Array.from(new Set(items.map((item) => vatRateOf(item.vat_rate))))
+    const uniformRate = rates.length > 1 ? null : (rates[0] ?? vatRateOf(undefined))
+    let net: number
+    if (uniformRate === null) {
+        const gross = items.reduce((sum, item) => sum + grossLineTotal(item.quantity, item.unit_price, item.vat_rate), 0)
+        const netOfItems = items.reduce((sum, item) => sum + lineAmounts(item.quantity, item.unit_price, item.vat_rate).net, 0)
+        net = gross > 0 ? Math.round(total * (netOfItems / gross) * 100) / 100 : total
+    } else {
+        net = Math.round((total / (1 + uniformRate / 100)) * 100) / 100
+    }
+    return { net, vat: Math.round((total - net) * 100) / 100, rate: uniformRate }
+}
 
 export const formatInvoiceNumber = (invoice: InvoiceView): string => {
     if (invoice.invoice_type === "TK") {

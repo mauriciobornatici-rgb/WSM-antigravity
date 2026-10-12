@@ -4,6 +4,7 @@ import { api } from "@/services/api";
 import { showErrorToast } from "@/lib/errorHandling";
 import type { Invoice, InvoiceItem } from "@/types/api";
 import { formatMoney } from "@/lib/formatters";
+import { grossLineTotal, grossPrice } from "@/lib/pricing";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -401,7 +402,7 @@ export function POSHistoryDialog({
                                                         <TableRow className="border-border hover:bg-transparent">
                                                             <TableHead className="text-[10px] text-muted-foreground py-1.5">Desc</TableHead>
                                                             <TableHead className="text-[10px] text-muted-foreground text-center py-1.5">Cant</TableHead>
-                                                            <TableHead className="text-[10px] text-muted-foreground text-right py-1.5">P.Unit</TableHead>
+                                                            <TableHead className="text-[10px] text-muted-foreground text-right py-1.5">P.Unit (IVA incl.)</TableHead>
                                                             <TableHead className="text-[10px] text-muted-foreground text-right py-1.5 pr-2">Total</TableHead>
                                                         </TableRow>
                                                     </TableHeader>
@@ -415,9 +416,9 @@ export function POSHistoryDialog({
                                                                     </div>
                                                                 </TableCell>
                                                                 <TableCell className="text-center font-bold font-mono py-2">{item.quantity}</TableCell>
-                                                                <TableCell className="text-right font-mono py-2">{formatMoney(item.unit_price)}</TableCell>
+                                                                <TableCell className="text-right font-mono py-2">{formatMoney(grossPrice(item.unit_price, item.vat_rate))}</TableCell>
                                                                 <TableCell className="text-right font-mono py-2 pr-2 font-semibold">
-                                                                    {formatMoney(item.total_line != null ? item.total_line : (item.quantity * item.unit_price))}
+                                                                    {formatMoney(item.total_line != null ? item.total_line : grossLineTotal(item.quantity, item.unit_price, item.vat_rate))}
                                                                 </TableCell>
                                                             </TableRow>
                                                         ))}

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { api } from "@/services/api"
 import { showErrorToast } from "@/lib/errorHandling"
+import { netFromGross } from "@/lib/pricing"
 import type { Client, CompanySettings } from "@/types"
 import type { InvoiceItem } from "@/types/api"
 import {
@@ -25,6 +26,8 @@ export default function InvoicesPage() {
     const [invoices, setInvoices] = useState<InvoiceView[]>([])
     const [loading, setLoading] = useState(true)
     const [isCreateOpen, setIsCreateOpen] = useState(false)
+    const [isCreating, setIsCreating] = useState(false)
+    const creatingRef = useRef(false)
     const [isPreviewOpen, setIsPreviewOpen] = useState(false)
     const [selectedInvoice, setSelectedInvoice] = useState<InvoiceView | null>(null)
     const [activePrintLayout, setActivePrintLayout] = useState<'a4' | 'thermal' | null>(null)
@@ -74,7 +77,13 @@ export default function InvoicesPage() {
 
     const addDraftItem = () => {
         if (!manualItem.description || manualItem.unit_price <= 0) return
-        setDraftInvoice((prev) => ({ ...prev, items: [...prev.items, { ...manualItem }] }))
+        if (!(manualItem.quantity > 0)) {
+            toast.error("La cantidad debe ser mayor a 0")
+            return
+        }
+        // The price is typed as the final one (VAT included); the draft keeps the net price the server expects (ADR-015).
+        const netItem = { ...manualItem, unit_price: netFromGross(manualItem.unit_price, manualItem.vat_rate) }
+        setDraftInvoice((prev) => ({ ...prev, items: [...prev.items, netItem] }))
         setManualItem({
             description: "",
             quantity: 1,
@@ -94,6 +103,9 @@ export default function InvoicesPage() {
     }
 
     const handleCreateInvoice = async () => {
+        if (creatingRef.current) return
+        creatingRef.current = true
+        setIsCreating(true)
         try {
             if (!draftInvoice.client_id) {
                 toast.error("Seleccione un cliente")
@@ -111,6 +123,9 @@ export default function InvoicesPage() {
             void loadData()
         } catch (error) {
             showErrorToast("Error al emitir factura", error)
+        } finally {
+            creatingRef.current = false
+            setIsCreating(false)
         }
     }
 
@@ -266,6 +281,7 @@ export default function InvoicesPage() {
                     draftInvoice={draftInvoice}
                     manualItem={manualItem}
                     total={calculateDraftTotal(draftInvoice)}
+                    isSubmitting={isCreating}
                     onDraftChange={setDraftInvoice}
                     onManualItemChange={setManualItem}
                     onAddItem={addDraftItem}

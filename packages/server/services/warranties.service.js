@@ -5,6 +5,7 @@ import { nextDocumentSequence } from '../utils/documentSequence.js';
 import { businessError } from '../utils/businessError.js';
 import { ACCOUNTS, LOCATIONS } from '../utils/paymentAccounts.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
+import { lineAmounts } from '../utils/vatMath.js';
 import auditService from './audit.service.js';
 import afipService from './afip.service.js';
 import accountingService from './accounting.service.js';
@@ -430,7 +431,8 @@ class ReturnsService extends BaseService {
         const [sold] = await conn.query(
             // Weighted average: the same product may appear on several lines at different prices.
             `SELECT product_id, SUM(quantity) AS quantity,
-                    ROUND(SUM(quantity * unit_price) / NULLIF(SUM(quantity), 0), 2) AS unit_price
+                    -- 4 decimals like the stored net price (ADR-015): 2 would refund a cent short.
+                    ROUND(SUM(quantity * unit_price) / NULLIF(SUM(quantity), 0), 4) AS unit_price
              FROM order_items WHERE order_id = ? AND product_id IN (?)
              GROUP BY product_id`,
             [data.order_id, productIds]
@@ -549,9 +551,10 @@ class ReturnsService extends BaseService {
             for (const item of items) {
                 // If item is rejected, it does not contribute to the refund amount
                 if (String(item.condition_status).toLowerCase() === 'rejected') continue;
-                const lineNet = Math.round(Number(item.quantity || 0) * Number(item.unit_price || 0) * 100);
-                netCents += lineNet;
-                vatCents += Math.round(lineNet * (vatByProduct.get(item.product_id) ?? 21) / 100);
+                // Same formula as the sale (ADR-015): the refund is exactly what was charged.
+                const line = lineAmounts(item.quantity, item.unit_price, vatByProduct.get(item.product_id) ?? 21);
+                netCents += Math.round(line.net * 100);
+                vatCents += Math.round(line.vat * 100);
             }
             const netAmount = netCents / 100;
             const vatAmount = vatCents / 100;
@@ -803,7 +806,14 @@ class CreditNotesService extends BaseService {
                 WHERE ri.return_id = ?
                   AND LOWER(COALESCE(ri.condition_status, '')) <> 'rejected'
             `, [cn.reference_id]);
-            if (itemsRows.length > 0) return itemsRows;
+            // Same line amounts as the note (ADR-015, gross first): ARCA must receive exactly the
+            // stored amount, or the lost-response recovery would never match and issue it twice.
+            if (itemsRows.length > 0) {
+                return itemsRows.map((row) => {
+                    const line = lineAmounts(row.quantity, row.unit_price, row.vat_rate);
+                    return { vat_rate: Number(row.vat_rate), total_line: line.gross, vat_amount: line.vat };
+                });
+            }
         }
         const [byRate] = await pool.query(
             `SELECT vat_rate, SUM(total_line) AS gross, SUM(vat_amount) AS vat

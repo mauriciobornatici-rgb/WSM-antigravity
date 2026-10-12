@@ -6,6 +6,7 @@ import { calculateShiftExpectedBalance } from '../../services/cashShift.service.
 import { resolvePriceOverrides } from './CreateOrderUseCase.js';
 import defaultStockLedger from '../inventory/StockLedger.js';
 import accountingService from '../../services/accounting.service.js';
+import { lineAmounts } from '../../utils/vatMath.js';
 
 export class PickupOrderCheckoutUseCase {
     constructor(dependencies = {}) {
@@ -94,7 +95,8 @@ export class PickupOrderCheckoutUseCase {
                 // Stable lock order (by product) so two counters cannot deadlock each other.
                 const extraItems = [...payload.extra_items]
                     .sort((a, b) => String(a.product_id).localeCompare(String(b.product_id)));
-                const lockedRows = await this.stockLedger.lockSellableRows(connection, extraItems.map((item) => item.product_id));
+                // Extras added at the counter come from the sales floor first (ADR-015).
+                const lockedRows = await this.stockLedger.lockSellableRows(connection, extraItems.map((item) => item.product_id), { channel: 'counter' });
                 const unitCosts = await accountingService.productUnitCosts(connection, extraItems.map((item) => item.product_id));
                 for (const item of extraItems) {
                     const qty = parseInt(String(item.quantity), 10);
@@ -151,9 +153,8 @@ export class PickupOrderCheckoutUseCase {
                         [orderItemId, orderId, item.product_id, qty, qty, unitPrice, subtotal]
                     );
 
-                    // Order totals are gross: net + catalog VAT (ADR-008).
-                    const vatRate = product.vat_rate == null ? 21 : Number(product.vat_rate);
-                    const grossLine = Math.round((subtotal + Math.round(subtotal * vatRate) / 100) * 100) / 100;
+                    // Order totals are gross: quantity × the final price (ADR-008, ADR-015).
+                    const grossLine = lineAmounts(qty, unitPrice, product.vat_rate).gross;
                     await connection.query(
                         'UPDATE orders SET total_amount = total_amount + ? WHERE id = ?',
                         [grossLine, orderId]

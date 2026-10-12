@@ -83,8 +83,8 @@ test('supplier payments persist split lines, defaults, ledger impact and audit',
     // Only the cash line (5) leaves the drawer; the transfer (10) does not.
     const drawer = calls.filter((call) => call.sql.includes('INSERT INTO shift_payments'));
     assert.equal(drawer.length, 1);
-    assert.deepEqual([drawer[0].params[1], drawer[0].params[2]], ['shift-1', 5]);
-    assert.ok(drawer[0].sql.includes("'expense'"));
+    // ADR-015: el tipo del movimiento viaja como parametro (4to), no como literal del SQL.
+    assert.deepEqual([drawer[0].params[1], drawer[0].params[2], drawer[0].params[3]], ['shift-1', 5, 'expense']);
     assert.ok(calls.some((call) => call.sql.startsWith('UPDATE cash_shifts SET expected_balance') && call.params[0] === 95));
 });
 

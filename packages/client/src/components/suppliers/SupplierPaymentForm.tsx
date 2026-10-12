@@ -10,6 +10,7 @@ import { DollarSign, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { SupplierPaymentCreateInput } from '@/types/api';
 import { createClientUuid } from '@/lib/clientUuid';
+import { formatMoney } from '@/lib/formatters';
 
 interface PaymentLine {
     id: string;
@@ -32,12 +33,21 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
     const [notes, setNotes] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    // One key per payment attempt, kept across retries until the payment is confirmed.
+    const [idempotencyKey, setIdempotencyKey] = useState(() => createClientUuid());
 
     const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([
         { id: createClientUuid(), amount: '', payment_method: 'Efectivo', reference_number: '' }
     ]);
 
+    // The server answers 409 when a key is reused with different content: any edit after a failed
+    // attempt starts a new attempt. Never while a submit is in flight (a retry must keep its key).
+    const renewKey = () => {
+        if (!submitting) setIdempotencyKey(createClientUuid());
+    };
+
     const addPaymentLine = () => {
+        renewKey();
         setPaymentLines([...paymentLines, {
             id: createClientUuid(),
             amount: '',
@@ -48,10 +58,12 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
 
     const removePaymentLine = (id: string) => {
         if (paymentLines.length === 1) return;
+        renewKey();
         setPaymentLines(paymentLines.filter(line => line.id !== id));
     };
 
     const updateLine = (id: string, field: keyof PaymentLine, value: string) => {
+        renewKey();
         setPaymentLines(paymentLines.map(line =>
             line.id === id ? { ...line, [field]: value } : line
         ));
@@ -71,8 +83,27 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
     const [cashRegisterId, setCashRegisterId] = useState('');
     const needsRegisterChoice = paysCash && openRegisters.length > 1;
 
+    // Caja 2 (ADR-015) cannot go negative: warn and block when the lines exceed its balance.
+    const treasuryTotal = paymentLines
+        .filter((line) => line.payment_method === 'Caja 2')
+        .reduce((acc, line) => acc + (parseFloat(line.amount || '0') || 0), 0);
+    const paysTreasury = paymentLines.some((line) => line.payment_method === 'Caja 2');
+    const treasuryQuery = useQuery({
+        queryKey: ['treasury', 'for-supplier-payment'],
+        queryFn: () => api.getTreasury(),
+        enabled: paysTreasury,
+        meta: { silentError: true },
+    });
+    const treasuryBalance = treasuryQuery.data?.balance;
+    const treasuryShort = paysTreasury && treasuryBalance !== undefined && treasuryTotal > treasuryBalance + 0.005;
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        if (treasuryShort) {
+            toast.error("El pago con Caja 2 supera su saldo");
+            return;
+        }
 
         if (totalAmount <= 0) {
             toast.error("El monto total debe ser mayor a 0");
@@ -93,6 +124,7 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
         setSubmitting(true);
         try {
             const data: SupplierPaymentCreateInput = {
+                idempotency_key: idempotencyKey,
                 supplier_id: supplier.id,
                 ...(paysCash && cashRegisterId ? { cash_register_id: cashRegisterId } : {}),
                 payment_date: paymentDate,
@@ -105,6 +137,7 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
             };
 
             await onSubmit(data);
+            setIdempotencyKey(createClientUuid());
         } catch {
             // Error handling is delegated to the parent component
         } finally {
@@ -123,13 +156,13 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
                     <div>
                         <p className="text-sm text-muted-foreground">Saldo Actual</p>
                         <p className="text-2xl font-bold">
-                            ${currentBalance.toLocaleString()}
+                            {formatMoney(currentBalance)}
                         </p>
                     </div>
                     <div>
                         <p className="text-sm text-muted-foreground">Nuevo Saldo</p>
                         <p className={`text-2xl font-bold ${newBalance < 0 ? 'text-green-600' : 'text-red-500'}`}>
-                            ${newBalance.toLocaleString()}
+                            {formatMoney(newBalance)}
                         </p>
                     </div>
                 </div>
@@ -150,7 +183,7 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
                 {needsRegisterChoice ? (
                     <div className="space-y-1.5">
                         <Label htmlFor="supplier-payment-register">Caja de la que sale el efectivo</Label>
-                        <Select value={cashRegisterId} onValueChange={setCashRegisterId}>
+                        <Select value={cashRegisterId} onValueChange={(value) => { renewKey(); setCashRegisterId(value); }}>
                             <SelectTrigger id="supplier-payment-register" className="h-9">
                                 <SelectValue placeholder="Elegí la caja" />
                             </SelectTrigger>
@@ -162,18 +195,27 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
                         </Select>
                     </div>
                 ) : null}
+                {paysTreasury && treasuryBalance !== undefined ? (
+                    <p className="text-sm font-medium">Saldo Caja 2: {formatMoney(treasuryBalance)}</p>
+                ) : null}
+                {treasuryShort ? (
+                    <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm font-medium text-destructive">
+                        El pago con Caja 2 ({formatMoney(treasuryTotal)}) supera su saldo ({formatMoney(treasuryBalance ?? 0)}).
+                    </p>
+                ) : null}
 
                 <div className="space-y-3">
-                    {paymentLines.map((line) => (
+                    {paymentLines.map((line, index) => (
                         <div key={line.id} className="grid grid-cols-12 gap-3 items-end bg-white dark:bg-slate-950 p-3 rounded-md border border-slate-100 dark:border-slate-800 shadow-sm transition-all hover:border-blue-200 dark:hover:border-blue-800">
                             <div className="col-span-12 md:col-span-3 space-y-1.5">
-                                <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Método</Label>
+                                <Label htmlFor={`supplier-payment-${line.id}-method`} className="text-xs uppercase font-bold text-muted-foreground tracking-wider">Método</Label>
                                 <Select value={line.payment_method} onValueChange={(val) => updateLine(line.id, 'payment_method', val)}>
-                                    <SelectTrigger className="h-9">
+                                    <SelectTrigger id={`supplier-payment-${line.id}-method`} aria-label={`Método de pago ${index + 1}`} className="h-9">
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="Efectivo">Efectivo</SelectItem>
+                                        <SelectItem value="Efectivo">Efectivo (caja del turno)</SelectItem>
+                                        <SelectItem value="Caja 2">Efectivo Caja 2</SelectItem>
                                         <SelectItem value="Transferencia">Transferencia</SelectItem>
                                         <SelectItem value="Echeq">Echeq</SelectItem>
                                         <SelectItem value="Cheque Físico">Cheque Físico</SelectItem>
@@ -183,10 +225,11 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
                             </div>
 
                             <div className="col-span-12 md:col-span-3 space-y-1.5">
-                                <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Monto</Label>
+                                <Label htmlFor={`supplier-payment-${line.id}-amount`} className="text-xs uppercase font-bold text-muted-foreground tracking-wider">Monto</Label>
                                 <div className="relative">
                                     <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                                     <Input
+                                        id={`supplier-payment-${line.id}-amount`}
                                         type="number"
                                         step="0.01"
                                         min="0"
@@ -199,8 +242,9 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
                             </div>
 
                             <div className="col-span-12 md:col-span-5 space-y-1.5">
-                                <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Referencia / Observación</Label>
+                                <Label htmlFor={`supplier-payment-${line.id}-reference`} className="text-xs uppercase font-bold text-muted-foreground tracking-wider">Referencia / Observación</Label>
                                 <Input
+                                    id={`supplier-payment-${line.id}-reference`}
                                     value={line.reference_number}
                                     onChange={(e) => updateLine(line.id, 'reference_number', e.target.value)}
                                     placeholder="Ej: Nro de cheque o Transf."
@@ -214,6 +258,7 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => removePaymentLine(line.id)}
+                                    aria-label={`Eliminar método de pago ${index + 1}`}
                                     disabled={paymentLines.length === 1}
                                     className="h-9 w-9 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
                                 >
@@ -231,7 +276,7 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
                     <ArgentinaDateInput
                         id="paymentDate"
                         value={paymentDate}
-                        onChange={setPaymentDate}
+                        onChange={(value) => { renewKey(); setPaymentDate(value); }}
                         ariaLabel="Fecha general de pago"
                         required
                     />
@@ -241,7 +286,7 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
                     <Input
                         id="notes"
                         value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
+                        onChange={(e) => { renewKey(); setNotes(e.target.value); }}
                         placeholder="Ej: Pago de factura #123..."
                     />
                 </div>
@@ -250,13 +295,13 @@ export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPa
             {/* Footer Actions */}
             <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-sm font-medium">
-                    Total a Registrar: <span className="text-blue-600 text-lg ml-1 font-bold">${totalAmount.toLocaleString()}</span>
+                    Total a Registrar: <span className="text-blue-600 text-lg ml-1 font-bold">{formatMoney(totalAmount)}</span>
                 </div>
                 <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
                     <Button type="button" variant="outline" onClick={onCancel} disabled={submitting}>
                         Cancelar
                     </Button>
-                    <Button type="submit" disabled={submitting || totalAmount <= 0} className="bg-blue-600 hover:bg-blue-700">
+                    <Button type="submit" disabled={submitting || totalAmount <= 0 || treasuryShort} className="bg-blue-600 hover:bg-blue-700">
                         {submitting ? 'Registrando...' : 'Registrar Pago Completo'}
                     </Button>
                 </div>

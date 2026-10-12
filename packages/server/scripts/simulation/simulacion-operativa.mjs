@@ -98,7 +98,7 @@ async function ledger(code) {
     const [row] = await q('SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) AS bal FROM journal_entry_lines WHERE account_code = ?', [code]);
     return Number(row.bal);
 }
-const LEDGER = { cash: '1.1.01.01', cards: '1.1.02.03', receivables: '1.1.03.01', inventory: '1.1.04.01', suppliers: '2.1.01.01' };
+const LEDGER = { cash: '1.1.01.01', treasury: '1.1.01.02', cards: '1.1.02.03', receivables: '1.1.03.01', inventory: '1.1.04.01', suppliers: '2.1.01.01' };
 
 // ---------- simulación ----------
 async function main() {
@@ -125,7 +125,9 @@ async function main() {
         ctx.p1 = await mk('Zapatilla', 50000, 30000);
         ctx.p2 = await mk('Pelota', 10000, 5000);
         ctx.p3 = await mk('Remera', 15000, 8000);
-        for (const code of [`DEP-${RUN}`, `SAL-${RUN}`]) await call('POST', '/api/inventory/locations', { code, name: code });
+        await call('POST', '/api/inventory/locations', { code: `DEP-${RUN}`, name: `DEP-${RUN}` });
+        // ADR-015: the counter sells from the sales floor first, orders are picked from the warehouse.
+        await call('POST', '/api/inventory/locations', { code: `SAL-${RUN}`, name: `SAL-${RUN}`, is_sales_floor: true });
         ctx.dep = `DEP-${RUN}`; ctx.sal = `SAL-${RUN}`;
         ctx.pids = [ctx.p1.id, ctx.p2.id, ctx.p3.id];
         check('Productos creados con stock 0', (await q('SELECT COALESCE(SUM(quantity),0) s FROM inventory WHERE product_id IN (?)', [ctx.pids]))[0].s, 0);
@@ -292,6 +294,7 @@ async function main() {
         const where = await q("SELECT product_id, from_location, quantity FROM inventory_movements WHERE reference_id = ? AND type = 'sale'", [ctx.posOrderId]);
         for (const m of where) move(m.product_id, m.from_location, -Number(m.quantity));
         check('Movimientos de venta POS: 1 zapatilla + 2 pelotas', where.reduce((s, m) => s + Number(m.quantity), 0), 3);
+        check('El mostrador vende primero desde el salón (ADR-015)', [...new Set(where.map((m) => m.from_location))], [ctx.sal]);
         await verifyStock('Venta POS', ctx.pids);
         ctx.cashExpected += 60500;
         check('Caja esperada suma solo el efectivo', await shiftExpected(), ctx.cashExpected);
@@ -328,6 +331,7 @@ async function main() {
         const out = await q("SELECT product_id, from_location, quantity FROM inventory_movements WHERE reference_id = ? AND type = 'sale'", [ctx.orderId]);
         for (const m of out) move(m.product_id, m.from_location, -Number(m.quantity));
         check('Preparado: movimientos de salida por 5 unidades', out.reduce((s, m) => s + Number(m.quantity), 0), 5);
+        check('El pedido se prepara desde el depósito, no desde el salón (ADR-015)', [...new Set(out.map((m) => m.from_location))], [ctx.dep]);
         await verifyStock('Pedido preparado descuenta físico', ctx.pids);
         const res = await q('SELECT COALESCE(SUM(reserved_quantity),0) r FROM inventory WHERE product_id IN (?)', [ctx.pids]);
         check('Reservas liberadas al preparar', Number(res[0].r), 0);
@@ -428,6 +432,28 @@ async function main() {
         check('Pagar en efectivo más de lo que hay en caja → 409', tooBig.status, 409);
         const creditRefund = await call('POST', `/api/cash-shifts/${ctx.shift.id}/payments`, { amount: 10, payment_method: 'credit_account', type: 'refund' }).catch((e) => e);
         check('Reintegro "a cuenta corriente" → 400', creditRefund.status, 400);
+
+        // ADR-015: "Caja 2" (tesorería) se alimenta desde la caja y paga proveedores
+        const treasury0 = Number((await call('GET', '/api/treasury')).balance);
+        await call('POST', '/api/treasury/transfers', { idempotency_key: uuid(), from: 'drawer', to: 'treasury', amount: 20000, notes: 'Retiro a Caja 2' });
+        ctx.cashExpected -= 20000;
+        check('Retiro de la caja a Caja 2 baja el arqueo', await shiftExpected(), ctx.cashExpected);
+        const payKey = uuid();
+        const payBody = { idempotency_key: payKey, supplier_id: ctx.supplier.id, payments: [{ amount: 5000, payment_method: 'Caja 2' }] };
+        const p1 = await call('POST', '/api/supplier-payments', payBody);
+        const p2 = await call('POST', '/api/supplier-payments', payBody);
+        check('Pago a proveedor repetido (doble clic) no se duplica', [Boolean(p2.idempotent_replay), p2.ids?.[0] === p1.ids?.[0]], [true, true]);
+        check('Saldo proveedor tras pago desde Caja 2', await supplierBalance(), 305300);
+        check('Caja 2 = traspaso − pago (15.000)', money(Number((await call('GET', '/api/treasury')).balance) - treasury0), 15000);
+        check('El pago desde Caja 2 no toca la caja del turno', await shiftExpected(), ctx.cashExpected);
+        const overTreasury = await call('POST', '/api/supplier-payments', { supplier_id: ctx.supplier.id, payments: [{ amount: 99999999, payment_method: 'Caja 2' }] }).catch((e) => e);
+        check('Pagar desde Caja 2 más de lo que tiene → 409', overTreasury.status, 409);
+
+        // ADR-015: precio final exacto (cargado con IVA, guardado neto)
+        await call('PUT', `/api/products/${ctx.p3.id}`, { sku: `SIM-Remera-${RUN}`, name: `Remera Sim ${RUN}`, sale_price: 59999 / 1.21, purchase_price: 8000, cost_price: 8000 });
+        const [stored] = await q('SELECT sale_price FROM products WHERE id = ?', [ctx.p3.id]);
+        check('Precio final $59.999 se recupera exacto desde el neto guardado (4 decimales)', money(Number(stored.sale_price) * 1.21), 59999);
+        await call('PUT', `/api/products/${ctx.p3.id}`, { sku: `SIM-Remera-${RUN}`, name: `Remera Sim ${RUN}`, sale_price: 15000, purchase_price: 8000, cost_price: 8000 });
     });
 
     await step('14. Garantía: ingreso, envío al proveedor y reemplazo', async () => {
@@ -535,6 +561,7 @@ async function main() {
         const clientsSum = (await clientBalance(ctx.client.id)) + (await clientBalance(ctx.client2.id));
         check('Mayor Deudores = suma de cuentas corrientes de clientes', await ledgerDelta('receivables'), money(clientsSum));
         check('Mayor Caja = movimiento real de efectivo del turno', await ledgerDelta('cash'), money(ctx.cashExpected - 20000));
+        check('Mayor Caja 2 = traspasos − pagos desde Caja 2', await ledgerDelta('treasury'), 15000);
         check('Mayor Tarjetas y QR a cobrar = cobros con débito (24.200)', await ledgerDelta('cards'), 24200);
         // ADR-014: acreditación del procesador con comisión
         const bank0 = await ledger('1.1.02.01');

@@ -163,8 +163,9 @@ test('a cash payment inserts an expense in the open shift and lowers its expecte
     const connection = drawerConnection({ inflow: 80, opening: 20 });
     const result = await recordDrawerOutflow(connection, { amount: 60, referenceId: 'pay-1' });
     const insert = connection.calls.find(({ statement }) => statement.startsWith('INSERT INTO shift_payments'));
-    assert.ok(insert.statement.includes("'cash'") && insert.statement.includes("'expense'"));
-    assert.deepEqual([insert.params[1], insert.params[2]], ['shift-1', 60]);
+    // ADR-015: el tipo viaja parametrizado (default 'expense'); antes era literal en el SQL.
+    assert.ok(insert.statement.includes("'cash'"));
+    assert.deepEqual([insert.params[1], insert.params[2], insert.params[3]], ['shift-1', 60, 'expense']);
     const update = connection.calls.find(({ statement }) => statement.startsWith('UPDATE cash_shifts SET expected_balance'));
     assert.deepEqual(update.params, [40, 'shift-1']);
     assert.deepEqual(result, { shiftId: 'shift-1', expected_balance: 40, referenceId: 'pay-1' });

@@ -5,6 +5,8 @@ import { toast } from "sonner"
 import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
 import { createClientUuid } from "@/lib/clientUuid"
+import { formatMoney } from "@/lib/formatters"
+import { grossLineTotal, grossPrice } from "@/lib/pricing"
 import { QuickClientDialog } from "@/components/pos/QuickClientDialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -106,7 +108,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
     const createOrderTotal = useMemo(() => {
         return createItems.reduce((sum, item) => {
             const product = productById.get(item.product_id)
-            return sum + Number(item.quantity || 0) * Number(product?.sale_price || 0)
+            return sum + grossLineTotal(item.quantity, product?.sale_price, product?.vat_rate)
         }, 0)
     }, [createItems, productById])
 
@@ -271,9 +273,9 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
 
         if (!isPaymentBalanced) {
             if (remainingToAssign > 0) {
-                toast.error(`Falta asignar $${remainingToAssign.toLocaleString("es-AR")} en medios de pago`)
+                toast.error(`Falta asignar ${formatMoney(remainingToAssign)} en medios de pago`)
             } else if (remainingToAssign < 0) {
-                toast.error(`Los medios de pago superan el total del pedido por $${Math.abs(remainingToAssign).toLocaleString("es-AR")}`)
+                toast.error(`Los medios de pago superan el total del pedido por ${formatMoney(Math.abs(remainingToAssign))}`)
             } else {
                 toast.error("Revisa los importes de los medios de pago")
             }
@@ -393,7 +395,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                     <div className="flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">
                                         <Calculator className="h-4 w-4" />
                                         <span className="text-xs uppercase tracking-wide opacity-80">Suma total:</span>
-                                        <span className="text-base font-bold">${createOrderTotal.toLocaleString("es-AR")}</span>
+                                        <span className="text-base font-bold">{formatMoney(createOrderTotal)}</span>
                                     </div>
                                 ) : null}
                             </div>
@@ -428,7 +430,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                                             {product.sku} - {product.name}
                                                         </span>
                                                         <span className="block text-xs text-muted-foreground">
-                                                            Stock: {Number(product.stock_current ?? 0)}
+                                                            Stock: {Number(product.stock_current ?? 0)} | {formatMoney(grossPrice(product.sale_price, product.vat_rate))} c/IVA
                                                             {alreadyAdded ? " | Ya agregado" : ""}
                                                         </span>
                                                     </span>
@@ -489,10 +491,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                                     }
                                                 />
                                                 <div className="flex items-center text-sm font-semibold">
-                                                    $
-                                                    {(
-                                                        Number(product?.sale_price || 0) * Number(item.quantity || 0)
-                                                    ).toLocaleString("es-AR")}
+                                                    {formatMoney(grossLineTotal(item.quantity, product?.sale_price, product?.vat_rate))}
                                                 </div>
                                                 <Button
                                                     type="button"
@@ -517,7 +516,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                         <div className="flex items-center gap-2">
                                             <span className="text-xs uppercase font-medium text-muted-foreground">Suma pedido:</span>
                                             <span className="text-lg font-bold text-foreground">
-                                                ${createOrderTotal.toLocaleString("es-AR")}
+                                                {formatMoney(createOrderTotal)}
                                             </span>
                                         </div>
                                     </div>
@@ -532,7 +531,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                     <Label className="text-sm font-semibold">Medios de pago</Label>
                                     {hasItems ? (
                                         <span className="text-xs text-muted-foreground">
-                                            (Total a cubrir: <strong>${createOrderTotal.toLocaleString("es-AR")}</strong>)
+                                            (Total a cubrir: <strong>{formatMoney(createOrderTotal)}</strong>)
                                         </span>
                                     ) : null}
                                 </div>
@@ -587,7 +586,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                             <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 font-medium">
                                                 <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
                                                 <span>
-                                                    Falta asignar: <strong className="text-base font-bold text-amber-700 dark:text-amber-300">${remainingToAssign.toLocaleString("es-AR")}</strong>
+                                                    Falta asignar: <strong className="text-base font-bold text-amber-700 dark:text-amber-300">{formatMoney(remainingToAssign)}</strong>
                                                 </span>
                                             </div>
                                             <div className="flex flex-wrap items-center gap-2">
@@ -615,7 +614,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                         <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive font-medium">
                                             <AlertCircle className="h-4 w-4 shrink-0" />
                                             <span>
-                                                El monto asignado supera el total del pedido por <strong>${Math.abs(remainingToAssign).toLocaleString("es-AR")}</strong>
+                                                El monto asignado supera el total del pedido por <strong>{formatMoney(Math.abs(remainingToAssign))}</strong>
                                             </span>
                                         </div>
                                     ) : (
@@ -623,7 +622,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                             <div className="flex items-center gap-2">
                                                 <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                                                 <span>
-                                                    Monto completamente asignado (<strong>$0</strong> pendiente). Total: ${paymentsTotal.toLocaleString("es-AR")}
+                                                    Monto completamente asignado (<strong>{formatMoney(0)}</strong> pendiente). Total: {formatMoney(paymentsTotal)}
                                                 </span>
                                             </div>
                                             <Badge variant="outline" className="border-emerald-500 text-emerald-700 dark:text-emerald-300 bg-emerald-100/50 dark:bg-emerald-900/30 text-xs">
@@ -638,7 +637,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                 )}
 
                                 <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
-                                    <span>Total asignado: <strong>${paymentsTotal.toLocaleString("es-AR")}</strong> de ${createOrderTotal.toLocaleString("es-AR")}</span>
+                                    <span>Total asignado: <strong>{formatMoney(paymentsTotal)}</strong> de {formatMoney(createOrderTotal)}</span>
                                     {hasItems && Math.abs(remainingToAssign) > 0.01 ? (
                                         <Button
                                             type="button"
@@ -715,7 +714,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                         </div>
 
                         <div className="rounded-md border bg-muted/20 p-3 text-right text-sm">
-                            Total pedido: <strong>${createOrderTotal.toLocaleString("es-AR")}</strong>
+                            Total pedido: <strong>{formatMoney(createOrderTotal)}</strong>
                         </div>
                         <div className="flex flex-col items-end gap-1.5 border-t pt-3">
                             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end w-full">
@@ -730,8 +729,8 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                             ? "Debes agregar al menos un producto"
                                             : !isPaymentBalanced
                                             ? remainingToAssign > 0
-                                                ? `Falta asignar $${remainingToAssign.toLocaleString("es-AR")} en medios de pago`
-                                                : `El monto asignado supera el total por $${Math.abs(remainingToAssign).toLocaleString("es-AR")}`
+                                                ? `Falta asignar ${formatMoney(remainingToAssign)} en medios de pago`
+                                                : `El monto asignado supera el total por ${formatMoney(Math.abs(remainingToAssign))}`
                                             : undefined
                                     }
                                 >
@@ -741,9 +740,9 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                             {!canSubmit && hasItems && !createOrderMutation.isPending ? (
                                 <p className="text-xs text-amber-600 dark:text-amber-400 font-medium text-right">
                                     {remainingToAssign > 0
-                                        ? `* Falta asignar $${remainingToAssign.toLocaleString("es-AR")} en medios de pago para poder crear el pedido`
+                                        ? `* Falta asignar ${formatMoney(remainingToAssign)} en medios de pago para poder crear el pedido`
                                         : remainingToAssign < 0
-                                        ? `* El importe asignado excede el total del pedido por $${Math.abs(remainingToAssign).toLocaleString("es-AR")}`
+                                        ? `* El importe asignado excede el total del pedido por ${formatMoney(Math.abs(remainingToAssign))}`
                                         : createPaymentLines.some((l) => Number(l.amount || 0) <= 0)
                                         ? "* Todos los medios de pago deben tener un importe mayor a cero"
                                         : ""}

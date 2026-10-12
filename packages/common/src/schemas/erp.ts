@@ -143,6 +143,8 @@ export const supplierPaymentFiltersSchema = z.object({
 });
 
 export const supplierPaymentCreateSchema = z.object({
+  // One key per payment attempt: a retry returns the payment already registered (ADR-015).
+  idempotency_key: uuidSchema.optional(),
   supplier_id: uuidSchema,
   // Drawer the cash comes from when paying in cash and more than one register is open.
   cash_register_id: optionalUuidSchema,
@@ -408,6 +410,17 @@ export const cashTransactionSchema = z.object({
   reason: z.string().min(1),
   notes: z.string().nullable().optional(),
 });
+
+// "Caja 2" (ADR-015): moves cash between the POS drawer, treasury cash and the bank.
+export const treasuryTransferSchema = z.object({
+  // Required: a double click must never move cash twice.
+  idempotency_key: uuidSchema,
+  from: z.enum(['drawer', 'treasury', 'bank', 'initial']),
+  to: z.enum(['drawer', 'treasury', 'bank']),
+  amount: z.coerce.number().positive(),
+  cash_register_id: optionalUuidSchema,
+  notes: z.string().trim().max(200).nullable().optional(),
+}).refine((data) => data.from !== data.to, { message: 'Origen y destino deben ser distintos', path: ['to'] });
 
 // Card/QR settlement: the processor deposits in the bank what was collected, minus its fee.
 export const cardSettlementSchema = z.object({

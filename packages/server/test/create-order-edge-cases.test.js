@@ -89,14 +89,16 @@ test('order creation resolves cashier, catalog prices, mixed checks and loyalty 
         client_id: 'c', counter_name: ' ', points_redeemed: 50,
         items: [{ product_id: 'p', quantity: 2, unit_price: 'bad' }],
         payments: [
-            { method: 'cash', amount: 1000 },
-            { method: 'credit_account', amount: 1000, check: { note: 'metadata' } }
+            { method: 'cash', amount: 1210 },
+            { method: 'credit_account', amount: 1210, check: { note: 'metadata' } }
         ]
     }, 'u');
-    assert.equal(result.total_amount, 1800);
+    // ADR-015: el pedido se cobra con IVA (2 x 1000 x 1.21 = 2420; sin vat_rate en catálogo rige 21 %);
+    // menos 20 puntos canjeados ($200) quedan 2220, que dan 2 puntos.
+    assert.equal(result.total_amount, 2220);
     assert.equal(result.points_redeemed, 20);
-    assert.equal(result.points_earned, 1);
-    assert.equal(audit.new_values.total_amount, 1800);
+    assert.equal(result.points_earned, 2);
+    assert.equal(audit.new_values.total_amount, 2220);
     const orderInsert = calls.find((call) => call.sql.includes('INSERT INTO orders'));
     assert.ok(orderInsert.params.includes('Cajero QA'));
     assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO order_payments')).length, 2);
@@ -328,4 +330,51 @@ test('an authorized price override is audited in the same transaction as the sal
     assert.deepEqual(override.entry.new_values, {
         source: 'authorized_user', role: 'manager', lines: [{ product_id: 'p', catalog_price: 100, unit_price: 80 }],
     });
+});
+
+test('resolveUnitPrice keeps the catalog net price for a rounded request and 4 decimals for overrides', async () => {
+    const { resolveUnitPrice } = await import('../domains/sales/CreateOrderUseCase.js');
+    const prices = new Map([['p', 82.6446]]);
+    assert.equal(resolveUnitPrice({ product_id: 'p' }, prices), 82.6446);
+    assert.equal(resolveUnitPrice({ product_id: 'p', unit_price: 82.64 }, prices), 82.6446);
+    assert.equal(resolveUnitPrice({ product_id: 'p', unit_price: 70.123456 }, prices), 70.1235);
+    assert.equal(resolveUnitPrice({ product_id: 'p', unit_price: -1 }, prices), 82.6446);
+});
+
+test('an offline sale queued before per-line VAT rounding absorbs the cents in its last payment (audited)', async (t) => {
+    const inserts = [];
+    const audits = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        if (statement.includes('SELECT id, sale_price, name, vat_rate FROM products')) {
+            return [[{ id: 'a', sale_price: 10.0041, name: 'A', vat_rate: 21 }, { id: 'b', sale_price: 10.0041, name: 'B', vat_rate: 21 }, { id: 'c', sale_price: 10.0041, name: 'C', vat_rate: 21 }]];
+        }
+        if (statement.includes('INSERT INTO order_payments')) inserts.push(params);
+        return [[]];
+    });
+    const originalAudit = auditService.log;
+    auditService.log = async (entry) => { audits.push(entry); };
+    t.after(() => { auditService.log = originalAudit; });
+    const useCase = new CreateOrderUseCase();
+    // Per line: round2(10.0041 × 1.21) = 12.10, total 36.30. The old client rounded the total:
+    // round2(30.0123 × 1.21) = 36.31, one cent away.
+    const order = {
+        external_source: 'pos',
+        external_id: 'offline-1',
+        offline_captured_at: new Date(Date.now() - 60_000).toISOString(),
+        items: ['a', 'b', 'c'].map((id) => ({ product_id: id, quantity: 1, unit_price: 10.0041 })),
+        payments: [{ method: 'card', amount: 20 }, { method: 'cash', amount: 16.33 }],
+    };
+    try {
+        await useCase.execute(order, 'u', { role: 'cashier' });
+    } catch {
+        // The mock does not model the whole sale: only the payment resolution matters here.
+    }
+    assert.deepEqual(inserts.map((params) => params[3]), [20, 16.3]);
+    assert.ok(audits.some((entry) => entry.action === 'OFFLINE_SALE_PAYMENT_ROUNDING'));
+    // Online, the same gap is still rejected.
+    await assert.rejects(
+        () => useCase.execute({ ...order, offline_captured_at: undefined }, 'u', { role: 'cashier' }),
+        (e) => e.errorCode === 'INVALID_ORDER_PAYMENT_ALLOCATION'
+    );
 });

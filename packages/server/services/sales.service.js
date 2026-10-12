@@ -8,6 +8,7 @@ import accountingService from './accounting.service.js';
 import invoiceAuthorizationUseCase from '../domains/sales/InvoiceAuthorizationUseCase.js';
 import createOrderUseCase from '../domains/sales/CreateOrderUseCase.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
+import { lineAmounts } from '../utils/vatMath.js';
 import dispatchOrderUseCase from '../domains/sales/DispatchOrderUseCase.js';
 import deliverOrderUseCase from '../domains/sales/DeliverOrderUseCase.js';
 
@@ -509,7 +510,7 @@ class SalesService extends BaseService {
 
         const orderIds = orders.map((o) => o.id);
         const [items] = await pool.query(`
-            SELECT oi.*, p.name AS product_name, p.sku, p.location, p.barcode
+            SELECT oi.*, p.name AS product_name, p.sku, p.location, p.barcode, p.vat_rate
             FROM order_items oi
             LEFT JOIN products p ON oi.product_id = p.id
             WHERE oi.order_id IN (?)
@@ -662,7 +663,7 @@ class SalesService extends BaseService {
         if (orders.length === 0) throw new Error('Order not found');
 
         const [items] = await pool.query(`
-            SELECT oi.*, p.name AS product_name, p.sku, p.location, p.barcode
+            SELECT oi.*, p.name AS product_name, p.sku, p.location, p.barcode, p.vat_rate
             FROM order_items oi
             LEFT JOIN products p ON p.id = oi.product_id
             WHERE oi.order_id = ?
@@ -909,9 +910,8 @@ class SalesService extends BaseService {
                     const vatRate = item.vat_rate != null ? Number(item.vat_rate) : 21.00;
                     const unitPrice = Number(item.unit_price || 0);
 
-                    const lineNet = this._roundMoney(qty * unitPrice);
-                    const lineVat = this._roundMoney(lineNet * (vatRate / 100));
-                    const lineTotal = this._roundMoney(lineNet + lineVat);
+                    // ADR-015: gross first, so the invoice charges exactly what the order showed.
+                    const { net: lineNet, vat: lineVat, gross: lineTotal } = lineAmounts(qty, unitPrice, vatRate);
 
                     netAmount += lineNet;
                     vatAmount += lineVat;
@@ -1173,9 +1173,8 @@ class SalesService extends BaseService {
                 const discount = Number(item.discount_percentage ?? item.discount ?? 0);
                 const vatRate = Number(item.vat_rate ?? 21);
 
-                const base = this._roundMoney(quantity * unitPrice * (1 - (discount / 100)));
-                const lineVat = this._roundMoney(base * (vatRate / 100));
-                const totalLine = this._roundMoney(base + lineVat);
+                // ADR-015: gross first (quantity × final price, after discount), VAT = gross − net.
+                const { net: base, vat: lineVat, gross: totalLine } = lineAmounts(quantity, unitPrice * (1 - (discount / 100)), vatRate);
 
                 netAmount += base;
                 vatAmount += lineVat;

@@ -3,6 +3,7 @@ import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import defaultStockLedger from '../inventory/StockLedger.js';
 import accountingService from '../../services/accounting.service.js';
+import { lineAmounts } from '../../utils/vatMath.js';
 import { hasPermission, PERMISSIONS } from '@wsm/common';
 
 // A POS checkout without shipping is a counter sale: the customer leaves with the
@@ -18,6 +19,20 @@ export function isOfflineReplay(orderData, now = Date.now()) {
     if (orderData.external_source !== 'pos' || !orderData.offline_captured_at) return false;
     const capturedAt = Date.parse(orderData.offline_captured_at);
     return Number.isFinite(capturedAt) && capturedAt <= now + CLOCK_SKEW_MS && now - capturedAt <= OFFLINE_REPLAY_MAX_AGE_MS;
+}
+
+/**
+ * Net unit price stored for a line (ADR-015). A requested price within half a cent of the
+ * catalog is the catalog price itself (the screen shows it rounded): keeping the catalog's
+ * 4 decimals makes the line charge exactly the final price on the shelf. Anything else is
+ * an override (checked by resolvePriceOverrides) and is kept at 4 decimals.
+ */
+export function resolveUnitPrice(item, priceByProduct) {
+    const catalog = priceByProduct.get(item.product_id);
+    const requested = Number(item.unit_price);
+    if (item.unit_price == null || !Number.isFinite(requested) || requested < 0) return catalog;
+    if (Math.abs(requested - catalog) < 0.005) return catalog;
+    return Math.round(requested * 10000) / 10000;
 }
 
 /**
@@ -95,6 +110,13 @@ export class CreateOrderUseCase {
              FOR UPDATE`,
             [productId]
         );
+        // ADR-015: orders are picked in the back: warehouse locations before the sales floor.
+        const ordered = this.stockLedger.orderByChannel(
+            stockRows,
+            await this.stockLedger.salesFloorCodes(connection),
+            'order'
+        );
+        stockRows.splice(0, stockRows.length, ...ordered);
 
         const availableQty = stockRows.reduce((sum, row) => sum + Number(row.available_quantity || 0), 0);
         if (availableQty < requestedQty) {
@@ -191,55 +213,23 @@ export class CreateOrderUseCase {
             }
             const priceOverride = resolvePriceOverrides(orderData, priceByProduct, nameByProduct, actor);
 
-            const computedNet = orderData.items.reduce(
-                (sum, item) => {
-                    const requestedPrice = Number(item.unit_price);
-                    const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
-                        ? requestedPrice
-                        : priceByProduct.get(item.product_id);
-                    return sum + Math.round(Number(item.quantity) * unitPrice * 100) / 100;
-                },
-                0
-            );
-
             const computedWithVat = orderData.items.reduce(
-                (sum, item) => {
-                    const requestedPrice = Number(item.unit_price);
-                    const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
-                        ? requestedPrice
-                        : priceByProduct.get(item.product_id);
-                    const vatRate = vatByProduct.get(item.product_id);
-                    const lineNet = Math.round(Number(item.quantity) * unitPrice * 100) / 100;
-                    const lineVat = Math.round(lineNet * (vatRate / 100) * 100) / 100;
-                    return sum + lineNet + lineVat;
-                },
+                (sum, item) => sum + lineAmounts(
+                    // ADR-015: the line is charged at quantity × the final (VAT-included) price.
+                    item.quantity, resolveUnitPrice(item, priceByProduct), vatByProduct.get(item.product_id)
+                ).gross,
                 0
             );
 
             const externalTotal = Number(orderData.external_total_amount ?? orderData.total_amount);
-            let resolvedTotal = computedNet;
-
-            if (orderData.external_source === 'pos') {
-                // Catalog prices are net (ADR-008): a POS sale always charges net + catalog VAT.
-                // The client total is not trusted; payments must add up to this amount.
-                resolvedTotal = Math.round(computedWithVat * 100) / 100;
-            } else if (orderData.external_source && Number.isFinite(externalTotal) && externalTotal >= 0) {
+            // Order totals are VAT-included (ADR-008/015) and computed here: a client-sent total
+            // is never trusted (an internal order used to keep the net total, or any total the
+            // client sent, and the current account of uninvoiced credit orders read it).
+            let resolvedTotal = Math.round(computedWithVat * 100) / 100;
+            if (orderData.external_source && orderData.external_source !== 'pos'
+                && Number.isFinite(externalTotal) && externalTotal >= 0) {
+                // An external channel (Tiendanube) reports what its customer actually paid.
                 resolvedTotal = externalTotal;
-            } else if (Number.isFinite(externalTotal) && externalTotal >= 0) {
-                if (Math.abs(externalTotal - computedWithVat) <= 0.05) {
-                    resolvedTotal = Math.round(computedWithVat * 100) / 100;
-                } else if (Math.abs(externalTotal - computedNet) <= 0.05) {
-                    resolvedTotal = Math.round(computedNet * 100) / 100;
-                } else {
-                    resolvedTotal = externalTotal;
-                }
-            } else if (Array.isArray(orderData.payments) && orderData.payments.length > 0) {
-                const allocated = Math.round(orderData.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0) * 100) / 100;
-                if (Math.abs(allocated - computedWithVat) <= 0.05) {
-                    resolvedTotal = Math.round(computedWithVat * 100) / 100;
-                } else {
-                    resolvedTotal = Math.round(computedNet * 100) / 100;
-                }
             }
             const allowedPaymentStatuses = new Set(['pending', 'paid', 'refunded', 'voided']);
             const resolvedPaymentStatus = orderData.external_source && allowedPaymentStatuses.has(orderData.payment_status)
@@ -252,9 +242,19 @@ export class CreateOrderUseCase {
                     check: payment.check || null
                 }))
                 : [];
+            let paymentRoundingAdjustment = null;
             if (normalizedPayments.length > 0) {
                 const allocatedTotal = Math.round(normalizedPayments.reduce((sum, payment) => sum + payment.amount, 0) * 100) / 100;
-                if (normalizedPayments.some((payment) => !payment.method || payment.amount <= 0) || Math.abs(allocatedTotal - resolvedTotal) > 0.01) {
+                const gap = Math.round((resolvedTotal - allocatedTotal) * 100) / 100;
+                // An offline sale queued by a client older than ADR-015 rounded the VAT on the
+                // total, not per line: up to a cent per line apart. The sale already happened,
+                // so the last payment absorbs the cents (audited) instead of losing the sale.
+                const lastPayment = normalizedPayments[normalizedPayments.length - 1];
+                if (offlineReplay && Math.abs(gap) > 0.01 && Math.abs(gap) <= 0.01 * orderData.items.length
+                    && lastPayment && lastPayment.amount + gap > 0) {
+                    paymentRoundingAdjustment = { method: lastPayment.method, from: lastPayment.amount, gap };
+                    lastPayment.amount = Math.round((lastPayment.amount + gap) * 100) / 100;
+                } else if (normalizedPayments.some((payment) => !payment.method || payment.amount <= 0) || Math.abs(gap) > 0.01) {
                     const err = new Error(`Los medios de pago deben sumar el total del pedido (${resolvedTotal})`);
                     err.statusCode = 400;
                     err.errorCode = 'INVALID_ORDER_PAYMENT_ALLOCATION';
@@ -334,7 +334,7 @@ export class CreateOrderUseCase {
             // Stock rows are locked in product-id order in every path so that two
             // concurrent carts with the same products cannot deadlock each other.
             const lockedRows = counterSale
-                ? await this.stockLedger.lockSellableRows(connection, productIds)
+                ? await this.stockLedger.lockSellableRows(connection, productIds, { channel: 'counter' })
                 : null;
             const unitCosts = counterSale
                 ? await accountingService.productUnitCosts(connection, productIds)
@@ -343,10 +343,7 @@ export class CreateOrderUseCase {
 
             for (const item of itemsInLockOrder) {
                 const itemId = crypto.randomUUID();
-                const requestedPrice = Number(item.unit_price);
-                const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
-                    ? requestedPrice
-                    : priceByProduct.get(item.product_id);
+                const unitPrice = resolveUnitPrice(item, priceByProduct);
 
                 if (counterSale) {
                     await connection.query(
@@ -445,6 +442,16 @@ export class CreateOrderUseCase {
                 }, connection);
             }
 
+            if (paymentRoundingAdjustment) {
+                await auditService.log({
+                    user_id: userId,
+                    action: 'OFFLINE_SALE_PAYMENT_ROUNDING',
+                    entity_type: 'order',
+                    entity_id: orderId,
+                    new_values: { offline_captured_at: orderData.offline_captured_at, total: resolvedTotal, ...paymentRoundingAdjustment }
+                }, connection);
+            }
+
             if (priceOverride.overrides.length > 0) {
                 await auditService.log({
                     user_id: userId,
@@ -465,7 +472,16 @@ export class CreateOrderUseCase {
                 });
             };
             const result = { id: orderId, total_amount: finalTotal, points_earned: pointsEarned, points_redeemed: pointsRedeemed };
-            if (isExternalTx) return { ...result, syncStock };
+            if (isExternalTx) {
+                // The POS checkout records these same payments in the shift and the invoice:
+                // hand back the amounts actually stored (after an offline rounding adjustment).
+                const payments = paymentRoundingAdjustment
+                    ? orderData.payments.map((payment, index) => (
+                        index === normalizedPayments.length - 1 ? { ...payment, amount: normalizedPayments[index].amount } : payment
+                    ))
+                    : orderData.payments;
+                return { ...result, payments, syncStock };
+            }
 
             await connection.commit();
             syncStock();

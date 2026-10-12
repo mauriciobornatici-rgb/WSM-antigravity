@@ -80,6 +80,27 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-015 — Precio final con IVA, Caja 2, idempotencia y salón de ventas (usuario, 2026-10-12)
+- **Precios con IVA en pantalla, guardados netos (amplía ADR-008):**
+  - Todo precio o costo visible se muestra con IVA incluido; el IVA se discrimina solo donde es fiscal (factura A, resumen fiscal del carrito, factura de proveedor, libro IVA).
+  - El precio de venta se carga final; el costo se carga neto (factura del proveedor) con el final al lado.
+  - Para que el precio final se cobre exacto, el neto se guarda con 4 decimales (migración 050).
+  - Fórmula única por línea: bruto = round2(cant × neto × (1+r)) primero, IVA = bruto − neto (`utils/vatMath.js`, `client/lib/pricing.ts`).
+  - El total de un pedido interno lo calcula siempre el servidor con IVA.
+  - Tiendanube publica el precio final y lo importado se guarda neto.
+- **Comisión de tarjetas:** se separa el IVA como crédito fiscal (1.1.05.02).
+- **Caja 2 (tesorería, 1.1.01.02, migración 049):**
+  - Efectivo fuera del cajón. Recibe traspasos desde la caja, el banco o un saldo inicial, y paga proveedores ("Efectivo Caja 2").
+  - Nunca se gasta más de lo que tiene (con lock).
+  - Los traspasos con la caja del turno usan `transfer_out` / `transfer_in` en el arqueo.
+- **Idempotencia:** pagos a proveedor (simple y masivo) y traspasos de tesorería. Tabla `idempotency_requests`: el reintento devuelve la respuesta original y la misma clave con otro contenido da 409.
+- **Ubicaciones:** marca "Salón de ventas" (`is_sales_floor`). El mostrador vende primero del salón; los pedidos se preparan primero desde el depósito.
+- **Aplicación (coordinador, tras la revisión del guardián, AUD-004):**
+  - Un precio pedido a medio centavo del catálogo es el del catálogo (se guardan sus 4 decimales); un precio distinto se guarda a 4 decimales.
+  - Una venta offline encolada antes de este cambio puede diferir hasta 1 centavo por línea, porque redondeaba el IVA sobre el total. El último pago absorbe esa diferencia, con auditoría `OFFLINE_SALE_PAYMENT_ROUNDING`, y el mismo monto va a la caja y a la factura. En línea sigue rechazándose.
+  - Orden de locks: Caja 2 antes que el turno de caja. Los saldos de Caja 2 y del cajón se leen con lock, nunca de una foto vieja de la transacción.
+  - La clave de idempotencia es obligatoria en traspasos de tesorería y se valida (texto de 64 caracteres o menos) en los pagos masivos.
+
 ### ADR-014 — NC fiscal, efectivo desde la caja, garantías y tarjetas (usuario, 2026-10-12)
 - **NC:**
   - Corrige una factura concreta del mismo cliente. Nunca supera lo acreditable de esa factura, sumando NC manuales y de devolución; las dos bloquean la factura.
@@ -116,7 +137,7 @@ El usuario aprobó corregir lo que encontró la simulación operativa. Desde aho
 
 ### ADR-012 — Reglas de negocio de la revisión del refactor (usuario, 2026-10-12)
 - **Estados de orden de compra (cambio manual):** solo hacia adelante: borrador → enviada → parcial → recibida; cancelar solo antes de recibir algo (borrador o enviada). `recibida` y `cancelada` son finales. Otra transición → 409.
-- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 049 (046 y 047 agregan cuentas y la NC fiscal, 048 completa NC viejas; ADR-013/014).
+- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 051 (046-050 agregan cuentas, NC fiscal, tesorería e idempotencia, precios a 4 decimales; ADR-013/014/015).
 - **Aplicación (coordinador, tras la revisión del guardián):**
   - "Recibir algo" incluye la mercadería en control de calidad: una OC con recepciones `pending_qc` o cantidades recibidas no se puede anular (409 `purchase_order_has_receptions`). La UI oculta "Anular orden" en ese caso.
   - Aprobar una recepción bloquea la OC antes que sus ítems. Contra una OC anulada responde 409 (`purchase_order_cancelled`), y nunca hace retroceder una OC `received`.

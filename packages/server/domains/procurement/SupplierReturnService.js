@@ -118,7 +118,7 @@ export class SupplierReturnService {
 
             const ids = rows.map((r) => r.id);
             const [items] = await pool.query(`
-                SELECT sri.*, p.name AS product_name, p.sku
+                SELECT sri.*, p.name AS product_name, p.sku, p.vat_rate
                 FROM supplier_return_items sri
                 LEFT JOIN products p ON sri.product_id = p.id
                 WHERE sri.return_id IN (?)

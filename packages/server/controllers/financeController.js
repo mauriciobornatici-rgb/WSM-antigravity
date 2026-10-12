@@ -2,6 +2,7 @@ import catchAsync from '../utils/catchAsync.js';
 import getRequestIp from '../utils/requestIp.js';
 import financeService from '../services/finance.service.js';
 import cashRegisterService from '../services/cashRegister.service.js';
+import treasuryService from '../services/treasury.service.js';
 
 export const getTransactions = catchAsync(async (req, res) => {
     const rows = await financeService.getTransactions(req.query);
@@ -100,6 +101,15 @@ export const getCustomerCheck = catchAsync(async (req, res) => {
 export const updateCustomerCheckStatus = catchAsync(async (req, res) => {
     const row = await financeService.updateCustomerCheckStatus(req.params.id, req.body, req.user?.id || null);
     res.json(row);
+});
+
+export const getTreasury = catchAsync(async (req, res) => {
+    res.json(await treasuryService.getSummary());
+});
+
+export const createTreasuryTransfer = catchAsync(async (req, res) => {
+    const result = await treasuryService.transfer(req.body, req.user?.id || null, getRequestIp(req));
+    res.status(result.idempotent_replay ? 200 : 201).json(result);
 });
 
 export const getCardSettlements = catchAsync(async (req, res) => {

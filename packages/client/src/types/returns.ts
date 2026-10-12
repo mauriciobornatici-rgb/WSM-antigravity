@@ -19,6 +19,7 @@ export type ClientReturnItemRow = {
     sku?: string;
     quantity: number;
     unit_price: number;
+    vat_rate?: number;
     condition_status?: string;
 };
 
@@ -69,6 +70,7 @@ export type SupplierReturnItem = {
     sku: string;
     quantity: number;
     unit_cost: number;
+    vat_rate?: number;
     reason?: string;
 };
 

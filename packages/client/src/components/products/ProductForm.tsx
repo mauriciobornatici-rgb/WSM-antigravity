@@ -7,10 +7,13 @@ import * as z from "zod";
 import { createProductSchema } from "@wsm/common";
 import type { Product, ProductCatalogOption } from "@/types";
 import { api } from "@/services/api";
+import { formatMoney } from "@/lib/formatters";
+import { grossPrice, netForTypedFinalPrice, netFromGross, vatRateOf } from "@/lib/pricing";
 import { Button } from "@/components/ui/button";
 import {
     Form,
     FormControl,
+    FormDescription,
     FormField,
     FormItem,
     FormLabel,
@@ -109,13 +112,19 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             color: initialData?.color ?? "",
             location: initialData?.location ?? "",
             purchase_price: String(initialData?.purchase_price ?? 0),
-            sale_price: String(initialData?.sale_price ?? 0),
+            // The sale price is typed as the final (VAT-included) one and stored net (ADR-015).
+            sale_price: String(grossPrice(initialData?.sale_price ?? 0, initialData?.vat_rate)),
             stock_initial: "0",
             image_url: initialData?.image_url ?? "",
         },
     });
 
     const isEditMode = Boolean(initialData);
+    const vatRate = vatRateOf(initialData?.vat_rate);
+    const purchaseWatch = useWatch({ control: form.control, name: "purchase_price" });
+    const saleFinalWatch = useWatch({ control: form.control, name: "sale_price" });
+    const saleNet = netFromGross(saleFinalWatch, vatRate);
+    const saleVat = Math.round((Number(saleFinalWatch || 0) - saleNet) * 100) / 100;
     const imageValue = useWatch({ control: form.control, name: "image_url" }) ?? "";
 
     const [scanDialogOpen, setScanDialogOpen] = useState(false);
@@ -344,7 +353,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             size: values.size?.trim() || null,
             color: values.color?.trim() || null,
             purchase_price: Number(values.purchase_price),
-            sale_price: Number(values.sale_price),
+            sale_price: netForTypedFinalPrice(values.sale_price, initialData?.sale_price, initialData?.vat_rate),
             image_url: values.image_url?.trim() || "",
         };
 
@@ -662,10 +671,13 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     name="purchase_price"
                                     render={({ field }) => (
                                         <FormItem>
-                                            <FormLabel>Precio compra</FormLabel>
+                                            <FormLabel>Precio compra neto (s/IVA)</FormLabel>
                                             <FormControl>
                                                 <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} value={field.value ?? ""} />
                                             </FormControl>
+                                            <FormDescription className="text-xs" aria-live="polite">
+                                                Final c/IVA: {formatMoney(grossPrice(purchaseWatch, vatRate))}
+                                            </FormDescription>
                                             <FormMessage />
                                         </FormItem>
                                     )}
@@ -675,10 +687,13 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     name="sale_price"
                                     render={({ field }) => (
                                         <FormItem>
-                                            <FormLabel>Precio venta</FormLabel>
+                                            <FormLabel>Precio de venta final (IVA incl.)</FormLabel>
                                             <FormControl>
                                                 <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} value={field.value ?? ""} />
                                             </FormControl>
+                                            <FormDescription className="text-xs" aria-live="polite">
+                                                Precio final con IVA; se guarda el neto. Neto: {formatMoney(saleNet)} · IVA {vatRate}%: {formatMoney(saleVat)}
+                                            </FormDescription>
                                             <FormMessage />
                                         </FormItem>
                                     )}

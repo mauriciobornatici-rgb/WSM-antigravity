@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatMoney } from "@/lib/formatters";
+import { grossPrice } from "@/lib/pricing";
 
 type InventoryTableProps = {
     loading: boolean;
@@ -30,8 +31,8 @@ export function InventoryTable({ loading, products, onEdit, onRelocate, onDelete
                         <TableHead>Codigo</TableHead>
                         <TableHead>Producto</TableHead>
                         <TableHead>Categoria</TableHead>
-                        <TableHead className="text-right">Costo</TableHead>
-                        <TableHead className="text-right">Venta</TableHead>
+                        <TableHead className="text-right">Costo (IVA incl.)</TableHead>
+                        <TableHead className="text-right">Venta (IVA incl.)</TableHead>
                         <TableHead className="text-right">Disponible</TableHead>
                         <TableHead className="text-right">Inmovilizado</TableHead>
                         <TableHead className="text-right">Acciones</TableHead>
@@ -78,10 +79,10 @@ export function InventoryTable({ loading, products, onEdit, onRelocate, onDelete
                                     <Badge variant="secondary">{product.category}</Badge>
                                 </TableCell>
                                 <TableCell className="text-right font-mono text-muted-foreground">
-                                    {formatMoney(product.purchase_price)}
+                                    {formatMoney(grossPrice(product.purchase_price, product.vat_rate))}
                                 </TableCell>
                                 <TableCell className="text-right font-semibold font-mono text-emerald-600 dark:text-emerald-400">
-                                    {formatMoney(product.sale_price)}
+                                    {formatMoney(grossPrice(product.sale_price, product.vat_rate))}
                                 </TableCell>
                                 <TableCell className="text-right">
                                     <div className="inline-flex items-center gap-2">

@@ -72,6 +72,9 @@ import { httpClient, isApiError } from "./httpClient";
 
 type GenericRecord = Record<string, unknown>;
 
+/** Funds for "Caja 2" movements (ADR-015); "initial" only sends (opening balance). */
+export type TreasuryFund = "drawer" | "treasury" | "bank" | "initial";
+
 export type ReturnsAnalyticsResponse = {
     totalLossAmount?: number;
     topReasons?: Array<{
@@ -481,9 +484,9 @@ export const api = {
         httpClient.get<InventoryItem[]>("/api/inventory"),
     getWarehouseLocations: () =>
         httpClient.get<WarehouseLocation[]>("/api/inventory/locations"),
-    createWarehouseLocation: (data: { code: string; name: string; description?: string }) =>
+    createWarehouseLocation: (data: { code: string; name: string; description?: string; is_sales_floor?: boolean }) =>
         httpClient.post<WarehouseLocation>("/api/inventory/locations", data),
-    updateWarehouseLocation: (id: string, data: { code?: string; name?: string; description?: string | null; active?: boolean }) =>
+    updateWarehouseLocation: (id: string, data: { code?: string; name?: string; description?: string | null; active?: boolean; is_sales_floor?: boolean }) =>
         httpClient.put<WarehouseLocation>(`/api/inventory/locations/${id}`, data),
     getStockAuditDashboard: (filters?: { status?: import("@/types").StockAuditStatus; abc_class?: import("@/types").StockAuditScope; location_code?: string }) =>
         httpClient.get<import("@/types").StockAuditDashboard>(withQuery("/api/inventory/audits/dashboard", filters)),
@@ -655,6 +658,11 @@ export const api = {
     // ==================== CREDIT NOTES ====================
     getCreditNotes: (filters?: { client_id?: string }) =>
         httpClient.get<GenericRecord[]>(withQuery("/api/credit-notes", filters)),
+
+    getTreasury: () =>
+        httpClient.get<{ balance: number; movements: Array<{ id: string; date: string; description: string; reference_type: string; amount: number }> }>("/api/treasury"),
+    createTreasuryTransfer: (data: { idempotency_key: string; from: TreasuryFund; to: Exclude<TreasuryFund, "initial">; amount: number; cash_register_id?: string; notes?: string | null }) =>
+        httpClient.post<{ id: string; amount: number; idempotent_replay?: boolean }>("/api/treasury/transfers", data),
 
     getCardSettlements: () =>
         httpClient.get<{ pending_balance: number; settlements: Array<{ id: string; amount: number; description: string; date: string }> }>("/api/card-settlements"),

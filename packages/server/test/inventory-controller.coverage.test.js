@@ -648,14 +648,15 @@ test('updateBatch and updateSerialNumber audit only when a record was updated', 
 test('getWarehouseLocations coerces numeric aggregates and booleans', async (t) => {
     installPool(t, {
         poolQuery: async () => [[
-            { id: 'l1', code: 'A', active: 1, sku_count: '3', total_quantity: '12.5' },
+            { id: 'l1', code: 'A', active: 1, is_sales_floor: 1, sku_count: '3', total_quantity: '12.5' },
             { id: 'l2', code: 'B', active: 0, sku_count: null, total_quantity: null }
         ]]
     });
     const result = await runHandler(controller.getWarehouseLocations);
+    // ADR-015: is_sales_floor también se devuelve como boolean (ausente => false).
     assert.deepEqual(result.body, [
-        { id: 'l1', code: 'A', active: true, sku_count: 3, total_quantity: 12.5 },
-        { id: 'l2', code: 'B', active: false, sku_count: 0, total_quantity: 0 }
+        { id: 'l1', code: 'A', active: true, is_sales_floor: true, sku_count: 3, total_quantity: 12.5 },
+        { id: 'l2', code: 'B', active: false, is_sales_floor: false, sku_count: 0, total_quantity: 0 }
     ]);
 });
 
@@ -753,14 +754,19 @@ test('updateWarehouseLocation allows renaming codes of unused locations and edit
     });
     assert.equal(renamed.status, 200);
     const update = calls.find((call) => call.statement.startsWith('UPDATE'));
-    assert.deepEqual(update.params, ['Z', 'Alpha', null, false, 'l1']);
+    assert.deepEqual(update.params, ['Z', 'Alpha', null, false, false, 'l1']);
     assert.equal(audit[0].action, 'UPDATE_WAREHOUSE_LOCATION');
 
     calls.length = 0;
     await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { name: 'Beta', description: 'new' } });
     assert.equal(calls.some((call) => call.statement.includes('AS usage_count')), false, 'no usage check if code is unchanged');
     const second = calls.find((call) => call.statement.startsWith('UPDATE'));
-    assert.deepEqual(second.params, ['A', 'Beta', 'new', true, 'l1']);
+    assert.deepEqual(second.params, ['A', 'Beta', 'new', true, false, 'l1']);
+
+    calls.length = 0;
+    await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { is_sales_floor: true } });
+    const third = calls.find((call) => call.statement.startsWith('UPDATE'));
+    assert.deepEqual(third.params, ['A', 'Alpha', 'old', true, true, 'l1']);
 });
 
 test('updateWarehouseLocation maps duplicates to 409 and rethrows other DB errors', async (t) => {

@@ -17,12 +17,12 @@ import { PaginationControls } from "@/components/common/PaginationControls";
 import { cn } from "@/lib/utils";
 import { showErrorToast } from "@/lib/errorHandling";
 import { createClientUuid } from "@/lib/clientUuid";
-import type { PendingSupplierInvoiceResponse, BulkSupplierPaymentAllocation, InvoicePaymentLineInput, BulkSupplierPaymentInput, CustomerCheck, OutgoingCheck } from "@/types/api";
+import type { PendingSupplierInvoiceResponse, BulkSupplierPaymentAllocation, SupplierSettlementLineInput, BulkSupplierPaymentInput, CustomerCheck, OutgoingCheck } from "@/types/api";
 import type { Supplier } from "@/types";
 
 type PaymentLine = {
     id: string;
-    method: InvoicePaymentLineInput["method"];
+    method: SupplierSettlementLineInput["method"];
     amount: string;
     check: {
         source_type: "own" | "third_party";
@@ -46,7 +46,8 @@ const OUTGOING_STATUS_LABELS: Record<OutgoingCheck["status"], string> = {
 };
 
 const PAYMENT_METHOD_OPTIONS: Array<{ value: PaymentLine["method"]; label: string }> = [
-    { value: "cash", label: "Efectivo" },
+    { value: "cash", label: "Efectivo (caja del turno)" },
+    { value: "treasury", label: "Efectivo Caja 2" },
     { value: "debit_card", label: "Tarjeta debito" },
     { value: "credit_card", label: "Tarjeta credito" },
     { value: "transfer", label: "Transferencia" },
@@ -81,6 +82,8 @@ export default function SupplierPaymentsPage() {
     const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
     const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([createPaymentLine()]);
     const [paymentNotes, setPaymentNotes] = useState("");
+    // One key per payment attempt, kept across retries until the payment is confirmed (ADR-015).
+    const [paymentKey, setPaymentKey] = useState(() => createClientUuid());
     const [outgoingFilter, setOutgoingFilter] = useState<OutgoingCheckFilter>("all");
     const [outgoingPage, setOutgoingPage] = useState(1);
     const [selectedOutgoingCheckId, setSelectedOutgoingCheckId] = useState<string | null>(null);
@@ -187,8 +190,15 @@ export default function SupplierPaymentsPage() {
 
     const remainingToAssign = totalSelected - totalToRegister;
 
+    // The server answers 409 when a key is reused with different content: any edit after a failed
+    // attempt starts a new attempt. Never while a submit is in flight (a retry must keep its key).
+    function renewPaymentKey() {
+        if (!isRegistering) setPaymentKey(createClientUuid());
+    }
+
     // Handle selection and suggest remaining amount
     const toggleInvoiceSelection = (invoiceId: string) => {
+        renewPaymentKey();
         const newSet = new Set(selectedInvoiceIds);
         if (newSet.has(invoiceId)) {
             newSet.delete(invoiceId);
@@ -210,6 +220,7 @@ export default function SupplierPaymentsPage() {
     };
 
     const toggleAllInvoices = () => {
+        renewPaymentKey();
         let newSet: Set<string>;
         if (selectedInvoiceIds.size === supplierInvoices.length) {
             newSet = new Set();
@@ -242,7 +253,22 @@ export default function SupplierPaymentsPage() {
     const [cashRegisterId, setCashRegisterId] = useState("");
     const needsRegisterChoice = paysCash && openRegisters.length > 1;
 
+    // Caja 2 (ADR-015) cannot go negative: warn and block when its lines exceed the balance.
+    const paysTreasury = paymentLines.some((line) => line.method === "treasury");
+    const treasuryTotal = paymentLines
+        .filter((line) => line.method === "treasury")
+        .reduce((sum, line) => sum + Number(line.amount || 0), 0);
+    const treasuryQuery = useQuery({
+        queryKey: ["treasury", "for-supplier-payment"],
+        queryFn: () => api.getTreasury(),
+        enabled: paysTreasury,
+        meta: { silentError: true },
+    });
+    const treasuryBalance = treasuryQuery.data?.balance;
+    const treasuryShort = paysTreasury && treasuryBalance !== undefined && treasuryTotal > treasuryBalance + 0.005;
+
     function updatePaymentLine(lineId: string, patch: Partial<PaymentLine>) {
+        renewPaymentKey();
         setPaymentLines((prev) => prev.map((line) => (line.id === lineId ? { ...line, ...patch } : line)));
     }
 
@@ -267,7 +293,7 @@ export default function SupplierPaymentsPage() {
             
             for (const inv of selectedInvoiceObjects) {
                 let pending = Number(inv.pending_amount || 0);
-                const invPayments: InvoicePaymentLineInput[] = [];
+                const invPayments: SupplierSettlementLineInput[] = [];
                 
                 for (const pay of remainingPayments) {
                     if (pending <= 0.01) break; // Float safety
@@ -295,6 +321,7 @@ export default function SupplierPaymentsPage() {
             const payload: BulkSupplierPaymentInput = {
                 supplierId: selectedSupplierId,
                 allocations,
+                idempotency_key: paymentKey,
             };
             if (paymentNotes.trim()) {
                 payload.notes = paymentNotes.trim();
@@ -308,6 +335,7 @@ export default function SupplierPaymentsPage() {
             return api.registerBulkSupplierPayments(payload);
         },
         onSuccess: (data) => {
+            setPaymentKey(createClientUuid());
             toast.success("Pago registrado", {
                 description: `Se pagaron ${formatMoney(data.total_paid)} a proveedor correctamente.`
             });
@@ -332,7 +360,8 @@ export default function SupplierPaymentsPage() {
                 : (!line.check.issuer_name || !line.check.bank_name || !line.check.check_number || !line.check.due_date)
         ))) ||
         totalToRegister <= 0 || 
-        Math.abs(remainingToAssign) > 0.01 || 
+        Math.abs(remainingToAssign) > 0.01 ||
+        treasuryShort ||
         isRegistering;
 
     return (
@@ -367,6 +396,7 @@ export default function SupplierPaymentsPage() {
                                 <Select 
                                     value={selectedSupplierId} 
                                     onValueChange={(val) => {
+                                        renewPaymentKey();
                                         setSelectedSupplierId(val);
                                         setSelectedInvoiceIds(new Set());
                                         setPaymentLines([createPaymentLine()]);
@@ -533,7 +563,7 @@ export default function SupplierPaymentsPage() {
                                                         <Input type="number" value={line.amount} onChange={(e) => updatePaymentLine(line.id, { amount: e.target.value })} placeholder="0.00" className="h-10 bg-background text-right font-mono" />
                                                     </div>
                                                     {paymentLines.length > 1 && (
-                                                        <Button variant="ghost" size="icon" aria-label="Eliminar medio de pago" onClick={() => setPaymentLines(prev => prev.filter(p => p.id !== line.id))} className="h-10 w-10 shrink-0 text-destructive hover:bg-destructive/10">
+                                                        <Button variant="ghost" size="icon" aria-label="Eliminar medio de pago" onClick={() => { renewPaymentKey(); setPaymentLines(prev => prev.filter(p => p.id !== line.id)); }} className="h-10 w-10 shrink-0 text-destructive hover:bg-destructive/10">
                                                             <Trash2 className="h-4 w-4" />
                                                         </Button>
                                                     )}
@@ -597,7 +627,7 @@ export default function SupplierPaymentsPage() {
                                         <Button
                                             variant="outline"
                                             size="sm"
-                                            onClick={() => setPaymentLines(prev => [...prev, createPaymentLine()])}
+                                            onClick={() => { renewPaymentKey(); setPaymentLines(prev => [...prev, createPaymentLine()]); }}
                                             className="w-full border-dashed border-slate-800 hover:bg-slate-800/50 text-slate-300 gap-1"
                                         >
                                             <Plus className="h-4 w-4" /> Agregar Método de Pago
@@ -609,10 +639,18 @@ export default function SupplierPaymentsPage() {
                                             El efectivo sale de la caja abierta y se descuenta de su arqueo.
                                         </p>
                                     ) : null}
+                                    {paysTreasury && treasuryBalance !== undefined ? (
+                                        <p className="text-sm font-medium">Saldo Caja 2: {formatMoney(treasuryBalance)}</p>
+                                    ) : null}
+                                    {treasuryShort ? (
+                                        <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm font-medium text-destructive">
+                                            El pago con Caja 2 ({formatMoney(treasuryTotal)}) supera su saldo ({formatMoney(treasuryBalance ?? 0)}).
+                                        </p>
+                                    ) : null}
                                     {needsRegisterChoice ? (
                                         <div className="space-y-1.5">
                                             <Label htmlFor="bulk-payment-register" className="text-xs text-slate-400">Caja de la que sale el efectivo</Label>
-                                            <Select value={cashRegisterId} onValueChange={setCashRegisterId}>
+                                            <Select value={cashRegisterId} onValueChange={(value) => { renewPaymentKey(); setCashRegisterId(value); }}>
                                                 <SelectTrigger id="bulk-payment-register">
                                                     <SelectValue placeholder="Elegí la caja" />
                                                 </SelectTrigger>
@@ -629,7 +667,7 @@ export default function SupplierPaymentsPage() {
                                         <Label className="text-xs text-slate-400">Notas u Observaciones</Label>
                                         <Textarea
                                             value={paymentNotes}
-                                            onChange={(e) => setPaymentNotes(e.target.value)}
+                                            onChange={(e) => { renewPaymentKey(); setPaymentNotes(e.target.value); }}
                                             placeholder="Detalle de cheques, números de transferencia, etc."
                                             className="bg-background border-input text-foreground min-h-[80px]"
                                         />

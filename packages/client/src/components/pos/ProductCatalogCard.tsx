@@ -16,6 +16,8 @@ import {
 import { Fragment, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { formatMoney } from "@/lib/formatters";
+import { grossPrice } from "@/lib/pricing";
 import type { CartItem, POSProduct } from "@/components/pos/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,7 +72,7 @@ function groupCatalogProducts(products: POSProduct[]): CatalogItem[] {
     return Array.from(grouped.entries()).map(([id, variants]) => {
         const first = variants[0];
         if (!first) throw new Error("Catalog group without variants");
-        const prices = variants.map((variant) => Number(variant.sale_price || 0));
+        const prices = variants.map((variant) => grossPrice(variant.sale_price, variant.vat_rate));
         return {
             id,
             name: first.family_name || first.name,
@@ -86,9 +88,9 @@ function groupCatalogProducts(products: POSProduct[]): CatalogItem[] {
 }
 
 function formatCatalogPrice(item: CatalogItem) {
-    const minimum = `$${item.minPrice.toLocaleString("es-AR")}`;
+    const minimum = formatMoney(item.minPrice);
     if (item.minPrice === item.maxPrice) return minimum;
-    return `${minimum} - $${item.maxPrice.toLocaleString("es-AR")}`;
+    return `${minimum} - ${formatMoney(item.maxPrice)}`;
 }
 
 type ProductCatalogCardProps = {
@@ -497,7 +499,7 @@ export function ProductCatalogCard({
                                         <TableHead>SKU / Codigo</TableHead>
                                         <TableHead>Ubicacion</TableHead>
                                         <TableHead className="text-right">Stock</TableHead>
-                                        <TableHead className="text-right">Precio</TableHead>
+                                        <TableHead className="text-right">Precio (IVA incl.)</TableHead>
                                         <TableHead className="w-28 text-right">Accion</TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -680,7 +682,7 @@ export function ProductCatalogCard({
                                                                                             Stock: {variant.stock}
                                                                                         </Badge>
                                                                                         <span className="font-bold text-foreground">
-                                                                                            ${Number(variant.sale_price).toLocaleString("es-AR")}
+                                                                                            {formatMoney(grossPrice(variant.sale_price, variant.vat_rate))}
                                                                                         </span>
                                                                                     </div>
                                                                                 </div>
@@ -791,7 +793,7 @@ export function ProductCatalogCard({
                                     <TableHead>Ubicacion</TableHead>
                                     <TableHead className="text-right">Stock</TableHead>
                                     <TableHead className="text-center">En Carrito</TableHead>
-                                    <TableHead className="text-right">Precio</TableHead>
+                                    <TableHead className="text-right">Precio (IVA incl.)</TableHead>
                                     <TableHead className="text-right">Accion</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -828,7 +830,7 @@ export function ProductCatalogCard({
                                                 )}
                                             </TableCell>
                                             <TableCell className="text-right font-semibold">
-                                                ${Number(variant.sale_price).toLocaleString("es-AR")}
+                                                {formatMoney(grossPrice(variant.sale_price, variant.vat_rate))}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <Button

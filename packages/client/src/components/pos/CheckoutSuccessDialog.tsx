@@ -3,6 +3,7 @@ import type { CheckoutSuccessDialogProps } from "@/components/pos/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/services/api";
+import { formatMoney } from "@/lib/formatters";
 import { toast } from "sonner";
 import { Loader2, Printer, ShieldCheck, AlertTriangle } from "lucide-react";
 import type { Invoice } from "@/types/api";
@@ -87,7 +88,7 @@ export function CheckoutSuccessDialog({
                         </p>
                         <p className="flex justify-between border-b border-slate-800 pb-1">
                             <span className="text-slate-400">Total:</span> 
-                            <span className="font-bold text-emerald-500">${grandTotal.toLocaleString("es-AR", { minimumFractionDigits: 2 })}</span>
+                            <span className="font-bold text-emerald-500">{formatMoney(grandTotal)}</span>
                         </p>
                         {invoiceState?.cae ? (
                             <p className="flex justify-between border-b border-slate-800 pb-1 text-emerald-400">

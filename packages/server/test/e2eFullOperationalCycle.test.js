@@ -296,7 +296,8 @@ test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Fact
         }, "admin-1");
 
         assert.ok(orderRes.id);
-        assert.equal(orderRes.total_amount, 220000);
+        // ADR-015: el pedido se cobra con IVA incluido (220.000 neto x 1,21).
+        assert.equal(orderRes.total_amount, 266200);
 
         // Stock físico disminuye de 20 u a 18 u
         memoryState.product.stock_current = 18;
