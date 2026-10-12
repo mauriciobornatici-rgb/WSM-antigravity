@@ -254,6 +254,16 @@ export const zodSchemas = {
     cardSettlement: z.object({
         body: commonSchemas.cardSettlementSchema
     }),
+    bankCharges: z.object({
+        body: commonSchemas.bankChargesSchema
+    }),
+    vatRateCreate: z.object({
+        body: commonSchemas.vatRateSchema
+    }),
+    vatRateUpdate: z.object({
+        params: z.object({ id: z.coerce.number().int().positive() }),
+        body: commonSchemas.vatRateSchema
+    }),
     cashShiftOpen: z.object({
         params: z.object({
             id: commonSchemas.uuidSchema

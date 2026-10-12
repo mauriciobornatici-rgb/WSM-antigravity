@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import pool from '../config/db.js';
 import auditService from './audit.service.js';
+import { outputVatLines } from '../utils/vatAccounts.js';
 
 class AccountingService {
     _round(val) {
@@ -90,8 +91,10 @@ class AccountingService {
             totalCredit = this._round(totalCredit + cred);
         }
 
+        // Double entry to the cent (integers, no float tolerance): a one-cent tolerance let
+        // unbalanced entries in.
         const difference = Math.abs(totalDebit - totalCredit);
-        if (difference > 0.0101) {
+        if (Math.round(totalDebit * 100) !== Math.round(totalCredit * 100)) {
             throw new Error(`Error de partida doble. Las sumas no coinciden. Suma Debe: $${totalDebit}, Suma Haber: $${totalCredit} (Diferencia: $${this._round(difference)})`);
         }
 
@@ -144,14 +147,23 @@ class AccountingService {
             LIMIT 1
         `, [invoiceId]);
         if (saleRows.length === 0 && Number(invoice.total_amount || 0) > 0) {
-            const saleAmount = this._round(Number(invoice.total_amount || 0) - Number(invoice.vat_amount || 0));
+            // Output VAT per rate, from the invoice lines (ADR-016). A type C invoice has no
+            // output VAT (monotributo): the whole amount is revenue.
+            const [byRate] = await connection.query(
+                'SELECT vat_rate, SUM(total_line) AS gross, SUM(vat_amount) AS vat FROM invoice_items WHERE invoice_id = ? GROUP BY vat_rate',
+                [invoiceId]
+            );
+            const vatRows = byRate.length > 0
+                ? byRate
+                : [{ vat_rate: 21, gross: invoice.total_amount, vat: invoice.vat_amount }];
+            const vatLines = outputVatLines(vatRows, { side: 'credit', voucherType: invoice.invoice_type, notes: 'IVA Débito Fiscal' });
+            const postedVat = vatLines.reduce((sum, line) => sum + line.credit, 0);
+            const saleAmount = this._round(Number(invoice.total_amount || 0) - postedVat);
             const saleLines = [
                 { account_code: '1.1.03.01', debit: Number(invoice.total_amount), credit: 0, notes: `Crédito por venta ${invoiceLabel}` },
-                { account_code: '4.1.01.01', debit: 0, credit: saleAmount, notes: 'Ingreso por ventas' }
+                { account_code: '4.1.01.01', debit: 0, credit: saleAmount, notes: 'Ingreso por ventas' },
+                ...vatLines
             ];
-            if (Number(invoice.vat_amount || 0) > 0) {
-                saleLines.push({ account_code: '2.1.02.02', debit: 0, credit: Number(invoice.vat_amount), notes: 'IVA Débito Fiscal 21%' });
-            }
             const difference = this._round(
                 saleLines.reduce((sum, line) => sum + Number(line.debit || 0), 0)
                 - saleLines.reduce((sum, line) => sum + Number(line.credit || 0), 0)
@@ -176,14 +188,20 @@ class AccountingService {
             LIMIT 1
         `, [invoiceId]);
         if (cmvRows.length === 0) {
+            // The cost recorded when the stock left (sale movements carry it, ADR-013): the same
+            // cost a return reverses. Today's product cost only when the movement has none.
             const [itemCosts] = await connection.query(`
-                SELECT ii.quantity, p.purchase_price, p.cost_price
+                SELECT ii.quantity, p.purchase_price, p.cost_price,
+                       (SELECT SUM(m.quantity * m.unit_cost) / NULLIF(SUM(m.quantity), 0)
+                        FROM inventory_movements m
+                        WHERE m.reference_id = ? AND m.product_id = ii.product_id AND m.type = 'sale' AND m.unit_cost > 0) AS sold_cost
                 FROM invoice_items ii
                 JOIN products p ON ii.product_id = p.id
                 WHERE ii.invoice_id = ?
-            `, [invoiceId]);
+            `, [invoice.order_id || '', invoiceId]);
             const totalCmv = this._round(itemCosts.reduce((sum, item) => {
-                const cost = Number(item.purchase_price || item.cost_price || 0);
+                const soldCost = Math.round(Number(item.sold_cost || 0) * 100) / 100;
+                const cost = soldCost > 0 ? soldCost : Number(item.purchase_price || item.cost_price || 0);
                 return sum + cost * Number(item.quantity || 0);
             }, 0));
             if (totalCmv > 0) {

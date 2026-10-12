@@ -139,14 +139,17 @@ test('createSupplierInvoice persists invoice, balance, ledger, journal entry and
     const { lines, reference_type: refType } = journals[0].entry;
     assert.equal(refType, 'supplier_invoice');
     assert.equal(lines[0].account_code, '1.1.04.01');
-    assert.equal(lines[0].debit, 105.01);
+    assert.equal(lines[0].debit, 100);
     assert.equal(lines[1].account_code, '1.1.05.02');
     assert.equal(lines[1].debit, 21);
     assert.match(lines[1].notes, /21%/);
-    assert.equal(lines[2].account_code, '2.1.01.01');
-    assert.equal(lines[2].credit, 126.01);
-    const debits = Math.round((lines[0].debit + lines[1].debit) * 100) / 100;
-    assert.equal(debits, lines[2].credit);
+    // ADR-016: perceptions are tax paid in advance, not inventory cost.
+    assert.equal(lines[2].account_code, '1.1.05.04');
+    assert.equal(lines[2].debit, 5.01);
+    assert.equal(lines[3].account_code, '2.1.01.01');
+    assert.equal(lines[3].credit, 126.01);
+    const debits = Math.round((lines[0].debit + lines[1].debit + lines[2].debit) * 100) / 100;
+    assert.equal(debits, lines[3].credit);
 
     assert.equal(logs[0].conn, connection);
     assert.equal(logs[0].payload.action, 'CREATE_SUPPLIER_INVOICE');
@@ -159,22 +162,32 @@ test('createSupplierInvoice derives total, uses defaults and non-A note', async 
     stub(t, accountingService, 'createJournalEntry', async (_c, entry) => { journals.push(entry); });
     stub(t, auditService, 'log', async () => {});
     const res = await runHandler(createSupplierInvoice, {
-        body: { invoice_number: '1', invoice_type: 'C', supplier_id: 's1', total_amount: 50 }
+        body: { invoice_number: '1', invoice_type: 'C', supplier_id: 's1', net_amount: 50, vat_amount: 10.5, total_amount: 60.5 }
     });
-    assert.equal(res.body.total_amount, 50);
+    assert.equal(res.body.total_amount, 60.5);
     const insert = calls.find((c) => c.statement.startsWith('INSERT INTO supplier_invoices'));
     assert.equal(insert.params[4], null);
     assert.equal(insert.params[5], null);
     assert.equal(insert.params[7], null);
     assert.equal(insert.params[12], null);
     assert.equal(insert.params[13], null);
-    assert.match(journals[0].lines[1].notes, /Factura C/);
+    // ADR-016: a Factura C gives no fiscal credit: its VAT is part of the cost.
+    assert.deepEqual(journals[0].lines.map((line) => [line.account_code, line.debit, line.credit]), [
+        ['1.1.04.01', 60.5, 0], ['2.1.01.01', 0, 60.5]
+    ]);
     assert.ok(journals[0].date instanceof Date);
 
     const none = await runHandler(createSupplierInvoice, {
         body: { invoice_number: '2', invoice_type: 'C', supplier_id: 's1' }
     });
     assert.equal(none.body.total_amount, 0);
+
+    // A typed total that disagrees with its parts would post an unbalanced entry.
+    const mismatch = await runHandler(createSupplierInvoice, {
+        body: { invoice_number: '3', invoice_type: 'A', supplier_id: 's1', net_amount: 100, vat_amount: 21, total_amount: 150 }
+    });
+    assert.equal(mismatch.status, 400);
+    assert.equal(mismatch.body.error, 'invalid_invoice_total');
 });
 
 test('createSupplierInvoice rolls back and releases when the journal entry fails', async (t) => {

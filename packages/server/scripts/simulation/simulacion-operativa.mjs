@@ -568,11 +568,25 @@ async function main() {
         const over = await call('POST', '/api/card-settlements', { amount: 99999999 }).catch((e) => e);
         check('Acreditar más que lo pendiente de tarjetas → 409', over.status, 409);
         const settleKey = uuid();
-        await call('POST', '/api/card-settlements', { idempotency_key: settleKey, amount: 24200, fee_amount: 500, reference: `LOTE-${RUN}` });
-        const replay = await call('POST', '/api/card-settlements', { idempotency_key: settleKey, amount: 24200, fee_amount: 500 });
+        // ADR-016: comisión con IVA 10,5 % y una retención del procesador.
+        const vat105Before = await ledger('1.1.05.01');
+        const withholdingsBefore = await ledger('1.1.05.04');
+        const settlement = { idempotency_key: settleKey, amount: 24200, fee_amount: 500, fee_vat_rate: 10.5, charges: [{ concept: 'withholding', amount: 200 }], reference: `LOTE-${RUN}` };
+        await call('POST', '/api/card-settlements', settlement);
+        const replay = await call('POST', '/api/card-settlements', settlement);
         check('La acreditación repetida no se duplica', Boolean(replay.idempotent_replay), true);
         check('Tras acreditar, Tarjetas a cobrar queda en 0 (variación de la corrida)', await ledgerDelta('cards'), 0);
-        check('El banco recibe lo liquidado menos la comisión (23.700)', money((await ledger('1.1.02.01')) - bank0), 23700);
+        check('El banco recibe lo liquidado menos comisión y retención (23.500)', money((await ledger('1.1.02.01')) - bank0), 23500);
+        check('IVA de la comisión al 10,5 % como crédito fiscal (47,51)', money((await ledger('1.1.05.01')) - vat105Before), 47.51);
+        check('La retención queda a favor (200)', money((await ledger('1.1.05.04')) - withholdingsBefore), 200);
+        // ADR-016: débitos bancarios sueltos (impuesto a los débitos y créditos + mantenimiento con IVA 21 %).
+        const bank1 = await ledger('1.1.02.01');
+        const charges = await call('POST', '/api/bank/charges', { idempotency_key: uuid(), reference: `Extracto ${RUN}`, charges: [{ concept: 'debits_credits_tax', amount: 141 }, { concept: 'maintenance', amount: 1210 }] });
+        check('Débitos bancarios registrados (1.351)', charges.total, 1351);
+        check('El banco baja por los débitos', money(bank1 - (await ledger('1.1.02.01'))), 1351);
+        check('Saldo del banco informado = mayor', Number((await call('GET', '/api/bank')).balance), money(await ledger('1.1.02.01')));
+        const initialByOther = await call('POST', '/api/treasury/transfers', { idempotency_key: uuid(), from: 'initial', to: 'treasury', amount: 1 }).then(() => 'ok').catch((e) => e.status);
+        check('Saldo inicial de Caja 2 lo carga el administrador (la corrida es admin)', initialByOther, 'ok');
         const [valued] = await q(
             `SELECT COALESCE(SUM(i.quantity * COALESCE(NULLIF(p.purchase_price, 0), p.cost_price, 0)), 0) AS v
              FROM inventory i JOIN products p ON p.id = i.product_id WHERE i.product_id IN (?)`, [ctx.pids]);

@@ -117,6 +117,14 @@ export interface OrderItemAllocation {
     inventory_location?: string
 }
 
+/** Shipping / discount / surcharge line of an order (amount VAT included, negative for a discount). */
+export interface OrderAdjustment {
+    kind: 'shipping' | 'discount' | 'surcharge'
+    description: string
+    amount: number
+    vat_rate?: number
+}
+
 export interface Order {
     id: string
     customer_name: string
@@ -132,6 +140,9 @@ export interface Order {
     invoice_id?: string
     items: OrderItem[]
     payments?: Array<{ id: string; method: string; amount: number }>
+    adjustments?: OrderAdjustment[]
+    // Sales channel that created the order ('pos', 'tiendanube'); null for orders made here.
+    external_source?: string | null
     cancellation_credit_amount?: number
     cancellation_financial_status?: 'client_credit' | 'debt_voided'
 

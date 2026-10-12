@@ -19,6 +19,8 @@ export type SupplierInvoicePayload = {
     due_date?: string;
     net_amount: number;
     vat_amount: number;
+    // ADR-016: the fiscal credit goes to the account of this rate.
+    vat_rate: number;
     other_taxes: number;
     total_amount: number;
     notes?: string;
@@ -197,6 +199,7 @@ export function SupplierInvoiceForm({
                 issue_date: issueDate,
                 net_amount: netVal,
                 vat_amount: vatVal,
+                vat_rate: Math.round((parseFloat(vatRate) || 0) * 1000) / 10,
                 other_taxes: taxVal,
                 total_amount: totalAmount,
             };

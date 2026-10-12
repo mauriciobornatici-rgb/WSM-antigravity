@@ -2,7 +2,10 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Receipt, Landmark, History } from "lucide-react";
 import { toast } from "sonner";
+import { hasPermission, PERMISSIONS } from "@wsm/common";
 import { api } from "@/services/api";
+import { useAuth } from "@/context/AuthContext";
+import { TreasuryPanel } from "@/components/cash/TreasuryPanel";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,6 +79,9 @@ function formatInvoiceLabel(invoice: PendingSupplierInvoiceResponse): string {
 
 export default function SupplierPaymentsPage() {
     const queryClient = useQueryClient();
+    const { user } = useAuth();
+    // Managers see the Caja 2 balance before paying with it (moving money needs more).
+    const canSeeTreasury = hasPermission(user?.role, PERMISSIONS.TREASURY_READ);
 
     // 3. State
     const [selectedSupplierId, setSelectedSupplierId] = useState<string>("");
@@ -376,6 +382,8 @@ export default function SupplierPaymentsPage() {
                     </p>
                 </div>
             </div>
+
+            {canSeeTreasury ? <TreasuryPanel readOnly /> : null}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Paso 1: Seleccionar Proveedor */}

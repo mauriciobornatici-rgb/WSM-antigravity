@@ -87,11 +87,23 @@ Bajos anotados (riesgos previos, no regresiones): borrado de proveedor sin lock 
   - corrección de datos previos;
   - centavos en devoluciones parciales.
 
+- [x] ADR-016 (decisiones del usuario sobre lo pendiente de ADR-015). Guardián AUD-005: corregido (ver `AUDIT.md`).
+  - Saldo inicial de Caja 2 solo para el administrador.
+  - Banco con saldo, movimientos y débitos (sueltos o dentro del movimiento).
+  - El gerente ve Caja 2.
+  - Alícuotas editables, con el IVA asentado por alícuota.
+  - Envío y descuentos de Tiendanube en la factura.
+  - Migración 052 (totales previos) y script `repair-tiendanube-prices.js`.
+  - Devoluciones parciales exactas al centavo.
+  - Migraciones 051 y 052 aplicadas en local y QA; el CHECK de inventario pasa a 053.
+  - Evidencia: validate 0 (873 + 83); coverage 98,03/90,48/95,97; integración 74/74 en 4 de 5 corridas (en 1 falló completo `purchase-order-lifecycle`, sin aserción: a investigar); RBAC OK; E2E 6/6; simulación 153/153.
+- Regla del usuario: todo texto visible de la app va en español.
+
 ## Próximos pasos
 
 1. Usuario: revisar y mergear PR #1; después re-apuntar PR #2 a `main`.
 2. Usuario: correr en producción los runbooks (`docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`) y aplicar la migración 045 con el despliegue.
-3. I8: migración 051 (CHECK de inventario) — solo después de la reparación en producción (AP2).
+3. I8: migración 053 (CHECK de inventario) — solo después de la reparación en producción (AP2).
 4. Fase H2: numeración ARCA, recuperación de CAE y de NC en `authorizing`.
 5. Riesgos bajos de arriba.
 

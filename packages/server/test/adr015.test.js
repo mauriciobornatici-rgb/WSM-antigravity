@@ -210,7 +210,12 @@ test('treasury transfer from Caja 2 requires funds; from the initial balance it 
         (err) => err.statusCode === 409 && err.responseBody.error === 'insufficient_treasury_cash'
     );
     assert.equal(journals.length, 0);
-    await treasuryService.transfer({ from: 'initial', to: 'treasury', amount: 40 });
+    // ADR-016: only the administrator loads the opening balance.
+    await assert.rejects(
+        () => treasuryService.transfer({ from: 'initial', to: 'treasury', amount: 40 }, 'u1', null, { role: 'manager' }),
+        (err) => err.statusCode === 403
+    );
+    await treasuryService.transfer({ from: 'initial', to: 'treasury', amount: 40 }, 'u1', null, { role: 'admin' });
     assert.deepEqual(journals[0].lines.map((line) => line.account_code), ['1.1.01.02', '3.1.01.01']);
 });
 

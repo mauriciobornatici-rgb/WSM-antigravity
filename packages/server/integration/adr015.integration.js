@@ -46,7 +46,7 @@ test('ADR-015: the same key with another amount is refused, not replayed', async
 
 test('ADR-015: Caja 2 pays suppliers only with the cash it holds, and two payments cannot spend it twice', async () => {
     const before = (await treasuryService.getSummary()).balance;
-    await treasuryService.transfer({ from: 'initial', to: 'treasury', amount: 500, idempotency_key: crypto.randomUUID() }, null, null);
+    await treasuryService.transfer({ from: 'initial', to: 'treasury', amount: 500, idempotency_key: crypto.randomUUID() }, null, null, { role: 'admin' });
     const supplierId = await seedSupplier(2000);
     const available = (await treasuryService.getSummary()).balance;
     assert.equal(Math.round((available - before) * 100) / 100, 500);

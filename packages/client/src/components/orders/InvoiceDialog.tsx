@@ -26,13 +26,49 @@ const INVOICE_TYPES: Array<{ value: InvoiceType; label: string }> = [
     { value: "TK", label: "Ticket" },
 ]
 
+const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
+
+// Same rules as the server invoice (sales.service createInvoice, ADR-016): once picking
+// started only picked units are billed, a discount keeps its percentage over what was picked
+// of its VAT rate (never more than those products), shipping and surcharges are billed whole.
 function getInvoiceTotal(order: Order): number {
     const items = order.items || []
-    const picked = items
-        .filter((item) => Number(item.picked_quantity || 0) > 0)
-        .reduce((sum, item) => sum + grossLineTotal(item.picked_quantity, item.unit_price, item.vat_rate), 0)
-    if (picked > 0) return picked
-    return items.reduce((sum, item) => sum + grossLineTotal(item.quantity, item.unit_price, item.vat_rate), 0)
+    const anyPicked = items.some((item) => Number(item.picked_quantity || 0) > 0)
+    const ordered = new Map<number, number>()
+    const billed = new Map<number, number>()
+    for (const item of items) {
+        const rate = item.vat_rate == null ? 21 : Number(item.vat_rate)
+        ordered.set(rate, (ordered.get(rate) || 0) + grossLineTotal(item.quantity, item.unit_price, item.vat_rate))
+        const quantity = anyPicked ? Number(item.picked_quantity || 0) : Number(item.quantity)
+        billed.set(rate, (billed.get(rate) || 0) + grossLineTotal(quantity, item.unit_price, item.vat_rate))
+    }
+    let total = round2([...billed.values()].reduce((sum, value) => sum + value, 0))
+    const adjustments = order.adjustments || []
+    const orderedTotal = round2([...ordered.values()].reduce((sum, value) => sum + value, 0))
+    const external = Boolean(order.external_source) && order.external_source !== "pos"
+    if (external && adjustments.length === 0 && Math.abs(total - orderedTotal) < 0.005) {
+        // Channel orders imported before ADR-016: the invoice matches what the customer paid.
+        return round2(Number(order.total_amount || total))
+    }
+    // Charges first: a discount on the shipping can use the shipping line as room.
+    const picked = new Map(billed)
+    const sorted = [...adjustments].sort((a, b) => Number(b.amount) - Number(a.amount))
+    for (const adjustment of sorted) {
+        const rate = Number(adjustment.vat_rate)
+        let amount = round2(Number(adjustment.amount || 0))
+        if (amount > 0) {
+            billed.set(rate, (billed.get(rate) || 0) + amount)
+        } else if (amount < 0) {
+            const orderedGross = ordered.get(rate) || 0
+            const pickedGross = picked.get(rate) || 0
+            const available = round2(billed.get(rate) || 0)
+            if (orderedGross > 0 && pickedGross < orderedGross) amount = round2(amount * pickedGross / orderedGross)
+            amount = Math.max(amount, -available)
+            billed.set(rate, available + amount)
+        }
+        total += amount
+    }
+    return round2(total)
 }
 
 export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: InvoiceDialogProps) {
@@ -160,6 +196,15 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                                             </td>
                                         </tr>
                                     )}
+                                    {(order?.adjustments ?? []).map((adjustment, idx) => (
+                                        <tr key={`adjustment-${idx}`} className="bg-muted/20">
+                                            <td colSpan={3} className="p-2 font-medium text-foreground">{adjustment.description}</td>
+                                            <td className={`p-2 text-right font-semibold ${adjustment.amount < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}`}>
+                                                {adjustment.amount < 0 ? "-" : ""}
+                                                {formatMoney(Math.abs(adjustment.amount))}
+                                            </td>
+                                        </tr>
+                                    ))}
                                 </tbody>
                             </table>
                         </div>

@@ -5,7 +5,8 @@ import { nextDocumentSequence } from '../utils/documentSequence.js';
 import { businessError } from '../utils/businessError.js';
 import { ACCOUNTS, LOCATIONS } from '../utils/paymentAccounts.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
-import { lineAmounts } from '../utils/vatMath.js';
+import { allocateCents, grossLineAmounts, lineAmounts } from '../utils/vatMath.js';
+import { outputVatLines, splitByRate } from '../utils/vatAccounts.js';
 import auditService from './audit.service.js';
 import afipService from './afip.service.js';
 import accountingService from './accounting.service.js';
@@ -449,11 +450,24 @@ class ReturnsService extends BaseService {
         );
         const soldByProduct = new Map(sold.map((row) => [row.product_id, row]));
         const returnedByProduct = new Map(returned.map((row) => [row.product_id, Number(row.quantity || 0)]));
+        // Once invoiced, what can come back is what was invoiced (a partially picked order
+        // delivered and charged fewer units than it ordered).
+        const [invoicedRows] = await conn.query(
+            `SELECT ii.product_id, SUM(ii.quantity) AS quantity
+             FROM invoices i JOIN invoice_items ii ON ii.invoice_id = i.id
+             WHERE i.order_id = ? AND i.deleted_at IS NULL AND ii.product_id IN (?)
+             GROUP BY ii.product_id`,
+            [data.order_id, productIds]
+        );
+        const invoicedByProduct = invoicedRows.length > 0
+            ? new Map(invoicedRows.map((row) => [row.product_id, Number(row.quantity || 0)]))
+            : null;
 
         const prices = new Map();
         for (const [productId, requested] of requestedByProduct) {
             const soldRow = soldByProduct.get(productId);
-            const returnable = Number(soldRow?.quantity || 0) - (returnedByProduct.get(productId) || 0);
+            const delivered = invoicedByProduct ? (invoicedByProduct.get(productId) || 0) : Number(soldRow?.quantity || 0);
+            const returnable = delivered - (returnedByProduct.get(productId) || 0);
             if (requested > returnable) {
                 throw this._buildDomainError(
                     `No se puede devolver ${requested} unidad(es) del producto ${productId}: quedan ${Math.max(returnable, 0)} por devolver de ese pedido.`,
@@ -510,6 +524,159 @@ class ReturnsService extends BaseService {
         }
     }
 
+    /**
+     * What each returned line refunds (ADR-016). A product refunds its share of what was charged
+     * for it (the invoice lines, or the order lines before invoicing), after the discounts of its
+     * VAT rate. Shares are cumulative over the order's approved returns: unit k of Q refunds
+     * round(G·k/Q) − round(G·(k−1)/Q), so returning every unit, one by one or all at once, adds
+     * up to exactly G and never more. Returns [{ item, gross, vat, vat_rate }] for non-rejected lines.
+     */
+    async _returnRefunds(conn, returnRow, items) {
+        const active = items.filter((item) => String(item.condition_status).toLowerCase() !== 'rejected');
+        if (active.length === 0) return [];
+        const productIds = [...new Set(active.map((item) => item.product_id))];
+        const [vatRows] = await conn.query('SELECT id, vat_rate FROM products WHERE id IN (?)', [productIds]);
+        const vatByProduct = new Map(vatRows.map((row) => [row.id, row.vat_rate == null ? 21 : Number(row.vat_rate)]));
+        const perUnit = (item) => {
+            const rate = vatByProduct.get(item.product_id) ?? 21;
+            const line = lineAmounts(item.quantity, item.unit_price, rate);
+            return { item, gross: line.gross, vat: line.vat, vat_rate: rate };
+        };
+        if (!returnRow.order_id) return active.map(perUnit);
+
+        // Serializes approvals of the same order: the cumulative shares need the previous ones.
+        await conn.query('SELECT id FROM orders WHERE id = ? FOR UPDATE', [returnRow.order_id]);
+        const [invoices] = await conn.query(
+            'SELECT id FROM invoices WHERE order_id = ? AND deleted_at IS NULL LIMIT 1',
+            [returnRow.order_id]
+        );
+        let charged;
+        let discounts;
+        if (invoices[0]) {
+            [charged] = await conn.query(
+                `SELECT product_id, vat_rate, SUM(quantity) AS quantity, SUM(total_line) AS gross, SUM(vat_amount) AS vat
+                 FROM invoice_items WHERE invoice_id = ? AND product_id IS NOT NULL GROUP BY product_id, vat_rate`,
+                [invoices[0].id]
+            );
+            [discounts] = await conn.query(
+                `SELECT vat_rate, SUM(total_line) AS gross, SUM(vat_amount) AS vat
+                 FROM invoice_items WHERE invoice_id = ? AND product_id IS NULL AND total_line < 0 GROUP BY vat_rate`,
+                [invoices[0].id]
+            );
+        } else {
+            const [orderLines] = await conn.query(
+                `SELECT oi.product_id, COALESCE(p.vat_rate, 21) AS vat_rate, oi.quantity, oi.unit_price
+                 FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?`,
+                [returnRow.order_id]
+            );
+            const byProduct = new Map();
+            for (const line of orderLines) {
+                const amounts = lineAmounts(line.quantity, line.unit_price, line.vat_rate);
+                const row = byProduct.get(line.product_id) || { product_id: line.product_id, vat_rate: Number(line.vat_rate), quantity: 0, gross: 0, vat: 0 };
+                row.quantity += Number(line.quantity);
+                row.gross += amounts.gross;
+                row.vat += amounts.vat;
+                byProduct.set(line.product_id, row);
+            }
+            charged = [...byProduct.values()];
+            // Same split of each discount as the invoice will make (grossLineAmounts).
+            const [adjustments] = await conn.query(
+                'SELECT amount, vat_rate FROM order_adjustments WHERE order_id = ? AND amount < 0',
+                [returnRow.order_id]
+            );
+            const byRate = new Map();
+            for (const adjustment of adjustments) {
+                const amounts = grossLineAmounts(adjustment.amount, adjustment.vat_rate);
+                const rate = Number(adjustment.vat_rate);
+                const row = byRate.get(rate) || { vat_rate: rate, gross: 0, vat: 0 };
+                row.gross += amounts.gross;
+                row.vat += amounts.vat;
+                byRate.set(rate, row);
+            }
+            discounts = [...byRate.values()];
+        }
+
+        // What each product was really charged: the discounts of a rate are split over the
+        // products of that rate by the largest remainder, so the products add up exactly to
+        // what the invoice charged for that rate (a rounded factor could add a cent).
+        const discountByRate = new Map(discounts.map((row) => [Number(row.vat_rate), row]));
+        const chargedByProduct = new Map();
+        const rates = [...new Set(charged.map((row) => Number(row.vat_rate)))];
+        for (const rate of rates) {
+            const rows = charged.filter((row) => Number(row.vat_rate) === rate);
+            const discount = discountByRate.get(rate);
+            const grossCents = rows.map((row) => Math.round(Number(row.gross) * 100));
+            const vatCents = rows.map((row) => Math.round(Number(row.vat) * 100));
+            const grossOff = allocateCents(Math.max(Math.round(Number(discount?.gross || 0) * 100), -grossCents.reduce((a, b) => a + b, 0)), grossCents);
+            const vatOff = allocateCents(Math.max(Math.round(Number(discount?.vat || 0) * 100), -vatCents.reduce((a, b) => a + b, 0)), grossCents);
+            rows.forEach((row, index) => {
+                const previous = chargedByProduct.get(row.product_id);
+                chargedByProduct.set(row.product_id, {
+                    vat_rate: rate,
+                    quantity: (previous?.quantity || 0) + Number(row.quantity),
+                    grossCents: (previous?.grossCents || 0) + grossCents[index] + grossOff[index],
+                    vatCents: (previous?.vatCents || 0) + vatCents[index] + vatOff[index],
+                });
+            });
+        }
+
+        const [previousRows] = await conn.query(
+            `SELECT ri.product_id, SUM(ri.quantity) AS quantity,
+                    SUM(ri.refund_amount) AS refunded, SUM(ri.refund_vat) AS refunded_vat,
+                    SUM(ri.refund_amount IS NULL) AS legacy_lines
+             FROM client_return_items ri JOIN client_returns r ON r.id = ri.return_id
+             WHERE r.order_id = ? AND r.id <> ? AND r.status = 'approved'
+               AND LOWER(COALESCE(ri.condition_status, '')) <> 'rejected'
+             GROUP BY ri.product_id`,
+            [returnRow.order_id, returnRow.id]
+        );
+        const refundedBefore = new Map(previousRows.map((row) => [row.product_id, row]));
+
+        const refunds = [];
+        for (const productId of productIds) {
+            const lines = active.filter((item) => item.product_id === productId);
+            const quantity = lines.reduce((sum, item) => sum + Number(item.quantity), 0);
+            const sold = chargedByProduct.get(productId);
+            const previous = refundedBefore.get(productId);
+            const before = Number(previous?.quantity || 0);
+            // (An invoice with no product lines, as old ones may be, falls back to the order.)
+            if (invoices[0] && charged.length > 0 && (!sold || before + quantity > sold.quantity)) {
+                // Once invoiced, only what was invoiced comes back (a partial picking delivered less).
+                throw businessError(409, {
+                    error: 'return_exceeds_invoiced',
+                    message: 'La devolución supera las unidades facturadas de ese producto.'
+                });
+            }
+            if (!sold || !(sold.quantity > 0) || before + quantity > sold.quantity) {
+                refunds.push(...lines.map(perUnit));
+                continue;
+            }
+            const share = (cents, units) => Math.round(cents * units / sold.quantity);
+            let grossCents = share(sold.grossCents, before + quantity) - share(sold.grossCents, before);
+            let vatCents = share(sold.vatCents, before + quantity) - share(sold.vatCents, before);
+            if (before + quantity === sold.quantity && previous && Number(previous.legacy_lines || 0) === 0) {
+                // The last units return exactly what is left of the charge: earlier refunds,
+                // whatever their rounding, plus this one add up to what was charged.
+                grossCents = Math.max(0, sold.grossCents - Math.round(Number(previous.refunded || 0) * 100));
+                vatCents = Math.max(0, sold.vatCents - Math.round(Number(previous.refunded_vat || 0) * 100));
+            }
+            // Several lines of the same product (sellable / damaged): split by quantity.
+            let grossLeft = grossCents;
+            let vatLeft = vatCents;
+            let unitsLeft = quantity;
+            for (const item of lines) {
+                const units = Number(item.quantity);
+                const lineGross = units === unitsLeft ? grossLeft : Math.round(grossLeft * units / unitsLeft);
+                const lineVat = units === unitsLeft ? vatLeft : Math.round(vatLeft * units / unitsLeft);
+                grossLeft -= lineGross;
+                vatLeft -= lineVat;
+                unitsLeft -= units;
+                refunds.push({ item, gross: lineGross / 100, vat: lineVat / 100, vat_rate: sold.vat_rate });
+            }
+        }
+        return refunds;
+    }
+
     async approveReturn(returnId, actorUserId, ipAddress = null) {
         const conn = await pool.getConnection();
         try {
@@ -539,26 +706,18 @@ class ReturnsService extends BaseService {
                 throw this._buildDomainError('La devolucion no tiene items', 'RETURN_WITHOUT_ITEMS', 400);
             }
 
-            // The refund reverses what the customer paid: net price + VAT per line
-            // (ADR-008: stored prices are net), rounded per line like the sale invoice.
-            const [vatRows] = await conn.query(
-                'SELECT id, vat_rate FROM products WHERE id IN (?)',
-                [items.map((item) => item.product_id)]
-            );
-            const vatByProduct = new Map(vatRows.map((row) => [row.id, row.vat_rate == null ? 21 : Number(row.vat_rate)]));
-            let netCents = 0;
-            let vatCents = 0;
-            for (const item of items) {
-                // If item is rejected, it does not contribute to the refund amount
-                if (String(item.condition_status).toLowerCase() === 'rejected') continue;
-                // Same formula as the sale (ADR-015): the refund is exactly what was charged.
-                const line = lineAmounts(item.quantity, item.unit_price, vatByProduct.get(item.product_id) ?? 21);
-                netCents += Math.round(line.net * 100);
-                vatCents += Math.round(line.vat * 100);
+            // The refund reverses what the customer paid for those units (ADR-016): exact to the
+            // cent across partial returns, discounts included. Stored per line for the note.
+            const refunds = await this._returnRefunds(conn, returnRow, items);
+            let refundCents = 0;
+            for (const refund of refunds) {
+                refundCents += Math.round(refund.gross * 100);
+                await conn.query(
+                    'UPDATE client_return_items SET refund_amount = ?, refund_vat = ? WHERE id = ?',
+                    [refund.gross, refund.vat, refund.item.id]
+                );
             }
-            const netAmount = netCents / 100;
-            const vatAmount = vatCents / 100;
-            const totalAmount = (netCents + vatCents) / 100;
+            const totalAmount = refundCents / 100;
             
             // It's possible that a return ONLY has rejected items, then totalAmount = 0
             // If totalAmount is 0, we just approve it without creating a Credit Note.
@@ -708,14 +867,20 @@ class ReturnsService extends BaseService {
                     description: `Nota de crédito ${creditNoteNumber} - Devolución de cliente`,
                     reference_type: 'client_return',
                     reference_id: returnId,
-                    // Mirror of the sale entry (accounting.service): Clientes / Ventas + IVA Débito Fiscal.
-                    lines: [
-                        { account_code: '4.1.01.01', debit: netAmount, credit: 0, notes: 'Reversión de venta por devolución' },
-                        ...(vatAmount > 0
-                            ? [{ account_code: '2.1.02.02', debit: vatAmount, credit: 0, notes: 'Reversión de IVA Débito Fiscal' }]
-                            : []),
-                        { account_code: '1.1.03.01', debit: 0, credit: totalAmount, notes: 'Crédito a favor del cliente' }
-                    ]
+                    // Mirror of the sale entry (accounting.service): Clientes / Ventas + IVA Débito
+                    // Fiscal per rate (none on a type C note).
+                    lines: (() => {
+                        const vatLines = outputVatLines(
+                            refunds.map((refund) => ({ vat_rate: refund.vat_rate, vat: refund.vat })),
+                            { side: 'debit', voucherType: creditNoteType, notes: 'Reversión de IVA Débito Fiscal' }
+                        );
+                        const reversedVat = vatLines.reduce((sum, line) => sum + line.debit, 0);
+                        return [
+                            { account_code: '4.1.01.01', debit: Math.round((totalAmount - reversedVat) * 100) / 100, credit: 0, notes: 'Reversión de venta por devolución' },
+                            ...vatLines,
+                            { account_code: '1.1.03.01', debit: 0, credit: totalAmount, notes: 'Crédito a favor del cliente' }
+                        ];
+                    })()
                 });
             }
 
@@ -800,16 +965,27 @@ class CreditNotesService extends BaseService {
     async _creditNoteVoucherItems(cn, invoice) {
         if (cn.reference_type === 'return' && cn.reference_id) {
             const [itemsRows] = await pool.query(`
-                SELECT ri.quantity, ri.unit_price, COALESCE(p.vat_rate, 21) AS vat_rate
+                SELECT ri.quantity, ri.unit_price, ri.refund_amount, ri.refund_vat,
+                       -- The rate it was invoiced at (the refund was computed with it), not
+                       -- the product's rate today.
+                       COALESCE(
+                           (SELECT ii.vat_rate FROM invoice_items ii
+                            WHERE ii.invoice_id = ? AND ii.product_id = ri.product_id LIMIT 1),
+                           p.vat_rate, 21
+                       ) AS vat_rate
                 FROM client_return_items ri
                 JOIN products p ON ri.product_id = p.id
                 WHERE ri.return_id = ?
                   AND LOWER(COALESCE(ri.condition_status, '')) <> 'rejected'
-            `, [cn.reference_id]);
-            // Same line amounts as the note (ADR-015, gross first): ARCA must receive exactly the
-            // stored amount, or the lost-response recovery would never match and issue it twice.
+            `, [invoice?.id || '', cn.reference_id]);
+            // Same line amounts as the note: ARCA must receive exactly the stored amount, or the
+            // lost-response recovery would never match and issue it twice. Returns approved since
+            // ADR-016 store what each line refunded; older ones used the sale formula (ADR-015).
             if (itemsRows.length > 0) {
                 return itemsRows.map((row) => {
+                    if (row.refund_amount != null) {
+                        return { vat_rate: Number(row.vat_rate), total_line: Number(row.refund_amount), vat_amount: Number(row.refund_vat || 0) };
+                    }
                     const line = lineAmounts(row.quantity, row.unit_price, row.vat_rate);
                     return { vat_rate: Number(row.vat_rate), total_line: line.gross, vat_amount: line.vat };
                 });
@@ -1092,17 +1268,24 @@ class CreditNotesService extends BaseService {
 
             // A manual note lowers what the client owes like a return does: sales and output
             // VAT go down in the same proportion as on the invoice it corrects.
-            const invoiceTotal = Number(invoice.total_amount || 0);
-            const vatShare = invoiceTotal > 0 ? Number(invoice.vat_amount || 0) / invoiceTotal : 0;
-            const net = Math.round((gross - gross * vatShare) * 100) / 100;
+            // Output VAT per rate (ADR-016), split like the ARCA voucher lines of the note.
+            const [byRate] = await connection.query(
+                'SELECT vat_rate, SUM(total_line) AS gross, SUM(vat_amount) AS vat FROM invoice_items WHERE invoice_id = ? GROUP BY vat_rate',
+                [invoice.id]
+            );
+            const vatLines = outputVatLines(
+                splitByRate(byRate.length > 0 ? byRate : [{ vat_rate: 21, gross: invoice.total_amount, vat: invoice.vat_amount }], gross),
+                { side: 'debit', voucherType: creditNoteType, notes: 'Reversión de IVA Débito Fiscal' }
+            );
+            const reversedVat = vatLines.reduce((sum, line) => sum + line.debit, 0);
             await accountingService.createJournalEntryIfAny(connection, {
                 date: new Date(),
                 description: `Nota de crédito ${number} - ${notes || 'manual'}`,
                 reference_type: 'credit_note',
                 reference_id: id,
                 lines: [
-                    { account_code: ACCOUNTS.SALES, debit: net, credit: 0, notes: 'Bonificación / ajuste a favor del cliente' },
-                    { account_code: ACCOUNTS.VAT_DEBIT_21, debit: Math.round((gross - net) * 100) / 100, credit: 0, notes: 'Reversión de IVA Débito Fiscal' },
+                    { account_code: ACCOUNTS.SALES, debit: Math.round((gross - reversedVat) * 100) / 100, credit: 0, notes: 'Bonificación / ajuste a favor del cliente' },
+                    ...vatLines,
                     { account_code: ACCOUNTS.RECEIVABLES, debit: 0, credit: gross, notes: 'Crédito a favor del cliente' }
                 ]
             });

@@ -4,7 +4,8 @@ import type { CompanySettings, SystemSettings, User } from "@/types"
 import type { AuditLogEntry, PaginationMeta, UserCreateInput, UserFormValues, UserUpdateInput } from "@/types/api"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
-import { Building2, Users, Settings2, Loader2, History, ReceiptText } from "lucide-react"
+import { Building2, Users, Settings2, Loader2, History, ReceiptText, Percent } from "lucide-react"
+import { hasPermission, PERMISSIONS } from "@wsm/common"
 import { UserForm } from "@/components/users/UserForm"
 import { toast } from "sonner"
 import { useAuth } from "@/context/AuthContext"
@@ -19,6 +20,7 @@ import { BillingSettingsTab } from "@/components/settings/BillingSettingsTab"
 import { UsersManagementTab } from "@/components/settings/UsersManagementTab"
 import { AuditLogTab } from "@/components/settings/AuditLogTab"
 import { SystemSettingsTab } from "@/components/settings/SystemSettingsTab"
+import { VatRatesTab } from "@/components/settings/VatRatesTab"
 
 const buildSystemSettings = (settings: CompanySettings): SystemSettings => ({
     regional: {
@@ -44,6 +46,7 @@ export default function SettingsPage() {
 function SettingsContent() {
     const [searchParams, setSearchParams] = useSearchParams()
     const { user: currentUser } = useAuth()
+    const canManageSettings = hasPermission(currentUser?.role, PERMISSIONS.SETTINGS_MANAGE)
     const [company, setCompany] = useState<CompanySettings | null>(null)
     const [system, setSystem] = useState<SystemSettings | null>(null)
     const [users, setUsers] = useState<User[]>([])
@@ -288,7 +291,7 @@ function SettingsContent() {
             </div>
 
             <Tabs
-                value={["company", "users", "system", "billing", "audit"].includes(searchParams.get("tab") || "") ? searchParams.get("tab")! : "company"}
+                value={["company", "users", "system", "billing", "audit", ...(canManageSettings ? ["vat"] : [])].includes(searchParams.get("tab") || "") ? searchParams.get("tab")! : "company"}
                 onValueChange={(tab) => setSearchParams(tab === "company" ? {} : { tab }, { replace: true })}
                 className="space-y-4"
             >
@@ -297,6 +300,9 @@ function SettingsContent() {
                     <TabsTrigger value="users" className="flex shrink-0 gap-2"><Users className="h-4 w-4" /> Usuarios</TabsTrigger>
                     <TabsTrigger value="system" className="flex shrink-0 gap-2"><Settings2 className="h-4 w-4" /> Sistema</TabsTrigger>
                     <TabsTrigger value="billing" className="flex shrink-0 gap-2"><ReceiptText className="h-4 w-4" /> Facturación</TabsTrigger>
+                    {canManageSettings && (
+                        <TabsTrigger value="vat" className="flex shrink-0 gap-2"><Percent className="h-4 w-4" /> Alícuotas de IVA</TabsTrigger>
+                    )}
                     {currentUser?.role === 'admin' && (
                         <TabsTrigger value="audit" className="flex shrink-0 gap-2"><History className="h-4 w-4" /> Auditoría</TabsTrigger>
                     )}
@@ -332,6 +338,12 @@ function SettingsContent() {
                         onDeleteUser={handleDeleteUser}
                     />
                 </TabsContent>
+
+                {canManageSettings && (
+                    <TabsContent value="vat">
+                        <VatRatesTab />
+                    </TabsContent>
+                )}
 
                 {currentUser?.role === 'admin' && (
                     <TabsContent value="audit">

@@ -331,6 +331,21 @@ export class CreateOrderUseCase {
                 ]
             );
 
+            // Shipping, discounts and surcharges reported by an external channel (ADR-016): they
+            // are invoiced next to the detail. Never from the HTTP body (the schema strips them).
+            if (orderData.external_source && orderData.external_source !== 'pos' && Array.isArray(orderData.adjustments)) {
+                for (const adjustment of orderData.adjustments) {
+                    const amount = Math.round(Number(adjustment.amount || 0) * 100) / 100;
+                    if (!amount) continue;
+                    await connection.query(
+                        `INSERT INTO order_adjustments (id, order_id, kind, description, amount, vat_rate)
+                         VALUES (?, ?, ?, ?, ?, ?)`,
+                        [crypto.randomUUID(), orderId, adjustment.kind, String(adjustment.description || adjustment.kind).slice(0, 255),
+                            amount, adjustment.vat_rate == null ? 21 : Number(adjustment.vat_rate)]
+                    );
+                }
+            }
+
             // Stock rows are locked in product-id order in every path so that two
             // concurrent carts with the same products cannot deadlock each other.
             const lockedRows = counterSale

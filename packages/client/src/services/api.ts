@@ -75,6 +75,25 @@ type GenericRecord = Record<string, unknown>;
 /** Funds for "Caja 2" movements (ADR-015); "initial" only sends (opening balance). */
 export type TreasuryFund = "drawer" | "treasury" | "bank" | "initial";
 
+/** Bank debit that accompanies a movement or a card settlement (VAT included as debited). */
+export type BankChargeConcept = "commission" | "maintenance" | "debits_credits_tax" | "withholding" | "other";
+
+export type BankCharge = {
+    concept: BankChargeConcept;
+    amount: number;
+    vat_rate?: number;
+    notes?: string | null;
+};
+
+export type VatRate = { id: string; name: string; rate: number; is_default: boolean; active: boolean };
+
+export type VatRateInput = { name: string; rate: number; is_default?: boolean; active?: boolean };
+
+export type BankSummary = {
+    balance: number;
+    movements: Array<{ id: string; date: string; description: string; reference_type: string; amount: number }>;
+};
+
 export type ReturnsAnalyticsResponse = {
     totalLossAmount?: number;
     topReasons?: Array<{
@@ -661,13 +680,25 @@ export const api = {
 
     getTreasury: () =>
         httpClient.get<{ balance: number; movements: Array<{ id: string; date: string; description: string; reference_type: string; amount: number }> }>("/api/treasury"),
-    createTreasuryTransfer: (data: { idempotency_key: string; from: TreasuryFund; to: Exclude<TreasuryFund, "initial">; amount: number; cash_register_id?: string; notes?: string | null }) =>
-        httpClient.post<{ id: string; amount: number; idempotent_replay?: boolean }>("/api/treasury/transfers", data),
+    createTreasuryTransfer: (data: { idempotency_key: string; from: TreasuryFund; to: Exclude<TreasuryFund, "initial">; amount: number; cash_register_id?: string; notes?: string | null; charges?: BankCharge[] }) =>
+        httpClient.post<{ id: string; amount: number; charges_total?: number; idempotent_replay?: boolean }>("/api/treasury/transfers", data),
 
     getCardSettlements: () =>
         httpClient.get<{ pending_balance: number; settlements: Array<{ id: string; amount: number; description: string; date: string }> }>("/api/card-settlements"),
-    createCardSettlement: (data: { idempotency_key: string; amount: number; fee_amount?: number; reference?: string | null }) =>
-        httpClient.post<{ id: string; amount: number; idempotent_replay?: boolean }>("/api/card-settlements", data),
+    createCardSettlement: (data: { idempotency_key: string; amount: number; fee_amount?: number; fee_vat_rate?: number; charges?: BankCharge[]; reference?: string | null }) =>
+        httpClient.post<{ id: string; amount: number; deposited?: number; idempotent_replay?: boolean }>("/api/card-settlements", data),
+
+    getBank: () =>
+        httpClient.get<BankSummary>("/api/bank"),
+    createBankCharges: (data: { idempotency_key: string; date?: string | null; reference?: string | null; charges: BankCharge[] }) =>
+        httpClient.post<{ id: string; total: number; idempotent_replay?: boolean }>("/api/bank/charges", data),
+
+    getVatRates: (all = false) =>
+        httpClient.get<VatRate[]>(withQuery("/api/vat-rates", all ? { all: "true" } : undefined)),
+    createVatRate: (data: VatRateInput) =>
+        httpClient.post<VatRate>("/api/vat-rates", data),
+    updateVatRate: (id: string, data: VatRateInput) =>
+        httpClient.put<VatRate>(`/api/vat-rates/${id}`, data),
 
     createCreditNote: (data: CreditNoteCreateInput) =>
         httpClient.post<GenericRecord>("/api/credit-notes", data),

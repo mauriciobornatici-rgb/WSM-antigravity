@@ -219,6 +219,19 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                                         </TableRow>
                                                     )
                                                 })}
+                                                {(detailOrder.adjustments ?? []).map((adjustment, idx) => (
+                                                    <TableRow key={`adjustment-${idx}`} className="border-border bg-muted/20">
+                                                        <TableCell colSpan={6} className="text-sm font-medium">
+                                                            {adjustment.description}
+                                                        </TableCell>
+                                                        <TableCell
+                                                            className={`text-right font-mono font-bold ${adjustment.amount < 0 ? "text-emerald-600 dark:text-emerald-400" : ""}`}
+                                                        >
+                                                            {adjustment.amount < 0 ? "-" : ""}
+                                                            {formatMoney(Math.abs(adjustment.amount))}
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ))}
                                             </TableBody>
                                         </Table>
                                     </div>

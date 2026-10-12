@@ -179,7 +179,9 @@ test('supplier return approval updates inventory, accounting, balance and audit'
         if (statement.startsWith('SELECT id, location, quantity, reserved_quantity')) return [[{ id: 'i', location: 'General', quantity: 2, reserved_quantity: 0 }]];
         if (statement.startsWith('UPDATE inventory')) return [{ affectedRows: 1 }];
         // The supplier's last posted invoice: Factura A with 21 % VAT.
-        if (statement.includes('FROM supplier_invoices si')) return [[{ net_amount: 100, vat_amount: 21 }]];
+        if (statement.includes('FROM supplier_invoices si')) return [[{ id: 'si', net_amount: 100, vat_amount: 21 }]];
+        // ADR-016: its entry booked the fiscal credit in the 21 % account.
+        if (statement.includes("jl.account_code LIKE '1.1.05.%'")) return [[{ account_code: '1.1.05.02', amount: 21 }]];
         return [[]];
     });
     const originals = { audit: auditService.log, journal: accountingService.createJournalEntry };

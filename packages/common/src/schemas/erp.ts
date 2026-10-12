@@ -174,6 +174,14 @@ export const supplierInvoiceCreateSchema = z.object({
   due_date: z.string().nullable().optional(),
   net_amount: z.coerce.number().min(0),
   vat_amount: z.coerce.number().min(0),
+  // ADR-016: the invoice's VAT rate, so the fiscal credit lands in its own account.
+  // null / empty means "not sent" (z.coerce would turn null into 0 %).
+  vat_rate: z.preprocess(
+    (value) => (value === null || value === '' ? undefined : value),
+    z.coerce.number().refine((rate) => [0, 2.5, 5, 10.5, 21, 27].includes(rate), {
+      message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
+    }).optional()
+  ),
   other_taxes: z.coerce.number().min(0).optional(),
   total_amount: z.coerce.number().min(0).optional(),
   notes: z.string().nullable().optional(),
@@ -411,6 +419,36 @@ export const cashTransactionSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
+// VAT rates accepted by ARCA (ADR-016): the only ones a fee or charge can use.
+export const ARCA_VAT_RATES = [0, 2.5, 5, 10.5, 21, 27] as const;
+const vatRateValueSchema = z.coerce.number().refine((rate) => (ARCA_VAT_RATES as readonly number[]).includes(rate), {
+  message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
+});
+
+// A bank debit (ADR-016): commission and maintenance carry VAT (fiscal credit at the rate
+// picked, default 21 %); the tax on debits and credits and withholdings do not.
+export const bankChargeConcepts = ['commission', 'maintenance', 'debits_credits_tax', 'withholding', 'other'] as const;
+export const bankChargeSchema = z.object({
+  concept: z.enum(bankChargeConcepts),
+  amount: z.coerce.number().positive(),
+  vat_rate: vatRateValueSchema.optional(),
+  notes: z.string().trim().max(120).nullable().optional(),
+});
+
+export const bankChargesSchema = z.object({
+  idempotency_key: uuidSchema,
+  date: z.string().nullable().optional(),
+  reference: z.string().trim().max(120).nullable().optional(),
+  charges: z.array(bankChargeSchema).min(1).max(20),
+});
+
+export const vatRateSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  rate: vatRateValueSchema,
+  is_default: z.boolean().optional(),
+  active: z.boolean().optional(),
+});
+
 // "Caja 2" (ADR-015): moves cash between the POS drawer, treasury cash and the bank.
 export const treasuryTransferSchema = z.object({
   // Required: a double click must never move cash twice.
@@ -420,17 +458,26 @@ export const treasuryTransferSchema = z.object({
   amount: z.coerce.number().positive(),
   cash_register_id: optionalUuidSchema,
   notes: z.string().trim().max(200).nullable().optional(),
-}).refine((data) => data.from !== data.to, { message: 'Origen y destino deben ser distintos', path: ['to'] });
+  // The bank's own debits on a bank movement (ADR-016).
+  charges: z.array(bankChargeSchema).max(20).optional(),
+}).refine((data) => data.from !== data.to, { message: 'Origen y destino deben ser distintos', path: ['to'] })
+  .refine((data) => !data.charges?.length || data.from === 'bank' || data.to === 'bank', {
+    message: 'Los débitos bancarios solo acompañan un movimiento del banco',
+    path: ['charges'],
+  });
 
-// Card/QR settlement: the processor deposits in the bank what was collected, minus its fee.
+// Card/QR settlement: the processor deposits in the bank what was collected, minus its fee
+// (VAT at the rate picked, ADR-016) and its other debits (withholdings, taxes).
 export const cardSettlementSchema = z.object({
   idempotency_key: uuidSchema.optional(),
   amount: z.coerce.number().positive(),
   fee_amount: z.coerce.number().min(0).optional(),
+  fee_vat_rate: vatRateValueSchema.optional(),
+  charges: z.array(bankChargeSchema).max(20).optional(),
   settlement_date: z.string().nullable().optional(),
   reference: z.string().trim().max(255).nullable().optional(),
-}).refine((data) => (data.fee_amount ?? 0) < data.amount, {
-  message: 'La comisión debe ser menor al monto acreditado',
+}).refine((data) => (data.fee_amount ?? 0) + (data.charges ?? []).reduce((sum, charge) => sum + charge.amount, 0) < data.amount, {
+  message: 'La comisión y los débitos deben ser menores al monto acreditado',
   path: ['fee_amount'],
 });
 

@@ -3,6 +3,7 @@ import getRequestIp from '../utils/requestIp.js';
 import financeService from '../services/finance.service.js';
 import cashRegisterService from '../services/cashRegister.service.js';
 import treasuryService from '../services/treasury.service.js';
+import vatRatesService from '../services/vatRates.service.js';
 
 export const getTransactions = catchAsync(async (req, res) => {
     const rows = await financeService.getTransactions(req.query);
@@ -108,8 +109,29 @@ export const getTreasury = catchAsync(async (req, res) => {
 });
 
 export const createTreasuryTransfer = catchAsync(async (req, res) => {
-    const result = await treasuryService.transfer(req.body, req.user?.id || null, getRequestIp(req));
+    const result = await treasuryService.transfer(req.body, req.user?.id || null, getRequestIp(req), req.user || null);
     res.status(result.idempotent_replay ? 200 : 201).json(result);
+});
+
+export const getBank = catchAsync(async (req, res) => {
+    res.json(await treasuryService.getBankSummary());
+});
+
+export const createBankCharges = catchAsync(async (req, res) => {
+    const result = await treasuryService.createBankCharges(req.body, req.user?.id || null, getRequestIp(req));
+    res.status(result.idempotent_replay ? 200 : 201).json(result);
+});
+
+export const getVatRates = catchAsync(async (req, res) => {
+    res.json(await vatRatesService.list({ includeInactive: req.query.all === 'true' }));
+});
+
+export const createVatRate = catchAsync(async (req, res) => {
+    res.status(201).json(await vatRatesService.save(req.body, null, req.user?.id || null, getRequestIp(req)));
+});
+
+export const updateVatRate = catchAsync(async (req, res) => {
+    res.json(await vatRatesService.save(req.body, Number(req.params.id), req.user?.id || null, getRequestIp(req)));
 });
 
 export const getCardSettlements = catchAsync(async (req, res) => {

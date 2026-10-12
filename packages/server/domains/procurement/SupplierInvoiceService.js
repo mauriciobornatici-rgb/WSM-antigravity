@@ -4,6 +4,8 @@ import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
 import purchaseOrderService from './PurchaseOrderService.js';
 import { businessError } from '../../utils/businessError.js';
+import { ACCOUNTS } from '../../utils/paymentAccounts.js';
+import { vatCreditAccount } from '../../utils/vatAccounts.js';
 
 export class SupplierInvoiceService {
     async getSupplierInvoices(filters = {}) {
@@ -55,6 +57,21 @@ export class SupplierInvoiceService {
         const taxes = Math.round(Number(other_taxes || 0) * 100) / 100;
         const total = Math.round(Number(total_amount || (net + vat + taxes)) * 100) / 100;
         const creatorId = userId || null;
+        // The total is what we owe: it must be the sum of its parts or the entry would not
+        // balance (a typed total that disagrees used to post an unbalanced purchase).
+        const partsCents = Math.round(net * 100) + Math.round(vat * 100) + Math.round(taxes * 100);
+        if (Math.round(total * 100) !== partsCents) {
+            throw businessError(400, {
+                error: 'invalid_invoice_total',
+                message: `El total (${total.toFixed(2)}) no coincide con neto + IVA + percepciones (${(partsCents / 100).toFixed(2)}).`
+            });
+        }
+        if (vat > 0 && data.vat_rate != null && Number(data.vat_rate) === 0) {
+            throw businessError(400, {
+                error: 'invalid_vat_rate',
+                message: 'La factura tiene IVA: elegí su alícuota (0 % es solo para comprobantes sin IVA).'
+            });
+        }
 
         const connection = await pool.getConnection();
         try {
@@ -115,7 +132,12 @@ export class SupplierInvoiceService {
             ]);
 
             // 5. Create Accounting Journal Entry (Double-Entry Bookkeeping)
-            const debitInventory = Math.round((net + taxes) * 100) / 100;
+            // ADR-016: only a Factura A (or M) gives fiscal credit, in the account of its rate.
+            // On a B or C invoice the VAT is part of the cost. Perceptions ("Percepciones /
+            // Otros") are tax paid in advance: Retenciones y percepciones sufridas, not cost.
+            const givesCredit = invoice_type === 'A' || invoice_type === 'M';
+            const vatRate = data.vat_rate == null ? 21 : Number(data.vat_rate);
+            const debitInventory = Math.round((net + (givesCredit ? 0 : vat)) * 100) / 100;
             await accountingService.createJournalEntry(connection, {
                 date: issue_date || new Date(),
                 description: `Factura de Compra ${invoice_type} ${invoice_number}`,
@@ -123,7 +145,12 @@ export class SupplierInvoiceService {
                 reference_id: id,
                 lines: [
                     { account_code: '1.1.04.01', debit: debitInventory, credit: 0, notes: 'Inventario / Bienes de Cambio' },
-                    { account_code: '1.1.05.02', debit: vat, credit: 0, notes: `IVA Crédito Fiscal (${invoice_type === 'A' ? '21%' : 'Factura ' + invoice_type})` },
+                    ...(givesCredit && vat > 0
+                        ? [{ account_code: vatCreditAccount(vatRate), debit: vat, credit: 0, notes: `IVA Crédito Fiscal ${vatRate}%` }]
+                        : []),
+                    ...(taxes > 0
+                        ? [{ account_code: ACCOUNTS.WITHHOLDINGS, debit: taxes, credit: 0, notes: 'Percepciones sufridas' }]
+                        : []),
                     { account_code: '2.1.01.01', debit: 0, credit: total, notes: `Proveedores - Cuenta Corriente` }
                 ]
             });

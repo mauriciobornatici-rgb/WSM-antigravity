@@ -8,7 +8,7 @@ import accountingService from './accounting.service.js';
 import invoiceAuthorizationUseCase from '../domains/sales/InvoiceAuthorizationUseCase.js';
 import createOrderUseCase from '../domains/sales/CreateOrderUseCase.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
-import { lineAmounts } from '../utils/vatMath.js';
+import { grossLineAmounts, lineAmounts } from '../utils/vatMath.js';
 import dispatchOrderUseCase from '../domains/sales/DispatchOrderUseCase.js';
 import deliverOrderUseCase from '../domains/sales/DeliverOrderUseCase.js';
 
@@ -521,10 +521,21 @@ class SalesService extends BaseService {
             WHERE order_id IN (?)
             ORDER BY created_at ASC
         `, [orderIds]);
+        // Shipping, discounts and surcharges of the order (ADR-016), VAT included.
+        const [adjustmentRows] = await pool.query(
+            'SELECT order_id, kind, description, amount, vat_rate FROM order_adjustments WHERE order_id IN (?) ORDER BY created_at, id',
+            [orderIds]
+        );
 
         const rows = orders.map((o) => ({
             ...o,
             items: items.filter((i) => i.order_id === o.id),
+            adjustments: adjustmentRows.filter((row) => row.order_id === o.id).map((row) => ({
+                kind: row.kind,
+                description: row.description,
+                amount: Number(row.amount || 0),
+                vat_rate: Number(row.vat_rate || 0)
+            })),
             payments: paymentRows.filter((payment) => payment.order_id === o.id).map((payment) => ({
                 id: payment.id,
                 method: payment.method,
@@ -904,9 +915,17 @@ class SalesService extends BaseService {
 
             let netAmount = 0;
             let vatAmount = 0;
+            // Once picking started, a line with nothing picked was not delivered: it is not
+            // invoiced (it used to be invoiced in full). An order never picked bills what it ordered.
+            const anyPicked = items.some((item) => Number(item.picked_quantity || 0) > 0);
+            const orderedGrossByRate = new Map();
+            for (const item of items) {
+                const rate = item.vat_rate != null ? Number(item.vat_rate) : 21.00;
+                orderedGrossByRate.set(rate, (orderedGrossByRate.get(rate) || 0) + lineAmounts(item.quantity, item.unit_price, rate).gross);
+            }
             const invoiceItems = items
                 .map((item) => {
-                    const qty = Number(item.picked_quantity || 0) > 0 ? Number(item.picked_quantity) : Number(item.quantity);
+                    const qty = anyPicked ? Number(item.picked_quantity || 0) : Number(item.quantity);
                     const vatRate = item.vat_rate != null ? Number(item.vat_rate) : 21.00;
                     const unitPrice = Number(item.unit_price || 0);
 
@@ -930,6 +949,67 @@ class SalesService extends BaseService {
                 .filter((item) => item.quantity > 0);
 
             if (invoiceItems.length === 0) throw new Error('No picked items found');
+
+            // Shipping, discounts and surcharges of the order go on the invoice next to the
+            // detail (ADR-016), so the invoice adds up to what the customer paid. On a partially
+            // picked order a discount keeps its percentage (prorated by what was picked of its
+            // VAT rate), and it never exceeds those products. Every change is audited.
+            const [adjustments] = await connection.query(
+                'SELECT kind, description, amount, vat_rate FROM order_adjustments WHERE order_id = ? ORDER BY created_at, id',
+                [orderId]
+            );
+            const productGrossByRate = new Map();
+            for (const item of invoiceItems) {
+                productGrossByRate.set(item.vat_rate, (productGrossByRate.get(item.vat_rate) || 0) + item.total_line);
+            }
+            const itemsGross = this._roundMoney([...productGrossByRate.values()].reduce((sum, value) => sum + value, 0));
+            const orderedGross = this._roundMoney([...orderedGrossByRate.values()].reduce((sum, value) => sum + value, 0));
+            const external = order.external_source && order.external_source !== 'pos';
+            if (external && adjustments.length === 0 && Math.abs(itemsGross - orderedGross) < 0.005) {
+                // A channel order imported before ADR-016 has no adjustments: the gap between
+                // what the customer paid and the products is invoiced so the invoice matches it.
+                const gap = this._roundMoney(Number(order.total_amount || 0) - itemsGross);
+                if (Math.abs(gap) >= 0.01) {
+                    const mainRate = [...productGrossByRate.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 21;
+                    adjustments.push(gap > 0
+                        ? { kind: 'surcharge', description: 'Envío y otros cargos', amount: gap, vat_rate: 21 }
+                        : { kind: 'discount', description: 'Descuento', amount: gap, vat_rate: mainRate });
+                }
+            }
+            const adjustmentChanges = [];
+            // Charges first: a discount on the shipping can use the shipping line as room.
+            const pickedGrossByRate = new Map(productGrossByRate);
+            adjustments.sort((a, b) => Number(b.amount) - Number(a.amount));
+            for (const adjustment of adjustments) {
+                const vatRate = Number(adjustment.vat_rate);
+                const original = this._roundMoney(adjustment.amount);
+                let gross = original;
+                if (gross > 0) {
+                    productGrossByRate.set(vatRate, (productGrossByRate.get(vatRate) || 0) + gross);
+                } else if (gross < 0) {
+                    const ordered = orderedGrossByRate.get(vatRate) || 0;
+                    const picked = pickedGrossByRate.get(vatRate) || 0;
+                    const available = this._roundMoney(productGrossByRate.get(vatRate) || 0);
+                    if (ordered > 0 && picked < ordered) gross = this._roundMoney(gross * picked / ordered);
+                    gross = Math.max(gross, -available);
+                    productGrossByRate.set(vatRate, available + gross);
+                }
+                if (gross !== original) adjustmentChanges.push({ description: adjustment.description, ordered: original, invoiced: gross });
+                if (gross === 0) continue;
+                const { net: lineNet, vat: lineVat } = grossLineAmounts(gross, vatRate);
+                netAmount += lineNet;
+                vatAmount += lineVat;
+                invoiceItems.push({
+                    product_id: null,
+                    product_name: adjustment.description,
+                    sku: null,
+                    quantity: 1,
+                    unit_price: Math.round((gross / (1 + vatRate / 100)) * 10000) / 10000,
+                    vat_rate: vatRate,
+                    vat_amount: lineVat,
+                    total_line: gross
+                });
+            }
 
             netAmount = this._roundMoney(netAmount);
             vatAmount = this._roundMoney(vatAmount);
@@ -1080,6 +1160,7 @@ class SalesService extends BaseService {
                 entity_type: 'invoice',
                 entity_id: invoiceId,
                 new_values: {
+                    ...(adjustmentChanges.length > 0 ? { adjustment_changes: adjustmentChanges } : {}),
                     orderId,
                     invoiceType,
                     pointOfSale,

@@ -1,5 +1,40 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-005 — 2026-10-12 — `guardian-integridad` sobre ADR-016 (delta sin commitear de `codex/simulacion-operativa`)
+
+El coordinador verificó y corrigió cada hallazgo técnico:
+- [x] **Alta:** con un cupón repartido en varios productos, las devoluciones podían sumar 1 centavo más que la factura, y la última daba 409.
+  - Ahora el descuento de cada alícuota se reparte por mayor resto (`allocateCents`), así que los productos suman exactamente lo cobrado.
+  - La última unidad devuelve lo que queda de lo cobrado menos lo ya devuelto.
+  - Hay test unitario y uno MySQL (3 productos con cupón, devueltos de a uno, suman la factura).
+- [x] **Media:**
+  - La NC a ARCA toma la alícuota de la línea de factura, no la del producto hoy.
+  - Picking parcial: el descuento conserva su porcentaje sobre lo preparado, con auditoría, y la pantalla calcula igual que el servidor.
+  - Una línea sin preparar ya no se factura completa.
+  - Una devolución no supera lo facturado (409 `return_exceeds_invoiced`).
+  - La devolución a proveedor revierte el crédito fiscal en la cuenta que usó el asiento de esa compra.
+  - El total de una compra se compara con sus partes en centavos exactos.
+  - Una compra con IVA y alícuota 0 % se rechaza.
+  - El asiento exige Debe = Haber al centavo; antes toleraba 1 centavo.
+  - La migración 052 guarda los totales anteriores en `orders_total_backup_052`, con la reversión documentada, y cubre pedidos con factura borrada.
+  - Los pedidos de Tiendanube anteriores a la 051 facturan la diferencia con lo cobrado.
+- [x] **Baja:**
+  - Un débito muy chico queda entero en el gasto (antes daba error).
+  - El reintento de una acreditación se resuelve antes de validar las alícuotas.
+  - Un descuento mayor que los productos pasa a ser descuento sobre el envío.
+  - Un nombre de alícuota duplicado responde 409.
+  - El script de precios excluye las altas del ERP con stock y avisa que hay que republicar.
+  - El IVA del descuento se calcula con una sola fórmula (`grossLineAmounts`).
+- **Descartado:** "producto repetido en el script por variantes": `tiendanube_catalog_variants.product_id` es único.
+- **Observación:** en 1 de 5 corridas, el archivo `purchase-order-lifecycle.integration.js` falló completo al inicio (unos 200 ms), sin ninguna aserción fallida. Las otras 4 corridas dieron 74/74. No toca código de ADR-016; queda a investigar.
+- **Decisiones de negocio pendientes:**
+  - el IVA del envío y del recargo (hoy 21 %);
+  - si el envío se devuelve al devolver todo;
+  - envío y descuento en un picking parcial;
+  - facturas de compra con varias alícuotas.
+
+Evidencia: validate 0 (873 + 83); coverage 98,03/90,48/95,97; integración 74/74 en 4 de 5 corridas (ver la observación); RBAC OK; E2E 6/6; simulación 153/153.
+
 ## AUD-004 — 2026-10-12 — `guardian-integridad` y `revisor-ux` sobre ADR-015 (delta sin commitear de `codex/simulacion-operativa`)
 
 El coordinador verificó cada hallazgo en el código antes de corregirlo:

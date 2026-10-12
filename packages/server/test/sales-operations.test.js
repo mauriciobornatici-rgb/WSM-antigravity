@@ -129,7 +129,7 @@ test('getOrders returns populated rows directly when pagination totals are not r
         if (statement.includes('FROM order_payments')) return [[]];
         return [[]];
     });
-    assert.deepEqual(await salesService.getOrders(), [{ id: 'o-direct', status: 'pending', items: [], payments: [] }]);
+    assert.deepEqual(await salesService.getOrders(), [{ id: 'o-direct', status: 'pending', items: [], adjustments: [], payments: [] }]);
 });
 
 test('dispatchOrder completes pickup immediately and records an audit', async (t) => {

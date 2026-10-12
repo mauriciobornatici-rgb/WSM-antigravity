@@ -18,6 +18,9 @@ export const ACCOUNTS = Object.freeze({
     INVENTORY_LOSSES: '5.1.02.02',
     WARRANTY_COSTS: '5.1.02.03',
     BANK_FEES: '5.1.02.04',
+    // ADR-016: tax on bank debits and credits, and withholdings / perceptions suffered.
+    BANK_TAX: '5.1.02.05',
+    WITHHOLDINGS: '1.1.05.04',
 });
 
 // Non-sellable locations used by the warranty flow (same names as StockLedger's list).

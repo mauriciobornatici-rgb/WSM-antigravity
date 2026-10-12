@@ -3,6 +3,7 @@ import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
 import { nextDocumentSequence } from '../../utils/documentSequence.js';
+import { ACCOUNTS } from '../../utils/paymentAccounts.js';
 
 export class SupplierReturnService {
     /**
@@ -60,7 +61,7 @@ export class SupplierReturnService {
 
     async _resolveReturnAccounting(connection, supplierId, netTotal) {
         const [invoices] = await connection.query(
-            `SELECT si.net_amount, si.vat_amount
+            `SELECT si.id, si.net_amount, si.vat_amount, si.invoice_type
              FROM supplier_invoices si
              WHERE si.supplier_id = ?
                AND EXISTS (
@@ -76,7 +77,21 @@ export class SupplierReturnService {
         const vatRatio = invoiceNet > 0 ? Number(invoices[0].vat_amount || 0) / invoiceNet : 0;
         const netCents = Math.round(netTotal * 100);
         const vatCents = Math.round(netCents * vatRatio);
-        return { netAmount: netCents / 100, vatAmount: vatCents / 100, grossAmount: (netCents + vatCents) / 100 };
+        // ADR-016: the reversal follows how that purchase was actually posted. If its entry
+        // booked fiscal credit, the credit is reversed in that same account. If not (a B or C
+        // invoice since ADR-016), the VAT went into the goods' cost and leaves inventory with them.
+        const [creditLines] = await connection.query(
+            `SELECT jl.account_code, SUM(jl.debit) AS amount
+             FROM journal_entry_lines jl JOIN journal_entries je ON je.id = jl.journal_entry_id
+             WHERE je.reference_type = 'supplier_invoice' AND je.reference_id = ?
+               AND jl.account_code LIKE '1.1.05.%' AND jl.account_code <> ?
+             GROUP BY jl.account_code ORDER BY amount DESC`,
+            [invoices[0].id, ACCOUNTS.WITHHOLDINGS]
+        );
+        if (vatCents > 0 && creditLines.length === 0) {
+            return { netAmount: (netCents + vatCents) / 100, vatAmount: 0, grossAmount: (netCents + vatCents) / 100, vatAccount: null };
+        }
+        return { netAmount: netCents / 100, vatAmount: vatCents / 100, grossAmount: (netCents + vatCents) / 100, vatAccount: creditLines[0]?.account_code || null };
     }
 
     async nextSupplierReturnNumber(connection) {
@@ -231,7 +246,7 @@ export class SupplierReturnService {
                 ? await this._resolveReturnAccounting(connection, supplierReturn.supplier_id, totalAmount)
                 : null;
             if (accounting) {
-                const { netAmount, vatAmount, grossAmount } = accounting;
+                const { netAmount, vatAmount, grossAmount, vatAccount } = accounting;
                 await accountingService.createJournalEntry(connection, {
                     description: `Devolución a proveedor ${supplierReturn.return_number}`,
                     reference_type: 'supplier_return',
@@ -240,7 +255,7 @@ export class SupplierReturnService {
                         { account_code: '2.1.01.01', debit: grossAmount, credit: 0, notes: 'Proveedores - devolución' },
                         { account_code: '1.1.04.01', debit: 0, credit: netAmount, notes: 'Salida de mercadería devuelta' },
                         ...(vatAmount > 0
-                            ? [{ account_code: '1.1.05.02', debit: 0, credit: vatAmount, notes: 'Reversión de IVA Crédito Fiscal' }]
+                            ? [{ account_code: vatAccount || '1.1.05.02', debit: 0, credit: vatAmount, notes: 'Reversión de IVA Crédito Fiscal' }]
                             : [])
                     ]
                 });

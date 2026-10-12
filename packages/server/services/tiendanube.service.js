@@ -4,6 +4,7 @@ import pool from '../config/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import auditService from './audit.service.js';
 import { lineAmounts, netFromGross } from '../utils/vatMath.js';
+import { resolveUnitPrice } from '../domains/sales/CreateOrderUseCase.js';
 
 export class TiendaNubeService {
     constructor({ db = pool, http = axios, env = process.env } = {}) {
@@ -367,6 +368,12 @@ export class TiendaNubeService {
             throw error;
         }
 
+        const catalog = new Map();
+        if (items.length > 0) {
+            const [rows] = await this.db.query('SELECT id, vat_rate, sale_price FROM products WHERE id IN (?)', [items.map((item) => item.product_id)]);
+            for (const row of rows) catalog.set(row.id, { vat_rate: row.vat_rate == null ? 21 : Number(row.vat_rate), sale_price: Number(row.sale_price || 0) });
+        }
+        const adjustments = this.orderAdjustments(payload, items, catalog);
         const customerName = payload.customer?.name || payload.billing_address?.name || 'Cliente Tienda Nube';
         const result = await salesService.createOrder({
             customer_name: customerName,
@@ -379,13 +386,65 @@ export class TiendaNubeService {
             external_id: externalId,
             external_total_amount: Number(payload.total),
             payment_status: payload.payment_status,
-            items
+            items,
+            adjustments
         }, null);
 
         await this.persistOrderMetadata(result.id, payload);
         await this.applyRemoteStatus(result.id, payload, salesService);
 
         return { status: 'created', orderId: result.id };
+    }
+
+    /**
+     * Order lines that are not products (ADR-016), so that the invoice adds up to what the
+     * customer paid: the shipping charged, and the gap between the products plus shipping and
+     * the paid total — a discount (coupon, payment method, promotion) when negative, split by
+     * VAT rate in proportion to the products of each rate, or a surcharge when positive.
+     */
+    orderAdjustments(payload, items, catalog) {
+        const round2 = (value) => Math.round(value * 100) / 100;
+        const grossByRate = new Map();
+        const prices = new Map([...catalog.entries()].map(([id, product]) => [id, product.sale_price]));
+        for (const item of items) {
+            const product = catalog.get(item.product_id) || { vat_rate: 21, sale_price: 0 };
+            // The same unit price the order will store (CreateOrderUseCase).
+            const unitPrice = resolveUnitPrice(item, prices) ?? 0;
+            const { gross } = lineAmounts(item.quantity, unitPrice, product.vat_rate);
+            grossByRate.set(product.vat_rate, round2((grossByRate.get(product.vat_rate) || 0) + gross));
+        }
+        const itemsGross = round2([...grossByRate.values()].reduce((sum, value) => sum + value, 0));
+        const total = Number(payload.total);
+        if (!Number.isFinite(total)) return [];
+
+        const adjustments = [];
+        const shipping = round2(Number(payload.shipping_cost_customer || 0));
+        if (shipping > 0) {
+            const carrier = payload.shipping_option?.name || payload.shipping_option || payload.shipping || '';
+            adjustments.push({ kind: 'shipping', description: `Envío${typeof carrier === 'string' && carrier ? ` (${carrier})` : ''}`, amount: shipping, vat_rate: 21 });
+        }
+        const fullGap = round2(total - itemsGross - shipping);
+        // A discount never exceeds the products: what is left of it (free or discounted
+        // shipping) is a discount on the shipping line.
+        const gap = Math.max(fullGap, -itemsGross);
+        const shippingDiscount = round2(fullGap - gap);
+        if (shippingDiscount < 0) {
+            adjustments.push({ kind: 'discount', description: 'Descuento sobre el envío', amount: Math.max(shippingDiscount, -shipping), vat_rate: 21 });
+        }
+        if (gap < 0 && itemsGross > 0) {
+            const coupon = Array.isArray(payload.coupon) ? payload.coupon[0]?.code : payload.coupon?.code;
+            const description = coupon ? `Descuento (cupón ${coupon})` : 'Descuento';
+            const rates = [...grossByRate.entries()].filter(([, gross]) => gross > 0).sort((a, b) => a[1] - b[1]);
+            let assigned = 0;
+            rates.forEach(([rate, gross], index) => {
+                const amount = index === rates.length - 1 ? round2(gap - assigned) : round2(gap * gross / itemsGross);
+                assigned = round2(assigned + amount);
+                if (amount !== 0) adjustments.push({ kind: 'discount', description: rates.length > 1 ? `${description} IVA ${String(rate).replace('.', ',')}%` : description, amount, vat_rate: rate });
+            });
+        } else if (gap > 0) {
+            adjustments.push({ kind: 'surcharge', description: 'Recargo', amount: gap, vat_rate: 21 });
+        }
+        return adjustments;
     }
 
     localizedText(value, fallback = '') {

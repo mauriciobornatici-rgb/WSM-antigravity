@@ -251,6 +251,8 @@ function creditNoteQueryMock({ maxSeq = 4, failInsert = false } = {}) {
             return [[{ id: 'inv-1', client_id: 'c1', invoice_type: 'A', point_of_sale: 3, total_amount: 121, vat_amount: 21 }]];
         }
         if (statement.includes('AS credited FROM credit_notes')) return [[{ credited: 0 }]];
+        // ADR-016: the output VAT is reversed per rate of the invoice.
+        if (statement.startsWith('SELECT vat_rate, SUM(total_line)')) return [[{ vat_rate: 21, gross: 121, vat: 21 }]];
         // C2: the manual note is posted (sales + output VAT / receivables).
         if (statement.startsWith('INSERT INTO journal_entr')) return [{}];
         throw new Error(`Unexpected SQL: ${statement}`);

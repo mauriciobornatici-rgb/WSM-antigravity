@@ -7,6 +7,8 @@ import { recordDrawerOutflow } from './cashShift.service.js';
 import { businessError } from '../utils/businessError.js';
 import { claimIdempotentRequest, saveIdempotentResponse } from '../utils/idempotency.js';
 import { ensureTreasuryFunds, lockTreasury } from './treasury.service.js';
+import { bankChargeLines } from '../utils/bankCharges.js';
+import vatRatesService from './vatRates.service.js';
 
 class FinanceService {
     _buildValidationError(message, errorCode = 'VALIDATION_ERROR') {
@@ -1081,8 +1083,6 @@ class FinanceService {
     async createCardSettlement(payload, userId = null, ipAddress = null) {
         const amount = this._roundMoney(payload.amount);
         const fee = this._roundMoney(payload.fee_amount || 0);
-        const feeNet = this._roundMoney(fee / 1.21);
-        const feeVat = this._roundMoney(fee - feeNet);
         const key = payload.idempotency_key || null;
         const connection = await pool.getConnection();
         try {
@@ -1104,8 +1104,20 @@ class FinanceService {
                     return { id: existing[0].id, amount: Number(existing[0].amount), idempotent_replay: true };
                 }
             }
+            // After the replay check: a retry gets its original answer even if a rate changed since.
+            // ADR-016: the fee's VAT rate is picked by the user (default 21 %, 0 = not computable),
+            // and the processor's other debits (withholdings, tax on credits) ride on the settlement.
+            const charges = [
+                ...(fee > 0 ? [{ concept: 'commission', amount: fee, vat_rate: payload.fee_vat_rate, notes: 'procesador' }] : []),
+                ...(Array.isArray(payload.charges) ? payload.charges : []),
+            ];
+            const charged = await bankChargeLines(charges, (rate) => vatRatesService.resolveRate(connection, rate));
+            if (charged.total >= amount) {
+                throw businessError(400, { error: 'invalid_charge', message: 'La comisión y los débitos deben ser menores al monto liquidado.' });
+            }
             const [[balanceRow]] = await connection.query(
-                'SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) AS pending FROM journal_entry_lines WHERE account_code = ?',
+                // Locking read: the latest committed balance, never an older snapshot.
+                'SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) AS pending FROM journal_entry_lines WHERE account_code = ? FOR SHARE',
                 [ACCOUNTS.CARDS_TO_COLLECT]
             );
             const pending = this._roundMoney(balanceRow?.pending || 0);
@@ -1121,19 +1133,18 @@ class FinanceService {
             await connection.query(
                 `INSERT INTO transactions (id, type, amount, description, payment_method, reference_id, date)
                  VALUES (?, 'card_settlement', ?, ?, 'transfer', ?, ?)`,
-                [id, amount, `Acreditación de tarjetas${reference ? ` ${reference}` : ''}${fee > 0 ? ` (comisión ${fee.toFixed(2)})` : ''}`, key, payload.settlement_date || new Date()]
+                [id, amount, `Acreditación de tarjetas${reference ? ` ${reference}` : ''}${charged.total > 0 ? ` (débitos ${charged.total.toFixed(2)})` : ''}`, key, payload.settlement_date || new Date()]
             );
+            const deposited = this._roundMoney(amount - charged.total);
             await accountingService.createJournalEntryIfAny(connection, {
                 // A date-only value is a calendar day: build it in local time (new Date('YYYY-MM-DD') is UTC).
                 date: payload.settlement_date ? new Date(`${String(payload.settlement_date).slice(0, 10)}T12:00:00`) : new Date(),
                 description: `Acreditación de tarjetas y QR${reference ? ` ${reference}` : ''}`,
                 reference_type: 'card_settlement',
                 reference_id: id,
-                // ADR-015: the fee is invoiced by the processor with VAT 21%: its VAT is fiscal credit.
                 lines: [
-                    { account_code: ACCOUNTS.BANK, debit: this._roundMoney(amount - fee), credit: 0, notes: 'Depósito neto del procesador' },
-                    { account_code: ACCOUNTS.BANK_FEES, debit: feeNet, credit: 0, notes: 'Comisión del procesador (neto)' },
-                    { account_code: ACCOUNTS.VAT_CREDIT_21, debit: feeVat, credit: 0, notes: 'IVA crédito fiscal de la comisión' },
+                    { account_code: ACCOUNTS.BANK, debit: deposited, credit: 0, notes: 'Depósito neto del procesador' },
+                    ...charged.lines,
                     { account_code: ACCOUNTS.CARDS_TO_COLLECT, debit: 0, credit: amount, notes: 'Cobros con tarjeta/QR acreditados' }
                 ]
             });
@@ -1142,11 +1153,11 @@ class FinanceService {
                 action: 'CREATE_CARD_SETTLEMENT',
                 entity_type: 'transaction',
                 entity_id: id,
-                new_values: { amount, fee_amount: fee, reference, pending_before: pending },
+                new_values: { amount, fee_amount: fee, fee_vat_rate: payload.fee_vat_rate ?? null, charges: payload.charges || [], deposited, reference, pending_before: pending },
                 ip_address: ipAddress
             }, connection);
             await connection.commit();
-            return { id, amount, fee_amount: fee, pending_balance: this._roundMoney(pending - amount) };
+            return { id, amount, fee_amount: fee, deposited, pending_balance: this._roundMoney(pending - amount) };
         } catch (err) {
             await connection.rollback();
             throw err;

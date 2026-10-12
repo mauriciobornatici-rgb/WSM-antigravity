@@ -17,9 +17,11 @@ import {
     ArrowUpRight, 
     ArrowDownRight, 
     Scale,
-    CreditCard
+    CreditCard,
+    Landmark
 } from "lucide-react"
 import { CardSettlementsTab } from "@/components/accounting/CardSettlementsTab"
+import { BankTab } from "@/components/accounting/BankTab"
 import { showErrorToast } from "@/lib/errorHandling"
 import { toast } from "sonner"
 
@@ -496,6 +498,10 @@ export default function AccountingPage() {
                         <CreditCard className="h-4 w-4 text-violet-500" />
                         Tarjetas
                     </TabsTrigger>
+                    <TabsTrigger value="bank" className="gap-2 shrink-0">
+                        <Landmark className="h-4 w-4 text-sky-500" />
+                        Banco
+                    </TabsTrigger>
                     <TabsTrigger value="manualEntry" className="gap-2 shrink-0 bg-primary/5 hover:bg-primary/10 text-primary border border-primary/20">
                         <Plus className="h-4 w-4" />
                         Asiento Manual
@@ -504,6 +510,10 @@ export default function AccountingPage() {
 
                 <TabsContent value="cardSettlements" className="space-y-4">
                     <CardSettlementsTab />
+                </TabsContent>
+
+                <TabsContent value="bank" className="space-y-4">
+                    <BankTab />
                 </TabsContent>
 
                 {/* Dashboard / Cash Flow Tab */}

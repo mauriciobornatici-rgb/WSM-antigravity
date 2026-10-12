@@ -171,6 +171,15 @@ test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Fact
             }]];
         }
 
+        // ADR-016: what each product was charged on the invoice, its discounts and earlier refunds.
+        if (sql.includes("product_id IS NOT NULL GROUP BY")) {
+            return [[{ product_id: memoryState.product.id, vat_rate: 21, quantity: 2, gross: 266200, vat: 46200 }]];
+        }
+        if (sql.includes("product_id IS NULL AND total_line < 0") || sql.includes("r.status = 'approved'")
+            || sql.includes("FROM order_adjustments") || sql.includes("GROUP BY ii.product_id")) {
+            return [[]];
+        }
+
         // Client Return queries
         if (sql.includes("SELECT * FROM client_returns WHERE id = ?")) {
             return [[{
