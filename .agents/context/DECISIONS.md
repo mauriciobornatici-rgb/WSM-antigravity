@@ -80,6 +80,11 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-011 — Cierre de decisiones abiertas (usuario, 2026-10-12)
+- **Excepción offline declarada por el cliente:** riesgo aceptado. No hay forma técnica de probar que una terminal estuvo sin red; el control es la revisión obligatoria en "Excepciones POS", con aviso visible al gerente cuando hay pendientes.
+- **Devolución a proveedor:** espeja la factura de compra: Proveedores (bruto) / Mercadería (neto) + IVA crédito fiscal; el saldo del proveedor puede quedar a favor (sin recorte a 0).
+- **Remoto:** push de `codex/hardening-100` y Pull Request a `main`; no se mergea sin aprobación del usuario.
+
 ### ADR-010 — Decisiones tras la auditoría AUD-001 (usuario, 2026-09-25)
 - **Precio de venta offline distinto al catálogo:** la venta se registra (ya ocurrió) pero queda como excepción pendiente de revisión de un gerente (permiso `ORDERS_PRICE_OVERRIDE`), visible en un listado.
 - **Venta offline sin stock al sincronizar:** se registra; se descuenta lo disponible sin quedar negativo y el faltante queda como anomalía auditada para conteo, en vez de trabar la cola.
