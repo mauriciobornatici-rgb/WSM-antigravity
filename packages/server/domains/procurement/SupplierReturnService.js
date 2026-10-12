@@ -2,13 +2,7 @@ import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
-
-function domainError(message, errorCode, statusCode) {
-    const err = new Error(message);
-    err.errorCode = errorCode;
-    err.statusCode = statusCode;
-    return err;
-}
+import { nextDocumentSequence } from '../../utils/documentSequence.js';
 
 export class SupplierReturnService {
     /**
@@ -58,11 +52,7 @@ export class SupplierReturnService {
         }
 
         if (remaining > 0) {
-            throw domainError(
-                'Stock no reservado insuficiente para procesar la devolución al proveedor',
-                'INSUFFICIENT_STOCK',
-                409
-            );
+            throw Object.assign(new Error('Stock no reservado insuficiente para procesar la devolución al proveedor'), { errorCode: 'INSUFFICIENT_STOCK', statusCode: 409 });
         }
     }
 
@@ -87,6 +77,121 @@ export class SupplierReturnService {
         return { netAmount: netCents / 100, vatAmount: vatCents / 100, grossAmount: (netCents + vatCents) / 100 };
     }
 
+    async nextSupplierReturnNumber(connection) {
+        const year = new Date().getFullYear();
+        const prefix = `SR-${year}-`;
+        const [rows] = await connection.query(
+            `SELECT MAX(CAST(SUBSTRING_INDEX(return_number, '-', -1) AS UNSIGNED)) AS max_seq
+             FROM supplier_returns
+             WHERE return_number LIKE ?`,
+            [`${prefix}%`]
+        );
+        const maxExisting = Number(rows[0]?.max_seq || 0);
+        const nextSeq = await nextDocumentSequence(connection, `supplier_return:${year}`, maxExisting);
+        return `${prefix}${String(nextSeq).padStart(4, '0')}`;
+    }
+
+    async getReturns(filters = {}) {
+        const { supplier_id, status } = filters;
+        let query = `
+            SELECT sr.*, s.name AS supplier_name
+            FROM supplier_returns sr
+            LEFT JOIN suppliers s ON sr.supplier_id = s.id
+            WHERE 1=1
+        `;
+        const params = [];
+        if (supplier_id) {
+            query += ' AND sr.supplier_id = ?';
+            params.push(supplier_id);
+        }
+        if (status) {
+            query += ' AND sr.status = ?';
+            params.push(status);
+        }
+        query += ' ORDER BY sr.created_at DESC';
+
+        try {
+            const [rows] = await pool.query(query, params);
+            if (rows.length === 0) return rows;
+
+            const ids = rows.map((r) => r.id);
+            const [items] = await pool.query(`
+                SELECT sri.*, p.name AS product_name, p.sku
+                FROM supplier_return_items sri
+                LEFT JOIN products p ON sri.product_id = p.id
+                WHERE sri.return_id IN (?)
+            `, [ids]);
+
+            const itemsByReturn = {};
+            for (const item of items) {
+                if (!itemsByReturn[item.return_id]) itemsByReturn[item.return_id] = [];
+                itemsByReturn[item.return_id].push(item);
+            }
+
+            return rows.map((r) => ({
+                ...r,
+                items: itemsByReturn[r.id] || []
+            }));
+        } catch (err) {
+            if (err.code === 'ER_NO_SUCH_TABLE') {
+                return [];
+            }
+            throw err;
+        }
+    }
+
+    async createReturn(data, userId, ipAddress = null) {
+        const { supplier_id, items, notes } = data;
+        const id = crypto.randomUUID();
+
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const returnNumber = await this.nextSupplierReturnNumber(connection);
+
+            await connection.query(`
+                INSERT INTO supplier_returns (id, return_number, supplier_id, notes, status)
+                VALUES (?, ?, ?, ?, 'draft')
+            `, [id, returnNumber, supplier_id, notes || null]);
+
+            for (const item of items || []) {
+                await connection.query(`
+                    INSERT INTO supplier_return_items (id, return_id, product_id, quantity, unit_cost, reason)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                `, [
+                    crypto.randomUUID(),
+                    id,
+                    item.product_id,
+                    item.quantity,
+                    item.unit_cost || 0,
+                    item.reason || null
+                ]);
+            }
+
+            await auditService.log({
+                user_id: userId || null,
+                action: 'CREATE_SUPPLIER_RETURN',
+                entity_type: 'supplier_return',
+                entity_id: id,
+                new_values: {
+                    id,
+                    return_number: returnNumber,
+                    supplier_id,
+                    notes: notes || null,
+                    items: items || []
+                },
+                ip_address: ipAddress
+            }, connection);
+            await connection.commit();
+            return { id, return_number: returnNumber };
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+    }
+
     async approveSupplierReturn(id, userId, ipAddress = null) {
         const connection = await pool.getConnection();
         try {
@@ -94,16 +199,16 @@ export class SupplierReturnService {
 
             const [returns] = await connection.query('SELECT * FROM supplier_returns WHERE id = ? FOR UPDATE', [id]);
             if (returns.length === 0) {
-                throw domainError('Devolución no encontrada', 'RETURN_NOT_FOUND', 404);
+                throw Object.assign(new Error('Devolución no encontrada'), { errorCode: 'RETURN_NOT_FOUND', statusCode: 404 });
             }
             const supplierReturn = returns[0];
             if (supplierReturn.status === 'approved') {
-                throw domainError('La devolución ya fue aprobada', 'RETURN_ALREADY_APPROVED', 409);
+                throw Object.assign(new Error('La devolución ya fue aprobada'), { errorCode: 'RETURN_ALREADY_APPROVED', statusCode: 409 });
             }
 
             const [items] = await connection.query('SELECT * FROM supplier_return_items WHERE return_id = ?', [id]);
             if (items.length === 0) {
-                throw domainError('La devolución no tiene ítems', 'RETURN_WITHOUT_ITEMS', 400);
+                throw Object.assign(new Error('La devolución no tiene ítems'), { errorCode: 'RETURN_WITHOUT_ITEMS', statusCode: 400 });
             }
 
             let totalAmount = 0;

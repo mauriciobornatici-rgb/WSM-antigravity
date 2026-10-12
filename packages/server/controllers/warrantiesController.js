@@ -1,9 +1,7 @@
 import { warrantiesService, returnsService, creditNotesService } from '../services/warranties.service.js';
 import catchAsync from '../utils/catchAsync.js';
 import crypto from 'crypto';
-import pool from '../config/db.js';
 import auditService from '../services/audit.service.js';
-import { nextDocumentSequence } from '../utils/documentSequence.js';
 import getRequestIp from '../utils/requestIp.js';
 
 // WARRANTIY CLAIMS
@@ -80,76 +78,8 @@ export const getCreditNotes = catchAsync(async (req, res) => {
 });
 
 export const createCreditNote = catchAsync(async (req, res) => {
-    const id = crypto.randomUUID();
-    const allowedReferenceTypes = new Set(['return', 'warranty', 'discount', 'other']);
-    const requestedReferenceType = req.body.reference_type || 'other';
-    const referenceType = requestedReferenceType === 'manual'
-        ? 'other'
-        : (allowedReferenceTypes.has(requestedReferenceType) ? requestedReferenceType : 'other');
-    const notes = req.body.notes || req.body.reason || null;
-
-    const connection = await pool.getConnection();
-    try {
-        await connection.beginTransaction();
-
-        const year = new Date().getFullYear();
-        const prefix = `NC-${year}-`;
-        const [rows] = await connection.query(
-            `SELECT MAX(CAST(SUBSTRING_INDEX(number, '-', -1) AS UNSIGNED)) AS max_seq
-             FROM credit_notes
-             WHERE number LIKE ?`,
-            [`${prefix}%`]
-        );
-        const maxExisting = Number(rows[0]?.max_seq || 0);
-        const seq = await nextDocumentSequence(connection, `credit_note:${year}`, maxExisting);
-        const number = `${prefix}${String(seq).padStart(4, '0')}`;
-
-        await connection.query(
-            `INSERT INTO credit_notes (
-                id, number, client_id, customer_name, reference_type, reference_id, amount, status, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', ?)`,
-            [
-                id,
-                number,
-                req.body.client_id,
-                req.body.customer_name || null,
-                referenceType,
-                req.body.reference_id || null,
-                Number(req.body.amount || 0),
-                notes
-            ]
-        );
-
-        await connection.commit();
-
-        const result = {
-            id,
-            number,
-            client_id: req.body.client_id,
-            customer_name: req.body.customer_name || null,
-            reference_type: referenceType,
-            reference_id: req.body.reference_id || null,
-            amount: Number(req.body.amount || 0),
-            notes,
-            status: 'issued'
-        };
-
-        await auditService.log({
-            user_id: req.user?.id || null,
-            action: 'CREATE_CREDIT_NOTE',
-            entity_type: 'credit_note',
-            entity_id: id,
-            new_values: result,
-            ip_address: getRequestIp(req)
-        });
-
-        res.json(result);
-    } catch (err) {
-        await connection.rollback();
-        throw err;
-    } finally {
-        connection.release();
-    }
+    const result = await creditNotesService.createManualCreditNote(req.body, req.user?.id, getRequestIp(req));
+    res.json(result);
 });
 
 export const authorizeCreditNote = catchAsync(async (req, res) => {

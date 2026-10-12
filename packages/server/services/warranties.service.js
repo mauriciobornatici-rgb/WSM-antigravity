@@ -639,6 +639,79 @@ class CreditNotesService extends BaseService {
         const [updated] = await pool.query('SELECT * FROM credit_notes WHERE id = ?', [creditNoteId]);
         return updated[0];
     }
+
+    async createManualCreditNote(body, userId, ipAddress) {
+        const id = crypto.randomUUID();
+        const allowedReferenceTypes = new Set(['return', 'warranty', 'discount', 'other']);
+        const requestedReferenceType = body.reference_type || 'other';
+        const referenceType = requestedReferenceType === 'manual'
+            ? 'other'
+            : (allowedReferenceTypes.has(requestedReferenceType) ? requestedReferenceType : 'other');
+        const notes = body.notes || body.reason || null;
+
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            const year = new Date().getFullYear();
+            const prefix = `NC-${year}-`;
+            const [rows] = await connection.query(
+                `SELECT MAX(CAST(SUBSTRING_INDEX(number, '-', -1) AS UNSIGNED)) AS max_seq
+             FROM credit_notes
+             WHERE number LIKE ?`,
+                [`${prefix}%`]
+            );
+            const maxExisting = Number(rows[0]?.max_seq || 0);
+            const seq = await nextDocumentSequence(connection, `credit_note:${year}`, maxExisting);
+            const number = `${prefix}${String(seq).padStart(4, '0')}`;
+
+            await connection.query(
+                `INSERT INTO credit_notes (
+                id, number, client_id, customer_name, reference_type, reference_id, amount, status, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', ?)`,
+                [
+                    id,
+                    number,
+                    body.client_id,
+                    body.customer_name || null,
+                    referenceType,
+                    body.reference_id || null,
+                    Number(body.amount || 0),
+                    notes
+                ]
+            );
+
+            await connection.commit();
+
+            const result = {
+                id,
+                number,
+                client_id: body.client_id,
+                customer_name: body.customer_name || null,
+                reference_type: referenceType,
+                reference_id: body.reference_id || null,
+                amount: Number(body.amount || 0),
+                notes,
+                status: 'issued'
+            };
+
+            await auditService.log({
+                user_id: userId || null,
+                action: 'CREATE_CREDIT_NOTE',
+                entity_type: 'credit_note',
+                entity_id: id,
+                new_values: result,
+                ip_address: ipAddress
+            });
+
+            return result;
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+    }
 }
 
 export const warrantiesService = new WarrantiesService();

@@ -4,6 +4,11 @@ const env = getEnvConfig();
 
 // Express recognises an error handler by its four parameters: _next must stay.
 const globalErrorHandler = (err, req, res, _next) => {
+    // Expected business rule violations answer their exact body and are not logged as errors.
+    if (err.responseBody) {
+        return res.status(err.statusCode).json(err.responseBody);
+    }
+
     console.error(JSON.stringify({
         timestamp: new Date().toISOString(),
         level: 'error',

@@ -516,6 +516,154 @@ class FinanceService {
         }
     }
 
+    async getTransactions({ supplier_id, client_id, type, start_date, end_date }) {
+        let query = `
+        SELECT t.*, c.name AS client_name, s.name AS supplier_name
+        FROM transactions t
+        LEFT JOIN clients c ON t.client_id = c.id
+        LEFT JOIN suppliers s ON t.supplier_id = s.id
+        WHERE 1=1
+    `;
+        const params = [];
+
+        if (supplier_id) {
+            query += ' AND t.supplier_id = ?';
+            params.push(supplier_id);
+        }
+        if (client_id) {
+            query += ' AND t.client_id = ?';
+            params.push(client_id);
+        }
+        if (type) {
+            query += ' AND t.type = ?';
+            params.push(type);
+        }
+        if (start_date) {
+            query += ' AND DATE(t.date) >= DATE(?)';
+            params.push(start_date);
+        }
+        if (end_date) {
+            query += ' AND DATE(t.date) <= DATE(?)';
+            params.push(end_date);
+        }
+        query += ' ORDER BY t.date DESC';
+
+        const [rows] = await pool.query(query, params);
+        return rows;
+    }
+
+    async getPendingInvoices(clientId) {
+        let query = `
+        SELECT i.*, c.name AS client_name, c.tax_id AS client_tax_id
+        FROM invoices i
+        LEFT JOIN clients c ON i.client_id = c.id
+        WHERE i.deleted_at IS NULL
+          AND i.payment_status IN ('pending', 'partial')
+    `;
+        const params = [];
+
+        if (clientId) {
+            query += ' AND i.client_id = ?';
+            params.push(clientId);
+        }
+
+        query += ' ORDER BY i.issue_date ASC';
+
+        const [invoiceRows] = await pool.query(query, params);
+
+        // Get paid amounts from transactions to compute exact pending amount
+        if (invoiceRows.length > 0) {
+            const invoiceIds = invoiceRows.map(r => r.id);
+            const [paymentRows] = await pool.query(`
+            SELECT reference_id, SUM(amount) as paid_amount
+            FROM transactions
+            WHERE reference_id IN (?) AND type = 'sale'
+            GROUP BY reference_id
+        `, [invoiceIds]);
+
+            const paidMap = {};
+            for (const pr of paymentRows) {
+                paidMap[pr.reference_id] = Number(pr.paid_amount || 0);
+            }
+
+            for (const row of invoiceRows) {
+                const paid = paidMap[row.id] || 0;
+                const total = Number(row.total_amount || 0);
+                row.paid_amount = paid;
+                row.pending_amount = Math.max(0, total - paid);
+                row.document_type = 'invoice';
+                row.fiscal_status = row.cae ? 'authorized' : 'pending_cae';
+            }
+        }
+
+        let orderQuery = `
+        SELECT o.id, o.id AS order_id, o.client_id, c.name AS client_name, c.tax_id AS client_tax_id,
+               o.customer_name, o.created_at AS issue_date, o.payment_status, o.payment_method,
+               CASE
+                   WHEN COALESCE(SUM(CASE WHEN op.payment_method = 'credit_account' THEN op.amount ELSE 0 END), 0) > 0
+                       THEN SUM(CASE WHEN op.payment_method = 'credit_account' THEN op.amount ELSE 0 END)
+                   WHEN o.payment_method = 'credit_account' THEN o.total_amount
+                   ELSE 0
+               END AS total_amount
+        FROM orders o
+        JOIN clients c ON c.id = o.client_id AND c.deleted_at IS NULL
+        LEFT JOIN order_payments op ON op.order_id = o.id
+        WHERE o.deleted_at IS NULL AND o.invoice_id IS NULL
+          AND o.status NOT IN ('cancelled', 'returned')
+    `;
+        const orderParams = [];
+        if (clientId) {
+            orderQuery += ' AND o.client_id = ?';
+            orderParams.push(clientId);
+        }
+        orderQuery += `
+        GROUP BY o.id, o.client_id, c.name, c.tax_id, o.customer_name, o.created_at, o.payment_status, o.payment_method, o.total_amount
+        HAVING total_amount > 0
+        ORDER BY o.created_at ASC
+    `;
+        const [orderRows] = await pool.query(orderQuery, orderParams);
+        if (orderRows.length > 0) {
+            const orderIds = orderRows.map((row) => row.id);
+            const [paymentRows] = await pool.query(`
+            SELECT reference_id, SUM(amount) AS paid_amount
+            FROM transactions
+            WHERE reference_id IN (?) AND type = 'sale'
+            GROUP BY reference_id
+        `, [orderIds]);
+            const paidMap = new Map(paymentRows.map((row) => [row.reference_id, Number(row.paid_amount || 0)]));
+            for (const row of orderRows) {
+                row.document_type = 'order';
+                row.fiscal_status = 'not_invoiced';
+                row.paid_amount = paidMap.get(row.id) || 0;
+                row.pending_amount = Math.max(0, Number(row.total_amount || 0) - row.paid_amount);
+            }
+        }
+
+        return [...invoiceRows, ...orderRows]
+            .filter((row) => Number(row.pending_amount || 0) > 0.009)
+            .sort((a, b) => new Date(a.issue_date).getTime() - new Date(b.issue_date).getTime());
+    }
+
+    async getFiscalSalesStatus() {
+        const [rows] = await pool.query(`
+        SELECT o.id AS order_id, o.created_at AS sale_date, o.total_amount AS order_total,
+               o.customer_name, c.id AS client_id, c.name AS client_name, c.tax_id AS client_tax_id,
+               i.id AS invoice_id, i.invoice_type, i.point_of_sale, i.invoice_number,
+               i.total_amount AS invoice_total, i.status AS invoice_status, i.cae, i.cae_expiration_date,
+               CASE
+                   WHEN i.id IS NULL THEN 'not_invoiced'
+                   WHEN i.cae IS NULL OR i.cae = '' THEN 'pending_cae'
+                   ELSE 'authorized'
+               END AS fiscal_status
+        FROM orders o
+        JOIN clients c ON c.id = o.client_id AND c.deleted_at IS NULL
+        LEFT JOIN invoices i ON i.order_id = o.id AND i.deleted_at IS NULL
+        WHERE o.deleted_at IS NULL AND o.status NOT IN ('cancelled', 'returned')
+        ORDER BY o.created_at DESC
+    `);
+        return rows;
+    }
+
     async getCustomerChecks(filters = {}) {
         let query = `
             SELECT cc.*, c.name AS client_name,
