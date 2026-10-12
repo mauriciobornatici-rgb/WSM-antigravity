@@ -42,8 +42,21 @@ v2.1 por pedido del usuario). Decisiones de negocio en ADR-008 (precios de catá
 
 - [x] ESLint del servidor (`packages/server/eslint.config.js`): 29 problemas → 0; en `npm run lint`, `validate` y CI. Ningún hallazgo era bug (imports/variables sobrantes).
 
-1. Confirmar CI verde del PR #1 tras el push.
-2. Sacar SQL de controladores por dominio (169 consultas; con la red de tests ya puesta).
+- [x] `d39aaed` test del cargador de entorno portable (único fallo del CI Linux; verificado en node:24-alpine).
+
+## En curso — rama `codex/sql-out-of-controllers` (apilada sobre `codex/hardening-100`)
+
+Decisión del coordinador (el usuario delegó la elección): el PR #1 queda congelado para revisión; el refactor va en rama/PR propio que se re-apunta a `main` tras el merge del #1.
+- [x] `151c5d1` 125 consultas SQL en 10 controladores → 0 (servicios de dominio), sin cambiar SQL, transacciones, cuerpos ni códigos HTTP. Errores de negocio unificados en `utils/businessError.js` (catchAsync + middleware); se eliminaron 4 helpers locales y 25 try/catch. 791 tests sin editar, lint 0, coverage 99,25/91,82/99,00, integración 44/44, RBAC OK.
+- [x] CI del PR #1: **verde completo** (`d39aaed`).
+- [x] Revisión independiente (opus): seguridad sin hallazgos explotables; integridad sin regresiones (comparó todos los literales SQL antes/después).
+- [x] Endurecimientos aplicados: clase `BusinessError` (solo 4xx propios se responden; nunca cuerpos de librerías), `headersSent`, rollback único e incondicional en `user.service`, Tiendanube con `this.db`; NC manual audita dentro de la transacción; el GET del turno no pisa el saldo de un turno ya cerrado. 5 tests nuevos.
+- [x] Evidencia: validate 0 (796 + 69), coverage 99,26/91,78/99,00, qa:integration 44/44, RBAC OK.
+- [ ] PR #2 (base `codex/hardening-100`; re-apuntar a `main` tras el merge del #1).
+
+Pendiente de decisión del usuario (riesgos previos, no regresiones): ¿una OC `received`/`cancelled` puede volver a `draft`/`sent`? (hoy sí); ¿la NC manual necesita clave de idempotencia? Bajos anotados: borrado de proveedor sin lock contra factura concurrente; renombre de ubicación no atómico; 404 de cliente sin `message`.
+
+1. Abrir PR #2 y consultar las dos decisiones de negocio.
 3. Usuario: correr los runbooks en producción tras el merge.
 2. I8: migración 045 (CHECK de inventario) — solo después de que el usuario corra la reparación en producción (AP2). Runbooks: `docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`.
 3. Fase H2 (numeración ARCA, recuperación de CAE y de NC en `authorizing`), ESLint del servidor, E2E de checkout.

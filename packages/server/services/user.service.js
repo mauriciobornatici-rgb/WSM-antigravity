@@ -104,7 +104,6 @@ class UserService {
 
             const [existing] = await connection.query('SELECT id FROM users WHERE email = ? FOR UPDATE', [email]);
             if (existing.length > 0) {
-                await connection.rollback();
                 throw businessError(409, { error: 'duplicate_email', message: 'El correo electrónico ya está registrado' });
             }
 
@@ -126,7 +125,7 @@ class UserService {
             return newUser[0];
         } catch (error) {
             // Business errors already rolled back before being thrown.
-            if (!error.responseBody) await connection.rollback();
+            await connection.rollback(); // single rollback for business and unexpected errors alike
             throw error;
         } finally {
             connection.release();
@@ -146,7 +145,6 @@ class UserService {
                 [id]
             );
             if (existing.length === 0) {
-                await connection.rollback();
                 throw businessError(404, { error: 'not_found', message: 'Usuario no encontrado' });
             }
 
@@ -159,19 +157,16 @@ class UserService {
                     "SELECT id FROM users WHERE role = 'admin' AND status = 'active' AND deleted_at IS NULL FOR UPDATE"
                 );
                 if (admins.length <= 1) {
-                    await connection.rollback();
                     throw businessError(409, { error: 'last_admin', message: 'No se puede quitar el rol o desactivar al último administrador activo' });
                 }
             }
 
             const [dupEmail] = await connection.query('SELECT id FROM users WHERE email = ? AND id != ? FOR UPDATE', [email, id]);
             if (dupEmail.length > 0) {
-                await connection.rollback();
                 throw businessError(409, { error: 'duplicate_email', message: 'El correo electrónico ya está registrado por otro usuario' });
             }
 
             if (password && !isStrongPassword(password)) {
-                await connection.rollback();
                 throw invalidPassword();
             }
 
@@ -203,7 +198,7 @@ class UserService {
             return updatedUser[0];
         } catch (error) {
             // Business errors already rolled back before being thrown.
-            if (!error.responseBody) await connection.rollback();
+            await connection.rollback(); // single rollback for business and unexpected errors alike
             throw error;
         } finally {
             connection.release();
@@ -220,14 +215,12 @@ class UserService {
                 [id]
             );
             if (user.length === 0) {
-                await connection.rollback();
                 throw businessError(404, { error: 'not_found', message: 'Usuario no encontrado' });
             }
 
             if (user[0].role === 'admin') {
                 const [admins] = await connection.query("SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL FOR UPDATE");
                 if (admins.length <= 1) {
-                    await connection.rollback();
                     throw businessError(409, { error: 'last_admin', message: 'No se puede eliminar el último administrador del sistema' });
                 }
             }
@@ -248,7 +241,7 @@ class UserService {
             await connection.commit();
         } catch (error) {
             // Business errors already rolled back before being thrown.
-            if (!error.responseBody) await connection.rollback();
+            await connection.rollback(); // single rollback for business and unexpected errors alike
             throw error;
         } finally {
             connection.release();

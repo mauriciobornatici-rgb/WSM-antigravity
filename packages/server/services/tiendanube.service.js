@@ -1839,13 +1839,13 @@ export class TiendaNubeService {
     }
 
     async getOAuthClientId() {
-        const [rows] = await pool.query('SELECT tiendanube_client_id FROM company_settings LIMIT 1');
+        const [rows] = await this.db.query('SELECT tiendanube_client_id FROM company_settings LIMIT 1');
         return rows[0]?.tiendanube_client_id;
     }
 
     // Devuelve el id de la fila de ajustes y las credenciales OAuth (el secreto ya descifrado, solo para uso interno).
     async getOAuthCredentials() {
-        const [rows] = await pool.query('SELECT id, tiendanube_client_id, tiendanube_client_secret FROM company_settings LIMIT 1');
+        const [rows] = await this.db.query('SELECT id, tiendanube_client_id, tiendanube_client_secret FROM company_settings LIMIT 1');
         const settings = rows[0] || {};
         return {
             settingsId: rows[0]?.id,
@@ -1855,14 +1855,14 @@ export class TiendaNubeService {
     }
 
     async saveOAuthConnection(settingsId, accessToken, storeId) {
-        await pool.query(
+        await this.db.query(
             `UPDATE company_settings SET tiendanube_access_token = ?, tiendanube_store_id = ?,
                 tiendanube_connection_status = 'connected' WHERE id = ?`,
             [encrypt(accessToken), storeId, settingsId]
         );
     }
 
-    async readConfig(executor = pool, forUpdate = false) {
+    async readConfig(executor = this.db, forUpdate = false) {
         const [rows] = await executor.query(
             `SELECT tiendanube_client_id, tiendanube_client_secret, tiendanube_location_id
          FROM company_settings WHERE id = 1 LIMIT 1${forUpdate ? ' FOR UPDATE' : ''}`
@@ -1877,7 +1877,7 @@ export class TiendaNubeService {
 
     async updateConfig({ clientId, clientSecret, locationId }, userId) {
         const encryptedSecret = clientSecret?.trim() ? encrypt(clientSecret.trim()) : null;
-        const connection = await pool.getConnection();
+        const connection = await this.db.getConnection();
         try {
             await connection.beginTransaction();
             const previous = await this.readConfig(connection, true);
@@ -1911,7 +1911,7 @@ export class TiendaNubeService {
     }
 
     async markDisconnected() {
-        await pool.query(
+        await this.db.query(
             `UPDATE company_settings
          SET tiendanube_access_token = NULL, tiendanube_store_id = NULL,
              tiendanube_connection_status = 'disconnected'

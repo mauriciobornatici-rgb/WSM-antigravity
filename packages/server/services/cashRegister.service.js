@@ -44,7 +44,8 @@ class CashRegisterService {
 
         const shift = shifts[0];
         const summary = await calculateShiftExpectedBalance(pool, shift.id);
-        await pool.query('UPDATE cash_shifts SET expected_balance = ? WHERE id = ?', [summary.expected_balance, shift.id]);
+        // Only while still open: a shift closed concurrently keeps the balance its close recorded.
+        await pool.query('UPDATE cash_shifts SET expected_balance = ? WHERE id = ? AND status = "open"', [summary.expected_balance, shift.id]);
 
         return {
             ...shift,

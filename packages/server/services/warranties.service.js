@@ -681,8 +681,6 @@ class CreditNotesService extends BaseService {
                 ]
             );
 
-            await connection.commit();
-
             const result = {
                 id,
                 number,
@@ -695,6 +693,8 @@ class CreditNotesService extends BaseService {
                 status: 'issued'
             };
 
+            // Audited inside the transaction: a credit note is never issued without its trace
+            // (and a failed audit no longer leaves an issued note behind for a retry to duplicate).
             await auditService.log({
                 user_id: userId || null,
                 action: 'CREATE_CREDIT_NOTE',
@@ -702,8 +702,9 @@ class CreditNotesService extends BaseService {
                 entity_id: id,
                 new_values: result,
                 ip_address: ipAddress
-            });
+            }, connection);
 
+            await connection.commit();
             return result;
         } catch (err) {
             await connection.rollback();
