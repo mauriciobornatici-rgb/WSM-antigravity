@@ -20,14 +20,20 @@ v2.1 por pedido del usuario). Decisiones de negocio en ADR-008 (precios de catá
 - [x] `988572a` venta offline sin stock con faltante auditado · `f8a47df` pantalla Excepciones POS (ADR-010).
 - [x] Evidencia: unit 476/476, cliente 69 tests + lint/tipos/build, `qa:integration` 40/40.
 
-## En curso
+- [x] AUD-002 re-auditoría del delta: 5 hallazgos corregidos (ver `AUDIT.md`).
 
-- [x] AUD-002 re-auditoría del delta: 5 hallazgos corregidos (ver `AUDIT.md`); unit 476/476, integración 42/42.
-- [ ] Nada en curso: listo para revisión del usuario y push.
+## Sesión 2026-10-12
+
+- [x] `98451fd` npm audit 12 → 0 (proxy-addr crítica, axios, undici); nodemon → `node --watch`.
+- [x] `05e149a` devolución a proveedor espeja la compra (ADR-011) · `8967a7e` contador de excepciones POS en el menú.
+- [x] CI: `qa:integration` en el job mysql-qa; smoke RBAC con 5 casos de POS/excepciones (17/17).
+- [x] Evidencia: unit 477/477, cliente 69, `qa:integration` 44/44, preflight + smokes RBAC/integridad OK.
+- [ ] Push de `codex/hardening-100` + PR a `main` (aprobado por el usuario, ADR-011); cobertura del CI conocida en rojo (H-02).
 
 ## Próximos pasos
 
-1. Usuario: revisar y hacer push de `codex/hardening-100`; correr los runbooks en producción.
+1. Ola C: gate de cobertura en verde (90 %) por dominio; ESLint del servidor; E2E de checkout.
+2. Usuario: correr los runbooks en producción tras el merge.
 2. I8: migración 045 (CHECK de inventario) — solo después de que el usuario corra la reparación en producción (AP2). Runbooks: `docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`.
 3. Fase H2 (numeración ARCA, recuperación de CAE y de NC en `authorizing`), ESLint del servidor, E2E de checkout.
 

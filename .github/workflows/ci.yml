@@ -146,6 +146,10 @@ jobs:
       - name: Run RBAC smoke
         run: npm run qa:smoke:rbac
 
+      # Locks, constraints and concurrency can only be proven against a real database.
+      - name: Run real-MySQL integration tests
+        run: npm run qa:integration
+
       - name: Remove ephemeral QA database
         if: always()
         run: docker compose -f docker-compose.test.yml down -v --remove-orphans

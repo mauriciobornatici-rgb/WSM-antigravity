@@ -163,6 +163,53 @@ async function run() {
             endpoint: '/api/invoice-items',
             token: admin,
             expected: 400
+        },
+        {
+            name: 'manager can list POS exceptions',
+            method: 'GET',
+            endpoint: '/api/pos/exceptions',
+            token: manager,
+            expected: 200
+        },
+        {
+            name: 'cashier cannot list POS exceptions',
+            method: 'GET',
+            endpoint: '/api/pos/exceptions',
+            token: cashier,
+            expected: 403
+        },
+        {
+            name: 'cashier cannot review POS exceptions',
+            method: 'POST',
+            endpoint: '/api/pos/exceptions/1/review',
+            token: cashier,
+            expected: 403,
+            body: { decision: 'approved' }
+        },
+        {
+            name: 'warehouse cannot run a POS checkout',
+            method: 'POST',
+            endpoint: '/api/pos/checkout',
+            token: warehouse,
+            expected: 403,
+            body: {
+                idempotency_key: '11111111-1111-4111-8111-111111111111',
+                shift_id: '11111111-1111-4111-8111-111111111111',
+                payments: [{ method: 'cash', amount: 1 }],
+                items: [{ product_id: '11111111-1111-4111-8111-111111111111', quantity: 1 }]
+            }
+        },
+        {
+            name: 'POS checkout rejects a payload without shift',
+            method: 'POST',
+            endpoint: '/api/pos/checkout',
+            token: cashier,
+            expected: 400,
+            body: {
+                idempotency_key: '11111111-1111-4111-8111-111111111111',
+                payments: [{ method: 'cash', amount: 1 }],
+                items: [{ product_id: '11111111-1111-4111-8111-111111111111', quantity: 1 }]
+            }
         }
     ];
 
