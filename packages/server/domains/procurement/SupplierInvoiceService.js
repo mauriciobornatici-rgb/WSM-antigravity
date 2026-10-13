@@ -130,6 +130,16 @@ export class SupplierInvoiceService {
         try {
             await connection.beginTransaction();
 
+            // 0. The supplier exists and is not being deleted at this moment (its row is locked:
+            // a concurrent deletion waits and then sees the new balance).
+            const [supplierRows] = await connection.query(
+                'SELECT id FROM suppliers WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+                [supplier_id]
+            );
+            if (supplierRows.length === 0) {
+                throw businessError(404, { error: 'supplier_not_found', message: 'Proveedor no encontrado o eliminado.' });
+            }
+
             // 1. Check for duplicates (invoice number + type per supplier)
             const [existing] = await connection.query(
                 'SELECT id FROM supplier_invoices WHERE supplier_id = ? AND invoice_type = ? AND invoice_number = ? LIMIT 1',

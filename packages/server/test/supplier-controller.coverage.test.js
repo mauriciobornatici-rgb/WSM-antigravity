@@ -28,13 +28,33 @@ function runHandler(handler, overrides = {}) {
 
 function installPool(t, handler) {
     const calls = [];
+    // Lock statements and transaction events are tracked apart so `calls` only holds business SQL.
+    calls.locks = [];
+    calls.tx = [];
     const prev = pool.query;
-    pool.query = async (sql, params = []) => {
+    const prevGetConnection = pool.getConnection;
+    const run = async (sql, params = []) => {
         const statement = norm(sql);
+        if (statement.startsWith('SELECT GET_LOCK')) {
+            calls.locks.push({ statement, params });
+            return [[{ acquired: 1 }]];
+        }
+        if (statement.startsWith('SELECT RELEASE_LOCK')) {
+            calls.locks.push({ statement, params });
+            return [[{ released: 1 }]];
+        }
         calls.push({ statement, params });
         return handler(statement, params);
     };
-    t.after(() => { pool.query = prev; });
+    pool.query = run;
+    pool.getConnection = async () => ({
+        beginTransaction: async () => { calls.tx.push('begin'); },
+        commit: async () => { calls.tx.push('commit'); },
+        rollback: async () => { calls.tx.push('rollback'); },
+        release: () => { calls.tx.push('release'); },
+        query: run
+    });
+    t.after(() => { pool.query = prev; pool.getConnection = prevGetConnection; });
     return calls;
 }
 
@@ -150,6 +170,7 @@ test('deleteSupplier returns 404 for unknown supplier', async (t) => {
     installPool(t, async () => [[]]);
     const res = await runHandler(deleteSupplier, { params: { id: 'x' } });
     assert.equal(res.status, 404);
+    assert.equal(res.body.message, 'Proveedor no encontrado');
 });
 
 test('deleteSupplier refuses suppliers with pending balance', async (t) => {
@@ -159,7 +180,24 @@ test('deleteSupplier refuses suppliers with pending balance', async (t) => {
     assert.equal(res.status, 409);
     assert.equal(res.body.error, 'has_balance');
     assert.equal(calls.length, 1);
+    assert.ok(calls[0].statement.endsWith('FOR UPDATE'));
     assert.equal(logs.length, 0);
+    assert.deepEqual(calls.tx, ['begin', 'rollback', 'release']);
+});
+
+test('createSupplier without tax id takes no lock and skips the duplicate check', async (t) => {
+    const calls = installPool(t, async (statement) => {
+        if (statement.startsWith('SELECT * FROM suppliers')) return [[{ id: 'new', name: 'Proveedor SA' }]];
+        return [{ affectedRows: 1 }];
+    });
+    installAudit(t);
+    const res = await runHandler(createSupplier, { body: { ...body, tax_id: '   ' } });
+    assert.equal(res.body.id, 'new');
+    assert.equal(calls.locks.length, 0);
+    assert.ok(!calls.some((c) => c.statement.includes('tax_id = ?')));
+    const insert = calls.find((c) => c.statement.startsWith('INSERT INTO suppliers'));
+    assert.equal(insert.params[2], null);
+    assert.deepEqual(calls.tx, ['begin', 'commit', 'release']);
 });
 
 test('deleteSupplier soft-deletes a zero-balance supplier and audits', async (t) => {

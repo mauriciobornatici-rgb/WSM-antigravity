@@ -55,7 +55,7 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - [x] PR #2 abierto (base `codex/hardening-100`; re-apuntar a `main` tras el merge del #1).
 - [x] ADR-012 (decisión del usuario): OC solo avanza (`received`/`cancelled` finales, cancelar solo desde `draft`/`sent`; transición con `FOR UPDATE` y 409 `invalid_transition`); NC manual con `idempotency_key` (migración 045, aplicada solo en QA; replay devuelve la NC existente; reintento único ante duplicado/deadlock). Guardián (AUD-003): 5 hallazgos verificados y corregidos (recepción contra OC anulada o recibida; clave de NC reusada → 409; reintentos acotados; no-op sin auditoría). Evidencia: validate 0 (810 + 69), coverage 99,27/91,81/99,01, qa:integration 52/52 ×3, RBAC OK.
 
-Bajos anotados (riesgos previos, no regresiones): borrado de proveedor sin lock contra factura concurrente; renombre de ubicación no atómico; 404 de cliente sin `message`; carrera en el control de `tax_id` duplicado de proveedores.
+- [x] Bajos anotados resueltos (2026-10-13): borrado de proveedor con lock (y factura de compra a proveedor eliminado → 404), renombre de ubicación atómico, 404 de cliente con mensaje, CUIT de proveedor serializado con lock por nombre (sin CUIT no se controla). Remitos facturables solo con control de calidad aprobado.
 
 ## Simulación operativa y contabilidad completa — rama `codex/simulacion-operativa` (local, sin push)
 

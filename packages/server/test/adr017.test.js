@@ -38,6 +38,7 @@ function supplierInvoiceHarness(t) {
     const calls = [];
     mockPool(t, async (sql, params) => {
         calls.push({ sql: String(sql), params });
+        if (/FROM suppliers WHERE id = \? AND deleted_at IS NULL FOR UPDATE/.test(String(sql))) return [[{ id: params[0] }]];
         return [[]];
     });
     const originals = { journal: accountingService.createJournalEntry, audit: auditService.log };

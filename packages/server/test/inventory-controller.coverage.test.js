@@ -702,9 +702,16 @@ test('createWarehouseLocation maps duplicate codes to 409 and rethrows other err
     await assert.rejects(runHandler(controller.createWarehouseLocation, { body: { code: 'A' } }), /conn lost/);
 });
 
+// updateLocation runs in a transaction: the location pool answers on a tracked connection.
+function installLocationPool(t, query) {
+    const tracked = createTrackedConnection(query);
+    installPool(t, { tracked });
+    return tracked.calls;
+}
+
 function locationPool({ existing, usage = 0, updateError } = {}) {
     return async (statement) => {
-        if (statement === 'SELECT * FROM warehouse_locations WHERE id = ?') {
+        if (statement === 'SELECT * FROM warehouse_locations WHERE id = ? FOR UPDATE' || statement === 'SELECT * FROM warehouse_locations WHERE id = ?') {
             return [existing ? [existing] : []];
         }
         if (statement.includes('AS usage_count')) return [[{ usage_count: usage }]];
@@ -718,11 +725,11 @@ function locationPool({ existing, usage = 0, updateError } = {}) {
 
 test('updateWarehouseLocation answers 404 for unknown ids and 400 for blank code or name', async (t) => {
     installAudit(t);
-    installPool(t, { poolQuery: locationPool({ existing: null }) });
+    installLocationPool(t, locationPool({ existing: null }));
     const missing = await runHandler(controller.updateWarehouseLocation, { params: { id: 'x' }, body: {} });
     assert.equal(missing.status, 404);
 
-    installPool(t, { poolQuery: locationPool({ existing: { id: 'l1', code: 'A', name: 'Alpha', description: null, active: 1 } }) });
+    installLocationPool(t, locationPool({ existing: { id: 'l1', code: 'A', name: 'Alpha', description: null, active: 1 } }));
     const blank = await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { code: ' ' } });
     assert.equal(blank.status, 400);
     const blankName = await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { name: '' } });
@@ -732,9 +739,7 @@ test('updateWarehouseLocation answers 404 for unknown ids and 400 for blank code
 });
 
 test('updateWarehouseLocation blocks code changes while stock or products use the location', async (t) => {
-    const calls = installPool(t, {
-        poolQuery: locationPool({ existing: { id: 'l1', code: 'A', name: 'Alpha', description: null, active: 1 }, usage: '2' })
-    });
+    const calls = installLocationPool(t, locationPool({ existing: { id: 'l1', code: 'A', name: 'Alpha', description: null, active: 1 }, usage: '2' }));
     const result = await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { code: 'Z' } });
     assert.equal(result.status, 409);
     assert.equal(result.body.error, 'location_in_use');
@@ -744,7 +749,7 @@ test('updateWarehouseLocation blocks code changes while stock or products use th
 
 test('updateWarehouseLocation allows renaming codes of unused locations and edits other fields freely', async (t) => {
     const existing = { id: 'l1', code: 'A', name: 'Alpha', description: 'old', active: 1 };
-    const calls = installPool(t, { poolQuery: locationPool({ existing, usage: 0 }) });
+    const calls = installLocationPool(t, locationPool({ existing, usage: 0 }));
     const audit = installAudit(t);
 
     const renamed = await runHandler(controller.updateWarehouseLocation, {
@@ -771,11 +776,11 @@ test('updateWarehouseLocation allows renaming codes of unused locations and edit
 
 test('updateWarehouseLocation maps duplicates to 409 and rethrows other DB errors', async (t) => {
     const existing = { id: 'l1', code: 'A', name: 'Alpha', description: null, active: 1 };
-    installPool(t, { poolQuery: locationPool({ existing, updateError: dupError() }) });
+    installLocationPool(t, locationPool({ existing, updateError: dupError() }));
     const dup = await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { name: 'B' } });
     assert.equal(dup.status, 409);
     assert.equal(dup.body.error, 'duplicate_location');
 
-    installPool(t, { poolQuery: locationPool({ existing, updateError: new Error('io') }) });
+    installLocationPool(t, locationPool({ existing, updateError: new Error('io') }));
     await assert.rejects(runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { name: 'B' } }), /io/);
 });

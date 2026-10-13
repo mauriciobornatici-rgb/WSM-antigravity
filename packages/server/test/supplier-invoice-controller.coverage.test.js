@@ -38,6 +38,10 @@ function installPool(t, handler) {
     const lifecycle = [];
     const run = async (sql, params = []) => {
         const statement = norm(sql);
+        // The supplier row lock that opens the invoice transaction is answered apart from `calls`.
+        if (statement.startsWith('SELECT id FROM suppliers WHERE id = ? AND deleted_at IS NULL FOR UPDATE')) {
+            return [[{ id: params[0] }]];
+        }
         calls.push({ statement, params });
         return handler(statement, params);
     };

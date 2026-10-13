@@ -173,7 +173,7 @@ class ClientService {
         WHERE c.id = ? AND c.deleted_at IS NULL
         LIMIT 1
     `, [id]);
-        if (existing.length === 0) throw businessError(404, { error: 'not_found' });
+        if (existing.length === 0) throw businessError(404, { error: 'not_found', message: 'Cliente no encontrado' });
 
         const balance = Number(existing[0].computed_balance || 0);
         if (Math.abs(balance) > 0.000001) {

@@ -155,3 +155,28 @@ test('ADR-019: a delivery note still in quality control cannot be invoiced', asy
         (err) => err.statusCode === 409 && err.responseBody.error === 'reception_not_approved'
     );
 });
+
+test('Bajos: a location code with stock cannot be renamed, and a deleted supplier gets no invoices', async () => {
+    const { default: locationsService } = await import('../services/inventoryLocations.service.js');
+    const { default: supplierService } = await import('../domains/procurement/SupplierService.js');
+    const code = `QA-REN-${crypto.randomUUID().slice(0, 8)}`;
+    const locationId = crypto.randomUUID();
+    await pool.query('INSERT INTO warehouse_locations (id, code, name, active) VALUES (?, ?, ?, 1)', [locationId, code, code]);
+    await seedProduct({ stock: [{ location: code, quantity: 1 }] });
+    await assert.rejects(() => locationsService.updateLocation(locationId, { code: `${code}-X` }, null, null),
+        (err) => err.responseBody?.error === 'location_in_use');
+    const renamed = await locationsService.updateLocation(locationId, { name: 'Nuevo nombre' }, null, null);
+    assert.equal(renamed.name, 'Nuevo nombre');
+
+    const supplier = await supplierService.createSupplier({ name: 'Proveedor a borrar', tax_id: `20-${Date.now()}-1` }, null);
+    await assert.rejects(() => supplierService.createSupplier({ name: 'Otro', tax_id: supplier.tax_id }, null),
+        (err) => err.responseBody?.error === 'duplicate_tax_id');
+    await supplierService.deleteSupplier(supplier.id, null);
+    await assert.rejects(
+        () => new SupplierInvoiceService().createSupplierInvoice({
+            invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplier.id, issue_date: '2026-10-13',
+            net_amount: 100, vat_amount: 21, vat_rate: 21, total_amount: 121,
+        }, null),
+        (err) => err.statusCode === 404 && err.responseBody.error === 'supplier_not_found'
+    );
+});
