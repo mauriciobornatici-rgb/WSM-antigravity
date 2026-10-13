@@ -6,21 +6,9 @@ import { GoodsReceptionService } from "../domains/procurement/GoodsReceptionServ
 import { CreateOrderUseCase } from "../domains/sales/CreateOrderUseCase.js";
 import { InvoiceAuthorizationUseCase } from "../domains/sales/InvoiceAuthorizationUseCase.js";
 import financeService from "../services/finance.service.js";
-import afipService from "../services/afip.service.js";
 
 test("Circuito E2E Operativo Completo: Compra -> Stock -> Venta -> Cta Cte -> Cobro -> Caja", async (t) => {
     const executedQueries = [];
-
-    const origAuthorizeVoucher = afipService.authorizeVoucher;
-    afipService.authorizeVoucher = async () => ({
-        cae: "71234567890123",
-        cae_expiration_date: "20261231",
-        invoice_number: 1001
-    });
-
-    t.after(() => {
-        afipService.authorizeVoucher = origAuthorizeVoucher;
-    });
 
     mockPool(t, async (sql, params) => {
         executedQueries.push({ sql, params });

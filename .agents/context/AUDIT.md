@@ -1,5 +1,32 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-008 — 2026-10-13 — `guardian-integridad` sobre ADR-020 (autorización ARCA)
+
+El guardián encontró 3 caminos altos a doble CAE en la primera versión y varios medios. Se rediseñó el flujo:
+- [x] **Alta:**
+  - Al vencer el lock se borraba el número pedido de un documento que podía estar en curso. Ahora "ocupado" responde 409 sin tocar el documento, y el estado ARCA solo lo modifica quien tiene el lock.
+  - Ante una falta de respuesta se liberaba en el acto. Ahora el documento nunca se libera sin que ARCA confirme que el número no existe y sin pasar 2 minutos de enfriamiento.
+  - Los rechazos se clasificaban sin verificar. Ahora también se verifica antes de liberar: si el comprobante se emitió igual, se adopta.
+- [x] **Media:**
+  - Todo el trabajo de base bajo el lock usa la misma conexión, así el pool no puede trabarse.
+  - El documento pasa a 'authorizing' solo cuando su número queda guardado.
+  - El worker no se superpone consigo mismo, no espera el lock y nunca crea comprobantes.
+  - `_finish` no repite la autorización ni la auditoría.
+  - Un conflicto de numeración después de emitido el CAE deja el documento en estado terminal 'arca_conflict', con el CAE guardado, y nunca pide otro.
+  - Se guardan el punto de venta y el tipo pedidos (migración 059) y se verifica contra ellos.
+  - Si no se puede consultar a ARCA antes de pedir, nada cambia (503 `arca_unreachable`).
+- [x] **Baja:**
+  - Una respuesta sin CAE se trata como incierta y se verifica.
+  - La pantalla distingue "en verificación" (informativo) de "no se pudo consultar" (error) y del conflicto.
+- **Verificado en el SDK 1.2.3:** `getVoucherInfo` devuelve null ante el código 602 (no existe) y lanza los demás errores; los rechazos son `AfipWebServiceError` con el código de ARCA.
+- **Solo verificable en homologación de ARCA:** la NC con `CbtesAsoc`; Factura C y NC C sin `Iva`; `CondicionIVAReceptorId` (RG 5616), que ahora se envía desde la condición guardada en la factura (A va a Responsable Inscripto salvo que diga Monotributo); un pedido que llega tarde después de un timeout.
+- **Decisiones de negocio pendientes:**
+  - procedimiento manual ante 'arca_conflict';
+  - si se permite cambiar el punto de venta con comprobantes en verificación (el sistema verifica igual en el punto de venta original);
+  - si la fecha impresa debe ser la de autorización.
+
+Evidencia: validate 0 (946 + 91); coverage 96,63/90,85/94,13; integración 104/104 ×3 (14 escenarios ARCA con base real); RBAC OK; E2E 6/6.
+
 ## AUD-007 — 2026-10-13 — `guardian-integridad` sobre ADR-018/019 (delta sin commitear)
 
 El coordinador verificó y corrigió cada hallazgo técnico:

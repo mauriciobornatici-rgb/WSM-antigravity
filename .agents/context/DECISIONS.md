@@ -80,6 +80,31 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-020 — Autorización ARCA sólida (usuario, 2026-10-13: "dejar sólido lo vinculado a ARCA")
+- **Problemas encontrados:**
+  - La recuperación de una respuesta perdida comparaba solo el último comprobante de ARCA por total y documento. Dos tickets iguales seguidos a consumidor final podían compartir CAE, y si en el medio se autorizaba otro, la factura quedaba sin recuperar y se emitía dos veces.
+  - Un error de red al consultar se tomaba como "no existe" y se pedía otro CAE.
+  - La llamada a ARCA corría dentro de una transacción con la factura bloqueada.
+  - El número de ARCA podía chocar con el número provisorio de otra factura pendiente, después de emitido el CAE.
+  - La NC no guardaba su número de ARCA.
+  - Una NC caída en 'authorizing' quedaba trabada.
+  - La caché de ARCA no tomaba un certificado renovado.
+- **Diseño:** `domains/fiscal/ArcaAuthorizationService.js` es un flujo común con adaptadores de factura y de NC.
+  1. Se reclama el documento ('authorizing') en una transacción corta.
+  2. Un lock con nombre por punto de venta y tipo serializa la numeración entre procesos. El documento se relee bajo el lock.
+  3. Un intento previo se resuelve preguntando a ARCA por exactamente ese número. Se adopta solo si coinciden tipo, total, documento del cliente, fecha y comprobante asociado, y ningún otro documento local lo tiene.
+  4. El número y la fecha (hora de Argentina) se guardan antes de pedir el CAE.
+     - Si ARCA rechaza, el número no se usó y el documento vuelve a pendiente con el motivo.
+     - Si ARCA no responde, se le pregunta por ese número. Si sigue sin saberse, el documento queda en verificación y un worker lo resuelve cada 2 minutos, sin pedir nunca otro CAE a ciegas.
+  5. El resultado se guarda en una transacción corta.
+     - Si otra factura pendiente tenía ese número provisorio, pasa a uno nuevo, con auditoría.
+     - Los provisorios siguientes continúan después del número de ARCA.
+     - La NC guarda `arca_voucher_number`.
+- **Validaciones:**
+  - La Factura A y la NC A exigen el CUIT del cliente: se rechazan antes de llamar a ARCA.
+  - El certificado renovado se usa sin reiniciar el servidor.
+- **Migración 058.** El CHECK de inventario pasa a 059.
+
 ### ADR-019 — Varios remitos por factura de compra y stock único con Tiendanube (usuario, 2026-10-13)
 - **Remitos:**
   - Una factura de compra puede cubrir uno o varios remitos (recepciones) del mismo proveedor, en la tabla `supplier_invoice_receptions` (migración 056).
@@ -211,7 +236,7 @@ El usuario aprobó corregir lo que encontró la simulación operativa. Desde aho
 
 ### ADR-012 — Reglas de negocio de la revisión del refactor (usuario, 2026-10-12)
 - **Estados de orden de compra (cambio manual):** solo hacia adelante: borrador → enviada → parcial → recibida; cancelar solo antes de recibir algo (borrador o enviada). `recibida` y `cancelada` son finales. Otra transición → 409.
-- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 058 (046-057 agregan cuentas, NC fiscal, tesorería e idempotencia, precios a 4 decimales, débitos bancarios, alícuotas y ajustes de pedido, y corrigen totales previos; ADR-013/014/015/016).
+- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 060 (046-059 agregan cuentas, NC fiscal, tesorería e idempotencia, precios a 4 decimales, débitos bancarios, alícuotas y ajustes de pedido, y corrigen totales previos; ADR-013/014/015/016).
 - **Aplicación (coordinador, tras la revisión del guardián):**
   - "Recibir algo" incluye la mercadería en control de calidad: una OC con recepciones `pending_qc` o cantidades recibidas no se puede anular (409 `purchase_order_has_receptions`). La UI oculta "Anular orden" en ese caso.
   - Aprobar una recepción bloquea la OC antes que sus ítems. Contra una OC anulada responde 409 (`purchase_order_cancelled`), y nunca hace retroceder una OC `received`.

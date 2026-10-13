@@ -223,6 +223,10 @@ export type Invoice = {
     customer_name?: string;
     cae?: string;
     cae_expiration_date?: string;
+    // ARCA tracking (ADR-020): last rejection / failure text, attempts and when the request was sent.
+    arca_last_error?: string | null;
+    arca_attempts?: number;
+    arca_requested_at?: string | null;
     items?: InvoiceItem[];
     [key: string]: unknown;
 };

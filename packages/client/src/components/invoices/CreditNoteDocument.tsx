@@ -5,6 +5,14 @@ import type { CompanySettings } from "@/types"
 import type { ClientReturnRow, CreditNoteRow, ClientReturnItemRow } from "@/types/returns"
 import { formatMoney } from "@/lib/formatters"
 import { grossLineTotal, grossPrice, lineAmounts, vatRateOf } from "@/lib/pricing"
+import {
+    ARCA_VERIFYING_HELP,
+    ARCA_VERIFYING_LABEL,
+    arcaAuthorizeButtonLabel,
+    creditNoteFiscalNumber,
+    isArcaAuthorizing,
+} from "@/lib/arca"
+import { ArcaLastError } from "./ArcaLastError"
 import { splitCreditNoteAmount } from "./invoiceUtils"
 import { buildAfipQrUrl } from "./afipQr"
 import { AfipQrImage } from "./AfipQrImage"
@@ -41,6 +49,8 @@ export function CreditNoteDocument({
     onClose,
 }: CreditNoteDocumentProps) {
     const [authorizing, setAuthorizing] = useState(false)
+    const verifying = isArcaAuthorizing(creditNote.status)
+    const fiscalNumber = creditNoteFiscalNumber(creditNote)
     const cnType = creditNote.credit_note_type || "B"
     const isNoteA = cnType === "A"
     // The credit amount is VAT-included: the net is split with the linked return's own rates (no hardcoded 21%).
@@ -50,7 +60,7 @@ export function CreditNoteDocument({
         emisorCuit: companyTaxId,
         invoiceType: cnType === "A" ? "NC_A" : "NC_B",
         pointOfSale: creditNote.point_of_sale ?? null,
-        invoiceNumber: Number(creditNote.number.split("-").pop() || 0),
+        invoiceNumber: creditNote.arca_voucher_number ?? Number(creditNote.number.split("-").pop() || 0),
         issueDate: creditNote.created_at ? String(creditNote.created_at) : null,
         totalAmount: creditNote.amount,
         cae: creditNote.cae ?? null,
@@ -68,13 +78,18 @@ export function CreditNoteDocument({
             id={printMode ? undefined : "printable-invoice-content"}
             className={printMode ? "w-full space-y-8 bg-white p-10 text-slate-900" : "space-y-8 p-8 text-slate-900"}
         >
-            {creditNote.status === "issued" && (
+            {(creditNote.status === "issued" || verifying) && (
                 <div className="no-print flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-md border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-slate-800 print:hidden shadow-sm">
                     <div className="flex items-start gap-2">
                         <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
                         <div>
-                            <span className="font-bold block text-amber-800">Nota de Crédito Pendiente de Autorización Fiscal</span>
-                            Este comprobante comercial aún no ha sido autorizado con el CAE de ARCA (ex-AFIP). Los totales no son válidos para balances oficiales hasta su aprobación.
+                            <span className="font-bold block text-amber-800">
+                                {verifying ? ARCA_VERIFYING_LABEL : "Nota de Crédito Pendiente de Autorización Fiscal"}
+                            </span>
+                            {verifying
+                                ? `${ARCA_VERIFYING_HELP}.`
+                                : "Este comprobante comercial aún no ha sido autorizado con el CAE de ARCA (ex-AFIP). Los totales no son válidos para balances oficiales hasta su aprobación."}
+                            <ArcaLastError doc={creditNote} className="mt-1" />
                         </div>
                     </div>
                     {onAuthorize && (
@@ -95,9 +110,9 @@ export function CreditNoteDocument({
                             }}
                         >
                             {authorizing ? (
-                                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Autorizando...</>
+                                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {verifying ? "Verificando..." : "Autorizando..."}</>
                             ) : (
-                                "Autorizar con ARCA"
+                                arcaAuthorizeButtonLabel(creditNote.status)
                             )}
                         </Button>
                     )}
@@ -132,8 +147,11 @@ export function CreditNoteDocument({
                     <div className="p-6 pl-10 space-y-2 text-right">
                         <h2 className="text-lg font-bold tracking-tight text-slate-900">NOTA DE CRÉDITO</h2>
                         <p className="text-sm font-mono font-bold text-slate-800">
-                            Nº {String(creditNote.point_of_sale || 1).padStart(4, "0")}-{String(creditNote.number.split("-").pop() || "").padStart(8, "0")}
+                            Nº {fiscalNumber ?? `${String(creditNote.point_of_sale || 1).padStart(4, "0")}-${String(creditNote.number.split("-").pop() || "").padStart(8, "0")}`}
                         </p>
+                        {fiscalNumber ? (
+                            <p className="text-[10px] font-mono text-slate-500">Ref. interna: {creditNote.number}</p>
+                        ) : null}
                         <p className="text-xs text-slate-600">
                             Fecha: {new Date(creditNote.created_at).toLocaleDateString("es-AR")}
                         </p>

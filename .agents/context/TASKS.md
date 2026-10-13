@@ -95,7 +95,7 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
   - Envío y descuentos de Tiendanube en la factura.
   - Migración 052 (totales previos) y script `repair-tiendanube-prices.js`.
   - Devoluciones parciales exactas al centavo.
-  - Migraciones 051 y 052 aplicadas en local y QA; el CHECK de inventario pasa a 058.
+  - Migraciones 051 y 052 aplicadas en local y QA; el CHECK de inventario pasa a 060.
   - Evidencia: validate 0 (873 + 83); coverage 98,03/90,48/95,97; integración 74/74 en 4 de 5 corridas (en 1 falló completo `purchase-order-lifecycle`, sin aserción: a investigar); RBAC OK; E2E 6/6; simulación 153/153.
 - Regla del usuario: todo texto visible de la app va en español.
 - [x] ADR-017 (AUD-006 corregido):
@@ -105,19 +105,19 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
   - origen de productos y script de precios sin adivinar;
   - alícuota de producto editable;
   - stock inicial con asiento.
-  - Migración 053 aplicada en local y QA; el CHECK de inventario pasa a 058.
+  - Migración 053 aplicada en local y QA; el CHECK de inventario pasa a 060.
   - Evidencia: validate 0 (878 + 84); coverage 96,88/90,17/94,75; integración 81/81 ×3; RBAC OK; E2E 6/6; simulación 153/153.
 
 
 - [x] ADR-018: stock inicial con costo obligatorio y cuenta de ajuste 3.1.03.01 (migración 055); envío bonificado o editado solo con gerente o administrador; NC anulada libera el envío. Evidencia: validate 0 (881 + 84); coverage 96,88/90,32/94,66; integración 82/82 ×3; RBAC OK; E2E 6/6; simulación 153/153.
-- [x] ADR-019 (AUD-007 corregido): varios remitos por factura de compra; stock único con Tiendanube (disponible menos lo que deben los pedidos online, conciliación cada 20 s, completa cada hora, forzada diaria, stock de seguridad opcional por check); pedidos online sin stock registrados y reservados al entrar mercadería. Migraciones 056 y 057; el CHECK de inventario pasa a 058. Evidencia: validate 0 (890 + 87); coverage 96,81/90,29/94,24; integración 88/88 ×3; RBAC OK; E2E 6/6; simulación 153/153.
+- [x] ADR-019 (AUD-007 corregido): varios remitos por factura de compra; stock único con Tiendanube (disponible menos lo que deben los pedidos online, conciliación cada 20 s, completa cada hora, forzada diaria, stock de seguridad opcional por check); pedidos online sin stock registrados y reservados al entrar mercadería. Migraciones 056 y 057; el CHECK de inventario pasa a 060. Evidencia: validate 0 (890 + 87); coverage 96,81/90,29/94,24; integración 88/88 ×3; RBAC OK; E2E 6/6; simulación 153/153.
 
 ## Próximos pasos
 
 1. Usuario: revisar y mergear PR #1; después re-apuntar PR #2 a `main`.
 2. Usuario: correr en producción los runbooks (`docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`) y aplicar la migración 045 con el despliegue.
-3. I8: migración 058 (CHECK de inventario) — solo después de la reparación en producción (AP2).
-4. Fase H2: numeración ARCA, recuperación de CAE y de NC en `authorizing`.
+3. I8: migración 060 (CHECK de inventario) — solo después de la reparación en producción (AP2).
+4. [x] Fase H2 (ADR-020, AUD-008): autorización ARCA sin doble CAE ni CAE perdido (número guardado antes de pedir, verificación del número exacto, enfriamiento de 2 min, worker cada 2 min, conflicto terminal), NC con número de ARCA, RG 5616 (condición IVA del receptor). Migraciones 058 y 059; el CHECK de inventario pasa a 060. Evidencia: validate 0 (947 + 91); coverage 96,57/90,67/94,13; integración 104/104 ×3 (14 escenarios ARCA con base real); RBAC OK; E2E 6/6; simulación 153/153. Pendiente del usuario: probar en homologación (NC con CbtesAsoc, Factura/NC C, RG 5616).
 5. Riesgos bajos de arriba.
 
 ## Límites

@@ -503,7 +503,9 @@ test('authorizeInvoice stores CAE expiration date in audit payload without rolli
             const statement = String(sql);
             connectionCalls.push({ sql: statement, params });
 
-            if (statement.startsWith('UPDATE invoices SET status = "authorized"')) {
+            // ADR-020: the invoice is claimed, then a ticket is authorized locally.
+            if (statement.startsWith("UPDATE invoices SET status = 'authorizing'")
+                || statement.startsWith("UPDATE invoices SET status = 'authorized'")) {
                 return [{ affectedRows: 1 }];
             }
             if (statement.startsWith('SELECT * FROM invoices WHERE id = ?')) {
@@ -542,8 +544,10 @@ test('authorizeInvoice stores CAE expiration date in audit payload without rolli
         const statement = String(sql);
         poolCalls.push({ sql: statement, params });
 
+        // The unlocked first read sees the pending invoice; the result is read back once stored.
         if (statement.startsWith('SELECT * FROM invoices WHERE id = ?')) {
-            return [[issuedInvoice]];
+            if (statement.includes('deleted_at IS NULL')) return [[issuedInvoice]];
+            return [[authorizedInvoice]];
         }
         if (statement.startsWith('SELECT * FROM company_settings')) {
             return [[{}]];

@@ -3,6 +3,13 @@ import { Mail, Printer, AlertTriangle, ShieldCheck, Loader2, ReceiptText } from 
 import { Button } from "@/components/ui/button"
 import { formatMoney } from "@/lib/formatters"
 import { grossLineTotal, grossPrice, vatRateOf } from "@/lib/pricing"
+import {
+    ARCA_VERIFYING_HELP,
+    ARCA_VERIFYING_LABEL,
+    arcaAuthorizeButtonLabel,
+    isArcaAuthorizing,
+} from "@/lib/arca"
+import { ArcaLastError } from "./ArcaLastError"
 import { formatInvoiceNumber } from "./invoiceUtils"
 import { buildAfipQrUrlFromInvoice } from "./afipQr"
 import { AfipQrImage } from "./AfipQrImage"
@@ -44,6 +51,7 @@ export function InvoiceDocument({
     const isInvoiceA = invoice.invoice_type === "A"
     const isInvoiceC = invoice.invoice_type === "C"
     const [authorizing, setAuthorizing] = useState(false)
+    const verifying = isArcaAuthorizing(invoice.status)
 
     const afipQrUrl = buildAfipQrUrlFromInvoice(invoice, companyTaxId)
 
@@ -59,13 +67,18 @@ export function InvoiceDocument({
             id={printMode ? undefined : "printable-invoice-content"}
             className={printMode ? "w-full space-y-8 bg-white p-10" : "space-y-8 p-8"}
         >
-            {invoice.status === "issued" && !isTicket && (
+            {(invoice.status === "issued" || verifying) && !isTicket && (
                 <div className="no-print flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-md border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-slate-800 print:hidden shadow-sm">
                     <div className="flex items-start gap-2">
                         <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
                         <div>
-                            <span className="font-bold block text-amber-800">Comprobante Pendiente de Autorización Fiscal</span>
-                            Este comprobante comercial aún no ha sido autorizado con el CAE de ARCA (ex-AFIP). Los totales no son válidos para balances oficiales hasta su aprobación.
+                            <span className="font-bold block text-amber-800">
+                                {verifying ? ARCA_VERIFYING_LABEL : "Comprobante Pendiente de Autorización Fiscal"}
+                            </span>
+                            {verifying
+                                ? `${ARCA_VERIFYING_HELP}.`
+                                : "Este comprobante comercial aún no ha sido autorizado con el CAE de ARCA (ex-AFIP). Los totales no son válidos para balances oficiales hasta su aprobación."}
+                            <ArcaLastError doc={invoice} className="mt-1" />
                         </div>
                     </div>
                     {onAuthorize && (
@@ -85,7 +98,7 @@ export function InvoiceDocument({
                                 }
                             }}
                         >
-                            {authorizing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin animate" /> Autorizando...</> : "Autorizar con ARCA"}
+                            {authorizing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin animate" /> {verifying ? "Verificando..." : "Autorizando..."}</> : arcaAuthorizeButtonLabel(invoice.status)}
                         </Button>
                     )}
                 </div>

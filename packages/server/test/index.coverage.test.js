@@ -23,6 +23,8 @@ const { default: pool } = await import('../config/db.js');
 const { getEnvConfig } = await import('../config/env.js');
 const { default: tiendaNubeService } = await import('../services/tiendanube.service.js');
 const { default: salesService } = await import('../services/sales.service.js');
+const { default: arcaAuthorization } = await import('../domains/fiscal/ArcaAuthorizationService.js');
+const { invoiceArcaAdapter, creditNoteArcaAdapter } = await import('../domains/fiscal/arcaAdapters.js');
 
 const serverDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const migrationsDirectory = path.join(serverDirectory, 'migrations');
@@ -266,6 +268,7 @@ test('startServer boots after a successful init, schedules background workers, a
     const previousFailed = tiendaNubeService.processFailedSyncs;
     const previousPending = tiendaNubeService.processPendingWebhookEvents;
     const previousReconcile = tiendaNubeService.reconcileStock;
+    const previousRecovery = arcaAuthorization.recoverPending;
     let failNext = false;
     tiendaNubeService.reconcileStock = async (options) => {
         workerCalls.push({ reconcile: options || {} });
@@ -274,6 +277,10 @@ test('startServer boots after a successful init, schedules background workers, a
     tiendaNubeService.processFailedSyncs = async () => {
         workerCalls.push('failed');
         if (failNext) throw new Error('sync boom');
+    };
+    arcaAuthorization.recoverPending = async (adapters) => {
+        workerCalls.push({ recovery: adapters });
+        if (failNext) throw new Error('arca boom');
     };
     tiendaNubeService.processPendingWebhookEvents = async (service) => {
         workerCalls.push({ pending: service });
@@ -284,6 +291,7 @@ test('startServer boots after a successful init, schedules background workers, a
         tiendaNubeService.processFailedSyncs = previousFailed;
         tiendaNubeService.processPendingWebhookEvents = previousPending;
         tiendaNubeService.reconcileStock = previousReconcile;
+        arcaAuthorization.recoverPending = previousRecovery;
         for (const { handle } of timers) clearInterval(handle);
     });
 
@@ -296,20 +304,22 @@ test('startServer boots after a successful init, schedules background workers, a
     assert.ok(logs.log.some(([line]) => String(line).includes('WSM SportsERP Backend Started')));
 
     // Workers: failed syncs every 5 min, stock reconciliation every 20 s (full every hour, ADR-019),
-    // webhook recovery every minute; all unref'd.
-    assert.deepEqual(timers.map((timer) => timer.ms), [5 * 60 * 1000, 20 * 1000, 60 * 60 * 1000, 24 * 60 * 60 * 1000, 60 * 1000]);
+    // ARCA recovery every 2 min (ADR-020), webhook recovery every minute; all unref'd.
+    assert.deepEqual(timers.map((timer) => timer.ms), [5 * 60 * 1000, 20 * 1000, 60 * 60 * 1000, 24 * 60 * 60 * 1000, 2 * 60 * 1000, 60 * 1000]);
     assert.ok(timers.every((timer) => timer.unrefCalls === 1));
     for (const timer of timers) timer.fn();
     assert.equal(workerCalls[0], 'failed');
     assert.deepEqual(workerCalls[1], { reconcile: {} });
     assert.deepEqual(workerCalls[2], { reconcile: { full: true } });
     assert.deepEqual(workerCalls[3], { reconcile: { full: true, force: true } });
-    assert.equal(workerCalls[4].pending, salesService);
+    assert.deepEqual(workerCalls[4], { recovery: [invoiceArcaAdapter, creditNoteArcaAdapter] });
+    assert.equal(workerCalls[5].pending, salesService);
 
     failNext = true;
     for (const timer of timers) timer.fn();
     await new Promise((resolve) => setImmediate(resolve));
     assert.ok(logs.error.some(([label]) => label === '[TiendaNube Background Sync] Error:'));
+    assert.ok(logs.error.some(([label]) => label === '[ARCA] Error en la recuperación:'));
     assert.ok(logs.error.some(([label]) => label === '[TiendaNube Webhook Worker] Error:'));
     assert.ok(logs.error.some(([label]) => label === '[TiendaNube Stock] Error:'));
     assert.ok(logs.error.some(([label]) => label === '[TiendaNube Stock] Error en la conciliación completa:'));
@@ -319,7 +329,7 @@ test('startServer boots after a successful init, schedules background workers, a
     const clearedBefore = timers.length;
     await shutdown('SIGINT');
     assert.equal(server.listening, false);
-    assert.equal(clearedBefore, 5);
+    assert.equal(clearedBefore, 6);
     const events = logs.log.map(([line]) => { try { return JSON.parse(line).event; } catch { return null; } });
     assert.ok(events.includes('shutdown_started'));
     assert.ok(events.includes('shutdown_completed'));

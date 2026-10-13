@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge"
+import { ARCA_VERIFYING_HELP, ARCA_VERIFYING_LABEL, ARCA_CONFLICT_LABEL } from "@/lib/arca"
 import { grossLineTotal, lineAmounts, vatRateOf } from "@/lib/pricing"
 import type { DraftInvoice, InvoiceView } from "./types"
 
@@ -40,8 +41,12 @@ export const getInvoiceStatusBadge = (status?: string, type?: string) => {
     switch (status) {
         case "issued":
             return <Badge className="bg-blue-500">Emitida</Badge>
+        case "authorizing":
+            return <Badge className="bg-amber-500" title={ARCA_VERIFYING_HELP}>{ARCA_VERIFYING_LABEL}</Badge>
         case "authorized":
             return <Badge className="bg-green-500">Autorizada (CAE)</Badge>
+        case "arca_conflict":
+            return <Badge className="bg-red-600">{ARCA_CONFLICT_LABEL}</Badge>
         default:
             return <Badge variant="outline">{status || "Sin estado"}</Badge>
     }

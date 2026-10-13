@@ -8,7 +8,6 @@ import stockLedger from '../domains/inventory/StockLedger.js';
 import { allocateCents, grossLineAmounts, lineAmounts } from '../utils/vatMath.js';
 import { outputVatLines, splitByRate } from '../utils/vatAccounts.js';
 import auditService from './audit.service.js';
-import afipService from './afip.service.js';
 import accountingService from './accounting.service.js';
 
 class WarrantiesService extends BaseService {
@@ -1102,107 +1101,11 @@ class CreditNotesService extends BaseService {
         });
     }
 
+    // ADR-020: through the shared ARCA flow; the note keeps the voucher number ARCA gave it.
     async authorizeCreditNote(creditNoteId, userId) {
-        const [rows] = await pool.query('SELECT * FROM credit_notes WHERE id = ? AND deleted_at IS NULL', [creditNoteId]);
-        if (rows.length === 0) {
-            const err = new Error('Credit Note not found');
-            err.statusCode = 404;
-            err.status = 'fail';
-            err.errorCode = 'CREDIT_NOTE_NOT_FOUND';
-            throw err;
-        }
-
-        const cn = rows[0];
-        if (cn.status === 'authorized') return cn;
-
-        const previousStatus = cn.status;
-
-        // Atomic claim: only the caller that flips status -> 'authorizing' proceeds.
-        // This prevents two concurrent requests from both calling AFIP for the same
-        // credit note (AFIP would otherwise authorize the same voucher twice).
-        const [claimResult] = await pool.query(
-            `UPDATE credit_notes SET status = 'authorizing' WHERE id = ? AND status NOT IN ('authorized', 'authorizing')`,
-            [creditNoteId]
-        );
-        if (!claimResult || claimResult.affectedRows !== 1) {
-            const err = new Error('La Nota de Crédito ya está siendo autorizada por otra solicitud');
-            err.statusCode = 409;
-            err.status = 'fail';
-            err.errorCode = 'CREDIT_NOTE_ALREADY_AUTHORIZING';
-            throw err;
-        }
-
-        let afipRes = null;
-
-        try {
-            // ADR-014: a credit note is authorized against the invoice it corrects
-            // (AFIP call happens outside any DB transaction).
-            const originalInvoice = await this._invoiceCorrectedBy(cn);
-            if (!originalInvoice) {
-                throw businessError(409, {
-                    error: 'credit_note_without_invoice',
-                    message: 'La nota de crédito no está asociada a una factura: no puede autorizarse en ARCA.'
-                });
-            }
-            // A ticket is not an electronic voucher: its note is internal, nothing to send.
-            const invoiceLetter = String(originalInvoice.invoice_type || '').toUpperCase();
-            if (invoiceLetter !== 'TK') {
-                if (!originalInvoice.cae) {
-                    throw businessError(409, {
-                        error: 'invoice_not_authorized',
-                        message: 'Autorizá primero en ARCA la factura que corrige esta nota de crédito.'
-                    });
-                }
-                const [settingsRows] = await pool.query('SELECT * FROM company_settings LIMIT 1');
-                const companySettings = settingsRows[0] || {};
-                // The note carries the letter of the invoice it corrects (ARCA rejects a mismatch),
-                // even if an older note was stored with another letter.
-                const noteLetter = ['A', 'B', 'C'].includes(invoiceLetter)
-                    ? invoiceLetter
-                    : (['A', 'B', 'C'].includes(cn.credit_note_type) ? cn.credit_note_type : 'B');
-                const invoiceData = {
-                    invoice_type: `NC_${noteLetter}`,
-                    client_tax_id: originalInvoice.client_tax_id || null,
-                    total_amount: cn.amount,
-                    invoice_number: cn.number,
-                    associated_voucher: {
-                        invoice_type: invoiceLetter,
-                        point_of_sale: originalInvoice.point_of_sale,
-                        invoice_number: originalInvoice.invoice_number,
-                        issue_date: originalInvoice.issue_date
-                    }
-                };
-                const invoiceItems = await this._creditNoteVoucherItems(cn, originalInvoice);
-                try {
-                    afipRes = await afipService.authorizeVoucher(invoiceData, invoiceItems, companySettings);
-                } catch (err) {
-                    throw new Error(`AFIP rechazó la Nota de Crédito: ${err.message}`);
-                }
-            }
-        } catch (err) {
-            // Release the claim so the credit note can be retried later.
-            await pool.query('UPDATE credit_notes SET status = ? WHERE id = ?', [previousStatus, creditNoteId]);
-            throw err;
-        }
-
-        const cae = afipRes ? afipRes.cae : null;
-        const expirationDate = afipRes ? afipRes.cae_expiration_date : null;
-
-        await pool.query(
-            'UPDATE credit_notes SET status = "authorized", cae = ?, cae_expiration_date = ? WHERE id = ?',
-            [cae, expirationDate, creditNoteId]
-        );
-
-        await auditService.log({
-            user_id: userId,
-            action: 'AUTHORIZE_CREDIT_NOTE',
-            entity_type: 'credit_note',
-            entity_id: creditNoteId,
-            new_values: { cae, cae_expiration_date: expirationDate }
-        });
-
-        const [updated] = await pool.query('SELECT * FROM credit_notes WHERE id = ?', [creditNoteId]);
-        return updated[0];
+        const { default: arcaAuthorization } = await import('../domains/fiscal/ArcaAuthorizationService.js');
+        const { creditNoteArcaAdapter } = await import('../domains/fiscal/arcaAdapters.js');
+        return arcaAuthorization.authorize(creditNoteArcaAdapter, creditNoteId, userId);
     }
 
     async createManualCreditNote(body, userId, ipAddress) {

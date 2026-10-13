@@ -31,6 +31,8 @@ import { validateZod, zodSchemas } from './middleware/validationMiddleware.js';
 import * as userController from './controllers/userController.js';
 import tiendaNubeService from './services/tiendanube.service.js';
 import salesService from './services/sales.service.js';
+import arcaAuthorization from './domains/fiscal/ArcaAuthorizationService.js';
+import { invoiceArcaAdapter, creditNoteArcaAdapter } from './domains/fiscal/arcaAdapters.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REQUEST_ID_PATTERN = /^[\w.-]{1,64}$/;
@@ -45,6 +47,7 @@ let webhookInterval = null;
 let stockReconcileInterval = null;
 let stockFullReconcileInterval = null;
 let stockDailyPushInterval = null;
+let arcaRecoveryInterval = null;
 
 if (env.trustProxy !== undefined) {
     app.set('trust proxy', env.trustProxy);
@@ -277,6 +280,15 @@ Health Check: http://localhost:${port}/api/health
             }, 24 * 60 * 60 * 1000);
             stockDailyPushInterval.unref();
 
+            // ADR-020: invoices and credit notes left waiting for ARCA (a crash, a lost answer)
+            // are settled every 2 minutes by asking ARCA about the number they requested.
+            arcaRecoveryInterval = setInterval(() => {
+                arcaAuthorization.recoverPending([invoiceArcaAdapter, creditNoteArcaAdapter]).catch(err => {
+                    console.error('[ARCA] Error en la recuperación:', err);
+                });
+            }, 2 * 60 * 1000);
+            arcaRecoveryInterval.unref();
+
             // Recover durable webhook events left pending by crashes or transient failures.
             webhookInterval = setInterval(() => {
                 tiendaNubeService.processPendingWebhookEvents(salesService).catch(err => {
@@ -299,6 +311,7 @@ const shutdown = async (signal) => {
     if (stockReconcileInterval) clearInterval(stockReconcileInterval);
     if (stockFullReconcileInterval) clearInterval(stockFullReconcileInterval);
     if (stockDailyPushInterval) clearInterval(stockDailyPushInterval);
+    if (arcaRecoveryInterval) clearInterval(arcaRecoveryInterval);
     if (httpServer) {
         await new Promise((resolve) => httpServer.close(resolve));
     }

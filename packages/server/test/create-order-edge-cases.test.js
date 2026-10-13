@@ -5,8 +5,7 @@ import { CreateOrderUseCase, resolvePriceOverrides } from '../domains/sales/Crea
 import { InvoiceAuthorizationUseCase } from '../domains/sales/InvoiceAuthorizationUseCase.js';
 import pool from '../config/db.js';
 import auditService from '../services/audit.service.js';
-import accountingService from '../services/accounting.service.js';
-import afipService from '../services/afip.service.js';
+import { invoiceArcaAdapter } from '../domains/fiscal/arcaAdapters.js';
 import { mockPool } from './helpers/mockDb.js';
 
 test('inventory reservation rejects malformed quantities and ignores zero-available rows', async () => {
@@ -126,44 +125,13 @@ test('duplicate external order races recover the committed remote order', async 
     assert.ok(connection);
 });
 
-test('invoice authorization handles missing, replay, success and AFIP rollback', async (t) => {
-    let mode = 'missing';
-    mockPool(t, async (sql) => {
-        const statement = String(sql);
-        if (statement.includes('FOR UPDATE')) {
-            if (mode === 'missing') return [[]];
-            if (mode === 'replay') return [[{ id: 'i', status: 'authorized' }]];
-            return [[{ id: 'i', status: 'issued', invoice_type: 'B' }]];
-        }
-        if (statement.includes('company_settings')) return [[]];
-        if (statement.includes('invoice_items')) return [[{ quantity: 1 }]];
-        if (statement.startsWith('SELECT * FROM invoices WHERE id = ?')) return [[{ id: 'i', status: 'authorized' }]];
-        return [[]];
-    });
-    const useCase = new InvoiceAuthorizationUseCase();
-    await assert.rejects(() => useCase.execute('i', 'u'), (e) => e.statusCode === 404);
-    mode = 'replay';
-    assert.equal((await useCase.execute('i', 'u')).status, 'authorized');
-
-    const originals = {
-        afip: afipService.authorizeVoucher,
-        journal: accountingService.postInvoiceAccountingEntries,
-        audit: auditService.log
-    };
-    afipService.authorizeVoucher = async () => ({ cae: 'CAE', cae_expiration_date: '2026-09-01', invoice_number: 2 });
-    accountingService.postInvoiceAccountingEntries = async () => {};
-    auditService.log = async () => {};
-    t.after(() => {
-        afipService.authorizeVoucher = originals.afip;
-        accountingService.postInvoiceAccountingEntries = originals.journal;
-        auditService.log = originals.audit;
-    });
-    mode = 'success';
-    assert.equal((await useCase.execute('i', 'u')).status, 'authorized');
-    afipService.authorizeVoucher = async () => { throw new Error('AFIP offline'); };
-    await assert.rejects(() => useCase.execute('i', 'u'), /AFIP offline/);
+test('invoice authorization delegates to the shared ARCA flow with the invoice adapter (ADR-020)', async () => {
+    const calls = [];
+    const arcaAuthorization = { authorize: async (...args) => { calls.push(args); return { id: 'i', status: 'authorized' }; } };
+    const result = await new InvoiceAuthorizationUseCase({ arcaAuthorization }).execute('i', 'u');
+    assert.equal(result.status, 'authorized');
+    assert.deepEqual(calls, [[invoiceArcaAdapter, 'i', 'u']]);
 });
-
 test('order creation with VAT and payments matches full gross total (POS checkout)', async (t) => {
     const calls = [];
     mockPool(t, async (sql, params) => {

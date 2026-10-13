@@ -19,6 +19,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { QueryErrorBanner, QueryLoadingState } from "./QueryStates"
 import { mapCreditNoteRows, creditNoteStatusLabel } from "./helpers"
 import { CreditNotePreviewDialog } from "@/components/invoices/CreditNotePreviewDialog"
+import { ArcaLastError } from "@/components/invoices/ArcaLastError"
+import {
+    ARCA_VERIFYING_HELP,
+    arcaAuthorizeButtonLabel,
+    creditNoteFiscalNumber,
+    isArcaAuthorizing,
+    reportArcaAuthorizeError,
+} from "@/lib/arca"
 import type { CompanySettings, Client } from "@/types"
 import type { CreditNoteRow, ClientReturnRow } from "@/types/returns"
 
@@ -146,7 +154,11 @@ export function CreditNotesTab({
                 setPreviewCreditNote(mapCreditNoteRows([updated])[0] ?? null)
             }
         } catch (error) {
-            showErrorToast("No se pudo autorizar la nota de crédito", error)
+            reportArcaAuthorizeError("No se pudo autorizar la nota de crédito", error)
+            // The note keeps its new state (rejected with reason, or in verification): refresh list and open preview.
+            const refreshed = await creditNotesQuery.refetch()
+            const row = refreshed.data?.find((item) => item.id === cn.id)
+            if (row && previewCreditNote?.id === cn.id) setPreviewCreditNote(row)
         }
     }
 
@@ -192,14 +204,26 @@ export function CreditNotesTab({
                                     creditNotes.map((row) => (
                                         <TableRow key={row.id}>
                                             <TableCell>{new Date(row.created_at).toLocaleDateString("es-AR")}</TableCell>
-                                            <TableCell className="font-mono font-bold">{row.number}</TableCell>
+                                            <TableCell className="font-mono font-bold">
+                                                {creditNoteFiscalNumber(row) ?? row.number}
+                                                {creditNoteFiscalNumber(row) ? (
+                                                    <span className="block text-xs font-normal text-muted-foreground">{row.number}</span>
+                                                ) : null}
+                                            </TableCell>
                                             <TableCell>
                                                 {row.client_name || row.customer_name || "Consumidor Final"}
                                             </TableCell>
                                             <TableCell>
-                                                <Badge variant={row.status === "authorized" ? "default" : "outline"}>
+                                                <Badge
+                                                    variant={row.status === "authorized" ? "default" : "outline"}
+                                                    title={isArcaAuthorizing(row.status) ? ARCA_VERIFYING_HELP : undefined}
+                                                >
                                                     {creditNoteStatusLabel(row.status)}
                                                 </Badge>
+                                                {isArcaAuthorizing(row.status) ? (
+                                                    <p className="mt-1 max-w-[220px] text-xs text-muted-foreground">{ARCA_VERIFYING_HELP}</p>
+                                                ) : null}
+                                                <ArcaLastError doc={row} className="mt-1 max-w-[220px]" />
                                             </TableCell>
                                             <TableCell>
                                                 {row.cae ? (
@@ -214,7 +238,7 @@ export function CreditNotesTab({
                                                 {formatMoney(row.amount)}
                                             </TableCell>
                                             <TableCell className="flex justify-end gap-1 text-right">
-                                                {row.status === "issued" && (
+                                                {(row.status === "issued" || isArcaAuthorizing(row.status)) && (
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
@@ -223,7 +247,7 @@ export function CreditNotesTab({
                                                         disabled={authorizeCreditNoteMutation.isPending}
                                                         title="Autorizar con ARCA/AFIP"
                                                     >
-                                                        Autorizar
+                                                        {arcaAuthorizeButtonLabel(row.status, "Autorizar")}
                                                     </Button>
                                                 )}
                                                 <Button

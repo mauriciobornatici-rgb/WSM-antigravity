@@ -2,6 +2,7 @@ import type { CompanySettings } from "@/types"
 import type { ClientReturnRow, CreditNoteRow, ClientReturnItemRow } from "@/types/returns"
 import { formatMoney } from "@/lib/formatters"
 import { grossLineTotal, grossPrice } from "@/lib/pricing"
+import { creditNoteFiscalNumber } from "@/lib/arca"
 import { splitCreditNoteAmount } from "./invoiceUtils"
 import { buildAfipQrUrl } from "./afipQr"
 import { AfipQrImage } from "./AfipQrImage"
@@ -34,6 +35,7 @@ export function PrintableThermalCreditNote({
     if (!creditNote) return null
 
     const cnType = creditNote.credit_note_type || "B"
+    const fiscalNumber = creditNoteFiscalNumber(creditNote)
 
     // The credit amount is VAT-included: the net is split with the linked return's own rates (no hardcoded 21%).
     const split = splitCreditNoteAmount(creditNote.amount, linkedReturn?.items)
@@ -43,7 +45,7 @@ export function PrintableThermalCreditNote({
         emisorCuit: companyTaxId,
         invoiceType: cnType === "A" ? "NC_A" : "NC_B",
         pointOfSale: creditNote.point_of_sale ?? null,
-        invoiceNumber: Number(creditNote.number.split("-").pop() || 0),
+        invoiceNumber: creditNote.arca_voucher_number ?? Number(creditNote.number.split("-").pop() || 0),
         issueDate: creditNote.created_at ? String(creditNote.created_at) : null,
         totalAmount: creditNote.amount,
         cae: creditNote.cae ?? null,
@@ -74,7 +76,8 @@ export function PrintableThermalCreditNote({
             {/* Document Title */}
             <div className="text-center py-2 border-b border-dashed border-slate-400">
                 <h3 className="text-xs font-bold uppercase">NOTA DE CRÉDITO {cnType}</h3>
-                <p className="text-[10px]">Comprobante Nº {String(creditNote.point_of_sale || 1).padStart(4, "0")}-{String(creditNote.number.split("-").pop() || "").padStart(8, "0")}</p>
+                <p className="text-[10px]">Comprobante Nº {fiscalNumber ?? `${String(creditNote.point_of_sale || 1).padStart(4, "0")}-${String(creditNote.number.split("-").pop() || "").padStart(8, "0")}`}</p>
+                {fiscalNumber ? <p className="text-[9px] text-slate-500">Ref. interna: {creditNote.number}</p> : null}
                 <p className="text-[10px]">Fecha: {new Date(creditNote.created_at).toLocaleString("es-AR")}</p>
             </div>
 

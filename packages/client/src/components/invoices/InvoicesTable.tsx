@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { formatMoney } from "@/lib/formatters"
 import { formatInvoiceNumber, getInvoiceStatusBadge } from "./invoiceUtils"
+import { ArcaLastError } from "./ArcaLastError"
 import type { InvoiceView } from "./types"
 
 type InvoicesTableProps = {
@@ -84,7 +85,10 @@ export function InvoicesTable({
                                 <TableCell className="text-right font-mono font-bold">
                                     {formatMoney(invoice.total_amount)}
                                 </TableCell>
-                                <TableCell>{getInvoiceStatusBadge(invoice.status, invoice.invoice_type)}</TableCell>
+                                <TableCell>
+                                    {getInvoiceStatusBadge(invoice.status, invoice.invoice_type)}
+                                    <ArcaLastError doc={invoice} className="mt-1 max-w-[220px]" />
+                                </TableCell>
                                 <TableCell className="flex justify-end gap-1 text-right">
                                     <Button variant="ghost" size="sm" title="Ver detalles" onClick={() => onPreview(invoice)}>
                                         <Eye className="h-4 w-4" />

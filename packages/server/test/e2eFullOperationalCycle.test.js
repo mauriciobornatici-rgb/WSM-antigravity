@@ -8,23 +8,10 @@ import { CreateOrderUseCase } from "../domains/sales/CreateOrderUseCase.js";
 import { InvoiceAuthorizationUseCase } from "../domains/sales/InvoiceAuthorizationUseCase.js";
 import { returnsService as clientReturnsService } from "../services/warranties.service.js";
 import financeService from "../services/finance.service.js";
-import afipService from "../services/afip.service.js";
 import { formatMoney } from "../utils/currency.js";
 
 test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Factura -> Pago -> Venta POS -> CAE -> Devolución Cliente -> Devolución Proveedor -> Balance", async (t) => {
     const executedQueries = [];
-
-    // Mock de AFIP
-    const origAuthorizeVoucher = afipService.authorizeVoucher;
-    afipService.authorizeVoucher = async () => ({
-        cae: "74328910293847",
-        cae_expiration_date: "20261231",
-        invoice_number: 5001
-    });
-
-    t.after(() => {
-        afipService.authorizeVoucher = origAuthorizeVoucher;
-    });
 
     // Simulación del estado persistente en memoria para validar coherencia en cada paso
     const memoryState = {

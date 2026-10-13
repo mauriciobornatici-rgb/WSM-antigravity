@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { api } from "@/services/api"
 import { showErrorToast } from "@/lib/errorHandling"
 import { netFromGross } from "@/lib/pricing"
+import { reportArcaAuthorizeError } from "@/lib/arca"
 import type { Client, CompanySettings } from "@/types"
 import type { InvoiceItem } from "@/types/api"
 import {
@@ -257,7 +258,15 @@ export default function InvoicesPage() {
             // Reload the list of invoices
             void loadData()
         } catch (error) {
-            showErrorToast("Error al autorizar factura", error)
+            reportArcaAuthorizeError("Error al autorizar factura", error)
+            // The invoice keeps its new state (rejected with reason, or in verification): refresh list and open preview.
+            try {
+                const [refreshed, fresh] = await Promise.all([api.getInvoices(), api.getInvoice(invoice.id)])
+                setInvoices(refreshed as InvoiceView[])
+                setSelectedInvoice((prev) => (prev?.id === invoice.id ? { ...prev, ...(fresh as InvoiceView) } : prev))
+            } catch {
+                // The list refresh is best effort; the authorize error was already reported.
+            }
             throw error
         }
     }
