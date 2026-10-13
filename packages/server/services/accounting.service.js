@@ -59,6 +59,25 @@ class AccountingService {
         return this.createJournalEntry(connection, { ...entryData, lines });
     }
 
+    /**
+     * Opening stock of a new product (ADR-017): goods the business already had enter inventory
+     * at cost against capital, so the ledger matches the stock (ADR-013). Nothing without cost.
+     */
+    async postInitialStock(connection, { productId, quantity, unitCost, description }) {
+        const amount = this._round(Number(quantity || 0) * Number(unitCost || 0));
+        if (!(amount > 0)) return null;
+        return this.createJournalEntry(connection, {
+            date: new Date(),
+            description: description || 'Stock inicial',
+            reference_type: 'initial_stock',
+            reference_id: productId,
+            lines: [
+                { account_code: '1.1.04.01', debit: amount, credit: 0, notes: 'Mercadería existente al alta' },
+                { account_code: '3.1.01.01', debit: 0, credit: amount, notes: 'Aporte de mercadería' }
+            ]
+        });
+    }
+
     async createJournalEntry(connection, entryData) {
         const { date, description, reference_type, reference_id, reversal_of_entry_id, lines } = entryData;
 

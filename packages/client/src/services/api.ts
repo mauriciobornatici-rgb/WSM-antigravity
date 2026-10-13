@@ -354,9 +354,13 @@ type OrderCreateInput = {
     delivery_notes?: string;
     notes?: string;
     total_amount?: number;
+    /** Envío (importe final con IVA). Si charge_customer es false queda a cargo del negocio y no se cobra. */
+    shipping_charge?: { amount: number; charge_customer: boolean; vat_rate?: number };
     items: Array<{ product_id: string; quantity: number; unit_price?: number; vat_rate?: number }>;
     [key: string]: unknown;
 };
+
+export type OrderShippingInput = { amount: number; charge_customer: boolean; vat_rate?: number };
 
 type ReturnCreateInput = {
     supplier_id: string;
@@ -374,6 +378,8 @@ type ClientReturnCreateInput = {
     customer_name?: string;
     order_id?: string;
     reason?: string;
+    /** Bonificar el envío cobrado (solo tiene efecto si la devolución tiene pedido). */
+    refund_shipping?: boolean;
     items?: Array<{
         product_id: string;
         quantity: number;
@@ -530,6 +536,9 @@ export const api = {
 
     createOrder: (data: OrderCreateInput) =>
         httpClient.post<{ id: string; total_amount: number }>("/api/orders", data),
+
+    updateOrderShipping: (orderId: string, body: OrderShippingInput) =>
+        httpClient.put<{ id: string; total_amount: number; shipping: unknown }>(`/api/orders/${orderId}/shipping`, body),
 
     // Counter sale in one server transaction: sale + stock + optional invoice + cash-shift payments.
     posCheckout: (data: PosCheckoutInput) =>
@@ -902,6 +911,9 @@ export const api = {
         due_date?: string;
         net_amount: number;
         vat_amount: number;
+        vat_rate?: number;
+        purchase_kind?: "goods" | "shipping" | "expense";
+        vat_lines?: Array<{ vat_rate: number; net_amount: number; vat_amount: number }>;
         other_taxes?: number;
         total_amount?: number;
         notes?: string;

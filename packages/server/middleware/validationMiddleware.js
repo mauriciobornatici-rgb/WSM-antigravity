@@ -118,6 +118,12 @@ export const zodSchemas = {
         }),
         body: commonSchemas.invoicePaymentSchema
     }),
+    orderShippingCharge: z.object({
+        params: z.object({
+            id: commonSchemas.uuidSchema
+        }),
+        body: commonSchemas.orderShippingChargeSchema
+    }),
     orderItemPick: z.object({
         params: z.object({
             id: commonSchemas.uuidSchema

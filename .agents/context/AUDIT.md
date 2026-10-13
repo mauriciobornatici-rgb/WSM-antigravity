@@ -1,5 +1,25 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-006 — 2026-10-12 — `guardian-integridad` sobre ADR-017 (delta sin commitear de `codex/simulacion-operativa`)
+
+Todos los hallazgos técnicos fueron verificados y corregidos:
+- [x] Alta: dos aprobaciones simultáneas devolvían el envío dos veces. La lectura de REPEATABLE READ fijaba la foto antes del lock del pedido. Ahora el pedido se bloquea antes de cualquier lectura sin lock. Hay test MySQL con `Promise.all`.
+- [x] Alta: el script de precios podía bajar un 17 % el precio de un producto creado en el ERP y vinculado después por SKU. Ahora se clasifica como del ERP si tiene alta auditada o si existía antes de vincularse.
+- [x] Media:
+  - No se puede cambiar el envío si el pedido tiene cobros en cuenta corriente o devoluciones.
+  - La alícuota queda guardada en cada línea del pedido (migración 054): cambiar la del producto ya no cambia lo que factura un pedido abierto.
+  - La importación de Tiendanube es atómica por producto.
+  - El descuento sobre el envío no se prorratea en una entrega parcial (el envío se cobra completo), igual en el servidor y en la pantalla.
+- [x] Baja:
+  - El IVA de cada alícuota de compra se valida contra su neto.
+  - Los totales del comprobante tienen que ser la suma de sus alícuotas, y el neto debe ser mayor a 0.
+  - La línea "Envío y otros cargos" de facturas viejas no se bonifica como envío.
+  - Se agregó un índice en `client_returns.order_id`.
+  - El retiro en mostrador usa el precio de catálogo con 4 decimales.
+- Pendiente o decisión: el producto se crea fuera de la transacción de su stock inicial (patrón previo); una NC de devolución anulada sigue contando el envío como devuelto.
+
+Evidencia: validate 0 (878 + 84); coverage 96,88/90,17/94,75; integración 81/81 ×3; RBAC OK; E2E 6/6; simulación 153/153.
+
 ## AUD-005 — 2026-10-12 — `guardian-integridad` sobre ADR-016 (delta sin commitear de `codex/simulacion-operativa`)
 
 El coordinador verificó y corrigió cada hallazgo técnico:

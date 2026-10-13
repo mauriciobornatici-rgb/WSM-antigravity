@@ -395,7 +395,7 @@ test('Tiendanube: a discount larger than the products becomes a discount on the 
     const adjustments = service.orderAdjustments({ total: '50', shipping_cost_customer: '100' }, [{ product_id: 'a', quantity: 1, unit_price: 100 }], catalog);
     assert.deepEqual(adjustments, [
         { kind: 'shipping', description: 'Envío', amount: 100, vat_rate: 21 },
-        { kind: 'discount', description: 'Descuento sobre el envío', amount: -50, vat_rate: 21 },
+        { kind: 'shipping_discount', description: 'Descuento sobre el envío', amount: -50, vat_rate: 21 },
         { kind: 'discount', description: 'Descuento', amount: -121, vat_rate: 21 },
     ]);
 });

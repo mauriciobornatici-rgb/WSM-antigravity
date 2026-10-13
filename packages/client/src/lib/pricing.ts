@@ -5,7 +5,15 @@
  */
 export const DEFAULT_VAT_RATE = 21
 
-const roundCents = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
+/** VAT rates the server accepts (21 % first: the default; the others are for exceptions). */
+export const VAT_RATE_OPTIONS = [21, 10.5, 27, 5, 2.5, 0] as const
+
+/** "10,5 %" style label for a VAT rate. */
+export function formatVatRate(rate: number): string {
+    return `${String(rate).replace(".", ",")} %`
+}
+
+const roundCents =(value: number) => Math.round((value + Number.EPSILON) * 100) / 100
 
 type VatInput = number | string | null | undefined
 

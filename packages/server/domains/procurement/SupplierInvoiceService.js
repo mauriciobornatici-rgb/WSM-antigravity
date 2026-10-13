@@ -7,6 +7,14 @@ import { businessError } from '../../utils/businessError.js';
 import { ACCOUNTS } from '../../utils/paymentAccounts.js';
 import { vatCreditAccount } from '../../utils/vatAccounts.js';
 
+// What a supplier invoice buys (ADR-017): goods go to inventory, freight and other expenses
+// to their expense accounts.
+const PURCHASE_ACCOUNTS = Object.freeze({
+    goods: { code: '1.1.04.01', notes: 'Inventario / Bienes de Cambio' },
+    shipping: { code: '5.1.02.06', notes: 'Fletes y envíos' },
+    expense: { code: '5.1.02.01', notes: 'Gastos generales' },
+});
+
 export class SupplierInvoiceService {
     async getSupplierInvoices(filters = {}) {
         const { supplier_id, status } = filters;
@@ -52,8 +60,51 @@ export class SupplierInvoiceService {
         } = data;
 
         const id = crypto.randomUUID();
-        const net = Math.round(Number(net_amount || 0) * 100) / 100;
-        const vat = Math.round(Number(vat_amount || 0) * 100) / 100;
+        // ADR-017: an invoice with several VAT rates comes as one line per rate.
+        const vatLines = Array.isArray(data.vat_lines) && data.vat_lines.length > 0
+            ? data.vat_lines.map((line) => ({
+                vat_rate: Number(line.vat_rate),
+                net: Math.round(Number(line.net_amount || 0) * 100) / 100,
+                vat: Math.round(Number(line.vat_amount || 0) * 100) / 100,
+            }))
+            : null;
+        const net = vatLines
+            ? vatLines.reduce((sum, line) => sum + Math.round(line.net * 100), 0) / 100
+            : Math.round(Number(net_amount || 0) * 100) / 100;
+        const vat = vatLines
+            ? vatLines.reduce((sum, line) => sum + Math.round(line.vat * 100), 0) / 100
+            : Math.round(Number(vat_amount || 0) * 100) / 100;
+        if (vatLines && vatLines.some((line) => line.vat > 0 && line.vat_rate === 0)) {
+            throw businessError(400, { error: 'invalid_vat_rate', message: 'Una línea con IVA no puede tener alícuota 0 %.' });
+        }
+        // AUD-006: each line's VAT must match its rate (a few cents of rounding per item are
+        // allowed), and the header amounts, when sent, must be the sums of the lines.
+        for (const line of vatLines || []) {
+            const expected = line.net * line.vat_rate / 100;
+            if (line.vat_rate > 0 && Math.abs(line.vat - expected) > Math.max(0.05, line.net * 0.001)) {
+                throw businessError(400, {
+                    error: 'invalid_vat_line',
+                    message: `El IVA de la línea al ${line.vat_rate}% (${line.vat.toFixed(2)}) no corresponde a su neto (${expected.toFixed(2)}).`
+                });
+            }
+        }
+        if (vatLines && ((net_amount != null && Math.round(Number(net_amount) * 100) !== Math.round(net * 100))
+            || (vat_amount != null && Math.round(Number(vat_amount) * 100) !== Math.round(vat * 100)))) {
+            throw businessError(400, {
+                error: 'invalid_invoice_total',
+                message: 'El neto y el IVA del comprobante deben ser la suma de sus alícuotas.'
+            });
+        }
+        if (!(net > 0)) {
+            throw businessError(400, { error: 'invalid_net_amount', message: 'El neto del comprobante debe ser mayor a cero.' });
+        }
+        const purchaseKind = data.purchase_kind || 'goods';
+        if (purchaseKind !== 'goods' && (reception_id || purchase_order_id)) {
+            throw businessError(400, {
+                error: 'invalid_purchase_kind',
+                message: 'Una factura vinculada a una recepción u orden de compra es de mercadería.'
+            });
+        }
         const taxes = Math.round(Number(other_taxes || 0) * 100) / 100;
         const total = Math.round(Number(total_amount || (net + vat + taxes)) * 100) / 100;
         const creatorId = userId || null;
@@ -92,8 +143,9 @@ export class SupplierInvoiceService {
             await connection.query(`
                 INSERT INTO supplier_invoices (
                     id, invoice_number, invoice_type, supplier_id, reception_id, purchase_order_id,
-                    issue_date, due_date, net_amount, vat_amount, other_taxes, total_amount, status, notes, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?)
+                    issue_date, due_date, net_amount, vat_amount, other_taxes, total_amount, status, notes, created_by,
+                    purchase_kind
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?)
             `, [
                 id,
                 invoice_number,
@@ -108,8 +160,16 @@ export class SupplierInvoiceService {
                 taxes,
                 total,
                 notes || null,
-                creatorId
+                creatorId,
+                purchaseKind
             ]);
+            for (const line of vatLines || []) {
+                await connection.query(
+                    `INSERT INTO supplier_invoice_vat_lines (id, supplier_invoice_id, vat_rate, net_amount, vat_amount)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [crypto.randomUUID(), id, line.vat_rate, line.net, line.vat]
+                );
+            }
 
             // 3. Increment Supplier Account Balance
             await connection.query(`
@@ -135,19 +195,33 @@ export class SupplierInvoiceService {
             // ADR-016: only a Factura A (or M) gives fiscal credit, in the account of its rate.
             // On a B or C invoice the VAT is part of the cost. Perceptions ("Percepciones /
             // Otros") are tax paid in advance: Retenciones y percepciones sufridas, not cost.
+            // ADR-017: several rates post one fiscal credit line each, and a freight or expense
+            // invoice goes to its expense account instead of inventory.
             const givesCredit = invoice_type === 'A' || invoice_type === 'M';
-            const vatRate = data.vat_rate == null ? 21 : Number(data.vat_rate);
-            const debitInventory = Math.round((net + (givesCredit ? 0 : vat)) * 100) / 100;
+            const rateLines = vatLines || [{ vat_rate: data.vat_rate == null ? 21 : Number(data.vat_rate), net, vat }];
+            const debitAccount = PURCHASE_ACCOUNTS[purchaseKind] || PURCHASE_ACCOUNTS.goods;
+            const debitBase = Math.round((net + (givesCredit ? 0 : vat)) * 100) / 100;
+            const creditByAccount = new Map();
+            if (givesCredit) {
+                for (const line of rateLines) {
+                    if (!(line.vat > 0)) continue;
+                    const account = vatCreditAccount(line.vat_rate);
+                    const current = creditByAccount.get(account) || { amount: 0, rates: new Set() };
+                    current.amount = Math.round((current.amount + line.vat) * 100) / 100;
+                    current.rates.add(line.vat_rate);
+                    creditByAccount.set(account, current);
+                }
+            }
             await accountingService.createJournalEntry(connection, {
                 date: issue_date || new Date(),
                 description: `Factura de Compra ${invoice_type} ${invoice_number}`,
                 reference_type: 'supplier_invoice',
                 reference_id: id,
                 lines: [
-                    { account_code: '1.1.04.01', debit: debitInventory, credit: 0, notes: 'Inventario / Bienes de Cambio' },
-                    ...(givesCredit && vat > 0
-                        ? [{ account_code: vatCreditAccount(vatRate), debit: vat, credit: 0, notes: `IVA Crédito Fiscal ${vatRate}%` }]
-                        : []),
+                    { account_code: debitAccount.code, debit: debitBase, credit: 0, notes: debitAccount.notes },
+                    ...[...creditByAccount.entries()].map(([account_code, credit]) => ({
+                        account_code, debit: credit.amount, credit: 0, notes: `IVA Crédito Fiscal ${[...credit.rates].join(' / ')}%`
+                    })),
                     ...(taxes > 0
                         ? [{ account_code: ACCOUNTS.WITHHOLDINGS, debit: taxes, credit: 0, notes: 'Percepciones sufridas' }]
                         : []),

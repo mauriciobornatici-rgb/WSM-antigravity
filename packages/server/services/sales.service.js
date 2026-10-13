@@ -9,6 +9,7 @@ import invoiceAuthorizationUseCase from '../domains/sales/InvoiceAuthorizationUs
 import createOrderUseCase from '../domains/sales/CreateOrderUseCase.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
 import { grossLineAmounts, lineAmounts } from '../utils/vatMath.js';
+import { businessError } from '../utils/businessError.js';
 import dispatchOrderUseCase from '../domains/sales/DispatchOrderUseCase.js';
 import deliverOrderUseCase from '../domains/sales/DeliverOrderUseCase.js';
 
@@ -510,7 +511,7 @@ class SalesService extends BaseService {
 
         const orderIds = orders.map((o) => o.id);
         const [items] = await pool.query(`
-            SELECT oi.*, p.name AS product_name, p.sku, p.location, p.barcode, p.vat_rate
+            SELECT oi.*, p.name AS product_name, p.sku, p.location, p.barcode, COALESCE(oi.vat_rate, p.vat_rate) AS vat_rate
             FROM order_items oi
             LEFT JOIN products p ON oi.product_id = p.id
             WHERE oi.order_id IN (?)
@@ -523,7 +524,7 @@ class SalesService extends BaseService {
         `, [orderIds]);
         // Shipping, discounts and surcharges of the order (ADR-016), VAT included.
         const [adjustmentRows] = await pool.query(
-            'SELECT order_id, kind, description, amount, vat_rate FROM order_adjustments WHERE order_id IN (?) ORDER BY created_at, id',
+            'SELECT order_id, kind, description, amount, vat_rate, billable FROM order_adjustments WHERE order_id IN (?) ORDER BY created_at, id',
             [orderIds]
         );
 
@@ -534,7 +535,9 @@ class SalesService extends BaseService {
                 kind: row.kind,
                 description: row.description,
                 amount: Number(row.amount || 0),
-                vat_rate: Number(row.vat_rate || 0)
+                vat_rate: Number(row.vat_rate || 0),
+                // ADR-017: a shipping absorbed by the business is shown but not billed.
+                billable: row.billable === undefined ? true : Boolean(Number(row.billable))
             })),
             payments: paymentRows.filter((payment) => payment.order_id === o.id).map((payment) => ({
                 id: payment.id,
@@ -674,7 +677,7 @@ class SalesService extends BaseService {
         if (orders.length === 0) throw new Error('Order not found');
 
         const [items] = await pool.query(`
-            SELECT oi.*, p.name AS product_name, p.sku, p.location, p.barcode, p.vat_rate
+            SELECT oi.*, p.name AS product_name, p.sku, p.location, p.barcode, COALESCE(oi.vat_rate, p.vat_rate) AS vat_rate
             FROM order_items oi
             LEFT JOIN products p ON p.id = oi.product_id
             WHERE oi.order_id = ?
@@ -893,6 +896,93 @@ class SalesService extends BaseService {
 
 
 
+    /**
+     * ADR-017: the shipping of an order made here, charged to the customer or absorbed by the
+     * business, until the order is invoiced. The order total follows (products + what is
+     * billed). Orders from a channel keep what the channel charged; an order with payments
+     * already recorded against its total is not changed under them.
+     */
+    async updateOrderShipping(orderId, payload, userId = null) {
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [orders] = await connection.query('SELECT * FROM orders WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [orderId]);
+            const order = orders[0];
+            if (!order) throw businessError(404, { error: 'not_found', message: 'Pedido no encontrado.' });
+            if (order.external_source) {
+                throw businessError(409, { error: 'channel_order', message: 'El envío de un pedido de un canal es el que cobró el canal: no se modifica acá.' });
+            }
+            if (order.invoice_id) {
+                throw businessError(409, { error: 'order_invoiced', message: 'El pedido ya está facturado: el envío no se puede cambiar.' });
+            }
+            if (this._normalizeOrderStatus(order.status) === 'cancelled') {
+                throw businessError(409, { error: 'order_cancelled', message: 'El pedido está cancelado.' });
+            }
+            // Payments planned at the counter (order_payments) and collections against the order
+            // on the current account (transactions of type sale) both count (AUD-006).
+            const [payments] = await connection.query(
+                `SELECT (SELECT COUNT(*) FROM order_payments WHERE order_id = ?)
+                      + (SELECT COUNT(*) FROM transactions WHERE reference_id = ? AND type = 'sale') AS n`,
+                [orderId, orderId]
+            );
+            const [returns] = await connection.query(
+                "SELECT COUNT(*) AS n FROM client_returns WHERE order_id = ? AND status NOT IN ('rejected', 'cancelled')",
+                [orderId]
+            );
+            if (Number(returns[0]?.n || 0) > 0) {
+                throw businessError(409, { error: 'order_has_returns', message: 'El pedido tiene devoluciones: el envío no se puede cambiar.' });
+            }
+            if (Number(payments[0]?.n || 0) > 0) {
+                throw businessError(409, { error: 'order_has_payments', message: 'El pedido ya tiene pagos registrados por su total: no se puede cambiar el envío.' });
+            }
+
+            const amount = this._roundMoney(payload.amount);
+            const vatRate = payload.vat_rate ?? 21;
+            const billable = payload.charge_customer !== false;
+            const [previous] = await connection.query(
+                "SELECT amount, vat_rate, billable FROM order_adjustments WHERE order_id = ? AND kind = 'shipping'",
+                [orderId]
+            );
+            await connection.query("DELETE FROM order_adjustments WHERE order_id = ? AND kind = 'shipping'", [orderId]);
+            if (amount > 0) {
+                await connection.query(
+                    `INSERT INTO order_adjustments (id, order_id, kind, description, amount, vat_rate, billable)
+                     VALUES (?, ?, 'shipping', 'Envío', ?, ?, ?)`,
+                    [crypto.randomUUID(), orderId, amount, vatRate, billable ? 1 : 0]
+                );
+            }
+
+            const [items] = await connection.query(
+                `SELECT oi.quantity, oi.unit_price, COALESCE(oi.vat_rate, p.vat_rate) AS vat_rate FROM order_items oi
+                 LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?`,
+                [orderId]
+            );
+            const [billed] = await connection.query(
+                'SELECT COALESCE(SUM(amount), 0) AS total FROM order_adjustments WHERE order_id = ? AND billable = 1',
+                [orderId]
+            );
+            const itemsGross = items.reduce((sum, item) => sum + lineAmounts(item.quantity, item.unit_price, item.vat_rate).gross, 0);
+            const total = this._roundMoney(itemsGross + Number(billed[0]?.total || 0));
+            await connection.query('UPDATE orders SET total_amount = ? WHERE id = ?', [total, orderId]);
+
+            await auditService.log({
+                user_id: userId,
+                action: 'UPDATE_ORDER_SHIPPING',
+                entity_type: 'order',
+                entity_id: orderId,
+                old_values: { shipping: previous[0] || null, total_amount: Number(order.total_amount || 0) },
+                new_values: { amount, vat_rate: vatRate, charge_customer: billable, total_amount: total },
+            }, connection);
+            await connection.commit();
+            return { id: orderId, total_amount: total, shipping: { amount, vat_rate: vatRate, charge_customer: billable } };
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+    }
+
     async createInvoice(orderId, invoiceData, userId, existingConnection = null) {
         const connection = existingConnection || await pool.getConnection();
         const isExternalTx = Boolean(existingConnection);
@@ -906,7 +996,7 @@ class SalesService extends BaseService {
             if (order.invoice_id) throw new Error('Order already invoiced');
 
             const [items] = await connection.query(`
-                SELECT oi.*, p.name AS product_name, p.sku, p.vat_rate
+                SELECT oi.*, p.name AS product_name, p.sku, COALESCE(oi.vat_rate, p.vat_rate) AS vat_rate
                 FROM order_items oi
                 LEFT JOIN products p ON oi.product_id = p.id
                 WHERE oi.order_id = ?
@@ -955,7 +1045,7 @@ class SalesService extends BaseService {
             // picked order a discount keeps its percentage (prorated by what was picked of its
             // VAT rate), and it never exceeds those products. Every change is audited.
             const [adjustments] = await connection.query(
-                'SELECT kind, description, amount, vat_rate FROM order_adjustments WHERE order_id = ? ORDER BY created_at, id',
+                'SELECT kind, description, amount, vat_rate FROM order_adjustments WHERE order_id = ? AND billable = 1 ORDER BY created_at, id',
                 [orderId]
             );
             const productGrossByRate = new Map();
@@ -990,7 +1080,11 @@ class SalesService extends BaseService {
                     const ordered = orderedGrossByRate.get(vatRate) || 0;
                     const picked = pickedGrossByRate.get(vatRate) || 0;
                     const available = this._roundMoney(productGrossByRate.get(vatRate) || 0);
-                    if (ordered > 0 && picked < ordered) gross = this._roundMoney(gross * picked / ordered);
+                    // A shipping discount follows the shipping, billed whole on a partial delivery
+                    // (ADR-017): only discounts on the products keep their share of what was picked.
+                    if (adjustment.kind !== 'shipping_discount' && ordered > 0 && picked < ordered) {
+                        gross = this._roundMoney(gross * picked / ordered);
+                    }
                     gross = Math.max(gross, -available);
                     productGrossByRate.set(vatRate, available + gross);
                 }
@@ -1007,7 +1101,8 @@ class SalesService extends BaseService {
                     unit_price: Math.round((gross / (1 + vatRate / 100)) * 10000) / 10000,
                     vat_rate: vatRate,
                     vat_amount: lineVat,
-                    total_line: gross
+                    total_line: gross,
+                    adjustment_kind: adjustment.kind || (gross < 0 ? 'discount' : 'surcharge')
                 });
             }
 
@@ -1089,8 +1184,8 @@ class SalesService extends BaseService {
                 await connection.query(`
                     INSERT INTO invoice_items (
                         id, invoice_id, product_id, description, quantity, unit_price,
-                        discount_percentage, vat_rate, vat_amount, total_line, product_name, sku
-                    ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+                        discount_percentage, vat_rate, vat_amount, total_line, product_name, sku, adjustment_kind
+                    ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
                 `, [
                     crypto.randomUUID(),
                     invoiceId,
@@ -1102,7 +1197,8 @@ class SalesService extends BaseService {
                     item.vat_amount,
                     item.total_line,
                     item.product_name || 'Producto',
-                    item.sku || null
+                    item.sku || null,
+                    item.adjustment_kind || null
                 ]);
             }
 

@@ -177,10 +177,12 @@ test('createSupplierInvoice derives total, uses defaults and non-A note', async 
     ]);
     assert.ok(journals[0].date instanceof Date);
 
+    // An invoice with no net amount is refused (it would post an empty purchase).
     const none = await runHandler(createSupplierInvoice, {
         body: { invoice_number: '2', invoice_type: 'C', supplier_id: 's1' }
     });
-    assert.equal(none.body.total_amount, 0);
+    assert.equal(none.status, 400);
+    assert.equal(none.body.error, 'invalid_net_amount');
 
     // A typed total that disagrees with its parts would post an unbalanced entry.
     const mismatch = await runHandler(createSupplierInvoice, {

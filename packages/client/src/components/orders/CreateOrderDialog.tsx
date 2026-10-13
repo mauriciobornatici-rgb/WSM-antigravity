@@ -18,6 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import type { Client, Product } from "@/types"
 import type { ShippingMethod, CreateOrderItem, NewClientForm } from "@/types/orders"
+import { ShippingChargeFields } from "./ShippingChargeFields"
+import { EMPTY_SHIPPING_CHARGE, type ShippingChargeValue } from "./shippingCharge"
 
 interface CreateOrderDialogProps {
     open: boolean
@@ -57,6 +59,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
     const [createRecipientName, setCreateRecipientName] = useState("")
     const [createRecipientDni, setCreateRecipientDni] = useState("")
     const [createNotes, setCreateNotes] = useState("")
+    const [createShipping, setCreateShipping] = useState<ShippingChargeValue>(EMPTY_SHIPPING_CHARGE)
     const [createItems, setCreateItems] = useState<CreateOrderItem[]>([])
     const [productSearch, setProductSearch] = useState("")
 
@@ -105,12 +108,21 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
             .slice(0, 30)
     }, [products, productSearch])
 
-    const createOrderTotal = useMemo(() => {
+    const itemsTotal = useMemo(() => {
         return createItems.reduce((sum, item) => {
             const product = productById.get(item.product_id)
             return sum + grossLineTotal(item.quantity, product?.sale_price, product?.vat_rate)
         }, 0)
     }, [createItems, productById])
+
+    // El envío solo existe en pedidos con envío; suma al total únicamente si se cobra al cliente.
+    const shippingAmount = createShippingMethod === "delivery" ? Math.max(0, Number(createShipping.amount) || 0) : 0
+    const hasShipping = shippingAmount > 0
+    const shippingCharged = hasShipping && createShipping.chargeCustomer
+    const createOrderTotal = useMemo(
+        () => Math.round((itemsTotal + (shippingCharged ? shippingAmount : 0)) * 100) / 100,
+        [itemsTotal, shippingCharged, shippingAmount]
+    )
 
     const totalItemsCount = createItems.length
     const totalUnitsCount = useMemo(() => {
@@ -163,6 +175,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
         setCreateRecipientName("")
         setCreateRecipientDni("")
         setCreateNotes("")
+        setCreateShipping(EMPTY_SHIPPING_CHARGE)
         setCreateItems([])
         setProductSearch("")
     }
@@ -305,6 +318,13 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                     }
                 }),
             }
+            if (hasShipping) {
+                payload.shipping_charge = {
+                    amount: shippingAmount,
+                    charge_customer: createShipping.chargeCustomer,
+                    vat_rate: Number(createShipping.vatRate),
+                }
+            }
             if (createClientId) payload.client_id = createClientId
             if (currentUser?.id) payload.counter_user_id = currentUser.id
 
@@ -395,7 +415,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                     <div className="flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">
                                         <Calculator className="h-4 w-4" />
                                         <span className="text-xs uppercase tracking-wide opacity-80">Suma total:</span>
-                                        <span className="text-base font-bold">{formatMoney(createOrderTotal)}</span>
+                                        <span className="text-base font-bold">{formatMoney(itemsTotal)}</span>
                                     </div>
                                 ) : null}
                             </div>
@@ -516,7 +536,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                         <div className="flex items-center gap-2">
                                             <span className="text-xs uppercase font-medium text-muted-foreground">Suma pedido:</span>
                                             <span className="text-lg font-bold text-foreground">
-                                                {formatMoney(createOrderTotal)}
+                                                {formatMoney(itemsTotal)}
                                             </span>
                                         </div>
                                     </div>
@@ -703,6 +723,16 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                     />
                                 </div>
                             ) : null}
+                            {createShippingMethod === "delivery" ? (
+                                <div className="space-y-3 rounded-md border bg-muted/20 p-3 sm:col-span-2">
+                                    <Label className="text-sm font-semibold">Envío</Label>
+                                    <ShippingChargeFields
+                                        idPrefix="create-order-shipping"
+                                        value={createShipping}
+                                        onChange={(patch) => setCreateShipping((current) => ({ ...current, ...patch }))}
+                                    />
+                                </div>
+                            ) : null}
                             <div className="space-y-2 sm:col-span-2">
                                 <Label>Observaciones</Label>
                                 <Textarea
@@ -713,7 +743,18 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                             </div>
                         </div>
 
-                        <div className="rounded-md border bg-muted/20 p-3 text-right text-sm">
+                        <div className="space-y-1 rounded-md border bg-muted/20 p-3 text-right text-sm">
+                            {hasShipping ? (
+                                shippingCharged ? (
+                                    <div className="text-muted-foreground">
+                                        Envío: <strong>{formatMoney(shippingAmount)}</strong>
+                                    </div>
+                                ) : (
+                                    <div className="text-muted-foreground">
+                                        Envío a cargo del negocio: {formatMoney(shippingAmount)} (no se suma al total)
+                                    </div>
+                                )
+                            ) : null}
                             Total pedido: <strong>{formatMoney(createOrderTotal)}</strong>
                         </div>
                         <div className="flex flex-col items-end gap-1.5 border-t pt-3">

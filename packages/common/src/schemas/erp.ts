@@ -185,6 +185,17 @@ export const supplierInvoiceCreateSchema = z.object({
   other_taxes: z.coerce.number().min(0).optional(),
   total_amount: z.coerce.number().min(0).optional(),
   notes: z.string().nullable().optional(),
+  // ADR-017: an invoice with several VAT rates: one line per rate (net and VAT). When sent,
+  // net_amount and vat_amount must be their sums.
+  vat_lines: z.array(z.object({
+    vat_rate: z.coerce.number().refine((rate) => [0, 2.5, 5, 10.5, 21, 27].includes(rate), {
+      message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
+    }),
+    net_amount: z.coerce.number().min(0),
+    vat_amount: z.coerce.number().min(0),
+  })).max(6).optional(),
+  // ADR-017: goods (inventory), freight (Fletes y envíos) or another expense.
+  purchase_kind: z.enum(['goods', 'shipping', 'expense']).optional(),
 });
 
 // 5. Quality QC
@@ -552,6 +563,9 @@ export const clientReturnCreateSchema = z.object({
       unit_price: z.coerce.number().min(0).optional(),
     })
   ).min(1).optional(),
+  // ADR-017: give the shipping back too (a commercial decision per return). The credit note
+  // then includes what is left of the shipping charged on the order.
+  refund_shipping: z.boolean().optional(),
 });
 
 export const creditNotesFiltersSchema = z.object({

@@ -43,6 +43,24 @@ describe("ProductForm prices (ADR-015)", () => {
         expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ sale_price: 2000, purchase_price: 500 });
     });
 
+    it("uses the product's VAT rate: with 10,5 % a final price of 110,50 saves net 100 and sends the rate", async () => {
+        const onSubmit = vi.fn();
+        render(
+            <ProductForm
+                initialData={{ ...storedProduct, vat_rate: 10.5, sale_price: 50 }}
+                onSubmit={onSubmit}
+                onCancel={vi.fn()}
+            />,
+        );
+
+        expect(screen.getByLabelText("Alícuota de IVA")).toBeTruthy();
+        fireEvent.change(screen.getByLabelText(/Precio de venta final/), { target: { value: "110.5" } });
+        fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+        expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ sale_price: 100, vat_rate: 10.5 });
+    });
+
     it("keeps the stored net price when the final price is left untouched", async () => {
         const onSubmit = vi.fn();
         render(

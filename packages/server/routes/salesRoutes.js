@@ -19,6 +19,8 @@ const canReviewPrices = authorizePermission(PERMISSIONS.ORDERS_PRICE_OVERRIDE);
 router.get('/pos/exceptions', canReviewPrices, validateZod(zodSchemas.posExceptionsQuery), salesController.listPosExceptions);
 router.post('/pos/exceptions/:id/review', canReviewPrices, validateZod(zodSchemas.posExceptionReview), salesController.reviewPosException);
 router.put('/orders/:id/status', canSell, validate(schemas.orderStatus), salesController.updateOrderStatus);
+// ADR-017: charge the shipping or not (orders made here, before invoicing).
+router.put('/orders/:id/shipping', canSell, validateZod(zodSchemas.orderShippingCharge), salesController.updateOrderShipping);
 router.put('/orders/:id/dispatch', canDispatch, validate(schemas.orderDispatch), salesController.dispatchOrder);
 router.put('/orders/:id/deliver', canDispatch, validate(schemas.orderDeliver), salesController.deliverOrder);
 router.post('/orders/:id/pickup-checkout', canSell, validate(schemas.pickupOrderCheckout), salesController.checkoutPickupOrder);

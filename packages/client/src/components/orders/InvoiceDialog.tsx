@@ -43,7 +43,8 @@ function getInvoiceTotal(order: Order): number {
         billed.set(rate, (billed.get(rate) || 0) + grossLineTotal(quantity, item.unit_price, item.vat_rate))
     }
     let total = round2([...billed.values()].reduce((sum, value) => sum + value, 0))
-    const adjustments = order.adjustments || []
+    // Shipping paid by the business (billable=false) is neither charged nor invoiced.
+    const adjustments = (order.adjustments || []).filter((adjustment) => adjustment.billable !== false)
     const orderedTotal = round2([...ordered.values()].reduce((sum, value) => sum + value, 0))
     const external = Boolean(order.external_source) && order.external_source !== "pos"
     if (external && adjustments.length === 0 && Math.abs(total - orderedTotal) < 0.005) {
@@ -62,7 +63,10 @@ function getInvoiceTotal(order: Order): number {
             const orderedGross = ordered.get(rate) || 0
             const pickedGross = picked.get(rate) || 0
             const available = round2(billed.get(rate) || 0)
-            if (orderedGross > 0 && pickedGross < orderedGross) amount = round2(amount * pickedGross / orderedGross)
+            // A shipping discount follows the shipping, billed whole on a partial delivery.
+            if (adjustment.kind !== "shipping_discount" && orderedGross > 0 && pickedGross < orderedGross) {
+                amount = round2(amount * pickedGross / orderedGross)
+            }
             amount = Math.max(amount, -available)
             billed.set(rate, available + amount)
         }
@@ -196,7 +200,7 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                                             </td>
                                         </tr>
                                     )}
-                                    {(order?.adjustments ?? []).map((adjustment, idx) => (
+                                    {(order?.adjustments ?? []).filter((adjustment) => adjustment.billable !== false).map((adjustment, idx) => (
                                         <tr key={`adjustment-${idx}`} className="bg-muted/20">
                                             <td colSpan={3} className="p-2 font-medium text-foreground">{adjustment.description}</td>
                                             <td className={`p-2 text-right font-semibold ${adjustment.amount < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}`}>

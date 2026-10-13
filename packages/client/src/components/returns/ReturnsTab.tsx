@@ -29,6 +29,7 @@ export function ReturnsTab() {
     const [clientId, setClientId] = useState("")
     const [orderId, setOrderId] = useState("")
     const [reason, setReason] = useState("")
+    const [refundShipping, setRefundShipping] = useState(false)
     const [returnItems, setReturnItems] = useState<ReturnFormItem[]>([])
 
     const returnsQuery = useQuery({
@@ -72,6 +73,7 @@ export function ReturnsTab() {
 
     function handleOrderChange(nextOrderId: string) {
         setOrderId(nextOrderId)
+        setRefundShipping(false)
         if (!nextOrderId) {
             setReturnItems([])
             setClientId("")
@@ -107,6 +109,7 @@ export function ReturnsTab() {
                 order_id: orderId,
                 customer_name: selectedClient?.name || "Consumidor final",
                 reason,
+                refund_shipping: refundShipping,
                 items: validItems.map((i) => ({
                     product_id: i.product_id,
                     quantity: i.quantity,
@@ -123,6 +126,7 @@ export function ReturnsTab() {
             setOrderId("")
             setReturnItems([])
             setReason("")
+            setRefundShipping(false)
         } catch (error) {
             showErrorToast("No se pudo registrar la devolución", error)
         }
@@ -267,6 +271,26 @@ export function ReturnsTab() {
                                 placeholder="Ej: Cambio de talle, Defectuoso..."
                             />
                         </div>
+
+                        {orderId ? (
+                            <div className="flex items-start gap-2">
+                                <input
+                                    id="return-refund-shipping"
+                                    type="checkbox"
+                                    checked={refundShipping}
+                                    onChange={(event) => setRefundShipping(event.target.checked)}
+                                    className="mt-0.5 h-4 w-4 cursor-pointer rounded accent-primary"
+                                />
+                                <div className="space-y-0.5">
+                                    <Label htmlFor="return-refund-shipping" className="cursor-pointer">
+                                        Bonificar el envío (se le devuelve al cliente)
+                                    </Label>
+                                    <p className="text-xs text-muted-foreground">
+                                        Incluye en la nota de crédito lo que quede del envío cobrado.
+                                    </p>
+                                </div>
+                            </div>
+                        ) : null}
 
                         {orderId && returnItems.length > 0 && (
                             <div className="border-t pt-4">

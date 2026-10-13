@@ -226,6 +226,18 @@ export class CreateOrderUseCase {
             // is never trusted (an internal order used to keep the net total, or any total the
             // client sent, and the current account of uninvoiced credit orders read it).
             let resolvedTotal = Math.round(computedWithVat * 100) / 100;
+            // ADR-017: the shipping of an order made here, charged to the customer or absorbed.
+            const shippingCharge = !orderData.external_source && orderData.shipping_charge
+                && Number(orderData.shipping_charge.amount) > 0
+                ? {
+                    kind: 'shipping',
+                    description: 'Envío',
+                    amount: Math.round(Number(orderData.shipping_charge.amount) * 100) / 100,
+                    vat_rate: orderData.shipping_charge.vat_rate ?? 21,
+                    billable: orderData.shipping_charge.charge_customer !== false,
+                }
+                : null;
+            if (shippingCharge?.billable) resolvedTotal = Math.round((resolvedTotal + shippingCharge.amount) * 100) / 100;
             if (orderData.external_source && orderData.external_source !== 'pos'
                 && Number.isFinite(externalTotal) && externalTotal >= 0) {
                 // An external channel (Tiendanube) reports what its customer actually paid.
@@ -331,19 +343,21 @@ export class CreateOrderUseCase {
                 ]
             );
 
-            // Shipping, discounts and surcharges reported by an external channel (ADR-016): they
-            // are invoiced next to the detail. Never from the HTTP body (the schema strips them).
-            if (orderData.external_source && orderData.external_source !== 'pos' && Array.isArray(orderData.adjustments)) {
-                for (const adjustment of orderData.adjustments) {
-                    const amount = Math.round(Number(adjustment.amount || 0) * 100) / 100;
-                    if (!amount) continue;
-                    await connection.query(
-                        `INSERT INTO order_adjustments (id, order_id, kind, description, amount, vat_rate)
-                         VALUES (?, ?, ?, ?, ?, ?)`,
-                        [crypto.randomUUID(), orderId, adjustment.kind, String(adjustment.description || adjustment.kind).slice(0, 255),
-                            amount, adjustment.vat_rate == null ? 21 : Number(adjustment.vat_rate)]
-                    );
-                }
+            // Shipping, discounts and surcharges reported by an external channel (ADR-016, never
+            // from the HTTP body: the schema strips them) and the shipping of an order made here
+            // (ADR-017). Billable ones are invoiced next to the detail.
+            const channelAdjustments = orderData.external_source && orderData.external_source !== 'pos' && Array.isArray(orderData.adjustments)
+                ? orderData.adjustments
+                : [];
+            for (const adjustment of [...channelAdjustments, ...(shippingCharge ? [shippingCharge] : [])]) {
+                const amount = Math.round(Number(adjustment.amount || 0) * 100) / 100;
+                if (!amount) continue;
+                await connection.query(
+                    `INSERT INTO order_adjustments (id, order_id, kind, description, amount, vat_rate, billable)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    [crypto.randomUUID(), orderId, adjustment.kind, String(adjustment.description || adjustment.kind).slice(0, 255),
+                        amount, adjustment.vat_rate == null ? 21 : Number(adjustment.vat_rate), adjustment.billable === false ? 0 : 1]
+                );
             }
 
             // Stock rows are locked in product-id order in every path so that two
@@ -362,8 +376,8 @@ export class CreateOrderUseCase {
 
                 if (counterSale) {
                     await connection.query(
-                        'INSERT INTO order_items (id, order_id, product_id, quantity, picked_quantity, unit_price) VALUES (?, ?, ?, ?, ?, ?)',
-                        [itemId, orderId, item.product_id, item.quantity, item.quantity, unitPrice]
+                        'INSERT INTO order_items (id, order_id, product_id, quantity, picked_quantity, unit_price, vat_rate) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [itemId, orderId, item.product_id, item.quantity, item.quantity, unitPrice, vatByProduct.get(item.product_id)]
                     );
                     const { shortage } = await this.stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
                         productId: item.product_id,
@@ -384,8 +398,8 @@ export class CreateOrderUseCase {
                 }
 
                 await connection.query(
-                    'INSERT INTO order_items (id, order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?, ?)',
-                    [itemId, orderId, item.product_id, item.quantity, unitPrice]
+                    'INSERT INTO order_items (id, order_id, product_id, quantity, unit_price, vat_rate) VALUES (?, ?, ?, ?, ?, ?)',
+                    [itemId, orderId, item.product_id, item.quantity, unitPrice, vatByProduct.get(item.product_id)]
                 );
 
                 await this._decreaseInventoryForOrder(connection, {

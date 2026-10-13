@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import pool from '../config/db.js';
 import auditService from '../services/audit.service.js';
 import inventoryService from '../services/inventory.service.js';
+import accountingService from '../services/accounting.service.js';
 
 test('ensureUniqueBarcode returns normalized barcode when no duplicate exists', async () => {
     const connection = {
@@ -247,6 +248,19 @@ test('createProduct persists initial stock and inventory movement when stock_ini
         poolCalls.push({ sql: String(sql), params });
         return [[]];
     };
+    // ADR-017: the opening stock is written in one transaction, with its ledger entry.
+    const originalGetConnection = pool.getConnection;
+    const lifecycle = [];
+    pool.getConnection = async () => ({
+        beginTransaction: async () => { lifecycle.push('begin'); },
+        commit: async () => { lifecycle.push('commit'); },
+        rollback: async () => { lifecycle.push('rollback'); },
+        release: () => { lifecycle.push('release'); },
+        query: pool.query,
+    });
+    const originalInitialStock = accountingService.postInitialStock;
+    let initialStock = null;
+    accountingService.postInitialStock = async (_connection, payload) => { initialStock = payload; };
     auditService.log = async (payload) => {
         auditPayload = payload;
     };
@@ -255,6 +269,8 @@ test('createProduct persists initial stock and inventory movement when stock_ini
         inventoryService.create = originalCreate;
         inventoryService.ensureUniqueBarcode = originalEnsureUniqueBarcode;
         pool.query = originalPoolQuery;
+        pool.getConnection = originalGetConnection;
+        accountingService.postInitialStock = originalInitialStock;
         auditService.log = originalAuditLog;
     });
 
@@ -289,6 +305,10 @@ test('createProduct persists initial stock and inventory movement when stock_ini
     assert.equal(poolCalls[1].params[1], createdPayload.id);
     assert.equal(poolCalls[1].params[2], 'A-01');
     assert.equal(poolCalls[1].params[3], 7);
+
+    assert.deepEqual(lifecycle, ['begin', 'commit', 'release']);
+    assert.deepEqual(initialStock, { productId: createdPayload.id, quantity: 7, unitCost: 100, description: 'Stock inicial de Pelota Oficial' });
+    assert.equal(createdPayload.origin, 'erp');
 
     assert.equal(auditPayload?.action, 'CREATE_PRODUCT');
     assert.equal(auditPayload?.new_values?.stock_initial, 7);

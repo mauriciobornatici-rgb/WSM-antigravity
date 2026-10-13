@@ -5,6 +5,7 @@ import auditService from './audit.service.js';
 import { businessError } from '../utils/businessError.js';
 import { normalizeProductImageUrl } from '../utils/imagePolicy.js';
 import goodsReceptionService from '../domains/procurement/GoodsReceptionService.js';
+import accountingService from './accounting.service.js';
 
 class InventoryService extends BaseService {
     constructor() {
@@ -260,33 +261,50 @@ class InventoryService extends BaseService {
         delete normalized.family_name;
         normalized.family_id = await this.resolveProductFamily(familyName, normalized);
 
-        const data = { id, ...normalized };
+        // ADR-017: where the product was created (the ERP), so price fixes never have to guess.
+        const data = { id, ...normalized, origin: 'erp' };
         const result = await this.create(data);
 
         if (stockInitial > 0) {
             const initialLocation = normalized.location || 'General';
-            await pool.query(
-                `INSERT INTO inventory (id, product_id, location, quantity)
-                 VALUES (?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
-                [crypto.randomUUID(), id, initialLocation, stockInitial]
-            );
-
-            await pool.query(
-                `INSERT INTO inventory_movements (
-                    id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
-                ) VALUES (?, 'initial_stock', ?, ?, ?, ?, ?, 'product', ?, ?)`,
-                [
-                    crypto.randomUUID(),
-                    id,
-                    initialLocation,
-                    stockInitial,
-                    Number(normalized.purchase_price || 0),
-                    'Initial stock on product creation',
-                    id,
-                    userId || null
-                ]
-            );
+            const connection = await pool.getConnection();
+            try {
+                await connection.beginTransaction();
+                await connection.query(
+                    `INSERT INTO inventory (id, product_id, location, quantity)
+                     VALUES (?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
+                    [crypto.randomUUID(), id, initialLocation, stockInitial]
+                );
+                await connection.query(
+                    `INSERT INTO inventory_movements (
+                        id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
+                    ) VALUES (?, 'initial_stock', ?, ?, ?, ?, ?, 'product', ?, ?)`,
+                    [
+                        crypto.randomUUID(),
+                        id,
+                        initialLocation,
+                        stockInitial,
+                        Number(normalized.purchase_price || 0),
+                        'Stock inicial al crear el producto',
+                        id,
+                        userId || null
+                    ]
+                );
+                // Every stock movement leaves its entry (ADR-013): the opening stock is valued at cost.
+                await accountingService.postInitialStock(connection, {
+                    productId: id,
+                    quantity: stockInitial,
+                    unitCost: Number(normalized.purchase_price || 0),
+                    description: `Stock inicial de ${normalized.name || normalized.sku || 'producto'}`,
+                });
+                await connection.commit();
+            } catch (error) {
+                await connection.rollback();
+                throw error;
+            } finally {
+                connection.release();
+            }
         }
 
         await auditService.log({

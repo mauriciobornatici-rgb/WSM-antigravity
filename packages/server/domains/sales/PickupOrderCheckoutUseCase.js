@@ -3,7 +3,7 @@ import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import salesService from '../../services/sales.service.js';
 import { calculateShiftExpectedBalance } from '../../services/cashShift.service.js';
-import { resolvePriceOverrides } from './CreateOrderUseCase.js';
+import { resolvePriceOverrides, resolveUnitPrice } from './CreateOrderUseCase.js';
 import defaultStockLedger from '../inventory/StockLedger.js';
 import accountingService from '../../services/accounting.service.js';
 import { lineAmounts } from '../../utils/vatMath.js';
@@ -128,10 +128,8 @@ export class PickupOrderCheckoutUseCase {
                         actor
                     );
                     priceOverrides.push(...overrides.map((line) => ({ ...line, source: overrideSource })));
-                    const requestedPrice = Number(item.unit_price);
-                    const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
-                        ? requestedPrice
-                        : Number(product.sale_price || 0);
+                    // Same unit price rule as any sale (catalog's 4 decimals when it is the catalog price).
+                    const unitPrice = resolveUnitPrice(item, new Map([[product.id, Number(product.sale_price || 0)]]));
 
                     // The customer takes it now: deduct unreserved stock, never below zero.
                     await this.stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
@@ -148,9 +146,9 @@ export class PickupOrderCheckoutUseCase {
                     const orderItemId = crypto.randomUUID();
                     const subtotal = Math.round(qty * unitPrice * 100) / 100;
                     await connection.query(
-                        `INSERT INTO order_items (id, order_id, product_id, quantity, picked_quantity, unit_price, subtotal)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                        [orderItemId, orderId, item.product_id, qty, qty, unitPrice, subtotal]
+                        `INSERT INTO order_items (id, order_id, product_id, quantity, picked_quantity, unit_price, subtotal, vat_rate)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [orderItemId, orderId, item.product_id, qty, qty, unitPrice, subtotal, product.vat_rate == null ? 21 : Number(product.vat_rate)]
                     );
 
                     // Order totals are gross: quantity × the final price (ADR-008, ADR-015).

@@ -61,6 +61,10 @@ export const reviewPosException = catchAsync(async (req, res) => {
     res.json(await posExceptionsService.review(req.params.id, req.body, req.user?.id));
 });
 
+export const updateOrderShipping = catchAsync(async (req, res) => {
+    res.json(await salesService.updateOrderShipping(req.params.id, req.body, req.user?.id || null));
+});
+
 export const updateOrderStatus = catchAsync(async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;

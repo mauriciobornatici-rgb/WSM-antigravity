@@ -4,6 +4,7 @@ import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
 import { nextDocumentSequence } from '../../utils/documentSequence.js';
 import { ACCOUNTS } from '../../utils/paymentAccounts.js';
+import { allocateCents } from '../../utils/vatMath.js';
 
 export class SupplierReturnService {
     /**
@@ -64,6 +65,8 @@ export class SupplierReturnService {
             `SELECT si.id, si.net_amount, si.vat_amount, si.invoice_type
              FROM supplier_invoices si
              WHERE si.supplier_id = ?
+               -- ADR-017: a freight or expense invoice never brought goods.
+               AND COALESCE(si.purchase_kind, 'goods') = 'goods'
                AND EXISTS (
                    SELECT 1 FROM journal_entries je
                    WHERE je.reference_type = 'supplier_invoice' AND je.reference_id = si.id
@@ -89,9 +92,15 @@ export class SupplierReturnService {
             [invoices[0].id, ACCOUNTS.WITHHOLDINGS]
         );
         if (vatCents > 0 && creditLines.length === 0) {
-            return { netAmount: (netCents + vatCents) / 100, vatAmount: 0, grossAmount: (netCents + vatCents) / 100, vatAccount: null };
+            return { netAmount: (netCents + vatCents) / 100, vatAmount: 0, grossAmount: (netCents + vatCents) / 100, vatLines: [] };
         }
-        return { netAmount: netCents / 100, vatAmount: vatCents / 100, grossAmount: (netCents + vatCents) / 100, vatAccount: creditLines[0]?.account_code || null };
+        // ADR-017: an invoice with several rates booked several credit accounts: the reversal
+        // is split over them in the same proportion, to the cent.
+        const parts = allocateCents(vatCents, creditLines.map((line) => Math.round(Number(line.amount) * 100)));
+        const vatLines = creditLines
+            .map((line, index) => ({ account_code: line.account_code, amount: parts[index] / 100 }))
+            .filter((line) => line.amount > 0);
+        return { netAmount: netCents / 100, vatAmount: vatCents / 100, grossAmount: (netCents + vatCents) / 100, vatLines };
     }
 
     async nextSupplierReturnNumber(connection) {
@@ -246,7 +255,7 @@ export class SupplierReturnService {
                 ? await this._resolveReturnAccounting(connection, supplierReturn.supplier_id, totalAmount)
                 : null;
             if (accounting) {
-                const { netAmount, vatAmount, grossAmount, vatAccount } = accounting;
+                const { netAmount, grossAmount, vatLines = [] } = accounting;
                 await accountingService.createJournalEntry(connection, {
                     description: `Devolución a proveedor ${supplierReturn.return_number}`,
                     reference_type: 'supplier_return',
@@ -254,9 +263,9 @@ export class SupplierReturnService {
                     lines: [
                         { account_code: '2.1.01.01', debit: grossAmount, credit: 0, notes: 'Proveedores - devolución' },
                         { account_code: '1.1.04.01', debit: 0, credit: netAmount, notes: 'Salida de mercadería devuelta' },
-                        ...(vatAmount > 0
-                            ? [{ account_code: vatAccount || '1.1.05.02', debit: 0, credit: vatAmount, notes: 'Reversión de IVA Crédito Fiscal' }]
-                            : [])
+                        ...vatLines.map((line) => ({
+                            account_code: line.account_code, debit: 0, credit: line.amount, notes: 'Reversión de IVA Crédito Fiscal'
+                        }))
                     ]
                 });
 

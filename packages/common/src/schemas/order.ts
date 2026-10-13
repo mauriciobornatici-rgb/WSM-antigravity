@@ -47,6 +47,15 @@ export const createOrderSchema = z.object({
   recipient_dni: z.string().nullable().optional(),
   delivery_notes: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  // ADR-017: the shipping of an order made here. Charged to the customer or absorbed by the
+  // business. VAT 21 % unless another rate is picked for an exception.
+  shipping_charge: z.object({
+    amount: z.coerce.number().min(0),
+    charge_customer: z.boolean(),
+    vat_rate: z.coerce.number().refine((rate) => [0, 2.5, 5, 10.5, 21, 27].includes(rate), {
+      message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
+    }).optional(),
+  }).optional(),
   items: z.array(
     z.object({
       product_id: uuidSchema,
@@ -59,7 +68,7 @@ export const createOrderSchema = z.object({
 
 // A POS counter checkout processed atomically (sale + invoice + cash-shift payments).
 export const posCheckoutSchema = createOrderSchema
-  .omit({ shipping_method: true, shipping_address: true, estimated_delivery: true, counter_user_id: true })
+  .omit({ shipping_method: true, shipping_address: true, estimated_delivery: true, counter_user_id: true, shipping_charge: true })
   .extend({
     idempotency_key: uuidSchema,
     shift_id: uuidSchema,
@@ -96,6 +105,15 @@ export const orderFiltersSchema = z.object({
   ]).optional(),
   shipping_method: z.enum(['pickup', 'delivery']).optional(),
 }).merge(paginationQuerySchema);
+
+// ADR-017: change the shipping of an order made here before it is invoiced.
+export const orderShippingChargeSchema = z.object({
+  amount: z.coerce.number().min(0),
+  charge_customer: z.boolean(),
+  vat_rate: z.coerce.number().refine((rate) => [0, 2.5, 5, 10.5, 21, 27].includes(rate), {
+    message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
+  }).optional(),
+});
 
 export const invoicePaymentSchema = z.object({
   payments: z.array(orderPaymentLineSchema).min(1),

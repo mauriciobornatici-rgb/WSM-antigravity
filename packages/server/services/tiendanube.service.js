@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import pool from '../config/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import auditService from './audit.service.js';
+import accountingService from './accounting.service.js';
 import { lineAmounts, netFromGross } from '../utils/vatMath.js';
 import { resolveUnitPrice } from '../domains/sales/CreateOrderUseCase.js';
 
@@ -429,7 +430,7 @@ export class TiendaNubeService {
         const gap = Math.max(fullGap, -itemsGross);
         const shippingDiscount = round2(fullGap - gap);
         if (shippingDiscount < 0) {
-            adjustments.push({ kind: 'discount', description: 'Descuento sobre el envío', amount: Math.max(shippingDiscount, -shipping), vat_rate: 21 });
+            adjustments.push({ kind: 'shipping_discount', description: 'Descuento sobre el envío', amount: Math.max(shippingDiscount, -shipping), vat_rate: 21 });
         }
         if (gap < 0 && itemsGross > 0) {
             const coupon = Array.isArray(payload.coupon) ? payload.coupon[0]?.code : payload.coupon?.code;
@@ -1246,8 +1247,8 @@ export class TiendaNubeService {
                     `INSERT INTO products (
                         id, sku, barcode, name, description, category, size, color, brand,
                         image_url, location, purchase_price, cost_price, sale_price, status,
-                        tiendanube_sync_enabled
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'General', ?, ?, ?, 'active', 0)`,
+                        tiendanube_sync_enabled, origin
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'General', ?, ?, ?, 'active', 0, 'tienda_online')`,
                     [
                         productId, variant.sku, variant.barcode || null, data.name,
                         data.description || null, data.category || null, variant.size || null,
@@ -1273,6 +1274,11 @@ export class TiendaNubeService {
                          ) VALUES (?, 'initial_stock', ?, 'General', ?, ?, 'Alta desde Tienda online', 'product', ?)`,
                         [crypto.randomUUID(), productId, stock, Number(variant.purchase_price || 0), productId]
                     );
+                    // ADR-017: the opening stock enters the ledger too.
+                    await accountingService.postInitialStock(connection, {
+                        productId, quantity: stock, unitCost: Number(variant.purchase_price || 0),
+                        description: `Stock inicial de ${variant.sku}`
+                    });
                 }
             }
             await connection.commit();
@@ -1500,16 +1506,34 @@ export class TiendaNubeService {
         return { externalId, name };
     }
 
+    // One product (family, variants, stock, kardex and ledger) is imported atomically: a failure
+    // halfway no longer leaves stock without its movement or an entry without lines (AUD-006).
     async persistRemoteProduct(remote) {
+        if (typeof this.db.getConnection !== 'function') return this._persistRemoteProduct(this.db, remote);
+        const connection = await this.db.getConnection();
+        try {
+            await connection.beginTransaction();
+            const result = await this._persistRemoteProduct(connection, remote);
+            await connection.commit();
+            return result;
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async _persistRemoteProduct(db, remote) {
         const remoteId = String(remote.id);
         const name = String(this.localizedText(remote.name, `Producto ${remoteId}`));
         const description = String(this.localizedText(remote.description, ''));
-        const [families] = await this.db.query(
+        const [families] = await db.query(
             `SELECT id FROM tiendanube_catalog_families WHERE remote_product_id = ? LIMIT 1`,
             [remoteId]
         );
         const familyId = families[0]?.id || crypto.randomUUID();
-        await this.db.query(
+        await db.query(
             `INSERT INTO tiendanube_catalog_families (
                 id, name, description, brand, category, visibility, remote_product_id,
                 sync_status, remote_updated_at, last_synced_at, deleted_at
@@ -1534,7 +1558,7 @@ export class TiendaNubeService {
                 skippedCount++;
                 continue;
             }
-            const [products] = await this.db.query(
+            const [products] = await db.query(
                 `SELECT id FROM products WHERE sku = ? AND deleted_at IS NULL LIMIT 1`,
                 [sku]
             );
@@ -1545,12 +1569,12 @@ export class TiendaNubeService {
                 const attributes = (remote.attributes || []).map((attribute) => this.localizedText(attribute, '').toLowerCase());
                 const sizeIndex = attributes.findIndex((attribute) => ['talle', 'size', 'tamanho'].includes(attribute));
                 const colorIndex = attributes.findIndex((attribute) => ['color', 'cor'].includes(attribute));
-                await this.db.query(
+                await db.query(
                     `INSERT INTO products (
                         id, sku, name, description, category, size, color, brand, image_url,
                         location, purchase_price, cost_price, sale_price, status,
-                        tiendanube_product_id, tiendanube_variant_id, tiendanube_sync_enabled
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'General', ?, ?, ?, 'active', ?, ?, 1)`,
+                        tiendanube_product_id, tiendanube_variant_id, tiendanube_sync_enabled, origin
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'General', ?, ?, ?, 'active', ?, ?, 1, 'tiendanube_import')`,
                     [
                         productId, sku, name, description || null,
                         this.localizedText(remote.categories?.[0]?.name, null),
@@ -1565,19 +1589,30 @@ export class TiendaNubeService {
                 );
                 const stock = Math.max(0, Number(variant.stock || 0));
                 if (stock > 0) {
-                    await this.db.query(
+                    await db.query(
                         `INSERT INTO inventory (id, product_id, location, quantity) VALUES (?, ?, 'General', ?)`,
                         [crypto.randomUUID(), productId, stock]
                     );
+                    // ADR-017: imported stock is traced like any other entry (kardex and ledger).
+                    const unitCost = Number(variant.cost || 0);
+                    await db.query(
+                        `INSERT INTO inventory_movements (
+                            id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id
+                         ) VALUES (?, 'initial_stock', ?, 'General', ?, ?, 'Importación desde Tiendanube', 'product', ?)`,
+                        [crypto.randomUUID(), productId, stock, unitCost, productId]
+                    );
+                    await accountingService.postInitialStock(db, {
+                        productId, quantity: stock, unitCost, description: `Stock inicial importado de ${sku}`
+                    });
                 }
             } else {
-                await this.db.query(
+                await db.query(
                     `UPDATE products SET tiendanube_product_id = ?, tiendanube_variant_id = ?, tiendanube_sync_enabled = 1
                      WHERE id = ?`,
                     [remoteId, String(variant.id), productId]
                 );
             }
-            await this.db.query(
+            await db.query(
                 `INSERT INTO tiendanube_catalog_variants (
                     id, family_id, product_id, remote_variant_id, sync_status, last_synced_at
                  ) VALUES (?, ?, ?, ?, 'synced', CURRENT_TIMESTAMP)

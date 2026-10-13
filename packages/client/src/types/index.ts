@@ -119,10 +119,12 @@ export interface OrderItemAllocation {
 
 /** Shipping / discount / surcharge line of an order (amount VAT included, negative for a discount). */
 export interface OrderAdjustment {
-    kind: 'shipping' | 'discount' | 'surcharge'
+    kind: 'shipping' | 'shipping_discount' | 'discount' | 'surcharge'
     description: string
     amount: number
     vat_rate?: number
+    /** false = envío a cargo del negocio (no se cobra ni se factura). */
+    billable?: boolean
 }
 
 export interface Order {

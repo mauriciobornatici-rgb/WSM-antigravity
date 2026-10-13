@@ -487,9 +487,10 @@ class ReturnsService extends BaseService {
 
             const returnId = crypto.randomUUID();
             await conn.query(
-                `INSERT INTO client_returns (id, client_id, customer_name, order_id, reason, status, created_at)
-                 VALUES (?, ?, ?, ?, ?, 'pending', NOW())`,
-                [returnId, data.client_id || null, data.customer_name || null, data.order_id || null, data.reason || null]
+                `INSERT INTO client_returns (id, client_id, customer_name, order_id, reason, status, refund_shipping, created_at)
+                 VALUES (?, ?, ?, ?, ?, 'pending', ?, NOW())`,
+                [returnId, data.client_id || null, data.customer_name || null, data.order_id || null, data.reason || null,
+                    data.refund_shipping && data.order_id ? 1 : 0]
             );
 
             if (data.items && data.items.length > 0) {
@@ -560,12 +561,13 @@ class ReturnsService extends BaseService {
             );
             [discounts] = await conn.query(
                 `SELECT vat_rate, SUM(total_line) AS gross, SUM(vat_amount) AS vat
-                 FROM invoice_items WHERE invoice_id = ? AND product_id IS NULL AND total_line < 0 GROUP BY vat_rate`,
+                 FROM invoice_items WHERE invoice_id = ? AND product_id IS NULL AND total_line < 0
+                   AND COALESCE(adjustment_kind, 'discount') = 'discount' GROUP BY vat_rate`,
                 [invoices[0].id]
             );
         } else {
             const [orderLines] = await conn.query(
-                `SELECT oi.product_id, COALESCE(p.vat_rate, 21) AS vat_rate, oi.quantity, oi.unit_price
+                `SELECT oi.product_id, COALESCE(oi.vat_rate, p.vat_rate, 21) AS vat_rate, oi.quantity, oi.unit_price
                  FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?`,
                 [returnRow.order_id]
             );
@@ -581,7 +583,7 @@ class ReturnsService extends BaseService {
             charged = [...byProduct.values()];
             // Same split of each discount as the invoice will make (grossLineAmounts).
             const [adjustments] = await conn.query(
-                'SELECT amount, vat_rate FROM order_adjustments WHERE order_id = ? AND amount < 0',
+                "SELECT amount, vat_rate FROM order_adjustments WHERE order_id = ? AND amount < 0 AND billable = 1 AND kind = 'discount'",
                 [returnRow.order_id]
             );
             const byRate = new Map();
@@ -677,6 +679,51 @@ class ReturnsService extends BaseService {
         return refunds;
     }
 
+    /**
+     * The shipping a return gives back (ADR-017): what the customer was charged for it (the
+     * invoice's shipping lines net of shipping discounts, or the order's before invoicing) minus
+     * what earlier approved returns of the order already gave back. Null when nothing is left.
+     */
+    async _shippingRefund(conn, returnRow) {
+        if (!returnRow.order_id) return null;
+        // Serializes with other approvals of the order: the shipping is given back once.
+        await conn.query('SELECT id FROM orders WHERE id = ? FOR UPDATE', [returnRow.order_id]);
+        const [invoices] = await conn.query(
+            'SELECT id FROM invoices WHERE order_id = ? AND deleted_at IS NULL LIMIT 1',
+            [returnRow.order_id]
+        );
+        let lines;
+        if (invoices[0]) {
+            [lines] = await conn.query(
+                `SELECT vat_rate, total_line AS gross, vat_amount AS vat FROM invoice_items
+                 WHERE invoice_id = ? AND product_id IS NULL
+                   AND (adjustment_kind IN ('shipping', 'shipping_discount')
+                        OR (adjustment_kind IS NULL AND (description = 'Envío' OR description LIKE 'Envío (%')))`,
+                [invoices[0].id]
+            );
+        } else {
+            const [rows] = await conn.query(
+                `SELECT amount, vat_rate FROM order_adjustments
+                 WHERE order_id = ? AND billable = 1 AND kind IN ('shipping', 'shipping_discount')`,
+                [returnRow.order_id]
+            );
+            lines = rows.map((row) => ({ vat_rate: row.vat_rate, ...grossLineAmounts(row.amount, row.vat_rate) }));
+        }
+        const grossCents = lines.reduce((sum, line) => sum + Math.round(Number(line.gross) * 100), 0);
+        const vatCents = lines.reduce((sum, line) => sum + Math.round(Number(line.vat) * 100), 0);
+        if (grossCents <= 0) return null;
+        const [[refunded]] = await conn.query(
+            `SELECT COALESCE(SUM(shipping_refund_amount), 0) AS gross, COALESCE(SUM(shipping_refund_vat), 0) AS vat
+             FROM client_returns WHERE order_id = ? AND id <> ? AND status = 'approved'`,
+            [returnRow.order_id, returnRow.id]
+        );
+        const leftGross = grossCents - Math.round(Number(refunded?.gross || 0) * 100);
+        if (leftGross <= 0) return null;
+        const leftVat = Math.max(0, vatCents - Math.round(Number(refunded?.vat || 0) * 100));
+        const mainLine = [...lines].sort((a, b) => Number(b.gross) - Number(a.gross))[0];
+        return { gross: leftGross / 100, vat: leftVat / 100, vat_rate: Number(mainLine?.vat_rate ?? 21) };
+    }
+
     async approveReturn(returnId, actorUserId, ipAddress = null) {
         const conn = await pool.getConnection();
         try {
@@ -705,6 +752,12 @@ class ReturnsService extends BaseService {
             if (items.length === 0) {
                 throw this._buildDomainError('La devolucion no tiene items', 'RETURN_WITHOUT_ITEMS', 400);
             }
+            // The order is locked before any plain read (AUD-006): under REPEATABLE READ the first
+            // plain read fixes the snapshot, so a lock taken after it would still sum the refunds
+            // and credit notes of an approval that committed meanwhile with stale data.
+            if (returnRow.order_id) {
+                await conn.query('SELECT id FROM orders WHERE id = ? FOR UPDATE', [returnRow.order_id]);
+            }
 
             // The refund reverses what the customer paid for those units (ADR-016): exact to the
             // cent across partial returns, discounts included. Stored per line for the note.
@@ -715,6 +768,16 @@ class ReturnsService extends BaseService {
                 await conn.query(
                     'UPDATE client_return_items SET refund_amount = ?, refund_vat = ? WHERE id = ?',
                     [refund.gross, refund.vat, refund.item.id]
+                );
+            }
+            // ADR-017: the shipping is given back only when the return says so, and only what is
+            // left of it (an earlier return may have refunded it already).
+            const shipping = returnRow.refund_shipping ? await this._shippingRefund(conn, returnRow) : null;
+            if (shipping) {
+                refundCents += Math.round(shipping.gross * 100);
+                await conn.query(
+                    'UPDATE client_returns SET shipping_refund_amount = ?, shipping_refund_vat = ?, shipping_refund_rate = ? WHERE id = ?',
+                    [shipping.gross, shipping.vat, shipping.vat_rate, returnId]
                 );
             }
             const totalAmount = refundCents / 100;
@@ -871,7 +934,7 @@ class ReturnsService extends BaseService {
                     // Fiscal per rate (none on a type C note).
                     lines: (() => {
                         const vatLines = outputVatLines(
-                            refunds.map((refund) => ({ vat_rate: refund.vat_rate, vat: refund.vat })),
+                            [...refunds, ...(shipping ? [shipping] : [])].map((refund) => ({ vat_rate: refund.vat_rate, vat: refund.vat })),
                             { side: 'debit', voucherType: creditNoteType, notes: 'Reversión de IVA Débito Fiscal' }
                         );
                         const reversedVat = vatLines.reduce((sum, line) => sum + line.debit, 0);
@@ -895,6 +958,7 @@ class ReturnsService extends BaseService {
                 credit_note_id: creditNoteId,
                 credit_note_number: creditNoteNumber,
                 total_amount: totalAmount,
+                shipping_refund_amount: shipping?.gross || 0,
                 restocked_quantity: restockedTotal,
                 discarded_quantity: discardedTotal
             };
@@ -981,15 +1045,27 @@ class CreditNotesService extends BaseService {
             // Same line amounts as the note: ARCA must receive exactly the stored amount, or the
             // lost-response recovery would never match and issue it twice. Returns approved since
             // ADR-016 store what each line refunded; older ones used the sale formula (ADR-015).
-            if (itemsRows.length > 0) {
-                return itemsRows.map((row) => {
-                    if (row.refund_amount != null) {
-                        return { vat_rate: Number(row.vat_rate), total_line: Number(row.refund_amount), vat_amount: Number(row.refund_vat || 0) };
-                    }
-                    const line = lineAmounts(row.quantity, row.unit_price, row.vat_rate);
-                    return { vat_rate: Number(row.vat_rate), total_line: line.gross, vat_amount: line.vat };
+            const voucherLines = itemsRows.map((row) => {
+                if (row.refund_amount != null) {
+                    return { vat_rate: Number(row.vat_rate), total_line: Number(row.refund_amount), vat_amount: Number(row.refund_vat || 0) };
+                }
+                const line = lineAmounts(row.quantity, row.unit_price, row.vat_rate);
+                return { vat_rate: Number(row.vat_rate), total_line: line.gross, vat_amount: line.vat };
+            });
+            // ADR-017: the shipping given back with the return.
+            const [shippingRows] = await pool.query(
+                'SELECT shipping_refund_amount, shipping_refund_vat, shipping_refund_rate FROM client_returns WHERE id = ?',
+                [cn.reference_id]
+            );
+            const shipping = shippingRows[0];
+            if (shipping && Number(shipping.shipping_refund_amount || 0) > 0) {
+                voucherLines.push({
+                    vat_rate: Number(shipping.shipping_refund_rate ?? 21),
+                    total_line: Number(shipping.shipping_refund_amount),
+                    vat_amount: Number(shipping.shipping_refund_vat || 0),
                 });
             }
+            if (voucherLines.length > 0) return voucherLines;
         }
         const [byRate] = await pool.query(
             `SELECT vat_rate, SUM(total_line) AS gross, SUM(vat_amount) AS vat

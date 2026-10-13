@@ -14,7 +14,7 @@ Decisiones de negocio: ADR-008 en `.agents/context/DECISIONS.md` (precios netos)
 | I5 | `OrderStatusService` único; sin `GREATEST(…,0)`; pagos/facturas no saltan estados; Tiendanube vía servicio; devoluciones a proveedor respetan reservas. | hecho (`d925dfa` + correcciones de auditoría) |
 | I6 | Resto H4 (factura manual, devoluciones), H3 (lock NC), H5 (recepción no asienta), M8 (transferencia no borra), `beginTransaction` dentro de `try`. | hecho (`d221b12`, `ba8391e`) |
 | I7 | `scripts/diagnose-stock-drift.js` (READ ONLY) y `repair-stock-drift.js` (dry-run por defecto, `--apply --confirm=<DB>`), clases A/B/C. | hecho (`fd18df2` + refuerzos de auditoría) |
-| I8 | Migración 053 CHECK de inventario con precondición; se publica solo después de reparar prod. | pendiente (AP2) |
+| I8 | Migración 055 CHECK de inventario con precondición; se publica solo después de reparar prod. | pendiente (AP2) |
 
 H2 (numeración ARCA / recuperación de CAE) queda para una fase con homologación.
 
@@ -33,5 +33,5 @@ H2 (numeración ARCA / recuperación de CAE) queda para una fase con homologaci�
 
 ## Puntos de aprobación pendientes
 
-- AP2: migración 053 solo tras correr la reparación en producción y preflight limpio.
+- AP2: migración 055 solo tras correr la reparación en producción y preflight limpio.
 - AP3: el usuario revisa el dry-run de producción (clases B y C) antes de `--apply`.

@@ -8,7 +8,7 @@ import { createProductSchema } from "@wsm/common";
 import type { Product, ProductCatalogOption } from "@/types";
 import { api } from "@/services/api";
 import { formatMoney } from "@/lib/formatters";
-import { grossPrice, netForTypedFinalPrice, netFromGross, vatRateOf } from "@/lib/pricing";
+import { VAT_RATE_OPTIONS, formatVatRate, grossPrice, netForTypedFinalPrice, netFromGross, vatRateOf } from "@/lib/pricing";
 import { Button } from "@/components/ui/button";
 import {
     Form,
@@ -20,6 +20,8 @@ import {
     FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CatalogOptionSelect } from "@/components/products/CatalogOptionSelect";
 
@@ -55,6 +57,7 @@ export type ProductFormSubmitData = {
     location?: string;
     purchase_price: number;
     sale_price: number;
+    vat_rate: number;
     stock_initial?: number;
     image_url?: string;
 };
@@ -120,7 +123,9 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     });
 
     const isEditMode = Boolean(initialData);
-    const vatRate = vatRateOf(initialData?.vat_rate);
+    // The chosen rate drives every net/final calculation; the typed final price is kept when it changes.
+    const [vatRateValue, setVatRateValue] = useState(String(vatRateOf(initialData?.vat_rate)));
+    const vatRate = vatRateOf(vatRateValue);
     const purchaseWatch = useWatch({ control: form.control, name: "purchase_price" });
     const saleFinalWatch = useWatch({ control: form.control, name: "sale_price" });
     const saleNet = netFromGross(saleFinalWatch, vatRate);
@@ -353,7 +358,8 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             size: values.size?.trim() || null,
             color: values.color?.trim() || null,
             purchase_price: Number(values.purchase_price),
-            sale_price: netForTypedFinalPrice(values.sale_price, initialData?.sale_price, initialData?.vat_rate),
+            sale_price: netForTypedFinalPrice(values.sale_price, initialData?.sale_price, vatRate),
+            vat_rate: vatRate,
             image_url: values.image_url?.trim() || "",
         };
 
@@ -664,6 +670,22 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     </FormItem>
                                 )}
                             />
+
+                            <div className="space-y-2 md:max-w-xs">
+                                <Label htmlFor="product-vat-rate">Alícuota de IVA</Label>
+                                <Select value={vatRateValue} onValueChange={setVatRateValue}>
+                                    <SelectTrigger id="product-vat-rate" aria-label="Alícuota de IVA">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {VAT_RATE_OPTIONS.map((rate) => (
+                                            <SelectItem key={rate} value={String(rate)}>
+                                                {formatVatRate(rate)}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
 
                             <div className="grid gap-3 md:grid-cols-2">
                                 <FormField<ProductFormSchema>
