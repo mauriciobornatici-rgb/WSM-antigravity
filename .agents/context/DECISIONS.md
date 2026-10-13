@@ -83,7 +83,7 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 ### ADR-019 — Varios remitos por factura de compra y stock único con Tiendanube (usuario, 2026-10-13)
 - **Remitos:**
   - Una factura de compra puede cubrir uno o varios remitos (recepciones) del mismo proveedor, en la tabla `supplier_invoice_receptions` (migración 056).
-  - Un remito se factura una sola vez: es único y se bloquea al cargar la factura.
+  - Un remito se factura una sola vez: es único y se bloquea al cargar la factura. Solo se facturan remitos con el control de calidad aprobado (usuario, 2026-10-13).
   - La pantalla suma lo recibido (cantidad × costo) y avisa, sin bloquear, si la factura difiere.
 - **Stock único con Tiendanube:**
   1. Se publica el disponible: físico en ubicaciones vendibles menos lo reservado por pedidos locales u online. No se publica el físico total.

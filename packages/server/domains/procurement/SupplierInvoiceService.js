@@ -153,8 +153,13 @@ export class SupplierInvoiceService {
                 if (receptions.length !== receptionIds.length || receptions.some((row) => row.supplier_id !== supplier_id)) {
                     throw businessError(400, { error: 'invalid_reception', message: 'Algún remito no existe o es de otro proveedor.' });
                 }
-                if (receptions.some((row) => ['cancelled', 'rejected'].includes(String(row.status || '').toLowerCase()))) {
-                    throw businessError(409, { error: 'reception_not_invoiceable', message: 'Algún remito está anulado o rechazado.' });
+                // ADR-019 (usuario): only goods that passed quality control are invoiced.
+                const notApproved = receptions.filter((row) => String(row.status || '').toLowerCase() !== 'approved');
+                if (notApproved.length > 0) {
+                    throw businessError(409, {
+                        error: 'reception_not_approved',
+                        message: `Estos remitos no tienen el control de calidad aprobado: ${notApproved.map((row) => row.remito_number || row.reception_number).join(', ')}.`
+                    });
                 }
                 const [invoiced] = await connection.query(
                     // Locking read: sees an invoice committed while this one waited for the lock (AUD-007).

@@ -21,7 +21,7 @@ El coordinador verificó y corrigió cada hallazgo técnico:
   - La lista de ubicaciones no vendibles se toma de `StockLedger`.
   - Publicación forzada diaria, que corrige ediciones hechas a mano en el panel de Tiendanube.
 - **Pendiente / decisión:**
-  - Facturar remitos con control de calidad pendiente (el servidor lo permite; la pantalla solo ofrece aprobados).
+  - [x] Facturar remitos con control de calidad pendiente: bloqueado por decisión del usuario (409 `reception_not_approved`).
   - Varias instancias del servidor duplicarían las corridas: hoy hay una sola.
 
 Evidencia: validate 0 (890 + 87); coverage 96,81/90,29/94,24; integración 88/88 ×3; RBAC OK; E2E 6/6; simulación 153/153.

@@ -140,3 +140,18 @@ test('AUD-007: units picked beyond the reservation leave stock when the order is
     await salesService.transitionOrderStatus(online.id, 'packed', null);
     assert.deepEqual(await stockOfProduct(productId), [0, 0], 'both units left: the reserved one and the extra one');
 });
+
+test('ADR-019: a delivery note still in quality control cannot be invoiced', async () => {
+    const supplierId = crypto.randomUUID();
+    await pool.query('INSERT INTO suppliers (id, name) VALUES (?, ?)', [supplierId, `Proveedor QA ${supplierId.slice(0, 8)}`]);
+    const productId = await seedProduct({ salePrice: 100 });
+    const receptionId = await seedReception(supplierId, productId, 2, 100);
+    await pool.query("UPDATE receptions SET status = 'pending_qc' WHERE id = ?", [receptionId]);
+    await assert.rejects(
+        () => new SupplierInvoiceService().createSupplierInvoice({
+            invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-13',
+            reception_ids: [receptionId], net_amount: 200, vat_amount: 42, vat_rate: 21, total_amount: 242,
+        }, null),
+        (err) => err.statusCode === 409 && err.responseBody.error === 'reception_not_approved'
+    );
+});
