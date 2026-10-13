@@ -1231,6 +1231,14 @@ export class TiendaNubeService {
                 error.errorCode = 'DUPLICATE_SKU';
                 throw error;
             }
+            // ADR-018: opening stock needs its cost (inventory and ledger move together).
+            const withoutCost = data.variants.filter((variant) => Number(variant.stock_initial || 0) > 0 && !(Number(variant.purchase_price || 0) > 0));
+            if (withoutCost.length > 0) {
+                const error = new Error(`Para cargar stock inicial indicá el precio de compra de: ${withoutCost.map((variant) => variant.sku).join(', ')}`);
+                error.statusCode = 400;
+                error.errorCode = 'INITIAL_STOCK_REQUIRES_COST';
+                throw error;
+            }
 
             await connection.query(
                 `INSERT INTO tiendanube_catalog_families

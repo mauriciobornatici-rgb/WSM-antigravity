@@ -22,7 +22,8 @@ interface OrderDetailDialogProps {
 
 export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint }: OrderDetailDialogProps) {
     const { user } = useAuth()
-    const canEditShipping = hasPermission(user?.role, PERMISSIONS.ORDERS_SELL)
+    // Changing a charge after the order was made is a concession: managers and admins (ADR-018).
+    const canEditShipping = hasPermission(user?.role, PERMISSIONS.ORDERS_PRICE_OVERRIDE)
     const [shippingOpen, setShippingOpen] = useState(false)
     const orderDetailQuery = useQuery({
         queryKey: ["orders", "detail", orderId ?? ""],

@@ -34,7 +34,11 @@ const productSchema = createProductSchema.extend({
     purchase_price: z.union([z.string(), z.number()]).transform(v => String(v)),
     sale_price: z.union([z.string(), z.number()]).transform(v => String(v)),
     stock_initial: z.union([z.string(), z.number()]).transform(v => String(v)),
-});
+}).refine(
+    // Opening stock is valued at cost (the server refuses it without one).
+    (values) => !(Number(values.stock_initial || 0) > 0) || Number(values.purchase_price || 0) > 0,
+    { message: "Para cargar stock inicial indicá el precio de compra", path: ["purchase_price"] }
+);
 
 type ProductFormSchema = z.infer<typeof productSchema>;
 const productFormResolver = zodResolver(productSchema) as Resolver<ProductFormSchema>;

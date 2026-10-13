@@ -65,7 +65,7 @@ test('ADR-017: a shipping absorbed by the business is kept on the order but neve
         shipping_method: 'delivery',
         shipping_charge: { amount: 2500, charge_customer: false },
         items: [{ product_id: productId, quantity: 1 }],
-    }, null);
+    }, null, { role: 'manager' });
     const [[orderRow]] = await pool.query('SELECT total_amount FROM orders WHERE id = ?', [order.id]);
     assert.equal(Number(orderRow.total_amount), 121);
     const [[adjustment]] = await pool.query('SELECT amount, billable FROM order_adjustments WHERE order_id = ?', [order.id]);
@@ -121,7 +121,7 @@ test('ADR-017: a product created with opening stock records its origin, rate and
     assert.deepEqual([product.origin, Number(product.vat_rate)], ['erp', 10.5]);
     const entry = await entryLines('initial_stock', created.id);
     assert.deepEqual(entry.map((line) => [line.account, line.debit, line.credit]).sort(), [
-        ['1.1.04.01', 200, 0], ['3.1.01.01', 0, 200],
+        ['1.1.04.01', 200, 0], ['3.1.03.01', 0, 200],
     ]);
 });
 
@@ -161,4 +161,21 @@ test('ADR-017 / AUD-006: an open order keeps the VAT rate it was sold at', async
     const invoice = await salesService.createInvoice(order.id, { invoice_type: 'B', point_of_sale: 95 }, null);
     const [[row]] = await pool.query('SELECT total_amount FROM invoices WHERE id = ?', [invoice.id]);
     assert.equal(Number(row.total_amount), 121);
+});
+
+test('ADR-018: a return whose credit note was cancelled no longer counts as having given the shipping back', async () => {
+    const productId = await seedProduct({ salePrice: 100, stock: [{ location: 'QA-A', quantity: 5 }] });
+    const order = await createOrder.execute({
+        shipping_method: 'delivery',
+        shipping_charge: { amount: 800, charge_customer: true },
+        items: [{ product_id: productId, quantity: 2 }],
+    }, null);
+    await salesService.createInvoice(order.id, { invoice_type: 'B', point_of_sale: 95 }, null);
+    const first = await returnsService.createReturn({ order_id: order.id, reason: 'Cambio', refund_shipping: true, items: [{ product_id: productId, quantity: 1 }] });
+    const approved = await returnsService.approveReturn(first.id, null);
+    assert.equal(approved.shipping_refund_amount, 800);
+    await pool.query("UPDATE credit_notes SET status = 'cancelled' WHERE reference_type = 'return' AND reference_id = ?", [first.id]);
+    const second = await returnsService.createReturn({ order_id: order.id, reason: 'Cambio', refund_shipping: true, items: [{ product_id: productId, quantity: 1 }] });
+    const secondApproved = await returnsService.approveReturn(second.id, null);
+    assert.equal(secondApproved.shipping_refund_amount, 800);
 });

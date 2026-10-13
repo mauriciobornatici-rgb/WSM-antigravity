@@ -61,7 +61,7 @@ class AccountingService {
 
     /**
      * Opening stock of a new product (ADR-017): goods the business already had enter inventory
-     * at cost against capital, so the ledger matches the stock (ADR-013). Nothing without cost.
+     * at cost against an adjustment account (ADR-018), so the ledger matches the stock (ADR-013).
      */
     async postInitialStock(connection, { productId, quantity, unitCost, description }) {
         const amount = this._round(Number(quantity || 0) * Number(unitCost || 0));
@@ -73,7 +73,7 @@ class AccountingService {
             reference_id: productId,
             lines: [
                 { account_code: '1.1.04.01', debit: amount, credit: 0, notes: 'Mercadería existente al alta' },
-                { account_code: '3.1.01.01', debit: 0, credit: amount, notes: 'Aporte de mercadería' }
+                { account_code: '3.1.03.01', debit: 0, credit: amount, notes: 'Ajuste por inventario inicial' }
             ]
         });
     }

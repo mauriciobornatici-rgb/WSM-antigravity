@@ -142,3 +142,40 @@ test('the price repair never touches a product created in the ERP and linked lat
         product_created_at: new Date('2026-05-01T12:00:00Z'), linked_at: new Date('2026-05-01T12:00:01Z'),
     }, old)).origin, 'imported');
 });
+
+// ---- ADR-018 ----
+
+test('opening stock without a cost is refused (it would enter stock without its entry)', async () => {
+    const { default: inventoryService } = await import('../services/inventory.service.js');
+    await assert.rejects(
+        () => inventoryService.createProduct({ sku: 'X', name: 'Sin costo', sale_price: 100, stock_initial: 3 }, 'u'),
+        (err) => err.statusCode === 400 && err.responseBody.error === 'initial_stock_requires_cost'
+    );
+});
+
+test('the opening stock entry goes to the adjustment account, not capital', async () => {
+    const posted = [];
+    const original = accountingService.createJournalEntry;
+    accountingService.createJournalEntry = async (_connection, entry) => { posted.push(entry); };
+    try {
+        await accountingService.postInitialStock({}, { productId: 'p', quantity: 4, unitCost: 50 });
+        assert.equal(await accountingService.postInitialStock({}, { productId: 'p', quantity: 4, unitCost: 0 }), null);
+    } finally {
+        accountingService.createJournalEntry = original;
+    }
+    assert.deepEqual(lineSet(posted[0].lines), [['1.1.04.01', 200, 0], ['3.1.03.01', 0, 200]]);
+    assert.equal(posted.length, 1);
+});
+
+test('only a manager or admin can absorb the shipping of a new order', async (t) => {
+    const { CreateOrderUseCase } = await import('../domains/sales/CreateOrderUseCase.js');
+    mockPool(t, async (sql) => {
+        if (String(sql).includes('SELECT id, sale_price, name, vat_rate FROM products')) return [[{ id: 'p', sale_price: 100, name: 'P', vat_rate: 21 }]];
+        return [[]];
+    });
+    const order = { items: [{ product_id: 'p', quantity: 1 }], shipping_charge: { amount: 500, charge_customer: false } };
+    await assert.rejects(
+        () => new CreateOrderUseCase({ onStockChanged: async () => {} }).execute(order, 'u', { role: 'cashier' }),
+        (err) => err.statusCode === 403 && err.errorCode === 'SHIPPING_ABSORB_NOT_ALLOWED'
+    );
+});

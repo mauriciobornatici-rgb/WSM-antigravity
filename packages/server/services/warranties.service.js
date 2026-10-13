@@ -713,8 +713,16 @@ class ReturnsService extends BaseService {
         const vatCents = lines.reduce((sum, line) => sum + Math.round(Number(line.vat) * 100), 0);
         if (grossCents <= 0) return null;
         const [[refunded]] = await conn.query(
-            `SELECT COALESCE(SUM(shipping_refund_amount), 0) AS gross, COALESCE(SUM(shipping_refund_vat), 0) AS vat
-             FROM client_returns WHERE order_id = ? AND id <> ? AND status = 'approved'`,
+            // A return whose credit note was cancelled (or deleted) no longer counts: its shipping
+            // can be given back again (ADR-017, decision 5).
+            `SELECT COALESCE(SUM(r.shipping_refund_amount), 0) AS gross, COALESCE(SUM(r.shipping_refund_vat), 0) AS vat
+             FROM client_returns r
+             WHERE r.order_id = ? AND r.id <> ? AND r.status = 'approved'
+               AND NOT EXISTS (
+                   SELECT 1 FROM credit_notes cn
+                   WHERE cn.reference_type = 'return' AND cn.reference_id = r.id
+                     AND (cn.status = 'cancelled' OR cn.deleted_at IS NOT NULL)
+               )`,
             [returnRow.order_id, returnRow.id]
         );
         const leftGross = grossCents - Math.round(Number(refunded?.gross || 0) * 100);

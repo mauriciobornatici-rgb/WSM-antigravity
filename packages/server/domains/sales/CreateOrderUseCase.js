@@ -237,6 +237,13 @@ export class CreateOrderUseCase {
                     billable: orderData.shipping_charge.charge_customer !== false,
                 }
                 : null;
+            if (shippingCharge && !shippingCharge.billable && !hasPermission(actor?.role, PERMISSIONS.ORDERS_PRICE_OVERRIDE)) {
+                // ADR-018: absorbing the shipping is a commercial concession (manager or admin).
+                const err = new Error('Bonificar el envío requiere autorización de un gerente o administrador.');
+                err.statusCode = 403;
+                err.errorCode = 'SHIPPING_ABSORB_NOT_ALLOWED';
+                throw err;
+            }
             if (shippingCharge?.billable) resolvedTotal = Math.round((resolvedTotal + shippingCharge.amount) * 100) / 100;
             if (orderData.external_source && orderData.external_source !== 'pos'
                 && Number.isFinite(externalTotal) && externalTotal >= 0) {

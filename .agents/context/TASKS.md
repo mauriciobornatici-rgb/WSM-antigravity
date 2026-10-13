@@ -95,7 +95,7 @@ Bajos anotados (riesgos previos, no regresiones): borrado de proveedor sin lock 
   - Envío y descuentos de Tiendanube en la factura.
   - Migración 052 (totales previos) y script `repair-tiendanube-prices.js`.
   - Devoluciones parciales exactas al centavo.
-  - Migraciones 051 y 052 aplicadas en local y QA; el CHECK de inventario pasa a 055.
+  - Migraciones 051 y 052 aplicadas en local y QA; el CHECK de inventario pasa a 056.
   - Evidencia: validate 0 (873 + 83); coverage 98,03/90,48/95,97; integración 74/74 en 4 de 5 corridas (en 1 falló completo `purchase-order-lifecycle`, sin aserción: a investigar); RBAC OK; E2E 6/6; simulación 153/153.
 - Regla del usuario: todo texto visible de la app va en español.
 - [x] ADR-017 (AUD-006 corregido):
@@ -105,15 +105,20 @@ Bajos anotados (riesgos previos, no regresiones): borrado de proveedor sin lock 
   - origen de productos y script de precios sin adivinar;
   - alícuota de producto editable;
   - stock inicial con asiento.
-  - Migración 053 aplicada en local y QA; el CHECK de inventario pasa a 055.
+  - Migración 053 aplicada en local y QA; el CHECK de inventario pasa a 056.
   - Evidencia: validate 0 (878 + 84); coverage 96,88/90,17/94,75; integración 81/81 ×3; RBAC OK; E2E 6/6; simulación 153/153.
 
+
+- [x] ADR-018: stock inicial con costo obligatorio y cuenta de ajuste 3.1.03.01 (migración 055); envío bonificado o editado solo con gerente o administrador; NC anulada libera el envío. Evidencia: validate 0 (881 + 84); coverage 96,88/90,32/94,66; integración 82/82 ×3; RBAC OK; E2E 6/6; simulación 153/153.
+- Propuestas pendientes de aprobación del usuario:
+  - Factura de compra con varios remitos (hoy solo admite uno).
+  - Stock único con Tiendanube: publicar el disponible, sincronizar en todos los flujos y reservar los pedidos de la tienda aunque falte stock.
 
 ## Próximos pasos
 
 1. Usuario: revisar y mergear PR #1; después re-apuntar PR #2 a `main`.
 2. Usuario: correr en producción los runbooks (`docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`) y aplicar la migración 045 con el despliegue.
-3. I8: migración 055 (CHECK de inventario) — solo después de la reparación en producción (AP2).
+3. I8: migración 056 (CHECK de inventario) — solo después de la reparación en producción (AP2).
 4. Fase H2: numeración ARCA, recuperación de CAE y de NC en `authorizing`.
 5. Riesgos bajos de arriba.
 

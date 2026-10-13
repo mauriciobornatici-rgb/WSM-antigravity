@@ -10,10 +10,12 @@ interface ShippingChargeFieldsProps {
     value: ShippingChargeValue
     onChange: (patch: Partial<ShippingChargeValue>) => void
     disabled?: boolean
+    /** Absorbing the shipping or changing its VAT is a concession: managers and admins only. */
+    canAuthorize?: boolean
 }
 
 /** Envío del pedido: importe final (con IVA), si se cobra al cliente y alícuota de IVA. */
-export function ShippingChargeFields({ idPrefix, value, onChange, disabled = false }: ShippingChargeFieldsProps) {
+export function ShippingChargeFields({ idPrefix, value, onChange, disabled = false, canAuthorize = true }: ShippingChargeFieldsProps) {
     return (
         <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-2">
@@ -32,7 +34,7 @@ export function ShippingChargeFields({ idPrefix, value, onChange, disabled = fal
             </div>
             <div className="space-y-2">
                 <Label htmlFor={`${idPrefix}-vat`}>IVA del envío</Label>
-                <Select value={value.vatRate} onValueChange={(vatRate) => onChange({ vatRate })} disabled={disabled}>
+                <Select value={value.vatRate} onValueChange={(vatRate) => onChange({ vatRate })} disabled={disabled || !canAuthorize}>
                     <SelectTrigger id={`${idPrefix}-vat`}>
                         <SelectValue />
                     </SelectTrigger>
@@ -50,7 +52,7 @@ export function ShippingChargeFields({ idPrefix, value, onChange, disabled = fal
                     id={`${idPrefix}-charge`}
                     type="checkbox"
                     checked={value.chargeCustomer}
-                    disabled={disabled}
+                    disabled={disabled || !canAuthorize}
                     onChange={(event) => onChange({ chargeCustomer: event.target.checked })}
                     className="h-4 w-4 cursor-pointer rounded accent-primary"
                 />
@@ -58,6 +60,11 @@ export function ShippingChargeFields({ idPrefix, value, onChange, disabled = fal
                     Cobrar el envío al cliente
                 </Label>
             </div>
+            {!canAuthorize ? (
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                    Bonificar el envío o cambiar su IVA requiere un gerente o administrador.
+                </p>
+            ) : null}
         </div>
     )
 }

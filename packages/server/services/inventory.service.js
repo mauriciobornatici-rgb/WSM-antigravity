@@ -249,6 +249,17 @@ class InventoryService extends BaseService {
         const stockInitial = Number.isFinite(rawStockInitial) ? Math.max(0, Math.floor(rawStockInitial)) : 0;
         delete normalized.stock_initial;
 
+        // ADR-018: opening stock is valued at cost (inventory and ledger move together): without a
+        // cost it would enter stock without its entry and later sales would credit inventory
+        // that was never debited.
+        const openingCost = Number(normalized.purchase_price ?? normalized.cost_price ?? 0);
+        if (stockInitial > 0 && !(openingCost > 0)) {
+            throw businessError(400, {
+                error: 'initial_stock_requires_cost',
+                message: 'Para cargar stock inicial indicá el precio de compra (costo) del producto.'
+            });
+        }
+
         if (normalized.cost_price != null && normalized.purchase_price == null) {
             normalized.purchase_price = normalized.cost_price;
         }

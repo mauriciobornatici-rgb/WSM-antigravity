@@ -20,6 +20,8 @@ import type { Client, Product } from "@/types"
 import type { ShippingMethod, CreateOrderItem, NewClientForm } from "@/types/orders"
 import { ShippingChargeFields } from "./ShippingChargeFields"
 import { EMPTY_SHIPPING_CHARGE, type ShippingChargeValue } from "./shippingCharge"
+import { useAuth } from "@/context/AuthContext"
+import { hasPermission, PERMISSIONS } from "@wsm/common"
 
 interface CreateOrderDialogProps {
     open: boolean
@@ -47,6 +49,9 @@ function newPaymentLine(method = "cash", amount = ""): CreatePaymentLine {
 }
 
 export function CreateOrderDialog({ open, onOpenChange, clients, products, currentUser }: CreateOrderDialogProps) {
+    const { user } = useAuth()
+    // Absorbing the shipping or changing its VAT is a concession (ADR-018).
+    const canAuthorizeShipping = hasPermission(user?.role, PERMISSIONS.ORDERS_PRICE_OVERRIDE)
     const queryClient = useQueryClient()
 
     // Form states
@@ -730,6 +735,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                                         idPrefix="create-order-shipping"
                                         value={createShipping}
                                         onChange={(patch) => setCreateShipping((current) => ({ ...current, ...patch }))}
+                                        canAuthorize={canAuthorizeShipping}
                                     />
                                 </div>
                             ) : null}

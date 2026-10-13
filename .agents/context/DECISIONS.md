@@ -80,6 +80,15 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-018 — Respuestas del usuario a lo pendiente de ADR-017 (usuario, 2026-10-12)
+1. **Stock inicial con costo obligatorio:** el alta con stock exige precio de compra, en el producto y en la familia de Tienda online. Lo importado de Tiendanube conserva el costo que informe la tienda.
+2. **Contrapartida del stock inicial:** cuenta de ajuste 3.1.03.01 "Ajuste por inventario inicial" (patrimonio, migración 055), no Capital.
+3. **Envío, según las normas habituales:**
+   - Cualquier vendedor puede cobrarlo.
+   - Bonificarlo (absorberlo), cambiar su IVA o editarlo después de creado el pedido es una concesión comercial: requiere gerente o administrador (`ORDERS_PRICE_OVERRIDE`, el mismo permiso que cambiar precios) y queda auditado.
+4. **Bonificar solo el envío, sin productos:** por ahora no.
+5. **NC anulada:** si la NC de una devolución se anula o se borra, su envío deja de contar como devuelto. No hay acción de anular NC: fiscalmente, una NC autorizada se revierte con nota de débito.
+
 ### ADR-017 — Envío cobrado o no, bonificación en devoluciones, compras con varias alícuotas (usuario, 2026-10-12)
 - **Envío:**
   - Lo contrata y lo paga el negocio. En cada pedido propio se elige cobrárselo al cliente o absorberlo.
@@ -186,7 +195,7 @@ El usuario aprobó corregir lo que encontró la simulación operativa. Desde aho
 
 ### ADR-012 — Reglas de negocio de la revisión del refactor (usuario, 2026-10-12)
 - **Estados de orden de compra (cambio manual):** solo hacia adelante: borrador → enviada → parcial → recibida; cancelar solo antes de recibir algo (borrador o enviada). `recibida` y `cancelada` son finales. Otra transición → 409.
-- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 055 (046-054 agregan cuentas, NC fiscal, tesorería e idempotencia, precios a 4 decimales, débitos bancarios, alícuotas y ajustes de pedido, y corrigen totales previos; ADR-013/014/015/016).
+- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 056 (046-055 agregan cuentas, NC fiscal, tesorería e idempotencia, precios a 4 decimales, débitos bancarios, alícuotas y ajustes de pedido, y corrigen totales previos; ADR-013/014/015/016).
 - **Aplicación (coordinador, tras la revisión del guardián):**
   - "Recibir algo" incluye la mercadería en control de calidad: una OC con recepciones `pending_qc` o cantidades recibidas no se puede anular (409 `purchase_order_has_receptions`). La UI oculta "Anular orden" en ese caso.
   - Aprobar una recepción bloquea la OC antes que sus ítems. Contra una OC anulada responde 409 (`purchase_order_cancelled`), y nunca hace retroceder una OC `received`.
