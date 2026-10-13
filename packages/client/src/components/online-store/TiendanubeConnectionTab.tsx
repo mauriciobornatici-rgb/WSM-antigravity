@@ -17,10 +17,15 @@ function ConnectionForm({ config }: { config: TiendaNubeIntegrationConfig }) {
     const [clientId, setClientId] = useState(config.clientId)
     const [clientSecret, setClientSecret] = useState("")
     const [locationId, setLocationId] = useState(config.locationId)
+    const [safetyStockEnabled, setSafetyStockEnabled] = useState(config.safetyStockEnabled)
+    const [safetyStock, setSafetyStock] = useState(String(config.safetyStock))
+    const safetyStockUnits = Math.max(0, Math.floor(Number(safetyStock) || 0))
     const statusQuery = useQuery({ queryKey: ["tiendanube-status"], queryFn: api.getTiendanubeStatus })
     const hasUnsavedChanges = clientId.trim() !== config.clientId
         || locationId.trim() !== config.locationId
         || Boolean(clientSecret.trim())
+        || safetyStockEnabled !== config.safetyStockEnabled
+        || safetyStockUnits !== config.safetyStock
     const canStartOAuth = Boolean(config.clientId && config.clientSecretConfigured && !hasUnsavedChanges)
 
     const refreshIntegration = async () => {
@@ -34,6 +39,8 @@ function ConnectionForm({ config }: { config: TiendaNubeIntegrationConfig }) {
         mutationFn: () => api.updateTiendanubeConfig({
             clientId: clientId.trim(),
             locationId: locationId.trim(),
+            safetyStockEnabled,
+            safetyStock: safetyStockUnits,
             ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
         }),
         onSuccess: async (updated) => {
@@ -92,6 +99,21 @@ function ConnectionForm({ config }: { config: TiendaNubeIntegrationConfig }) {
                             <p className="text-xs text-muted-foreground">Evita enviar stock al depósito incorrecto en tiendas multiubicación.</p>
                         </div>
                     </div>
+                    <div className="space-y-4 border-t pt-5">
+                        <div>
+                            <h3 className="text-sm font-semibold">Stock de seguridad (opcional)</h3>
+                            <p className="mt-1 text-xs text-muted-foreground">La tienda online publica el stock disponible del local (físico menos lo reservado por pedidos) y se actualiza sola ante cualquier movimiento.</p>
+                        </div>
+                        <div className="flex min-h-11 items-center gap-3">
+                            <input id="tn-safety-enabled" type="checkbox" checked={safetyStockEnabled} onChange={(event) => setSafetyStockEnabled(event.target.checked)} className="h-4 w-4 shrink-0 cursor-pointer rounded accent-primary" />
+                            <Label htmlFor="tn-safety-enabled" className="cursor-pointer">Publicar menos unidades que las disponibles</Label>
+                        </div>
+                        <div className="max-w-xs space-y-2">
+                            <Label htmlFor="tn-safety-units">Unidades de seguridad por producto</Label>
+                            <Input id="tn-safety-units" type="number" inputMode="numeric" min="0" step="1" disabled={!safetyStockEnabled} value={safetyStock} onChange={(event) => setSafetyStock(event.target.value)} aria-describedby="tn-safety-help" />
+                            <p id="tn-safety-help" className="text-xs text-muted-foreground">Si está activo, la tienda online muestra el stock disponible menos estas unidades, para cubrir ventas simultáneas. Cada producto puede tener su propio valor.</p>
+                        </div>
+                    </div>
                     {hasUnsavedChanges && <p className="text-xs text-amber-700 dark:text-amber-300">Guardá los cambios antes de iniciar OAuth para que Tiendanube utilice las credenciales correctas.</p>}
                 </CardContent>
                 <CardFooter className="flex flex-wrap justify-end gap-2 border-t pt-4">
@@ -146,5 +168,5 @@ export default function TiendanubeConnectionTab() {
     }
 
     const config = configQuery.data
-    return <ConnectionForm key={`${config.clientId}:${config.locationId}:${config.clientSecretConfigured}`} config={config} />
+    return <ConnectionForm key={`${config.clientId}:${config.locationId}:${config.clientSecretConfigured}:${config.safetyStockEnabled}:${config.safetyStock}`} config={config} />
 }

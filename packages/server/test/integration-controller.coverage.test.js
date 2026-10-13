@@ -489,14 +489,14 @@ test('getTiendaNubeConfigController never exposes the client secret', async (t) 
         }]]
     });
     const result = await runHandler(controller.getTiendaNubeConfigController);
-    assert.deepEqual(result.body, { clientId: 'cid', clientSecretConfigured: true, locationId: 'loc' });
+    assert.deepEqual(result.body, { clientId: 'cid', clientSecretConfigured: true, locationId: 'loc', safetyStockEnabled: false, safetyStock: 0 });
     assert.ok(!JSON.stringify(result.body).includes('top-secret'));
 });
 
 test('getTiendaNubeConfigController defaults to empty values when no settings row exists', async (t) => {
     installPool(t, { poolQuery: async () => [[]] });
     const result = await runHandler(controller.getTiendaNubeConfigController);
-    assert.deepEqual(result.body, { clientId: '', clientSecretConfigured: false, locationId: '' });
+    assert.deepEqual(result.body, { clientId: '', clientSecretConfigured: false, locationId: '', safetyStockEnabled: false, safetyStock: 0 });
 });
 
 test('updateTiendaNubeConfigController encrypts the secret, locks the row and audits without secrets', async (t) => {

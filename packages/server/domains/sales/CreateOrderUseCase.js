@@ -68,13 +68,10 @@ export function resolvePriceOverrides(orderData, priceByProduct, nameByProduct, 
     throw err;
 }
 
+// ADR-019: the online store shows what can still be sold (physical minus reserved).
 async function syncOnlineStock(productIds) {
-    const { default: inventoryService } = await import('../../services/inventory.service.js');
     const { default: tiendanubeService } = await import('../../services/tiendanube.service.js');
-    for (const productId of productIds) {
-        const totalStock = await inventoryService.getProductStock(productId);
-        await tiendanubeService.syncStock(productId, totalStock);
-    }
+    await tiendanubeService.pushAvailableStock(productIds);
 }
 
 export class CreateOrderUseCase {
@@ -92,7 +89,7 @@ export class CreateOrderUseCase {
         return err;
     }
 
-    async _decreaseInventoryForOrder(connection, { orderId, orderItemId, productId, productName, quantity }) {
+    async _decreaseInventoryForOrder(connection, { orderId, orderItemId, productId, productName, quantity, allowShortage = false }) {
         const requestedQty = Number.parseInt(String(quantity), 10);
         if (!Number.isFinite(requestedQty) || requestedQty <= 0) {
             const err = new Error(`Cantidad invalida para producto ${productName || productId}`);
@@ -119,7 +116,7 @@ export class CreateOrderUseCase {
         stockRows.splice(0, stockRows.length, ...ordered);
 
         const availableQty = stockRows.reduce((sum, row) => sum + Number(row.available_quantity || 0), 0);
-        if (availableQty < requestedQty) {
+        if (availableQty < requestedQty && !allowShortage) {
             throw this._buildStockError(productId, productName, requestedQty, availableQty);
         }
 
@@ -141,7 +138,12 @@ export class CreateOrderUseCase {
                         id, order_id, order_item_id, product_id, inventory_id,
                         location_code, reserved_quantity, picked_quantity, shortage_quantity,
                         status, version
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'reserved', 0)`,
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'reserved', 0)
+                    ON DUPLICATE KEY UPDATE
+                        -- A later reservation from the same stock row (an online order that waited
+                        -- for goods, AUD-007) adds to the existing allocation.
+                        reserved_quantity = reserved_quantity + VALUES(reserved_quantity),
+                        version = version + 1`,
                     [
                         crypto.randomUUID(),
                         orderId,
@@ -157,9 +159,88 @@ export class CreateOrderUseCase {
             remaining -= consume;
         }
 
-        if (remaining > 0) {
+        if (remaining > 0 && !allowShortage) {
             throw this._buildStockError(productId, productName, requestedQty, availableQty);
         }
+        // ADR-019: an online sale already happened: what could not be reserved is a shortage.
+        return { shortage: Math.max(remaining, 0) };
+    }
+
+    /**
+     * ADR-019 / AUD-007: an online order recorded without enough stock keeps waiting for it.
+     * When goods arrive, its missing units are reserved automatically, oldest order first,
+     * so the stock that comes in goes to whoever already paid for it. Returns what was reserved.
+     */
+    async reserveOpenShortages(productIds = null) {
+        const ids = Array.isArray(productIds) ? [...new Set(productIds.filter(Boolean))] : null;
+        if (ids && ids.length === 0) return [];
+        const [candidates] = await pool.query(
+            `SELECT oi.id AS order_item_id, oi.order_id, oi.product_id, p.name AS product_name
+             FROM order_items oi
+             JOIN orders o ON o.id = oi.order_id
+             LEFT JOIN products p ON p.id = oi.product_id
+             WHERE o.allocation_tracked = 1 AND o.deleted_at IS NULL
+               AND o.external_source IS NOT NULL AND o.external_source <> 'pos'
+               AND o.status NOT IN ('packed', 'dispatched', 'delivered', 'completed', 'cancelled', 'returned')
+               ${ids ? 'AND oi.product_id IN (?)' : ''}
+               AND oi.quantity > COALESCE((SELECT SUM(a.reserved_quantity) FROM order_item_allocations a
+                                           WHERE a.order_item_id = oi.id AND a.status IN ('reserved', 'picked')), 0)
+             ORDER BY o.created_at, oi.id`,
+            ids ? [ids] : []
+        );
+        const reserved = [];
+        for (const candidate of candidates) {
+            const connection = await pool.getConnection();
+            try {
+                await connection.beginTransaction();
+                // Same lock order as everywhere: the order first, then its stock rows.
+                const [orders] = await connection.query(
+                    "SELECT id, status FROM orders WHERE id = ? AND deleted_at IS NULL FOR UPDATE",
+                    [candidate.order_id]
+                );
+                const status = String(orders[0]?.status || '').toLowerCase();
+                if (!orders[0] || ['packed', 'dispatched', 'delivered', 'completed', 'cancelled', 'returned'].includes(status)) {
+                    await connection.rollback();
+                    continue;
+                }
+                const [[missingRow]] = await connection.query(
+                    `SELECT oi.quantity - COALESCE((SELECT SUM(a.reserved_quantity) FROM order_item_allocations a
+                                                    WHERE a.order_item_id = oi.id AND a.status IN ('reserved', 'picked')), 0) AS missing
+                     FROM order_items oi WHERE oi.id = ? FOR UPDATE`,
+                    [candidate.order_item_id]
+                );
+                const missing = Number(missingRow?.missing || 0);
+                if (missing <= 0) {
+                    await connection.rollback();
+                    continue;
+                }
+                const { shortage } = await this._decreaseInventoryForOrder(connection, {
+                    orderId: candidate.order_id,
+                    orderItemId: candidate.order_item_id,
+                    productId: candidate.product_id,
+                    productName: candidate.product_name,
+                    quantity: missing,
+                    allowShortage: true
+                });
+                const got = missing - shortage;
+                if (got > 0) {
+                    await auditService.log({
+                        action: 'CHANNEL_ORDER_SHORTAGE_RESERVED',
+                        entity_type: 'order',
+                        entity_id: candidate.order_id,
+                        new_values: { product_id: candidate.product_id, reserved: got, still_missing: shortage },
+                    }, connection);
+                    reserved.push({ order_id: candidate.order_id, product_id: candidate.product_id, reserved: got, still_missing: shortage });
+                }
+                await connection.commit();
+            } catch (error) {
+                await connection.rollback();
+                console.error('[Faltantes de pedidos online] No se pudo reservar:', error.message);
+            } finally {
+                connection.release();
+            }
+        }
+        return reserved;
     }
 
     /**
@@ -172,6 +253,7 @@ export class CreateOrderUseCase {
         const counterSale = isCounterSale(orderData);
         const offlineReplay = counterSale && isOfflineReplay(orderData);
         const stockShortages = [];
+        const channelShortages = [];
         const isExternalTx = Boolean(existingConnection);
         const connection = existingConnection || await pool.getConnection();
 
@@ -326,8 +408,8 @@ export class CreateOrderUseCase {
                     total_amount, status, payment_status, payment_method,
                     shipping_method, shipping_address, estimated_delivery,
                     recipient_name, recipient_dni, delivery_notes, notes,
-                    external_source, external_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    external_source, external_id, allocation_tracked
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     orderId,
                     orderData.client_id || null,
@@ -346,7 +428,9 @@ export class CreateOrderUseCase {
                     orderData.delivery_notes || null,
                     orderData.notes || null,
                     orderData.external_source || null,
-                    orderData.external_id || null
+                    orderData.external_id || null,
+                    // Reserved through allocations (AUD-007): never the legacy release path.
+                    counterSale ? 0 : 1
                 ]
             );
 
@@ -409,13 +493,20 @@ export class CreateOrderUseCase {
                     [itemId, orderId, item.product_id, item.quantity, unitPrice, vatByProduct.get(item.product_id)]
                 );
 
-                await this._decreaseInventoryForOrder(connection, {
+                // ADR-019: an order from the online store was already sold and paid there: it is
+                // always recorded. Units that cannot be reserved go to the exceptions list.
+                const channelSale = Boolean(orderData.external_source) && orderData.external_source !== 'pos';
+                const { shortage } = await this._decreaseInventoryForOrder(connection, {
                     orderId,
                     orderItemId: itemId,
                     productId: item.product_id,
                     productName: nameByProduct.get(item.product_id),
-                    quantity: item.quantity
+                    quantity: item.quantity,
+                    allowShortage: channelSale
                 });
+                if (shortage > 0) {
+                    channelShortages.push({ product_id: item.product_id, product_name: nameByProduct.get(item.product_id), requested: Number(item.quantity), shortage });
+                }
             }
 
             for (const payment of normalizedPayments) {
@@ -478,6 +569,18 @@ export class CreateOrderUseCase {
                 }, connection);
             }
 
+            if (channelShortages.length > 0) {
+                // ADR-019: an online sale without enough stock is recorded and reviewed by a manager
+                // (buy, transfer, or agree with the customer), like an offline counter sale.
+                await auditService.log({
+                    user_id: userId,
+                    action: 'CHANNEL_ORDER_STOCK_SHORTAGE',
+                    entity_type: 'order',
+                    entity_id: orderId,
+                    new_values: { source: orderData.external_source, external_id: orderData.external_id || null, lines: channelShortages }
+                }, connection);
+            }
+
             if (paymentRoundingAdjustment) {
                 await auditService.log({
                     user_id: userId,
@@ -499,8 +602,8 @@ export class CreateOrderUseCase {
             }
 
             // Online stock follows physical stock; a sync failure must not undo the sale.
+            // A sale takes stock and an order reserves it: both change what the store can sell.
             const syncStock = () => {
-                if (!counterSale) return;
                 setImmediate(() => {
                     this.onStockChanged([...new Set(productIds)]).catch((err) => {
                         console.error('[TiendaNube Sync] Error syncing stock after counter sale:', err);

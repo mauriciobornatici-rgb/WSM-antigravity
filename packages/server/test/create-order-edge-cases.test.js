@@ -262,7 +262,9 @@ test('a POS order with shipping keeps the reservation flow', async (t) => {
     auditService.log = async () => {};
     t.after(() => { auditService.log = originalAudit; });
 
-    await new CreateOrderUseCase({ onStockChanged: async () => { throw new Error('must not sync'); } }).execute({
+    // ADR-019: a reservation changes what the online store can sell, so it syncs too.
+    const synced = [];
+    await new CreateOrderUseCase({ onStockChanged: async (ids) => { synced.push(...ids); } }).execute({
         external_source: 'pos',
         external_id: 'c5b8f1c4-4a8e-4e0c-9d5e-2f1f1f1f1f1f',
         shipping_method: 'delivery',
@@ -272,6 +274,8 @@ test('a POS order with shipping keeps the reservation flow', async (t) => {
     assert.equal(calls.find((call) => call.sql.includes('INSERT INTO orders')).params[6], 'pending');
     assert.ok(calls.some((call) => call.sql.includes('reserved_quantity = reserved_quantity +')));
     assert.equal(calls.some((call) => call.sql.includes('SET quantity = quantity - ?')), false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(synced, ['p']);
 });
 
 test('price policy: catalog price unless authorized, imported, or captured offline (ADR-008)', () => {

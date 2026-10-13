@@ -42,6 +42,9 @@ const port = env.port;
 let httpServer = null;
 let syncInterval = null;
 let webhookInterval = null;
+let stockReconcileInterval = null;
+let stockFullReconcileInterval = null;
+let stockDailyPushInterval = null;
 
 if (env.trustProxy !== undefined) {
     app.set('trust proxy', env.trustProxy);
@@ -250,6 +253,30 @@ Health Check: http://localhost:${port}/api/health
             // unref() to allow Node.js to exit cleanly if needed (e.g. during test sweeps or shutdown)
             syncInterval.unref();
 
+            // ADR-019 — one stock: publish the available stock of every product whose stock or
+            // reservations changed (every 20 s, a cheap query; Tiendanube is called only for
+            // values that changed) and compare everything once an hour to heal any drift.
+            stockReconcileInterval = setInterval(() => {
+                tiendaNubeService.reconcileStock().catch(err => {
+                    console.error('[TiendaNube Stock] Error:', err);
+                });
+            }, 20 * 1000);
+            stockReconcileInterval.unref();
+            stockFullReconcileInterval = setInterval(() => {
+                tiendaNubeService.reconcileStock({ full: true }).catch(err => {
+                    console.error('[TiendaNube Stock] Error en la conciliación completa:', err);
+                });
+            }, 60 * 60 * 1000);
+            stockFullReconcileInterval.unref();
+            // Once a day every product is published again, even if unchanged here: it corrects
+            // stock edited by hand in the Tiendanube panel (one call per product per day).
+            stockDailyPushInterval = setInterval(() => {
+                tiendaNubeService.reconcileStock({ full: true, force: true }).catch(err => {
+                    console.error('[TiendaNube Stock] Error en la publicación diaria:', err);
+                });
+            }, 24 * 60 * 60 * 1000);
+            stockDailyPushInterval.unref();
+
             // Recover durable webhook events left pending by crashes or transient failures.
             webhookInterval = setInterval(() => {
                 tiendaNubeService.processPendingWebhookEvents(salesService).catch(err => {
@@ -269,6 +296,9 @@ const shutdown = async (signal) => {
     console.log(JSON.stringify({ timestamp: new Date().toISOString(), event: 'shutdown_started', signal }));
     if (syncInterval) clearInterval(syncInterval);
     if (webhookInterval) clearInterval(webhookInterval);
+    if (stockReconcileInterval) clearInterval(stockReconcileInterval);
+    if (stockFullReconcileInterval) clearInterval(stockFullReconcileInterval);
+    if (stockDailyPushInterval) clearInterval(stockDailyPushInterval);
     if (httpServer) {
         await new Promise((resolve) => httpServer.close(resolve));
     }

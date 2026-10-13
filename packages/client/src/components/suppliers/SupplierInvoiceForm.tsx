@@ -6,7 +6,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { FileText, DollarSign, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { api } from '@/services/api';
+import { api, type SupplierInvoiceCreateResult } from '@/services/api';
+import { formatMoney } from '@/lib/formatters';
+import { receptionNet, receptionsNetTotal, sharedPurchaseOrderId } from './receptionTotals';
 import { createClientUuid } from '@/lib/clientUuid';
 import { VAT_RATE_OPTIONS, formatVatRate } from '@/lib/pricing';
 import { Switch } from '@/components/ui/switch';
@@ -16,7 +18,7 @@ export type SupplierInvoicePayload = {
     invoice_number: string;
     invoice_type: 'A' | 'B' | 'C' | 'M';
     supplier_id: string;
-    reception_id?: string;
+    reception_ids?: string[];
     purchase_order_id?: string;
     issue_date: string;
     due_date?: string;
@@ -39,6 +41,7 @@ type SupplierReceptionOption = {
     created_at?: string;
     status: string;
     purchase_order_id?: string;
+    supplier_invoice_id?: string | null;
     items?: Array<{
         quantity_received?: number;
         unit_cost?: number;
@@ -82,7 +85,7 @@ interface SupplierInvoiceFormProps {
     initialSupplierId?: string;
     initialOrderId?: string;
     initialReceptionId?: string;
-    onSubmit: (data: SupplierInvoicePayload) => Promise<void>;
+    onSubmit: (data: SupplierInvoicePayload) => Promise<SupplierInvoiceCreateResult | void>;
     onCancel: () => void;
 }
 
@@ -97,7 +100,7 @@ export function SupplierInvoiceForm({
     const [supplierId, setSupplierId] = useState(initialSupplierId);
     const [invoiceNumber, setInvoiceNumber] = useState('');
     const [invoiceType, setInvoiceType] = useState<'A' | 'B' | 'C' | 'M'>('A');
-    const [receptionId, setReceptionId] = useState(initialReceptionId);
+    const [receptionIds, setReceptionIds] = useState<string[]>(initialReceptionId ? [initialReceptionId] : []);
     const [purchaseOrderId, setPurchaseOrderId] = useState(initialOrderId);
     const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10));
     const [dueDate, setDueDate] = useState('');
@@ -132,8 +135,13 @@ export function SupplierInvoiceForm({
                     api.getReceptions({ supplier_id: supplierId }) as Promise<SupplierReceptionOption[]>,
                     api.getPurchaseOrders({ supplier_id: supplierId }) as Promise<SupplierPurchaseOrderOption[]>
                 ]);
-                setReceptions(recs.filter(r => r.status === 'approved'));
+                const available = recs.filter(r => r.status === 'approved' && !r.supplier_invoice_id);
+                setReceptions(available);
                 setPurchaseOrders(pos);
+                // A reception handed in by the caller starts marked (and prefills the amounts).
+                if (initialReceptionId && available.some(r => r.id === initialReceptionId)) {
+                    applyReceptionSelection([initialReceptionId], available);
+                }
             } catch (err) {
                 console.error("Error al cargar comprobantes del proveedor:", err);
             } finally {
@@ -142,45 +150,43 @@ export function SupplierInvoiceForm({
         };
 
         void fetchSupplierDocs();
+        // Only a supplier change reloads; the initial remito prefill must not re-run on every render.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [supplierId]);
 
-    // Handle auto-prefilling from selected reception (Remito)
-    const handleReceptionChange = (value: string) => {
-        const recId = value === 'none' ? '' : value;
-        setReceptionId(recId);
-        if (!recId) return;
+    // Marking remitos prefills the net (and VAT) with the sum of the marked ones.
+    const applyReceptionSelection = (ids: string[], source: SupplierReceptionOption[]) => {
+        setReceptionIds(ids);
+        if (ids.length === 0) return;
 
-        const selectedRec = receptions.find(r => r.id === recId);
-        if (selectedRec) {
-            // If the reception is linked to a PO, set it as well
-            if (selectedRec.purchase_order_id) {
-                setPurchaseOrderId(selectedRec.purchase_order_id);
-            }
+        const selected = source.filter(r => ids.includes(r.id));
+        if (selected.length === 0) return;
 
-            // Prefill amounts from reception items
-            if (Array.isArray(selectedRec.items) && selectedRec.items.length > 0) {
-                let subtotal = 0;
-                for (const item of selectedRec.items) {
-                    const qty = Number(item.quantity_received || 0);
-                    const cost = Number(item.unit_cost || 0);
-                    subtotal += qty * cost;
-                }
-                const netPrefill = Math.round(subtotal * 100) / 100;
-                setNetAmount(String(netPrefill));
+        // When every marked remito comes from the same PO, link it as well
+        const sharedPo = sharedPurchaseOrderId(selected);
+        if (sharedPo) setPurchaseOrderId(sharedPo);
 
-                const rate = parseFloat(vatRate);
-                const vatPrefill = Math.round((netPrefill * rate) * 100) / 100;
-                setVatAmount(String(vatPrefill));
-                if (multiRate) setVatLines([newVatLine(String(Math.round(rate * 1000) / 10), String(netPrefill))]);
-            }
+        if (selected.some(r => Array.isArray(r.items) && r.items.length > 0)) {
+            const netPrefill = receptionsNetTotal(selected);
+            setNetAmount(String(netPrefill));
+
+            const rate = parseFloat(vatRate);
+            const vatPrefill = Math.round((netPrefill * rate) * 100) / 100;
+            setVatAmount(String(vatPrefill));
+            if (multiRate) setVatLines([newVatLine(String(Math.round(rate * 1000) / 10), String(netPrefill))]);
         }
+    };
+
+    const toggleReception = (id: string, checked: boolean) => {
+        const next = checked ? [...receptionIds.filter(item => item !== id), id] : receptionIds.filter(item => item !== id);
+        applyReceptionSelection(next, receptions);
     };
 
     // Auto-prefill from purchase order
     const handlePOChange = (value: string) => {
         const poId = value === 'none' ? '' : value;
         setPurchaseOrderId(poId);
-        if (!poId || receptionId) return; // If reception is selected, it takes priority
+        if (!poId || receptionIds.length > 0) return; // If remitos are marked, they take priority
 
         const selectedPo = purchaseOrders.find(p => p.id === poId);
         if (selectedPo) {
@@ -193,7 +199,7 @@ export function SupplierInvoiceForm({
     };
 
     // A voucher tied to a reception or purchase order is always goods.
-    const linkedToDocument = Boolean(receptionId) || Boolean(purchaseOrderId);
+    const linkedToDocument = receptionIds.length > 0 || Boolean(purchaseOrderId);
     const effectivePurchaseKind: PurchaseKind = linkedToDocument ? 'goods' : purchaseKind;
 
     const handleMultiRateChange = (enabled: boolean) => {
@@ -235,6 +241,10 @@ export function SupplierInvoiceForm({
         : parseFloat(vatAmount) || 0;
     const taxVal = parseFloat(otherTaxes) || 0;
     const totalAmount = Math.round((netVal + vatVal + taxVal) * 100) / 100;
+
+    const selectedReceptions = receptions.filter(r => receptionIds.includes(r.id));
+    const receivedNet = receptionsNetTotal(selectedReceptions);
+    const receivedDifference = round2(netVal - receivedNet);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -279,11 +289,17 @@ export function SupplierInvoiceForm({
             } else {
                 payload.vat_rate = Math.round((parseFloat(vatRate) || 0) * 1000) / 10;
             }
-            if (receptionId) payload.reception_id = receptionId;
+            if (receptionIds.length > 0) payload.reception_ids = receptionIds;
             if (purchaseOrderId) payload.purchase_order_id = purchaseOrderId;
             if (dueDate) payload.due_date = dueDate;
             if (notes.trim()) payload.notes = notes.trim();
-            await onSubmit(payload);
+            const result = await onSubmit(payload);
+            const difference = Number(result?.receptions_difference || 0);
+            if (difference !== 0) {
+                toast.info(`La factura difiere de lo recibido en ${formatMoney(Math.abs(difference))}`, {
+                    description: difference > 0 ? 'El neto facturado es mayor al recibido en los remitos.' : 'El neto facturado es menor al recibido en los remitos.',
+                });
+            }
         } catch {
             // Handled by parent or API caller
         } finally {
@@ -309,27 +325,51 @@ export function SupplierInvoiceForm({
                     </Select>
                 </div>
 
-                {/* Optional Reception Link */}
-                <div className="space-y-2">
-                    <Label htmlFor="reception">Vincular a Remito / Recepción (Opcional)</Label>
-                    <Select 
-                        value={receptionId} 
-                        onValueChange={handleReceptionChange}
-                        disabled={loadingDropdowns || !supplierId || !!initialReceptionId}
-                    >
-                        <SelectTrigger id="reception">
-                            <SelectValue placeholder={loadingDropdowns ? "Cargando..." : "Ninguno / Standalone"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="none">Ninguno / Standalone</SelectItem>
-                            {receptions.map(r => (
-                                <SelectItem key={r.id} value={r.id}>
-                                    {r.reception_number} {r.remito_number ? `(Remito: ${r.remito_number})` : ''} - {r.created_at ? new Date(r.created_at).toLocaleDateString() : "Sin fecha"}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
+                {/* Optional Reception Links (one or several remitos) */}
+                <fieldset className="space-y-2" aria-describedby="receptions-help">
+                    <legend className="text-sm font-medium leading-none">Remitos a facturar (opcional)</legend>
+                    {!supplierId ? (
+                        <p id="receptions-help" className="text-xs text-muted-foreground">Elegí un proveedor para ver sus remitos pendientes de factura.</p>
+                    ) : loadingDropdowns ? (
+                        <p id="receptions-help" className="text-xs text-muted-foreground">Cargando remitos...</p>
+                    ) : receptions.length === 0 ? (
+                        <p id="receptions-help" className="text-xs text-muted-foreground">Este proveedor no tiene remitos aprobados sin facturar.</p>
+                    ) : (
+                        <>
+                            <p id="receptions-help" className="text-xs text-muted-foreground">Podés marcar uno o varios remitos del mismo proveedor.</p>
+                            <div className="max-h-44 space-y-1 overflow-y-auto rounded-md border p-2">
+                                {receptions.map(r => (
+                                    <div key={r.id} className="flex min-h-11 items-center gap-3 rounded px-2 hover:bg-muted/50">
+                                        <input
+                                            id={`reception-${r.id}`}
+                                            type="checkbox"
+                                            checked={receptionIds.includes(r.id)}
+                                            onChange={e => toggleReception(r.id, e.target.checked)}
+                                            className="h-4 w-4 shrink-0 cursor-pointer rounded accent-primary"
+                                        />
+                                        <Label htmlFor={`reception-${r.id}`} className="flex flex-1 cursor-pointer flex-wrap items-center justify-between gap-x-3 gap-y-0.5 font-normal">
+                                            <span>
+                                                Remito {r.remito_number || r.reception_number}
+                                                {r.created_at ? <span className="text-muted-foreground"> · {new Date(r.created_at).toLocaleDateString('es-AR')}</span> : null}
+                                            </span>
+                                            <span className="font-mono text-xs">{formatMoney(receptionNet(r))}</span>
+                                        </Label>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                    {receptionIds.length > 0 ? (
+                        <div className="space-y-1" aria-live="polite">
+                            <p className="text-sm font-medium">Recibido en los remitos: {formatMoney(receivedNet)}</p>
+                            {Math.abs(receivedDifference) > 0.01 ? (
+                                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">
+                                    La factura difiere de lo recibido en {formatMoney(Math.abs(receivedDifference))}
+                                </p>
+                            ) : null}
+                        </div>
+                    ) : null}
+                </fieldset>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -60,6 +60,8 @@ export class SupplierInvoiceService {
         } = data;
 
         const id = crypto.randomUUID();
+        // ADR-019: one invoice may cover one or several delivery notes (receptions).
+        const receptionIds = [...new Set([...(Array.isArray(data.reception_ids) ? data.reception_ids : []), reception_id].filter(Boolean))];
         // ADR-017: an invoice with several VAT rates comes as one line per rate.
         const vatLines = Array.isArray(data.vat_lines) && data.vat_lines.length > 0
             ? data.vat_lines.map((line) => ({
@@ -99,7 +101,7 @@ export class SupplierInvoiceService {
             throw businessError(400, { error: 'invalid_net_amount', message: 'El neto del comprobante debe ser mayor a cero.' });
         }
         const purchaseKind = data.purchase_kind || 'goods';
-        if (purchaseKind !== 'goods' && (reception_id || purchase_order_id)) {
+        if (purchaseKind !== 'goods' && (receptionIds.length > 0 || purchase_order_id)) {
             throw businessError(400, {
                 error: 'invalid_purchase_kind',
                 message: 'Una factura vinculada a una recepción u orden de compra es de mercadería.'
@@ -139,6 +141,42 @@ export class SupplierInvoiceService {
                 throw businessError(409, { error: 'duplicate_invoice', message });
             }
 
+            // ADR-019: the delivery notes must be this supplier's and not invoiced yet. Locked so
+            // two invoices loaded at the same time cannot both take the same delivery note (the
+            // unique key on the link table is the last guard).
+            let receptionsNet = null;
+            if (receptionIds.length > 0) {
+                const [receptions] = await connection.query(
+                    'SELECT id, supplier_id, status, remito_number, reception_number FROM receptions WHERE id IN (?) ORDER BY id FOR UPDATE',
+                    [receptionIds]
+                );
+                if (receptions.length !== receptionIds.length || receptions.some((row) => row.supplier_id !== supplier_id)) {
+                    throw businessError(400, { error: 'invalid_reception', message: 'Algún remito no existe o es de otro proveedor.' });
+                }
+                if (receptions.some((row) => ['cancelled', 'rejected'].includes(String(row.status || '').toLowerCase()))) {
+                    throw businessError(409, { error: 'reception_not_invoiceable', message: 'Algún remito está anulado o rechazado.' });
+                }
+                const [invoiced] = await connection.query(
+                    // Locking read: sees an invoice committed while this one waited for the lock (AUD-007).
+                    'SELECT reception_id FROM supplier_invoice_receptions WHERE reception_id IN (?) FOR SHARE',
+                    [receptionIds]
+                );
+                if (invoiced.length > 0) {
+                    const labels = receptions
+                        .filter((row) => invoiced.some((link) => link.reception_id === row.id))
+                        .map((row) => row.remito_number || row.reception_number);
+                    throw businessError(409, {
+                        error: 'reception_already_invoiced',
+                        message: `Estos remitos ya están facturados: ${labels.join(', ')}.`
+                    });
+                }
+                const [[value]] = await connection.query(
+                    'SELECT COALESCE(SUM(quantity_received * unit_cost), 0) AS net FROM reception_items WHERE reception_id IN (?)',
+                    [receptionIds]
+                );
+                receptionsNet = Math.round(Number(value?.net || 0) * 100) / 100;
+            }
+
             // 2. Insert Supplier Invoice
             await connection.query(`
                 INSERT INTO supplier_invoices (
@@ -151,7 +189,7 @@ export class SupplierInvoiceService {
                 invoice_number,
                 invoice_type,
                 supplier_id,
-                reception_id || null,
+                receptionIds[0] || null,
                 purchase_order_id || null,
                 issue_date,
                 due_date || null,
@@ -163,6 +201,20 @@ export class SupplierInvoiceService {
                 creatorId,
                 purchaseKind
             ]);
+            for (const receptionId of receptionIds) {
+                try {
+                    await connection.query(
+                        'INSERT INTO supplier_invoice_receptions (supplier_invoice_id, reception_id) VALUES (?, ?)',
+                        [id, receptionId]
+                    );
+                } catch (err) {
+                    // The unique key is the last guard: another invoice took it at the same time.
+                    if (err?.code === 'ER_DUP_ENTRY') {
+                        throw businessError(409, { error: 'reception_already_invoiced', message: 'Algún remito ya fue facturado por otra factura cargada al mismo tiempo.' });
+                    }
+                    throw err;
+                }
+            }
             for (const line of vatLines || []) {
                 await connection.query(
                     `INSERT INTO supplier_invoice_vat_lines (id, supplier_invoice_id, vat_rate, net_amount, vat_amount)
@@ -240,6 +292,7 @@ export class SupplierInvoiceService {
                     invoice_type,
                     supplier_id,
                     reception_id,
+                    reception_ids: receptionIds,
                     purchase_order_id,
                     issue_date,
                     net_amount: net,
@@ -251,7 +304,17 @@ export class SupplierInvoiceService {
             }, connection);
             await connection.commit();
 
-            return { id, success: true, total_amount: total };
+            // ADR-019: what the delivery notes received (at their cost) against the invoice's net:
+            // a difference is shown to the user (it is not blocked: prices or extras can differ).
+            return {
+                id,
+                success: true,
+                total_amount: total,
+                reception_ids: receptionIds,
+                ...(receptionsNet != null
+                    ? { receptions_net: receptionsNet, receptions_difference: Math.round((net - receptionsNet) * 100) / 100 }
+                    : {})
+            };
         } catch (err) {
             await connection.rollback();
             throw err;

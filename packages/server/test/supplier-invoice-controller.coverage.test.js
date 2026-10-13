@@ -104,7 +104,12 @@ test('createSupplierInvoice rejects duplicates with 409 and rolls back without p
 });
 
 test('createSupplierInvoice persists invoice, balance, ledger, journal entry and audit', async (t) => {
-    const { calls, lifecycle, connection } = installPool(t, async () => [[]]);
+    const { calls, lifecycle, connection } = installPool(t, async (statement) => {
+        // ADR-019: the delivery note is this supplier's, not invoiced yet, and received 100 net.
+        if (statement.startsWith('SELECT id, supplier_id, status')) return [[{ id: 'r1', supplier_id: 's1', status: 'approved', remito_number: 'R-1' }]];
+        if (statement.includes('AS net FROM reception_items')) return [[{ net: 100 }]];
+        return [[]];
+    });
     const journals = [];
     stub(t, accountingService, 'createJournalEntry', async (conn, entry) => { journals.push({ conn, entry }); });
     const logs = [];

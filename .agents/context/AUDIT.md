@@ -1,5 +1,31 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-007 — 2026-10-13 — `guardian-integridad` sobre ADR-018/019 (delta sin commitear)
+
+El coordinador verificó y corrigió cada hallazgo técnico:
+- [x] **Alta:**
+  - Un pedido online sin asignaciones caía en la rama "legacy" y, al cancelarse, liberaba reservas de otros pedidos. Ahora los pedidos que se reservan por asignaciones se marcan (`orders.allocation_tracked`, migración 057) y nunca usan esa rama. Hay test MySQL.
+  - Las unidades pickeadas por encima de lo reservado no se descontaban al empacar. Ahora salen del disponible, sin quedar negativo. Hay test MySQL.
+  - Republicar el producto mandaba otro número y no actualizaba el estado. Ahora usa el mismo disponible y lo registra, y una variante re-vinculada se vuelve a publicar.
+- [x] **Media:**
+  - Backoff por producto (de 30 s a 1 h) y `failed_syncs` ya no reinicia los intentos.
+  - La corrida se corta tras 5 fallos seguidos.
+  - Se publica un producto a la vez, leyendo el valor justo antes de enviar.
+  - Una corrida completa pedida durante otra no se pierde.
+  - La ventana incremental usa el reloj de la base, con índice en `inventory.updated_at`.
+  - Un aumento (o una primera publicación) espera mientras hay pedidos online sin importar de los últimos 30 minutos.
+  - Lo que deben los pedidos online se descuenta de lo publicado y se reserva solo cuando entra stock, empezando por el pedido más viejo. Hay test MySQL.
+  - Un producto borrado se publica con 0.
+  - Dos facturas simultáneas sobre un remito: la segunda recibe 409, no 500.
+- [x] **Baja:**
+  - La lista de ubicaciones no vendibles se toma de `StockLedger`.
+  - Publicación forzada diaria, que corrige ediciones hechas a mano en el panel de Tiendanube.
+- **Pendiente / decisión:**
+  - Facturar remitos con control de calidad pendiente (el servidor lo permite; la pantalla solo ofrece aprobados).
+  - Varias instancias del servidor duplicarían las corridas: hoy hay una sola.
+
+Evidencia: validate 0 (890 + 87); coverage 96,81/90,29/94,24; integración 88/88 ×3; RBAC OK; E2E 6/6; simulación 153/153.
+
 ## AUD-006 — 2026-10-12 — `guardian-integridad` sobre ADR-017 (delta sin commitear de `codex/simulacion-operativa`)
 
 Todos los hallazgos técnicos fueron verificados y corregidos:

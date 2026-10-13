@@ -102,7 +102,7 @@ class SalesService extends BaseService {
         return createOrderUseCase._decreaseInventoryForOrder(connection, payload);
     }
 
-    async _restoreInventoryForCancelledOrder(connection, orderId, originalStatus = 'pending') {
+    async _restoreInventoryForCancelledOrder(connection, orderId, originalStatus = 'pending', allocationTracked = false) {
         const statusStr = String(originalStatus || '').trim().toLowerCase();
         
         // If order was already packed or dispatched, it had physical stock deductions, so we restore physically
@@ -168,8 +168,11 @@ class SalesService extends BaseService {
                         [alloc.id]
                     );
                 }
-            } else {
-                // Legacy fallback: release by product reservation
+            } else if (!allocationTracked) {
+                // Legacy fallback (orders from before allocations existed): release by product
+                // reservation. Never for an order tracked by allocations (AUD-007): one that
+                // could reserve nothing (an online order without stock) would free the
+                // reservations of other orders.
                 const [orderItems] = await connection.query(
                     'SELECT product_id, quantity FROM order_items WHERE order_id = ? FOR UPDATE',
                     [orderId]
@@ -289,7 +292,7 @@ class SalesService extends BaseService {
                     [orderId]
                 );
                 cancellationCreditAmount = this._roundMoney(paymentRows[0]?.paid_amount || 0);
-                await this._restoreInventoryForCancelledOrder(connection, orderId, order.status);
+                await this._restoreInventoryForCancelledOrder(connection, orderId, order.status, Boolean(Number(order.allocation_tracked || 0)));
             }
 
             // Automate WMS picking session management
@@ -336,7 +339,7 @@ class SalesService extends BaseService {
                     [orderId]
                 );
 
-                if (allocations.length > 0) {
+                if (allocations.length > 0 || Number(order.allocation_tracked || 0)) {
                     const allocationCosts = await accountingService.productUnitCosts(connection, allocations.map((alloc) => alloc.product_id));
                     for (const alloc of allocations) {
                         const reserved = Number(alloc.reserved_quantity || 0);
@@ -367,6 +370,33 @@ class SalesService extends BaseService {
                             "UPDATE order_item_allocations SET status = 'picked', picked_quantity = ?, shortage_quantity = ? WHERE id = ?",
                             [picked, Math.max(0, reserved - picked), alloc.id]
                         );
+                    }
+
+                    // AUD-007: units picked beyond what was reserved (an online order that came
+                    // without stock and was completed when goods arrived) also leave stock, from
+                    // what is free, never below zero. Goods that already left through another
+                    // channel (assumeFullyPicked) are recorded even if the system lacked them.
+                    const [extras] = await connection.query(
+                        `SELECT oi.id, oi.product_id, oi.picked_quantity,
+                                COALESCE((SELECT SUM(a.picked_quantity) FROM order_item_allocations a
+                                          WHERE a.order_item_id = oi.id AND a.status = 'picked'), 0) AS allocated_picked
+                         FROM order_items oi WHERE oi.order_id = ?`,
+                        [orderId]
+                    );
+                    for (const item of extras) {
+                        const extra = Number(item.picked_quantity || 0) - Number(item.allocated_picked || 0);
+                        if (extra <= 0) continue;
+                        const lockedRows = await stockLedger.lockSellableRows(connection, [item.product_id], { channel: 'order' });
+                        await stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
+                            productId: item.product_id,
+                            productName: item.product_id,
+                            quantity: extra,
+                            orderId,
+                            userId,
+                            reason: 'Order stock deduction (beyond reservation)',
+                            unitCost: (await accountingService.productUnitCosts(connection, [item.product_id])).get(item.product_id) || 0,
+                            allowShortage: Boolean(assumeFullyPicked)
+                        });
                     }
                 } else {
                     // Legacy fallback: release reservations & deduct physical stock

@@ -21,7 +21,10 @@ export class ReceptionService {
     async getReceptions(filters = {}) {
         const { status, supplier_id } = filters;
         let query = `
-            SELECT r.*, s.name AS supplier_name, po.po_number
+            SELECT r.*, s.name AS supplier_name, po.po_number,
+                   -- ADR-019: the purchase invoice that already covers this delivery note, if any.
+                   (SELECT sir.supplier_invoice_id FROM supplier_invoice_receptions sir
+                    WHERE sir.reception_id = r.id LIMIT 1) AS supplier_invoice_id
             FROM receptions r
             LEFT JOIN suppliers s ON r.supplier_id = s.id
             LEFT JOIN purchase_orders po ON r.purchase_order_id = po.id

@@ -265,7 +265,12 @@ test('startServer boots after a successful init, schedules background workers, a
     const workerCalls = [];
     const previousFailed = tiendaNubeService.processFailedSyncs;
     const previousPending = tiendaNubeService.processPendingWebhookEvents;
+    const previousReconcile = tiendaNubeService.reconcileStock;
     let failNext = false;
+    tiendaNubeService.reconcileStock = async (options) => {
+        workerCalls.push({ reconcile: options || {} });
+        if (failNext) throw new Error('stock boom');
+    };
     tiendaNubeService.processFailedSyncs = async () => {
         workerCalls.push('failed');
         if (failNext) throw new Error('sync boom');
@@ -278,6 +283,7 @@ test('startServer boots after a successful init, schedules background workers, a
         globalThis.setInterval = realSetInterval;
         tiendaNubeService.processFailedSyncs = previousFailed;
         tiendaNubeService.processPendingWebhookEvents = previousPending;
+        tiendaNubeService.reconcileStock = previousReconcile;
         for (const { handle } of timers) clearInterval(handle);
     });
 
@@ -289,26 +295,31 @@ test('startServer boots after a successful init, schedules background workers, a
     assert.equal(res.status, 200);
     assert.ok(logs.log.some(([line]) => String(line).includes('WSM SportsERP Backend Started')));
 
-    // Workers: failed syncs every 5 min, webhook recovery every minute; both unref'd.
-    assert.deepEqual(timers.map((timer) => timer.ms), [5 * 60 * 1000, 60 * 1000]);
+    // Workers: failed syncs every 5 min, stock reconciliation every 20 s (full every hour, ADR-019),
+    // webhook recovery every minute; all unref'd.
+    assert.deepEqual(timers.map((timer) => timer.ms), [5 * 60 * 1000, 20 * 1000, 60 * 60 * 1000, 24 * 60 * 60 * 1000, 60 * 1000]);
     assert.ok(timers.every((timer) => timer.unrefCalls === 1));
-    timers[0].fn();
-    timers[1].fn();
+    for (const timer of timers) timer.fn();
     assert.equal(workerCalls[0], 'failed');
-    assert.equal(workerCalls[1].pending, salesService);
+    assert.deepEqual(workerCalls[1], { reconcile: {} });
+    assert.deepEqual(workerCalls[2], { reconcile: { full: true } });
+    assert.deepEqual(workerCalls[3], { reconcile: { full: true, force: true } });
+    assert.equal(workerCalls[4].pending, salesService);
 
     failNext = true;
-    timers[0].fn();
-    timers[1].fn();
+    for (const timer of timers) timer.fn();
     await new Promise((resolve) => setImmediate(resolve));
     assert.ok(logs.error.some(([label]) => label === '[TiendaNube Background Sync] Error:'));
     assert.ok(logs.error.some(([label]) => label === '[TiendaNube Webhook Worker] Error:'));
+    assert.ok(logs.error.some(([label]) => label === '[TiendaNube Stock] Error:'));
+    assert.ok(logs.error.some(([label]) => label === '[TiendaNube Stock] Error en la conciliación completa:'));
+    assert.ok(logs.error.some(([label]) => label === '[TiendaNube Stock] Error en la publicación diaria:'));
 
     // Graceful shutdown stops the workers and the HTTP server.
     const clearedBefore = timers.length;
     await shutdown('SIGINT');
     assert.equal(server.listening, false);
-    assert.equal(clearedBefore, 2);
+    assert.equal(clearedBefore, 5);
     const events = logs.log.map(([line]) => { try { return JSON.parse(line).event; } catch { return null; } });
     assert.ok(events.includes('shutdown_started'));
     assert.ok(events.includes('shutdown_completed'));

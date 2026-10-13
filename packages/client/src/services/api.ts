@@ -275,7 +275,7 @@ type ProductUpsertInput =
         status?: "active" | "inactive";
     };
 
-export type PosExceptionType = "price" | "stock_shortage";
+export type PosExceptionType = "price" | "stock_shortage" | "channel_stock_shortage";
 
 export type PosExceptionPriceDetails = {
     source: "offline_pos";
@@ -424,9 +424,21 @@ type CreditNoteCreateInput = {
     notes?: string;
 };
 
+export type SupplierInvoiceCreateResult = {
+    id: string;
+    success: boolean;
+    total_amount: number;
+    // Neto recibido al costo y diferencia contra el neto de la factura (solo con remitos vinculados).
+    receptions_net?: number;
+    receptions_difference?: number;
+};
+
 type ReceptionRecord = {
     id: string;
     reception_number: string;
+    remito_number?: string | null;
+    // Factura de proveedor que ya cubre este remito.
+    supplier_invoice_id?: string | null;
     supplier_name: string;
     po_number?: string;
     reception_date?: string;
@@ -746,7 +758,7 @@ export const api = {
     getTiendanubeConfig: () =>
         httpClient.get<import("@/types").TiendaNubeIntegrationConfig>("/api/integrations/tiendanube/config"),
 
-    updateTiendanubeConfig: (config: { clientId: string; clientSecret?: string; locationId: string }) =>
+    updateTiendanubeConfig: (config: { clientId: string; clientSecret?: string; locationId: string; safetyStockEnabled?: boolean; safetyStock?: number }) =>
         httpClient.patch<import("@/types").TiendaNubeIntegrationConfig>("/api/integrations/tiendanube/config", config),
 
     getOnlineStoreOverview: () =>
@@ -905,7 +917,7 @@ export const api = {
         invoice_number: string;
         invoice_type: "A" | "B" | "C" | "M";
         supplier_id: string;
-        reception_id?: string;
+        reception_ids?: string[];
         purchase_order_id?: string;
         issue_date: string;
         due_date?: string;
@@ -917,7 +929,7 @@ export const api = {
         other_taxes?: number;
         total_amount?: number;
         notes?: string;
-    }) => httpClient.post<{ id: string; success: boolean; total_amount: number }>("/api/supplier-invoices", data),
+    }) => httpClient.post<SupplierInvoiceCreateResult>("/api/supplier-invoices", data),
 
     // ==================== PURCHASE ORDERS ====================
     getPurchaseOrders: (filters?: { supplier_id?: string; status?: string }) =>

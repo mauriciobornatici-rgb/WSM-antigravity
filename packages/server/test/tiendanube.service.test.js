@@ -397,6 +397,13 @@ test('processFailedSyncs retries pending entries and updates status to completed
                 }]];
             }
 
+            // ADR-019: a retry publishes today's available stock and records it.
+            if (statement.includes('FROM products p')) {
+                return [[{ id: params?.[1]?.[0], tiendanube_safety_stock: null, available: 15 }]];
+            }
+            if (statement.includes('tiendanube_stock_state')) {
+                return [{ affectedRows: 1 }];
+            }
             if (statement.includes('UPDATE failed_syncs')) {
                 return [{ affectedRows: 1 }];
             }
@@ -455,6 +462,13 @@ test('retrySync retries manual sync and throws on error', async () => {
                 }]];
             }
 
+            // ADR-019: a retry publishes today's available stock and records it.
+            if (statement.includes('FROM products p')) {
+                return [[{ id: params?.[1]?.[0], tiendanube_safety_stock: null, available: 15 }]];
+            }
+            if (statement.includes('tiendanube_stock_state')) {
+                return [{ affectedRows: 1 }];
+            }
             if (statement.includes('UPDATE failed_syncs')) {
                 return [{ affectedRows: 1 }];
             }

@@ -256,12 +256,13 @@ export default function ReceptionsPage() {
 
     async function handleCreateSupplierInvoice(data: SupplierInvoicePayload) {
         try {
-            await createInvoiceMutation.mutateAsync(data);
+            const result = await createInvoiceMutation.mutateAsync(data);
             toast.success("Factura registrada correctamente", {
                 description: "Se actualizó el saldo del proveedor y el Libro IVA Compras contable.",
             });
             setIsInvoiceDialogOpen(false);
             await queryClient.invalidateQueries({ queryKey: ["supplier-invoices"] });
+            return result;
         } catch {
             // El manejo global de React Query ya informa el error.
         }

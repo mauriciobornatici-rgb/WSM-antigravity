@@ -64,6 +64,7 @@ export type ProductFormSubmitData = {
     vat_rate: number;
     stock_initial?: number;
     image_url?: string;
+    tiendanube_safety_stock?: number | null;
 };
 
 interface ProductFormProps {
@@ -123,6 +124,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             sale_price: String(grossPrice(initialData?.sale_price ?? 0, initialData?.vat_rate)),
             stock_initial: "0",
             image_url: initialData?.image_url ?? "",
+            tiendanube_safety_stock: initialData?.tiendanube_safety_stock ?? null,
         },
     });
 
@@ -365,6 +367,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             sale_price: netForTypedFinalPrice(values.sale_price, initialData?.sale_price, vatRate),
             vat_rate: vatRate,
             image_url: values.image_url?.trim() || "",
+            tiendanube_safety_stock: values.tiendanube_safety_stock ?? null,
         };
 
         const location = values.location?.trim() || "";
@@ -725,6 +728,36 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     )}
                                 />
                             </div>
+                        </div>
+
+                        <div className="mt-3 grid gap-3 md:max-w-xs">
+                            <FormField<ProductFormSchema>
+                                control={form.control}
+                                name="tiendanube_safety_stock"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>Stock de seguridad en la tienda online <span className="text-xs font-normal text-muted-foreground">(opcional)</span></FormLabel>
+                                        <FormControl>
+                                            <Input
+                                                inputMode="numeric"
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                placeholder="Usa el valor general"
+                                                name={field.name}
+                                                ref={field.ref}
+                                                onBlur={field.onBlur}
+                                                value={field.value ?? ""}
+                                                onChange={(event) => field.onChange(event.target.value === "" ? null : event.target.value)}
+                                            />
+                                        </FormControl>
+                                        <FormDescription className="text-xs">
+                                            Solo aplica si la política de stock de seguridad está activa. Vacío = usa el valor general.
+                                        </FormDescription>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
                         </div>
 
                         {!isEditMode ? (

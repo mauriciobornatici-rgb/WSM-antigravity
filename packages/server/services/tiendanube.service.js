@@ -6,6 +6,8 @@ import auditService from './audit.service.js';
 import accountingService from './accounting.service.js';
 import { lineAmounts, netFromGross } from '../utils/vatMath.js';
 import { resolveUnitPrice } from '../domains/sales/CreateOrderUseCase.js';
+// Locations whose units cannot be sold: the same list sales and reservations use.
+import { NON_SELLABLE_LOCATIONS } from '../domains/inventory/StockLedger.js';
 
 export class TiendaNubeService {
     constructor({ db = pool, http = axios, env = process.env } = {}) {
@@ -713,6 +715,220 @@ export class TiendaNubeService {
         }
     }
 
+    /**
+     * ADR-019 — one stock: what the online store may sell is what the store can still sell.
+     * Physical stock in sellable locations minus what is reserved for orders (local or online),
+     * minus what online orders still owe (units sold online without stock, AUD-007), minus the
+     * optional safety stock when the policy is on (per product, or store-wide).
+     * Returns Map(productId → units, never negative).
+     */
+    async availableStock(productIds, executor = this.db) {
+        const ids = [...new Set((productIds || []).filter(Boolean))];
+        const result = new Map();
+        if (ids.length === 0) return result;
+        const [settingsRows] = await executor.query(
+            'SELECT tiendanube_safety_stock_enabled AS enabled, tiendanube_safety_stock AS units FROM company_settings WHERE id = 1 LIMIT 1'
+        );
+        const settings = settingsRows?.[0] || {};
+        const policyOn = Boolean(Number(settings.enabled || 0));
+        const [rows] = await executor.query(
+            `SELECT p.id, p.tiendanube_safety_stock,
+                    COALESCE((SELECT SUM(GREATEST(i.quantity - i.reserved_quantity, 0)) FROM inventory i
+                              WHERE i.product_id = p.id AND i.deleted_at IS NULL AND i.location NOT IN (?)), 0) AS available,
+                    COALESCE((SELECT SUM(GREATEST(oi.quantity - COALESCE((SELECT SUM(a.reserved_quantity) FROM order_item_allocations a
+                                                                          WHERE a.order_item_id = oi.id AND a.status IN ('reserved', 'picked')), 0), 0))
+                              FROM order_items oi JOIN orders o ON o.id = oi.order_id
+                              WHERE oi.product_id = p.id AND o.allocation_tracked = 1 AND o.deleted_at IS NULL
+                                AND o.external_source IS NOT NULL AND o.external_source <> 'pos'
+                                AND o.status NOT IN ('packed', 'dispatched', 'delivered', 'completed', 'cancelled', 'returned')), 0) AS owed
+             FROM products p
+             WHERE p.id IN (?)`,
+            [NON_SELLABLE_LOCATIONS, ids]
+        );
+        for (const row of Array.isArray(rows) ? rows : []) {
+            const safety = policyOn
+                ? Math.max(0, Number(row.tiendanube_safety_stock ?? settings.units ?? 0))
+                : 0;
+            result.set(row.id, Math.max(0, Number(row.available || 0) - Number(row.owed || 0) - safety));
+        }
+        return result;
+    }
+
+    async _recordPushedStock(productId, stock, variantId = null) {
+        await this.db.query(
+            `INSERT INTO tiendanube_stock_state (product_id, pushed_stock, variant_id, error_count, last_error_at)
+             VALUES (?, ?, ?, 0, NULL)
+             ON DUPLICATE KEY UPDATE pushed_stock = VALUES(pushed_stock),
+                variant_id = COALESCE(VALUES(variant_id), variant_id), error_count = 0, last_error_at = NULL`,
+            [productId, stock, variantId]
+        );
+    }
+
+    async _recordPushFailure(productId) {
+        await this.db.query(
+            `INSERT INTO tiendanube_stock_state (product_id, pushed_stock, error_count, last_error_at)
+             VALUES (?, NULL, 1, NOW())
+             ON DUPLICATE KEY UPDATE error_count = error_count + 1, last_error_at = NOW()`,
+            [productId]
+        );
+    }
+
+    // One publish at a time per product (AUD-007): two triggers cannot publish out of order.
+    async _withProductLock(productId, fn) {
+        if (!this.productLocks) this.productLocks = new Map();
+        const previous = this.productLocks.get(productId) || Promise.resolve();
+        let release;
+        const current = new Promise((resolve) => { release = resolve; });
+        const chained = previous.then(() => current);
+        this.productLocks.set(productId, chained);
+        await previous;
+        try {
+            return await fn();
+        } finally {
+            release();
+            if (this.productLocks.get(productId) === chained) this.productLocks.delete(productId);
+        }
+    }
+
+    /**
+     * Publishes the available stock of these products, calling Tiendanube only for the ones
+     * whose value changed since the last successful publish (most runs call nothing).
+     * - The value is read inside a per-product lock, right before sending.
+     * - A product that keeps failing waits longer each time (30 s doubling up to 1 h).
+     * - An increase waits while online orders are still being imported (Tiendanube already
+     *   discounted them: publishing more would undo a sale not yet recorded here).
+     * - After several consecutive failures the run stops (Tiendanube is down).
+     */
+    async pushAvailableStock(productIds, { force = false } = {}) {
+        const ids = [...new Set((productIds || []).filter(Boolean))];
+        if (ids.length === 0) return { checked: 0, pushed: 0 };
+        const [linked] = await this.db.query(
+            `SELECT p.id, p.tiendanube_variant_id, s.pushed_stock, s.variant_id, s.error_count,
+                    TIMESTAMPDIFF(SECOND, s.last_error_at, NOW()) AS seconds_since_error
+             FROM products p
+             LEFT JOIN tiendanube_stock_state s ON s.product_id = p.id
+             WHERE p.id IN (?) AND p.tiendanube_sync_enabled = 1
+               AND p.tiendanube_product_id IS NOT NULL AND p.tiendanube_variant_id IS NOT NULL`,
+            [ids]
+        );
+        if (!linked?.length) return { checked: 0, pushed: 0 };
+        const pendingOrders = await this._hasPendingOrderImports();
+        let pushed = 0;
+        let consecutiveFailures = 0;
+        for (const row of linked) {
+            const errors = Number(row.error_count || 0);
+            if (!force && errors > 0 && row.seconds_since_error != null
+                && Number(row.seconds_since_error) < Math.min(3600, 30 * 2 ** (errors - 1))) {
+                continue;
+            }
+            const outcome = await this._withProductLock(row.id, async () => {
+                const value = (await this.availableStock([row.id])).get(row.id) ?? 0;
+                // A new variant (re-linked) has never received anything: publish it.
+                const sameVariant = row.variant_id == null || String(row.variant_id) === String(row.tiendanube_variant_id);
+                const previous = row.pushed_stock == null || !sameVariant ? null : Number(row.pushed_stock);
+                if (!force && previous === value) return 'same';
+                // Anything that could raise what Tiendanube shows (a higher value, or a first
+                // publish) waits until the pending online orders are imported.
+                if (pendingOrders && (previous == null || value > previous)) return 'deferred';
+                const response = await this.syncStock(row.id, value);
+                if (response === undefined) {
+                    await this._recordPushFailure(row.id);
+                    return 'failed';
+                }
+                await this._recordPushedStock(row.id, value, row.tiendanube_variant_id);
+                return 'pushed';
+            });
+            if (outcome === 'pushed') {
+                pushed++;
+                consecutiveFailures = 0;
+            } else if (outcome === 'failed') {
+                consecutiveFailures++;
+                if (consecutiveFailures >= 5) return { checked: linked.length, pushed, aborted: true };
+            }
+        }
+        return { checked: linked.length, pushed };
+    }
+
+    // Online orders notified by Tiendanube in the last 30 minutes and not imported yet.
+    async _hasPendingOrderImports() {
+        const [rows] = await this.db.query(
+            `SELECT COUNT(*) AS n FROM tiendanube_webhook_events
+             WHERE status IN ('received', 'processing', 'failed') AND event LIKE 'order/%'
+               AND created_at >= NOW() - INTERVAL 30 MINUTE`
+        );
+        return Number(rows?.[0]?.n || 0) > 0;
+    }
+
+    /**
+     * Background reconciliation (ADR-019). First the missing units of online orders are
+     * reserved from what arrived (oldest order first). Incremental runs then look only at
+     * products whose stock rows changed since the previous run (by the database clock) or that
+     * were never published. A full run compares every linked product. A forced run (daily)
+     * publishes every product again, which also corrects edits made in the Tiendanube panel.
+     */
+    async reconcileStock({ full = false, force = false } = {}) {
+        if (this.stockReconcileRunning) {
+            // A full run asked during another run is not lost: it runs right after.
+            if (full) this.pendingStockReconcile = { full: true, force: force || this.pendingStockReconcile?.force };
+            return { skipped: true };
+        }
+        this.stockReconcileRunning = true;
+        try {
+            const [[clock]] = await this.db.query('SELECT NOW() AS now');
+            const startedAt = clock?.now ? new Date(clock.now) : new Date();
+            const incremental = !full && Boolean(this.lastStockReconcileAt);
+            let ids;
+            if (!incremental) {
+                const [rows] = await this.db.query(
+                    `SELECT id FROM products WHERE tiendanube_sync_enabled = 1 AND deleted_at IS NULL
+                       AND tiendanube_product_id IS NOT NULL AND tiendanube_variant_id IS NOT NULL`
+                );
+                ids = rows.map((row) => row.id);
+            } else {
+                // A little overlap so a change committed during the previous run is not missed.
+                const since = new Date(this.lastStockReconcileAt.getTime() - 15 * 1000);
+                const [rows] = await this.db.query(
+                    `SELECT p.id FROM products p
+                     LEFT JOIN tiendanube_stock_state s ON s.product_id = p.id
+                     WHERE p.tiendanube_sync_enabled = 1 AND p.deleted_at IS NULL
+                       AND p.tiendanube_product_id IS NOT NULL AND p.tiendanube_variant_id IS NOT NULL
+                       AND (p.updated_at >= ? OR s.product_id IS NULL OR s.error_count > 0
+                            OR EXISTS (SELECT 1 FROM inventory i WHERE i.product_id = p.id AND i.updated_at >= ?))`,
+                    [since, since]
+                );
+                ids = rows.map((row) => row.id);
+            }
+            try {
+                const { default: createOrderUseCase } = await import('../domains/sales/CreateOrderUseCase.js');
+                await (this.shortageReserver || createOrderUseCase).reserveOpenShortages(incremental ? ids : null);
+            } catch (error) {
+                // Publishing must not stop because a reservation failed: it is retried next run.
+                console.error('[Faltantes de pedidos online] Error:', error.message);
+            }
+            const creds = await this.getCredentials();
+            if (!creds) return { skipped: true };
+            const result = await this.pushAvailableStock(ids, { force });
+            if (!result.aborted) this.lastStockReconcileAt = startedAt;
+            return result;
+        } finally {
+            this.stockReconcileRunning = false;
+            const pending = this.pendingStockReconcile;
+            this.pendingStockReconcile = null;
+            if (pending) {
+                setImmediate(() => {
+                    this.reconcileStock(pending).catch((err) => console.error('[TiendaNube Stock] Error:', err));
+                });
+            }
+        }
+    }
+
+    // A product deleted here stops being sold online: it is published with 0 (AUD-007).
+    async publishZeroStock(productId) {
+        const response = await this.syncStock(productId, 0);
+        if (response !== undefined) await this._recordPushedStock(productId, 0);
+        return response;
+    }
+
     async queueFailedSync(productId, tnProductId, tnVariantId, stock, errorMessage) {
         const id = crypto.randomUUID();
         await this.db.query(`
@@ -720,10 +936,12 @@ export class TiendaNubeService {
                 id, product_id, tiendanube_product_id, tiendanube_variant_id, stock, status, last_error, attempts
             ) VALUES (?, ?, ?, ?, ?, 'pending', ?, 0)
             ON DUPLICATE KEY UPDATE
+                -- AUD-007: a failure that repeats keeps counting its attempts (it no longer
+                -- restarts at 0 each time, which retried a dead variant forever).
+                attempts = IF(status = 'completed', 0, attempts),
                 stock = VALUES(stock),
                 status = 'pending',
-                last_error = VALUES(last_error),
-                attempts = 0
+                last_error = VALUES(last_error)
         `, [id, productId, tnProductId, tnVariantId, stock, errorMessage]);
     }
 
@@ -766,9 +984,12 @@ export class TiendaNubeService {
         }
 
         try {
+            // ADR-019: publish today's available stock, not the value from when it failed.
+            const fresh = (await this.availableStock([row.product_id])).get(row.product_id) ?? Number(stock);
             const locationId = await this.resolveStockLocation(creds);
-            const payload = this.stockPayload(stock, tiendanube_variant_id, locationId);
+            const payload = this.stockPayload(fresh, tiendanube_variant_id, locationId);
             await this.apiRequest('post', creds, `/products/${tiendanube_product_id}/variants/stock`, payload);
+            await this._recordPushedStock(row.product_id, fresh);
 
             await this.db.query(`
                 UPDATE failed_syncs
@@ -821,9 +1042,12 @@ export class TiendaNubeService {
                 `, [id]);
                 if (claim.affectedRows !== 1) continue;
 
+                // ADR-019: publish today's available stock, not the value from when it failed.
+                const fresh = (await this.availableStock([product_id])).get(product_id) ?? Number(stock);
                 const locationId = await this.resolveStockLocation(creds);
-                const payload = this.stockPayload(stock, tiendanube_variant_id, locationId);
+                const payload = this.stockPayload(fresh, tiendanube_variant_id, locationId);
                 await this.apiRequest('post', creds, `/products/${tiendanube_product_id}/variants/stock`, payload);
+                await this._recordPushedStock(product_id, fresh);
 
                 await this.db.query(`
                     UPDATE failed_syncs
@@ -1437,7 +1661,11 @@ export class TiendaNubeService {
         }
         const withVariants = await this.getCatalogFamily(familyId);
         if (!withVariants?.variants?.length) throw new Error('El producto no tiene variantes publicables');
-        const payload = this.buildRemoteProductPayload(family, withVariants.variants);
+        // AUD-007: publishing the product sends the same stock the sync publishes (available,
+        // minus what online orders owe, minus the safety stock), and remembers it.
+        const available = await this.availableStock(withVariants.variants.map((variant) => variant.product_id));
+        const publishable = withVariants.variants.map((variant) => ({ ...variant, stock: available.get(variant.product_id) ?? 0 }));
+        const payload = this.buildRemoteProductPayload(family, publishable);
 
         try {
             const response = family.remote_product_id
@@ -1466,6 +1694,7 @@ export class TiendaNubeService {
                      WHERE id = ?`,
                     [String(remote.id), String(remoteVariant.id), variant.product_id]
                 );
+                await this._recordPushedStock(variant.product_id, available.get(variant.product_id) ?? 0, String(remoteVariant.id));
             }
             return { remoteProductId: String(remote.id), product: remote };
         } catch (error) {
@@ -1972,18 +2201,22 @@ export class TiendaNubeService {
 
     async readConfig(executor = this.db, forUpdate = false) {
         const [rows] = await executor.query(
-            `SELECT tiendanube_client_id, tiendanube_client_secret, tiendanube_location_id
+            `SELECT tiendanube_client_id, tiendanube_client_secret, tiendanube_location_id,
+                tiendanube_safety_stock_enabled, tiendanube_safety_stock
          FROM company_settings WHERE id = 1 LIMIT 1${forUpdate ? ' FOR UPDATE' : ''}`
         );
         const settings = rows[0] || {};
         return {
             clientId: settings.tiendanube_client_id || '',
             clientSecretConfigured: Boolean(settings.tiendanube_client_secret),
-            locationId: settings.tiendanube_location_id || ''
+            locationId: settings.tiendanube_location_id || '',
+            // ADR-019: optional safety stock (policy): units kept out of the online store.
+            safetyStockEnabled: Boolean(Number(settings.tiendanube_safety_stock_enabled || 0)),
+            safetyStock: Number(settings.tiendanube_safety_stock || 0)
         };
     }
 
-    async updateConfig({ clientId, clientSecret, locationId }, userId) {
+    async updateConfig({ clientId, clientSecret, locationId, safetyStockEnabled, safetyStock }, userId) {
         const encryptedSecret = clientSecret?.trim() ? encrypt(clientSecret.trim()) : null;
         const connection = await this.db.getConnection();
         try {
@@ -1991,13 +2224,20 @@ export class TiendaNubeService {
             const previous = await this.readConfig(connection, true);
             await connection.query(
                 `INSERT INTO company_settings (
-                id, tiendanube_client_id, tiendanube_client_secret, tiendanube_location_id
-             ) VALUES (1, ?, ?, ?)
+                id, tiendanube_client_id, tiendanube_client_secret, tiendanube_location_id,
+                tiendanube_safety_stock_enabled, tiendanube_safety_stock
+             ) VALUES (1, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
                 tiendanube_client_id = VALUES(tiendanube_client_id),
                 tiendanube_client_secret = COALESCE(VALUES(tiendanube_client_secret), tiendanube_client_secret),
-                tiendanube_location_id = VALUES(tiendanube_location_id)`,
-                [clientId, encryptedSecret, locationId]
+                tiendanube_location_id = VALUES(tiendanube_location_id),
+                tiendanube_safety_stock_enabled = VALUES(tiendanube_safety_stock_enabled),
+                tiendanube_safety_stock = VALUES(tiendanube_safety_stock)`,
+                [
+                    clientId, encryptedSecret, locationId,
+                    (safetyStockEnabled === undefined ? previous.safetyStockEnabled : safetyStockEnabled) ? 1 : 0,
+                    safetyStock === undefined ? previous.safetyStock : Math.max(0, Math.floor(Number(safetyStock) || 0))
+                ]
             );
             const updated = await this.readConfig(connection);
             await auditService.log({
@@ -2009,6 +2249,12 @@ export class TiendaNubeService {
                 new_values: updated
             }, connection);
             await connection.commit();
+            if (updated.safetyStockEnabled !== previous.safetyStockEnabled || updated.safetyStock !== previous.safetyStock) {
+                // The policy changes what every product publishes: compare them all now.
+                setImmediate(() => {
+                    this.reconcileStock({ full: true }).catch((err) => console.error('[TiendaNube Stock] Error:', err));
+                });
+            }
             return updated;
         } catch (error) {
             await connection.rollback();

@@ -194,6 +194,8 @@ export const supplierInvoiceCreateSchema = z.object({
     net_amount: z.coerce.number().min(0),
     vat_amount: z.coerce.number().min(0),
   })).max(6).optional(),
+  // ADR-019: the delivery notes (receptions) the invoice covers: one or several.
+  reception_ids: z.array(uuidSchema).max(50).optional(),
   // ADR-017: goods (inventory), freight (Fletes y envíos) or another expense.
   purchase_kind: z.enum(['goods', 'shipping', 'expense']).optional(),
 });

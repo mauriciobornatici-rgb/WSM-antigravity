@@ -29,6 +29,8 @@ export interface Product {
     tiendanube_sync_enabled?: boolean | number
     tiendanube_product_id?: string
     tiendanube_variant_id?: string
+    // Stock de seguridad propio en la tienda online; null/ausente = usa el valor general.
+    tiendanube_safety_stock?: number | null
 }
 
 export interface InventoryItem {
@@ -401,4 +403,6 @@ export interface TiendaNubeIntegrationConfig {
     clientId: string
     clientSecretConfigured: boolean
     locationId: string
+    safetyStockEnabled: boolean
+    safetyStock: number
 }

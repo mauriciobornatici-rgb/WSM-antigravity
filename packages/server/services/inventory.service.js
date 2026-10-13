@@ -400,9 +400,9 @@ class InventoryService extends BaseService {
         // We do this without await so it doesn't block the database transaction
         setImmediate(async () => {
             try {
-                const totalStock = await this.getProductStock(movementData.product_id);
+                // ADR-019: available stock (physical minus reserved), only when it changed.
                 const tiendanubeService = (await import('./tiendanube.service.js')).default;
-                await tiendanubeService.syncStock(movementData.product_id, totalStock);
+                await tiendanubeService.pushAvailableStock([movementData.product_id]);
             } catch (err) {
                 console.error('[TiendaNube Sync] Error calculating stock for sync:', err);
             }

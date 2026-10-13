@@ -39,7 +39,7 @@ function createDb({ rows = [], connectionQuery } = {}) {
 }
 
 test('exports the constants and a default singleton service', () => {
-    assert.deepEqual(EXCEPTION_TYPES, { PRICE: 'price', STOCK_SHORTAGE: 'stock_shortage' });
+    assert.deepEqual(EXCEPTION_TYPES, { PRICE: 'price', STOCK_SHORTAGE: 'stock_shortage', CHANNEL_SHORTAGE: 'channel_stock_shortage' });
     assert.equal(Object.isFrozen(EXCEPTION_TYPES), true);
     assert.equal(REVIEW_ACTION, 'POS_EXCEPTION_REVIEWED');
     assert.ok(defaultService instanceof PosExceptionsService);
