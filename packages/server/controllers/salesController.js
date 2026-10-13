@@ -3,6 +3,7 @@ import financeService from '../services/finance.service.js';
 import pickupOrderCheckoutUseCase from '../domains/sales/PickupOrderCheckoutUseCase.js';
 import posCheckoutUseCase from '../domains/sales/PosCheckoutUseCase.js';
 import posExceptionsService from '../domains/sales/PosExceptionsService.js';
+import arcaAuthorizationService from '../domains/fiscal/ArcaAuthorizationService.js';
 import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
@@ -179,6 +180,10 @@ export const getInvoiceItems = catchAsync(async (req, res) => {
     }
     const rows = await salesService.getInvoiceItems(invoice_id);
     res.json(rows);
+});
+
+export const getArcaAlerts = catchAsync(async (req, res) => {
+    res.json(await arcaAuthorizationService.listAlerts());
 });
 
 export const getTaxConditions = catchAsync(async (req, res) => {

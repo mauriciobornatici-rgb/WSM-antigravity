@@ -1,5 +1,6 @@
 import { useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { fetchCompanySettingsSafe } from "@/lib/companySettings"
 import { toast } from "sonner"
 import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
@@ -11,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label"
 import type { Order } from "@/types"
 import type { InvoiceType } from "@/types/orders"
+import { suggestedInvoiceLetter, taxConditionName } from "@/lib/taxConditions"
 
 interface InvoiceDialogProps {
     open: boolean
@@ -77,7 +79,14 @@ function getInvoiceTotal(order: Order): number {
 
 export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: InvoiceDialogProps) {
     const queryClient = useQueryClient()
-    const [invoiceType, setInvoiceType] = useState<InvoiceType>("B")
+    // ADR-021: the letter starts from the customer's VAT condition, and a choice is kept per order.
+    const [choice, setChoice] = useState<{ orderId: string; type: InvoiceType } | null>(null)
+    // Same rule as the POS: a monotributista company issues C, so nothing is suggested then.
+    const companySettings = useQuery({ queryKey: queryKeys.companySettings, queryFn: fetchCompanySettingsSafe, staleTime: 5 * 60_000 })
+    const suggestedType: InvoiceType = suggestedInvoiceLetter(order?.client_tax_condition_id, companySettings.data?.billing?.iva_condition) ?? "B"
+    const invoiceType: InvoiceType = choice && choice.orderId === order?.id ? choice.type : suggestedType
+    const setInvoiceType = (type: InvoiceType) => { if (order) setChoice({ orderId: order.id, type }) }
+    const clientTaxCondition = taxConditionName(order?.client_tax_condition_id)
 
     const createInvoiceMutation = useMutation({
         mutationFn: ({ orderId, payload }: { orderId: string; payload: Parameters<typeof api.createInvoiceFromOrder>[1] }) =>
@@ -120,6 +129,7 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                         <div>
                             <span className="text-muted-foreground">Cliente: </span>
                             <strong className="text-foreground">{order?.customer_name || order?.client_name || "Consumidor final"}</strong>
+                            {clientTaxCondition ? <span className="text-muted-foreground"> · {clientTaxCondition}</span> : null}
                         </div>
                         {order?.id ? (
                             <div className="text-muted-foreground">
@@ -130,9 +140,9 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
 
                     <div className="grid gap-3 sm:grid-cols-2">
                         <div className="space-y-2">
-                            <Label>Tipo de factura</Label>
+                            <Label htmlFor="order-invoice-type">Tipo de factura</Label>
                             <Select value={invoiceType} onValueChange={(value) => setInvoiceType(value as InvoiceType)}>
-                                <SelectTrigger>
+                                <SelectTrigger id="order-invoice-type">
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>

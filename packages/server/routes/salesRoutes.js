@@ -40,6 +40,9 @@ router.post('/invoices/:id/authorize', canInvoice, validate(schemas.idParam), sa
 router.post('/invoices/:id/payments', canInvoice, validateZod(zodSchemas.invoicePayment), salesController.registerInvoicePayments);
 router.get('/invoice-items', canInvoice, validate(schemas.invoiceItemsQuery), salesController.getInvoiceItems);
 
+// ADR-021: ARCA documents in conflict or stuck in verification (panel and menu alert).
+router.get('/fiscal/arca-alerts', canInvoice, salesController.getArcaAlerts);
+
 // Tax data
 router.get('/tax-conditions', canInvoice, salesController.getTaxConditions);
 

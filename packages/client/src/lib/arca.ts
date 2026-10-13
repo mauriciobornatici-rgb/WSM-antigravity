@@ -39,6 +39,53 @@ export function arcaLastErrorText(doc: { status?: string | null | undefined; arc
     return typeof text === "string" && text.trim().length > 0 ? text : null
 }
 
+type ArcaAlertDocument = {
+    document_kind: "invoice" | "credit_note"
+    id: string
+    letter: string | null
+    point_of_sale: number | null
+    number: number | string | null
+}
+
+/** "Factura B 0001-00000042" / "Nota de crédito B 0001-00000007" (ADR-021 alerts). */
+export function arcaAlertTitle(doc: ArcaAlertDocument): string {
+    const kind = doc.document_kind === "invoice" ? "Factura" : "Nota de crédito"
+    const letter = doc.letter ? ` ${String(doc.letter).replace(/^NC_/, "")}` : ""
+    const number = doc.number == null || doc.number === ""
+        ? ""
+        : typeof doc.number === "number" || /^\d+$/.test(String(doc.number))
+            ? ` ${formatFiscalNumber(doc.point_of_sale, doc.number)}`
+            : ` ${doc.number}`
+    return `${kind}${letter}${number}`
+}
+
+/** Where the document is reviewed: the invoice itself, or the credit notes tab. */
+export function arcaAlertLink(doc: ArcaAlertDocument): string {
+    return doc.document_kind === "invoice"
+        ? `/invoices?invoice_id=${encodeURIComponent(doc.id)}`
+        : "/returns-warranties?tab=credits"
+}
+
+/** Menu and dashboard text: "2 en conflicto · 1 sin confirmar". */
+export function arcaAlertSummary(conflicts: number, stuck: number, rejected = 0): string {
+    const parts: string[] = []
+    if (conflicts > 0) parts.push(`${conflicts} en conflicto`)
+    if (stuck > 0) parts.push(`${stuck} sin confirmar`)
+    if (rejected > 0) parts.push(`${rejected} ${rejected === 1 ? "rechazado" : "rechazados"}`)
+    return parts.join(" · ")
+}
+
+/** Rejected by ARCA: back to pending with the reason and no CAE (AUD-009). */
+export const ARCA_REJECTED_LABEL = "Rechazado por ARCA"
+
+const NETWORK_ERROR = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|timeout|network/i
+
+/** The saved error of the last attempt in Spanish: a raw network error becomes a plain message. */
+export function arcaErrorText(error?: string | null): string | null {
+    if (!error || !error.trim()) return null
+    return NETWORK_ERROR.test(error) ? "ARCA no respondió (error de conexión)." : error
+}
+
 /**
  * Reports a failed authorize call. Only "arca_unavailable" (the voucher stays in verification and the server
  * settles it) and "arca_verifying" (still within the waiting time) are informative; anything else, including

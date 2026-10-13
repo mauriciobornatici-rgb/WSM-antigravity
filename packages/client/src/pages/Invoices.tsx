@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
+import { queryKeys } from "@/lib/queryKeys"
 import { toast } from "sonner"
 import { api } from "@/services/api"
 import { showErrorToast } from "@/lib/errorHandling"
@@ -24,6 +26,7 @@ import type { DraftInvoice, DraftInvoiceItem, InvoiceView } from "@/components/i
 
 export default function InvoicesPage() {
     const [searchParams, setSearchParams] = useSearchParams()
+    const queryClient = useQueryClient()
     const [invoices, setInvoices] = useState<InvoiceView[]>([])
     const [loading, setLoading] = useState(true)
     const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -248,6 +251,8 @@ export default function InvoicesPage() {
     }
 
     const handleAuthorizeInvoice = async (invoice: InvoiceView) => {
+        // Any attempt can settle or raise an ARCA alert (dashboard and menu).
+        const refreshArcaAlerts = () => void queryClient.invalidateQueries({ queryKey: queryKeys.arcaAlerts })
         try {
             const updatedInvoice = await api.authorizeInvoice(invoice.id)
             toast.success("Factura autorizada exitosamente con CAE")
@@ -257,8 +262,10 @@ export default function InvoicesPage() {
             
             // Reload the list of invoices
             void loadData()
+            refreshArcaAlerts()
         } catch (error) {
             reportArcaAuthorizeError("Error al autorizar factura", error)
+            refreshArcaAlerts()
             // The invoice keeps its new state (rejected with reason, or in verification): refresh list and open preview.
             try {
                 const [refreshed, fresh] = await Promise.all([api.getInvoices(), api.getInvoice(invoice.id)])

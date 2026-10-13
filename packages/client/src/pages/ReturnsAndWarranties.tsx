@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
+import { useSearchParams } from "react-router-dom"
 import { FileText, RotateCcw, ShieldCheck, Truck, BarChart3 } from "lucide-react"
 import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
@@ -27,6 +28,9 @@ import { mapClientReturnRows } from "@/components/returns/helpers"
 import type { CreditNoteRow } from "@/types/returns"
 
 export default function ReturnsAndWarrantiesPage() {
+    // A link (e.g. the ARCA alert on the dashboard) can open a tab: ?tab=credits
+    const [searchParams] = useSearchParams()
+    const initialTab = searchParams.get("tab") || "warranties"
     const [companySettings, setCompanySettings] = useState<CompanySettings>(DEFAULT_COMPANY_SETTINGS)
     const [selectedCreditNote, setSelectedCreditNote] = useState<CreditNoteRow | null>(null)
     const [activePrintLayout, setActivePrintLayout] = useState<"a4" | "thermal" | null>(null)
@@ -57,7 +61,7 @@ export default function ReturnsAndWarrantiesPage() {
                 <p className="text-muted-foreground">Gestión de reclamos, devoluciones y notas de crédito.</p>
             </div>
 
-            <Tabs defaultValue="warranties" className="space-y-4">
+            <Tabs defaultValue={initialTab} className="space-y-4">
                 <TabsList className="h-auto w-full justify-start gap-2 overflow-x-auto p-1">
                     <TabsTrigger value="warranties" className="shrink-0 gap-2">
                         <ShieldCheck className="h-4 w-4" />

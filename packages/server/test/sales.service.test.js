@@ -379,7 +379,7 @@ test('createManualInvoice computes granular Mixed-VAT and rounds line-by-line co
             if (statement.includes('INSERT INTO journal_entry_lines')) {
                 return [{ affectedRows: 1 }];
             }
-            if (statement.includes('SELECT id, name, tax_id, address FROM clients')) {
+            if (statement.includes('tax_condition_id FROM clients')) {
                 return [[{ id: 'client-1', name: 'Cliente Test', tax_id: '20-12345678-9', address: 'Calle Falsa 123' }]];
             }
             if (statement.includes('UPDATE clients')) {

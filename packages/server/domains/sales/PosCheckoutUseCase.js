@@ -91,11 +91,13 @@ export class PosCheckoutUseCase {
 
             let invoice = null;
             if (emitInvoice && !order.invoice_id) {
+                // ADR-021 / AUD-009: a sale made offline is never lost over the invoice letter:
+                // its number is still provisional, so a letter ARCA would refuse is corrected.
                 invoice = await this.salesService.createInvoice(order.id, {
                     invoice_type: invoiceType,
                     point_of_sale: pointOfSale,
                     payments,
-                }, userId, connection);
+                }, userId, connection, { checkReceiverCondition: !isOfflineReplay(orderData) });
             } else if (order.invoice_id) {
                 const [invoices] = await connection.query('SELECT * FROM invoices WHERE id = ?', [order.invoice_id]);
                 invoice = invoices[0] || null;
@@ -117,6 +119,9 @@ export class PosCheckoutUseCase {
                     shift_id: shift.shiftId,
                     ...(shift.reassigned ? { original_shift_id: shift.originalShiftId, reason: 'offline sale synced after shift close' } : {}),
                     invoice_id: invoice?.id || null,
+                    ...(invoice && invoiceType && String(invoice.invoice_type).toUpperCase() !== String(invoiceType).toUpperCase()
+                        ? { invoice_type_requested: invoiceType, invoice_type_issued: invoice.invoice_type }
+                        : {}),
                     shift_payments: cash.inserted,
                 },
             }, connection);

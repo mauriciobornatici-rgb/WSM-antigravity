@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import type { Client, Product } from "@/types"
 import type { ShippingMethod, CreateOrderItem, NewClientForm } from "@/types/orders"
+import { NO_TAX_CONDITION, taxConditionCuitError } from "@/lib/taxConditions"
 import { ShippingChargeFields } from "./ShippingChargeFields"
 import { EMPTY_SHIPPING_CHARGE, type ShippingChargeValue } from "./shippingCharge"
 import { useAuth } from "@/context/AuthContext"
@@ -78,6 +79,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
         phone: "",
         address: "",
         credit_limit: 0,
+        tax_condition_id: NO_TAX_CONDITION,
     })
 
     const createOrderMutation = useMutation({
@@ -222,6 +224,11 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
             toast.error("Nombre y CUIT/DNI son obligatorios")
             return
         }
+        const cuitError = taxConditionCuitError(newClient.tax_condition_id, newClient.tax_id)
+        if (cuitError) {
+            toast.error(cuitError)
+            return
+        }
 
         try {
             setCreatingClient(true)
@@ -232,6 +239,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                 phone: newClient.phone,
                 address: newClient.address,
                 credit_limit: Number(newClient.credit_limit || 0),
+                tax_condition_id: newClient.tax_condition_id === NO_TAX_CONDITION ? null : newClient.tax_condition_id,
             })
             queryClient.setQueryData<Client[]>(queryKeys.clients.all, (current) =>
                 current ? [created, ...current] : [created]
@@ -245,6 +253,7 @@ export function CreateOrderDialog({ open, onOpenChange, clients, products, curre
                 phone: "",
                 address: "",
                 credit_limit: 0,
+                tax_condition_id: NO_TAX_CONDITION,
             })
             toast.success("Cliente creado")
         } catch {

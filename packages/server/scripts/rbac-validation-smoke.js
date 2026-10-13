@@ -165,6 +165,20 @@ async function run() {
             expected: 400
         },
         {
+            name: 'cashier can read ARCA alerts',
+            method: 'GET',
+            endpoint: '/api/fiscal/arca-alerts',
+            token: cashier,
+            expected: 200
+        },
+        {
+            name: 'warehouse cannot read ARCA alerts',
+            method: 'GET',
+            endpoint: '/api/fiscal/arca-alerts',
+            token: warehouse,
+            expected: 403
+        },
+        {
             name: 'manager can list POS exceptions',
             method: 'GET',
             endpoint: '/api/pos/exceptions',

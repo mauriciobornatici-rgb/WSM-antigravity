@@ -328,3 +328,69 @@ test('AUD-008: if ARCA cannot be reached before asking, the document stays pendi
     const row = await invoiceRow(id);
     assert.deepEqual([row.status, row.arca_expected_number], ['issued', null]);
 });
+
+test('ADR-021: the alerts list conflicts and verifications ARCA did not settle in time, not fresh ones', async () => {
+    await freshPointOfSale();
+    const service = new ArcaAuthorizationService({ afipService: fakeArca() });
+    const conflict = await seedInvoice({ total: 111 });
+    const stuck = await seedInvoice({ total: 222 });
+    const fresh = await seedInvoice({ total: 333 });
+    await pool.query("UPDATE invoices SET status = 'arca_conflict', arca_requested_at = NOW() WHERE id = ?", [conflict]);
+    await pool.query("UPDATE invoices SET status = 'authorizing', arca_requested_at = NOW() - INTERVAL 30 MINUTE WHERE id = ?", [stuck]);
+    await pool.query("UPDATE invoices SET status = 'authorizing', arca_requested_at = NOW() - INTERVAL 1 MINUTE WHERE id = ?", [fresh]);
+    const alerts = await service.listAlerts();
+    const byId = new Map(alerts.items.map((item) => [item.id, item]));
+    assert.equal(byId.get(conflict)?.status, 'arca_conflict');
+    assert.equal(byId.get(stuck)?.status, 'authorizing');
+    assert.equal(byId.get(stuck)?.amount, 222);
+    assert.equal(byId.has(fresh), false, 'still within the recovery window');
+    assert.ok(alerts.conflicts >= 1 && alerts.stuck >= 1);
+    // Settled documents leave the list.
+    await pool.query("UPDATE invoices SET status = 'issued', arca_requested_at = NULL WHERE id IN (?, ?, ?)", [conflict, stuck, fresh]);
+    const after = await service.listAlerts();
+    assert.equal(after.items.some((item) => [conflict, stuck].includes(item.id)), false);
+});
+
+test('ADR-021: ARCA receives the receiver VAT condition copied from the customer', async () => {
+    await freshPointOfSale();
+    const arca = fakeArca();
+    const seen = [];
+    const realRequestCae = arca.requestCae;
+    arca.requestCae = async (request, number, requestDate) => {
+        seen.push(request.receiverVatCondition);
+        return realRequestCae(request, number, requestDate);
+    };
+    const service = new ArcaAuthorizationService({ afipService: arca });
+    const id = await seedInvoice({ total: 1210, type: 'A' });
+    await pool.query("UPDATE invoices SET client_tax_id = '30712345674', client_tax_condition = 'Monotributista' WHERE id = ?", [id]);
+    const invoice = await service.authorize(invoiceArcaAdapter, id, null);
+    assert.equal(invoice.status, 'authorized');
+    assert.deepEqual(seen, [6], 'Monotributista is code 6, not the Responsable Inscripto default');
+});
+
+test('AUD-009: a rejection with no CAE is an alert, shown with the number asked of ARCA', async () => {
+    await freshPointOfSale();
+    const service = new ArcaAuthorizationService({ afipService: fakeArca() });
+    const rejected = await seedInvoice({ total: 444 });
+    const ticket = await seedInvoice({ total: 555 });
+    await pool.query("UPDATE invoices SET arca_last_error = '(10243) Condición IVA del receptor inválida', arca_expected_number = 7, arca_pos = ? WHERE id = ?", [pos, rejected]);
+    await pool.query("UPDATE invoices SET cae = '123', arca_last_error = 'viejo' WHERE id = ?", [ticket]);
+    const alerts = await service.listAlerts();
+    const item = alerts.items.find((row) => row.id === rejected);
+    assert.equal(item?.status, 'issued');
+    assert.equal(Number(item.number), 7);
+    assert.equal(Number(item.point_of_sale), pos);
+    assert.equal(alerts.items.some((row) => row.id === ticket), false, 'with a CAE it is not pending');
+    assert.ok(alerts.rejected >= 1);
+    await pool.query("UPDATE invoices SET arca_last_error = NULL WHERE id IN (?, ?)", [rejected, ticket]);
+});
+
+test('ADR-021: the customer VAT condition column exists without a foreign key (AUD-009)', async () => {
+    const [[column]] = await pool.query("SHOW COLUMNS FROM clients LIKE 'tax_condition_id'");
+    assert.equal(column.Null, 'YES');
+    const [fks] = await pool.query(
+        `SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clients' AND COLUMN_NAME = 'tax_condition_id' AND REFERENCED_TABLE_NAME IS NOT NULL`
+    );
+    assert.equal(fks.length, 0);
+});

@@ -193,6 +193,36 @@ test('updateClient handles missing records, duplicate tax ids and successful fal
     assert.equal(audit.action, 'UPDATE_CLIENT');
 });
 
+test('the customer VAT condition is stored, kept when not sent and cleared with null (ADR-021)', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        calls.push({ sql, params });
+        if (sql.includes('SELECT * FROM clients WHERE id') && sql.includes('deleted_at')) {
+            return [[{ id: 'c', name: 'Club', tax_condition_id: 'tc_RespInscripto' }]];
+        }
+        return [[]];
+    });
+    const original = auditService.log;
+    auditService.log = async () => {};
+    t.after(() => { auditService.log = original; });
+
+    await runHandler(createClient, { body: { name: 'Club', tax_id: '30712345678', tax_condition_id: 'tc_Monotributo' } });
+    const insert = calls.find((call) => call.sql.includes('INSERT INTO clients'));
+    assert.match(insert.sql, /tax_condition_id/);
+    assert.equal(insert.params[7], 'tc_Monotributo');
+
+    await runHandler(createClient, { body: { name: 'Ana', tax_id: '1' } });
+    assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO clients'))[1].params[7], null);
+
+    const updates = () => calls.filter((call) => call.sql.startsWith('UPDATE clients SET name'));
+    await runHandler(updateClient, { params: { id: 'c' }, body: { name: 'Club', tax_id: '30712345678' } });
+    assert.equal(updates()[0].params[6], 'tc_RespInscripto', 'a form without the field keeps the stored condition');
+    await runHandler(updateClient, { params: { id: 'c' }, body: { name: 'Club', tax_id: '30712345678', tax_condition_id: 'tc_Exento' } });
+    assert.equal(updates()[1].params[6], 'tc_Exento');
+    await runHandler(updateClient, { params: { id: 'c' }, body: { name: 'Club', tax_id: '30712345678', tax_condition_id: null } });
+    assert.equal(updates()[2].params[6], null);
+});
+
 test('deleteClient returns 404 for an unknown client', async (t) => {
     mockPool(t, async () => [[]]);
     const result = await runHandler(deleteClient, { params: { id: 'missing' } });

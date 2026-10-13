@@ -109,7 +109,7 @@ class ClientService {
     }
 
     async createClient({ body, actorId, ip }) {
-        const { name, tax_id, email, phone, address, credit_limit } = body;
+        const { name, tax_id, email, phone, address, credit_limit, tax_condition_id } = body;
         const id = crypto.randomUUID();
 
         const [existing] = await pool.query('SELECT id FROM clients WHERE tax_id = ? AND deleted_at IS NULL', [tax_id]);
@@ -118,8 +118,8 @@ class ClientService {
         }
 
         await pool.query(
-            'INSERT INTO clients (id, name, tax_id, email, phone, address, credit_limit) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [id, name, tax_id, email, phone, address, credit_limit || 0]
+            'INSERT INTO clients (id, name, tax_id, email, phone, address, credit_limit, tax_condition_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [id, name, tax_id, email, phone, address, credit_limit || 0, tax_condition_id || null]
         );
 
         const [newItem] = await pool.query('SELECT * FROM clients WHERE id = ?', [id]);
@@ -136,6 +136,8 @@ class ClientService {
 
     async updateClient({ id, body, actorId, ip }) {
         const { name, tax_id, email, phone, address, credit_limit } = body;
+        // A form that does not send the VAT condition keeps the stored one.
+        const taxConditionSent = Object.prototype.hasOwnProperty.call(body, 'tax_condition_id');
 
         const [existing] = await pool.query('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL', [id]);
         if (existing.length === 0) {
@@ -148,8 +150,12 @@ class ClientService {
         }
 
         await pool.query(
-            'UPDATE clients SET name = ?, tax_id = ?, email = ?, phone = ?, address = ?, credit_limit = ? WHERE id = ? AND deleted_at IS NULL',
-            [name, tax_id, email, phone, address, credit_limit || 0, id]
+            'UPDATE clients SET name = ?, tax_id = ?, email = ?, phone = ?, address = ?, credit_limit = ?, tax_condition_id = ? WHERE id = ? AND deleted_at IS NULL',
+            [
+                name, tax_id, email, phone, address, credit_limit || 0,
+                taxConditionSent ? (body.tax_condition_id || null) : (existing[0].tax_condition_id ?? null),
+                id
+            ]
         );
 
         const [updated] = await pool.query('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL', [id]);

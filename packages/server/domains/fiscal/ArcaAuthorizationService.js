@@ -5,6 +5,8 @@ import { businessError } from '../../utils/businessError.js';
 // After ARCA did not answer, the number is not given up before this long: the request may
 // still be in process (ARCA or the SDK cloud), and asking for another number would issue twice.
 export const ARCA_COOLDOWN_SECONDS = 120;
+// The recovery worker runs every 2 minutes: 10 minutes in verification is several failed runs.
+export const ARCA_ALERT_STALE_MINUTES = 10;
 
 /**
  * ADR-020 / AUD-008 — ARCA authorization that never issues twice and never loses a CAE.
@@ -271,6 +273,57 @@ export class ArcaAuthorizationService {
             this.recovering = false;
         }
         return results;
+    }
+
+    /**
+     * ADR-021 / AUD-009: what someone has to look at.
+     * - conflict: ARCA holds a voucher with that number that is not this document's (never
+     *   resolves on its own);
+     * - stuck: still in verification after `staleMinutes` (the worker cannot reach ARCA);
+     * - rejected: back to pending with ARCA's reason and no CAE (it will not authorize by
+     *   retrying as it is).
+     * Counts are exact; the list shows conflicts first and is capped.
+     */
+    async listAlerts({ staleMinutes = ARCA_ALERT_STALE_MINUTES } = {}) {
+        const pendingFilter = `deleted_at IS NULL AND (
+                status = 'arca_conflict'
+                OR (status = 'authorizing' AND (arca_requested_at IS NULL OR arca_requested_at < NOW() - INTERVAL ? MINUTE))
+                OR (status = 'issued' AND cae IS NULL AND arca_last_error IS NOT NULL)
+            )`;
+        const order = `ORDER BY (status = 'arca_conflict') DESC, arca_requested_at ASC LIMIT 100`;
+        const counts = `SUM(status = 'arca_conflict') AS conflicts, SUM(status = 'authorizing') AS stuck, SUM(status = 'issued') AS rejected`;
+        // The number at stake is the one asked of ARCA, when there is one.
+        const [invoices] = await this.db.query(
+            `SELECT 'invoice' AS document_kind, id, invoice_type AS letter,
+                    COALESCE(arca_pos, point_of_sale) AS point_of_sale,
+                    COALESCE(arca_expected_number, invoice_number) AS number,
+                    client_name AS customer, total_amount AS amount,
+                    status, arca_last_error, arca_requested_at, arca_attempts
+             FROM invoices WHERE ${pendingFilter} ${order}`,
+            [staleMinutes]
+        );
+        const [creditNotes] = await this.db.query(
+            `SELECT 'credit_note' AS document_kind, id, credit_note_type AS letter,
+                    COALESCE(arca_pos, point_of_sale) AS point_of_sale,
+                    COALESCE(arca_voucher_number, arca_expected_number, number) AS number,
+                    customer_name AS customer, amount,
+                    status, arca_last_error, arca_requested_at, arca_attempts
+             FROM credit_notes WHERE ${pendingFilter} ${order}`,
+            [staleMinutes]
+        );
+        const [[invoiceCounts = {}]] = await this.db.query(`SELECT ${counts} FROM invoices WHERE ${pendingFilter}`, [staleMinutes]);
+        const [[noteCounts = {}]] = await this.db.query(`SELECT ${counts} FROM credit_notes WHERE ${pendingFilter}`, [staleMinutes]);
+        const total = (key) => Number(invoiceCounts[key] || 0) + Number(noteCounts[key] || 0);
+        const items = [...invoices, ...creditNotes]
+            .map((row) => ({ ...row, amount: Number(row.amount || 0) }))
+            .sort((a, b) => Number(b.status === 'arca_conflict') - Number(a.status === 'arca_conflict'));
+        return {
+            conflicts: total('conflicts'),
+            stuck: total('stuck'),
+            rejected: total('rejected'),
+            stale_minutes: staleMinutes,
+            items,
+        };
     }
 }
 

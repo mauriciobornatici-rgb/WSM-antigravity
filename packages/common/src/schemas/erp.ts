@@ -339,6 +339,16 @@ export const serialUpdateSchema = z.object({
 });
 
 // 8. Clients
+// ADR-021: the customer's VAT condition, as seeded in `tax_conditions`.
+export const CLIENT_TAX_CONDITIONS = [
+  { id: 'tc_ConsFinal', name: 'Consumidor Final', code: '05' },
+  { id: 'tc_RespInscripto', name: 'Responsable Inscripto', code: '01' },
+  { id: 'tc_Monotributo', name: 'Monotributista', code: '06' },
+  { id: 'tc_Exento', name: 'Exento', code: '04' },
+] as const;
+export type ClientTaxConditionId = typeof CLIENT_TAX_CONDITIONS[number]['id'];
+const clientTaxConditionIds = CLIENT_TAX_CONDITIONS.map((condition) => condition.id) as [ClientTaxConditionId, ...ClientTaxConditionId[]];
+
 export const clientSchema = z.object({
   name: z.string().min(2).max(255),
   email: z.string().email().nullable().or(z.literal('')).optional(),
@@ -346,7 +356,13 @@ export const clientSchema = z.object({
   tax_id: z.string().nullable().optional(),
   address: z.string().nullable().optional(),
   credit_limit: z.coerce.number().min(0).optional(),
-});
+  tax_condition_id: z.enum(clientTaxConditionIds).nullable().optional(),
+}).refine(
+  // A Responsable Inscripto or a Monotributista is invoiced with an A, which needs the CUIT.
+  (data) => !['tc_RespInscripto', 'tc_Monotributo'].includes(String(data.tax_condition_id))
+    || String(data.tax_id || '').replace(/\D/g, '').length === 11,
+  { message: 'Un Responsable Inscripto o Monotributista necesita el CUIT (11 dígitos).', path: ['tax_id'] },
+);
 
 // 9. Suppliers
 export const supplierSchema = z.object({

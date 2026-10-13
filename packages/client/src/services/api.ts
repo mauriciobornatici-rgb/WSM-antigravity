@@ -309,6 +309,29 @@ export type PosException = {
     review: PosExceptionReview | null;
 };
 
+/** ADR-021: ARCA documents that need someone (conflict, or stuck in verification). */
+export type ArcaAlertItem = {
+    document_kind: "invoice" | "credit_note";
+    id: string;
+    letter: string | null;
+    point_of_sale: number | null;
+    number: number | string | null;
+    customer: string | null;
+    amount: number;
+    status: "arca_conflict" | "authorizing" | "issued";
+    arca_last_error: string | null;
+    arca_requested_at: string | null;
+    arca_attempts: number;
+};
+
+export type ArcaAlerts = {
+    conflicts: number;
+    stuck: number;
+    rejected: number;
+    stale_minutes: number;
+    items: ArcaAlertItem[];
+};
+
 export type PosExceptionReviewInput = {
     decision: "approved" | "rejected";
     notes?: string;
@@ -974,6 +997,9 @@ export const api = {
         httpClient.post<{ id: string; success: boolean }>("/api/quality-checks", data),
 
     // ==================== INVOICING ====================
+    getArcaAlerts: () =>
+        httpClient.get<ArcaAlerts>("/api/fiscal/arca-alerts"),
+
     getTaxConditions: () =>
         httpClient.get<Array<{ id: string; name: string; code: string }>>("/api/tax-conditions"),
 

@@ -16,6 +16,8 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { showErrorToast } from "@/lib/errorHandling"
 import type { ClientUpsertInput } from "@/types/api"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { NO_TAX_CONDITION, TAX_CONDITION_OPTIONS, taxConditionCuitError, taxConditionName } from "@/lib/taxConditions"
 
 function toSafeMoney(value: unknown): number {
     const num = Number(value)
@@ -74,7 +76,8 @@ export default function ClientsPage() {
                 phone: data.phone,
                 tax_id: data.tax_id,
                 address: data.address,
-                credit_limit: data.credit_limit
+                credit_limit: data.credit_limit,
+                tax_condition_id: data.tax_condition_id === NO_TAX_CONDITION ? null : data.tax_condition_id
             }
             await api.createClient(payload)
             await loadClients()
@@ -94,7 +97,8 @@ export default function ClientsPage() {
                 phone: data.phone,
                 tax_id: data.tax_id,
                 address: data.address,
-                credit_limit: data.credit_limit
+                credit_limit: data.credit_limit,
+                tax_condition_id: data.tax_condition_id === NO_TAX_CONDITION ? null : data.tax_condition_id
             }
             await api.updateClient(editingClient.id, payload)
             await loadClients()
@@ -232,7 +236,10 @@ export default function ClientsPage() {
                                                     </div>
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="font-mono">{client.tax_id}</TableCell>
+                                            <TableCell>
+                                                <div className="font-mono">{client.tax_id}</div>
+                                                <div className="text-xs text-muted-foreground">{taxConditionName(client.tax_condition_id) ?? "Condición IVA sin especificar"}</div>
+                                            </TableCell>
                                             <TableCell className="text-right">
                                                 <Badge variant={client.current_account_balance > 0 ? "secondary" : "outline"} className={cn(
                                                     "font-mono",
@@ -295,6 +302,26 @@ interface ClientFormValues {
     tax_id: string
     address: string
     credit_limit: number
+    tax_condition_id: string
+}
+
+function TaxConditionField({ id, value, onChange }: { id: string, value: string, onChange: (value: string) => void }) {
+    return (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">
+            <Label htmlFor={id} className="text-left sm:text-right">Condición IVA</Label>
+            <Select value={value} onValueChange={onChange}>
+                <SelectTrigger id={id} className="sm:col-span-3">
+                    <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value={NO_TAX_CONDITION}>Sin especificar</SelectItem>
+                    {TAX_CONDITION_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
+        </div>
+    )
 }
 
 function StatusCard({ title, count, icon: Icon, description, color, isCurrency }: { title: string, count: number | string, icon: LucideIcon, description: string, color?: string, isCurrency?: boolean }) {
@@ -323,17 +350,23 @@ function CreateClientDialog({ open, onOpenChange, onSubmit }: { open: boolean, o
         phone: "",
         tax_id: "",
         address: "",
-        credit_limit: "5000000"
+        credit_limit: "5000000",
+        tax_condition_id: NO_TAX_CONDITION as string
     })
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
+        const cuitError = taxConditionCuitError(formData.tax_condition_id, formData.tax_id)
+        if (cuitError) {
+            toast.error(cuitError)
+            return
+        }
         const data = {
             ...formData,
             credit_limit: parseFloat(formData.credit_limit)
         }
         onSubmit(data)
-        setFormData({ name: "", email: "", phone: "", tax_id: "", address: "", credit_limit: "5000000" })
+        setFormData({ name: "", email: "", phone: "", tax_id: "", address: "", credit_limit: "5000000", tax_condition_id: NO_TAX_CONDITION })
     }
 
     return (
@@ -359,8 +392,9 @@ function CreateClientDialog({ open, onOpenChange, onSubmit }: { open: boolean, o
                         <Label htmlFor="tax_id" className="text-left sm:text-right">CUIT / DNI</Label>
                         <Input id="tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} className="sm:col-span-3" required />
                     </div>
+                    <TaxConditionField id="tax_condition" value={formData.tax_condition_id} onChange={(value) => setFormData({ ...formData, tax_condition_id: value })} />
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">
-                        <Label htmlFor="email" className="text-left sm:text-right">Correo electronico</Label>
+                        <Label htmlFor="email" className="text-left sm:text-right">Correo electrónico</Label>
                         <Input id="email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="sm:col-span-3" />
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">
@@ -389,11 +423,17 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
         phone: client.phone || "",
         tax_id: client.tax_id,
         address: client.address || "",
-        credit_limit: client.credit_limit.toString()
+        credit_limit: client.credit_limit.toString(),
+        tax_condition_id: client.tax_condition_id || NO_TAX_CONDITION
     })
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
+        const cuitError = taxConditionCuitError(formData.tax_condition_id, formData.tax_id)
+        if (cuitError) {
+            toast.error(cuitError)
+            return
+        }
         const data = {
             ...formData,
             credit_limit: parseFloat(formData.credit_limit)
@@ -419,8 +459,9 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
                         <Label htmlFor="edit-tax_id" className="text-left sm:text-right">CUIT / DNI</Label>
                         <Input id="edit-tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} className="sm:col-span-3" required />
                     </div>
+                    <TaxConditionField id="edit-tax_condition" value={formData.tax_condition_id} onChange={(value) => setFormData({ ...formData, tax_condition_id: value })} />
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">
-                        <Label htmlFor="edit-email" className="text-left sm:text-right">Correo electronico</Label>
+                        <Label htmlFor="edit-email" className="text-left sm:text-right">Correo electrónico</Label>
                         <Input id="edit-email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="sm:col-span-3" />
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">

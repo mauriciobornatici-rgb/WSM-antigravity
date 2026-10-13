@@ -21,7 +21,7 @@ const TABLE_COLUMNS = {
     ],
     clients: [
         'id', 'name', 'email', 'phone', 'tax_id', 'address', 'credit_limit', 'current_account_balance',
-        'city', 'state', 'type', 'status', 'notes', 'created_at', 'updated_at', 'deleted_at'
+        'city', 'state', 'type', 'status', 'notes', 'tax_condition_id', 'created_at', 'updated_at', 'deleted_at'
     ],
     suppliers: [
         'id', 'name', 'tax_id', 'contact_name', 'email', 'phone', 'address', 'active',

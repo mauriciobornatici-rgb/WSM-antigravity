@@ -34,7 +34,7 @@ export interface PaginatedResponse<T> {
     pagination?: PaginationMeta;
 }
 
-export type ClientUpsertInput = Pick<Client, "name" | "email" | "phone" | "tax_id" | "address" | "credit_limit">;
+export type ClientUpsertInput = Pick<Client, "name" | "email" | "phone" | "tax_id" | "address" | "credit_limit"> & { tax_condition_id?: string | null };
 export type SupplierUpsertInput = Pick<Supplier, "name" | "tax_id" | "contact_name" | "email" | "phone" | "address">;
 
 export type UserRole = User["role"];

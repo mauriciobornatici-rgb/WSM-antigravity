@@ -1,5 +1,34 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-009 — 2026-10-13 — `guardian-integridad` sobre ADR-021 (condición IVA del cliente y alertas ARCA)
+
+- [x] **Alta: la letra A quedaba pegada en el POS** y el servidor aceptaba una Factura A sin cliente o sin CUIT. Era una factura que nunca se iba a poder autorizar ni anular.
+  - Ahora toda Factura A exige un cliente con CUIT de 11 dígitos (422 `invoice_cuit_required`). El control se hace antes de numerar, y también cuando la condición no está cargada.
+  - El POS vuelve a B al limpiar o cambiar el cliente si no hay sugerencia.
+- [x] **Media:**
+  - Responsable Inscripto o Monotributista con DNI: el esquema y los formularios exigen CUIT de 11 dígitos para esas condiciones.
+  - Venta offline reproducida: ya no se emite con una letra que ARCA rechaza. La letra se corrige (el número sigue siendo provisorio) y el cambio queda en la auditoría de `POS_CHECKOUT` (`invoice_type_requested` / `invoice_type_issued`).
+  - Las alertas ahora incluyen los rechazados (pendientes sin CAE y con motivo). Los contadores son exactos, los conflictos van primero y se muestra el número pedido a ARCA.
+  - Migración 060 sin FK a `tax_conditions`: en producción los ids o la intercalación podrían ser otros, y la migración corre al arrancar. Los nombres salen de la lista compartida `CLIENT_TAX_CONDITIONS`. La 060 solo estaba en local y QA: se deshizo y se volvió a aplicar.
+- [x] **Baja:**
+  - Los errores de red se muestran en español en la tarjeta.
+  - La facturación de pedidos considera la condición de la empresa, igual que el POS.
+  - TASKS ya dice 061 para el CHECK de inventario.
+- **Queda anotado (bajo):**
+  - La cola offline vieja (ventas sin turno) pasa por `POST /api/invoices` con el control estricto: una letra incorrecta da 422 en cada reintento.
+  - La edición de cliente no usa lock: dos ediciones simultáneas se pisan, aunque queda auditado.
+  - `offline_captured_at` declarado por el cliente evita el control estricto (se corrige la letra en vez de rechazar). Es el mismo riesgo aceptado en ADR-011.
+- **Decisiones de negocio pendientes:**
+  1. Camino para anular una factura emitida que no se puede autorizar (hoy no existe).
+  2. ¿Las alertas deben incluir facturas sin CAE después de X horas, sin ningún intento?
+  3. Cargar la condición de los clientes existentes. Sin ella, a un Inscripto se le sigue facturando B sin control.
+  4. ¿Hace falta un permiso para cambiar la condición? Hoy la puede cargar el cajero en el alta rápida.
+  5. ¿La factura debe imprimir "Sin especificar" en vez de "Consumidor Final" cuando la condición es desconocida?
+  6. Confirmar en homologación que el Monotributista recibe A (RG 5616).
+- **Antes de desplegar en producción:** nada, porque la 060 ya no depende de `tax_conditions`. Reversión: `ALTER TABLE clients DROP COLUMN tax_condition_id`.
+
+Evidencia: validate 0 (955 + 99); coverage 96,62/90,87/94,10; integración 108/108 ×2 (18 escenarios ARCA con base real); RBAC OK; E2E 6/6; simulación 153/153.
+
 ## AUD-008 — 2026-10-13 — `guardian-integridad` sobre ADR-020 (autorización ARCA)
 
 El guardián encontró 3 caminos altos a doble CAE en la primera versión y varios medios. Se rediseñó el flujo:

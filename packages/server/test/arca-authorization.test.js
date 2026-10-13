@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ArcaAuthorizationService, ARCA_COOLDOWN_SECONDS } from '../domains/fiscal/ArcaAuthorizationService.js';
+import { ArcaAuthorizationService, ARCA_COOLDOWN_SECONDS, ARCA_ALERT_STALE_MINUTES } from '../domains/fiscal/ArcaAuthorizationService.js';
 import { invoiceArcaAdapter, creditNoteArcaAdapter } from '../domains/fiscal/arcaAdapters.js';
 import afipService, { arcaToday } from '../services/afip.service.js';
 import auditService from '../services/audit.service.js';
@@ -705,6 +705,55 @@ test('the recovery worker does not overlap with itself and frees the flag even o
     assert.equal(empty.service.recovering, false);
 });
 
+// ---------------------------------------------------------------------------
+// listAlerts (ADR-021)
+// ---------------------------------------------------------------------------
+
+test('ARCA alerts list conflicts first, stale verifications and rejections, with exact counts', async () => {
+    const queries = [];
+    const db = {
+        query: async (sql, params) => {
+            const statement = String(sql);
+            queries.push({ sql: statement, params });
+            if (statement.includes('SUM(')) {
+                return statement.includes('FROM invoices')
+                    ? [[{ conflicts: '1', stuck: '150', rejected: '2' }]]
+                    : [[{ conflicts: null, stuck: '1', rejected: null }]];
+            }
+            if (statement.includes('FROM invoices')) {
+                return [[
+                    { document_kind: 'invoice', id: 'i-2', status: 'authorizing', amount: '100' },
+                    { document_kind: 'invoice', id: 'i-1', status: 'arca_conflict', amount: '1210.50' },
+                ]];
+            }
+            return [[{ document_kind: 'credit_note', id: 'c-1', status: 'arca_conflict', amount: null }]];
+        },
+    };
+    const service = new ArcaAuthorizationService({ db, afipService: {} });
+    const alerts = await service.listAlerts();
+    assert.deepEqual([alerts.conflicts, alerts.stuck, alerts.rejected], [1, 151, 2], 'counts come from COUNT queries, not the capped list');
+    assert.equal(alerts.stale_minutes, ARCA_ALERT_STALE_MINUTES);
+    assert.deepEqual(alerts.items.map(({ id, amount }) => [id, amount]), [['i-1', 1210.5], ['c-1', 0], ['i-2', 100]]);
+    assert.equal(queries.length, 4);
+    for (const { sql, params } of queries) {
+        assert.match(sql, /status = 'arca_conflict'/);
+        assert.match(sql, /status = 'authorizing' AND \(arca_requested_at IS NULL OR arca_requested_at < NOW\(\) - INTERVAL \? MINUTE\)/);
+        assert.match(sql, /status = 'issued' AND cae IS NULL AND arca_last_error IS NOT NULL/);
+        assert.match(sql, /deleted_at IS NULL/);
+        assert.deepEqual(params, [ARCA_ALERT_STALE_MINUTES]);
+    }
+    assert.match(queries[0].sql, /COALESCE\(arca_expected_number, invoice_number\) AS number/);
+    assert.match(queries[0].sql, /ORDER BY \(status = 'arca_conflict'\) DESC/);
+
+    const custom = await service.listAlerts({ staleMinutes: 30 });
+    assert.equal(custom.stale_minutes, 30);
+    assert.deepEqual(queries.at(-1).params, [30]);
+});
+
+test('ARCA alerts are empty when nothing needs a person', async () => {
+    const service = new ArcaAuthorizationService({ db: { query: async () => [[]] }, afipService: {} });
+    assert.deepEqual(await service.listAlerts(), { conflicts: 0, stuck: 0, rejected: 0, stale_minutes: ARCA_ALERT_STALE_MINUTES, items: [] });
+});
 // ---------------------------------------------------------------------------
 // Adapters
 // ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import { usePOSCart } from "@/hooks/usePOSCart";
 import { usePOSHotkeys } from "@/hooks/usePOSHotkeys";
 import { playScanErrorBeep } from "@/lib/scanAudio";
 import { createClientUuid } from "@/lib/clientUuid";
+import { NO_TAX_CONDITION, suggestedInvoiceLetter, taxConditionCuitError, taxConditionName } from "@/lib/taxConditions";
 import {
     enqueueOfflineSale,
     getOfflineQueue,
@@ -79,6 +80,7 @@ export default function POSPage() {
         phone: "",
         address: "",
         credit_limit: 0,
+        tax_condition_id: NO_TAX_CONDITION,
     });
 
     const [successDialogOpen, setSuccessDialogOpen] = useState(false);
@@ -220,7 +222,7 @@ export default function POSPage() {
                 fullInvoice.client_name = selectedClient.name;
                 fullInvoice.client_tax_id = selectedClient.tax_id;
                 fullInvoice.client_address = selectedClient.address;
-                fullInvoice.client_tax_condition = "Consumidor Final";
+                fullInvoice.client_tax_condition = taxConditionName(selectedClient.tax_condition_id) ?? "Consumidor Final";
             }
             setSelectedInvoice(fullInvoice);
             setActivePrintLayout(layout);
@@ -309,9 +311,9 @@ export default function POSPage() {
             setCart(newCartItems);
             setActivePickupOrder(order);
             if (order.client_id) {
-                setSelectedClientId(order.client_id);
+                selectClient(order.client_id);
             } else {
-                setSelectedClientId("");
+                selectClient("");
             }
             setEmitInvoice(true);
             toast.info(`Pedido #${order.id.slice(0, 8)} cargado en mostrador. Puedes cobrarlo o sumar productos adicionales.`);
@@ -323,7 +325,7 @@ export default function POSPage() {
     const handleCancelPickup = () => {
         setActivePickupOrder(null);
         setCart([]);
-        setSelectedClientId("");
+        selectClient("");
         toast.info("Retiro de pedido cancelado. Carrito restablecido.");
     };
 
@@ -366,6 +368,15 @@ export default function POSPage() {
         [clients, selectedClientId],
     );
 
+    // ADR-021: the letter follows the customer's VAT condition (the cashier can still change it).
+    function selectClient(clientId: string, knownClients: Client[] = clients) {
+        setSelectedClientId(clientId);
+        const client = knownClients.find((candidate) => candidate.id === clientId);
+        // Without a suggestion (no customer, or no condition loaded) it goes back to B: an A
+        // left over from the previous sale would need a CUIT the next one may not have.
+        setInvoiceType(suggestedInvoiceLetter(client?.tax_condition_id, companySettings.billing?.iva_condition) ?? "B");
+    }
+
     function handleCatalogScan(rawValue: string) {
         const scannedValue = rawValue.trim().toLowerCase();
         if (!scannedValue) return;
@@ -391,6 +402,11 @@ export default function POSPage() {
             toast.error("Nombre y CUIT/DNI son obligatorios");
             return;
         }
+        const cuitError = taxConditionCuitError(newClient.tax_condition_id, newClient.tax_id);
+        if (cuitError) {
+            toast.error(cuitError);
+            return;
+        }
 
         try {
             setCreatingClient(true);
@@ -401,9 +417,10 @@ export default function POSPage() {
                 phone: newClient.phone,
                 address: newClient.address,
                 credit_limit: Number(newClient.credit_limit || 0),
+                tax_condition_id: newClient.tax_condition_id === NO_TAX_CONDITION ? null : newClient.tax_condition_id,
             });
             setClients((current) => [created, ...current]);
-            setSelectedClientId(created.id);
+            selectClient(created.id, [created]);
             setClientDialogOpen(false);
             setNewClient({
                 name: "",
@@ -412,6 +429,7 @@ export default function POSPage() {
                 phone: "",
                 address: "",
                 credit_limit: 0,
+                tax_condition_id: NO_TAX_CONDITION,
             });
             toast.success("Cliente creado");
         } catch (error) {
@@ -518,7 +536,7 @@ export default function POSPage() {
             })),
         );
         setCart([]);
-        setSelectedClientId("");
+        selectClient("");
         setEmitInvoice(false);
         setPaymentSplits([defaultPaymentSplit(0)]);
         setPaymentDialogOpen(false);
@@ -685,7 +703,7 @@ export default function POSPage() {
                     <CartPanelCard
                         clients={clients}
                         selectedClientId={selectedClientId}
-                        onClientChange={setSelectedClientId}
+                        onClientChange={(clientId) => selectClient(clientId)}
                         onOpenClientDialog={() => setClientDialogOpen(true)}
                         selectedClient={selectedClient}
                         cart={cart}
@@ -718,7 +736,7 @@ export default function POSPage() {
                 onOpenChange={setPaymentDialogOpen}
                 clients={clients}
                 selectedClientId={selectedClientId}
-                onClientChange={setSelectedClientId}
+                onClientChange={(clientId) => selectClient(clientId)}
                 onOpenClientDialog={() => setClientDialogOpen(true)}
                 selectedClient={selectedClient}
                 paymentSplits={paymentSplits}
@@ -770,7 +788,7 @@ export default function POSPage() {
                 onRestoreCart={(id) => {
                     const restored = restoreParkedCart(id);
                     if (restored?.clientId) {
-                        setSelectedClientId(restored.clientId);
+                        selectClient(restored.clientId);
                     }
                 }}
                 onDeleteCart={deleteParkedCart}

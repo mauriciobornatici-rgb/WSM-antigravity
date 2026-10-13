@@ -35,6 +35,7 @@ import { hasPermission, PERMISSIONS, type Permission } from "@wsm/common";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { useArcaAlerts } from "@/hooks/useArcaAlerts";
 
 export default function AppLayout() {
     const { user, logout } = useAuth();
@@ -48,8 +49,11 @@ export default function AppLayout() {
         refetchInterval: 60_000,
         meta: { silentError: true },
     });
+    // ADR-021: ARCA documents in conflict or stuck in verification, on "Facturación".
+    const arcaAlerts = useArcaAlerts();
     const badgeByHref: Record<string, number> = {
         "/pos-exceptions": pendingPosExceptions.data?.length ?? 0,
+        "/invoices": (arcaAlerts.data?.conflicts ?? 0) + (arcaAlerts.data?.stuck ?? 0) + (arcaAlerts.data?.rejected ?? 0),
     };
     const { theme, toggleTheme } = useTheme();
     const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -177,7 +181,7 @@ export default function AppLayout() {
                                                         collapsed ? "absolute right-1.5 top-1.5 h-2.5 w-2.5" : "ml-auto px-1.5 py-0.5"
                                                     )}
                                                 >
-                                                    {!collapsed && badgeLabel}
+                                                    {!collapsed && <span aria-hidden="true">{badgeLabel}</span>}
                                                     <span className="sr-only">{badgeLabel} pendientes de revisión</span>
                                                 </span>
                                             )}

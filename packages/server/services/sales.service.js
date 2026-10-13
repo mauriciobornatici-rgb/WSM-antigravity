@@ -10,6 +10,7 @@ import createOrderUseCase from '../domains/sales/CreateOrderUseCase.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
 import { grossLineAmounts, lineAmounts } from '../utils/vatMath.js';
 import { businessError } from '../utils/businessError.js';
+import { CLIENT_TAX_CONDITIONS } from '@wsm/common';
 import dispatchOrderUseCase from '../domains/sales/DispatchOrderUseCase.js';
 import deliverOrderUseCase from '../domains/sales/DeliverOrderUseCase.js';
 
@@ -494,7 +495,7 @@ class SalesService extends BaseService {
 
     async getOrders(filters = {}, options = {}) {
         let filteredQuery = `
-            SELECT o.*, c.name AS client_name
+            SELECT o.*, c.name AS client_name, c.tax_condition_id AS client_tax_condition_id
             FROM orders o
             LEFT JOIN clients c ON o.client_id = c.id
             WHERE (o.deleted_at IS NULL)
@@ -762,19 +763,28 @@ class SalesService extends BaseService {
         return nextDocumentSequence(connection, scope, maxExisting);
     }
 
+    /**
+     * The customer as printed on the invoice. ADR-021: the VAT condition comes from the
+     * customer record; `tax_condition_known` is false when it was never loaded, and then the
+     * invoice keeps the previous default (Consumidor Final).
+     */
     async _resolveClientSnapshot(connection, clientId, fallbackName = 'Consumidor Final') {
         if (clientId) {
             const [clients] = await connection.query(
-                'SELECT id, name, tax_id, address FROM clients WHERE id = ? LIMIT 1',
+                'SELECT id, name, tax_id, address, tax_condition_id FROM clients WHERE id = ? LIMIT 1',
                 [clientId]
             );
             if (clients.length > 0) {
+                // The names come from the shared list, not from `tax_conditions`: its ids may
+                // differ in a database seeded before (AUD-009).
+                const conditionName = CLIENT_TAX_CONDITIONS.find((condition) => condition.id === clients[0].tax_condition_id)?.name;
                 return {
                     client_id: clients[0].id,
                     client_name: clients[0].name,
                     client_tax_id: clients[0].tax_id || null,
                     client_address: clients[0].address || null,
-                    client_tax_condition: 'Consumidor Final'
+                    client_tax_condition: conditionName || 'Consumidor Final',
+                    tax_condition_known: Boolean(conditionName)
                 };
             }
         }
@@ -784,8 +794,61 @@ class SalesService extends BaseService {
             client_name: fallbackName || 'Consumidor Final',
             client_tax_id: null,
             client_address: null,
-            client_tax_condition: 'Consumidor Final'
+            client_tax_condition: 'Consumidor Final',
+            tax_condition_known: false
         };
+    }
+
+    /**
+     * The letter ARCA will accept (RG 5616), decided before numbering. A Factura A always needs
+     * the customer's CUIT (ARCA refuses it otherwise, and an invoice that can never be
+     * authorized cannot be undone). With the condition loaded, A goes only to a Responsable
+     * Inscripto or a Monotributista and B to everyone else. Without it only the CUIT is checked
+     * (customers created before ADR-021).
+     *
+     * `correct`: an offline sale being replayed already happened and its number is still
+     * provisional, so the letter is fixed instead of refused (AUD-009).
+     */
+    _resolveInvoiceLetter(invoiceType, client, { correct = false } = {}) {
+        const letter = String(invoiceType || 'B').toUpperCase();
+        if (letter !== 'A' && letter !== 'B') return letter;
+        const hasCuit = String(client?.client_tax_id || '').replace(/\D/g, '').length === 11;
+        const known = Boolean(client?.tax_condition_known);
+        const condition = String(client?.client_tax_condition || '').toLowerCase();
+        const takesA = known && (condition.includes('inscripto') || condition.includes('monotribut'));
+        if (correct) {
+            if (letter === 'A' && (!hasCuit || (known && !takesA))) return 'B';
+            if (letter === 'B' && takesA && hasCuit) return 'A';
+            return letter;
+        }
+        if (letter === 'A' && !hasCuit) {
+            throw businessError(422, {
+                error: 'invoice_cuit_required',
+                message: 'Una factura A necesita un cliente con CUIT (11 dígitos). Elegí el cliente o emití una factura B.'
+            });
+        }
+        this._assertInvoiceTypeForClient(letter, client);
+        return letter;
+    }
+
+    _assertInvoiceTypeForClient(invoiceType, client) {
+        if (!client?.tax_condition_known) return;
+        const letter = String(invoiceType || '').toUpperCase();
+        if (letter !== 'A' && letter !== 'B') return;
+        const condition = String(client.client_tax_condition || '').toLowerCase();
+        const takesA = condition.includes('inscripto') || condition.includes('monotribut');
+        if (letter === 'A' && !takesA) {
+            throw businessError(422, {
+                error: 'invoice_type_mismatch',
+                message: `Una factura A solo se emite a un Responsable Inscripto o Monotributista. El cliente es ${client.client_tax_condition}: emití una factura B.`
+            });
+        }
+        if (letter === 'B' && takesA) {
+            throw businessError(422, {
+                error: 'invoice_type_mismatch',
+                message: `El cliente es ${client.client_tax_condition}: corresponde una factura A.`
+            });
+        }
     }
 
     _buildValidationError(message, errorCode = 'VALIDATION_ERROR') {
@@ -1013,7 +1076,7 @@ class SalesService extends BaseService {
         }
     }
 
-    async createInvoice(orderId, invoiceData, userId, existingConnection = null) {
+    async createInvoice(orderId, invoiceData, userId, existingConnection = null, { checkReceiverCondition = true } = {}) {
         const connection = existingConnection || await pool.getConnection();
         const isExternalTx = Boolean(existingConnection);
         try {
@@ -1140,7 +1203,9 @@ class SalesService extends BaseService {
             vatAmount = this._roundMoney(vatAmount);
             const totalAmount = this._roundMoney(netAmount + vatAmount);
 
-            const invoiceType = invoiceData.invoice_type || 'B';
+            // The letter is settled before numbering (ADR-021, AUD-009).
+            const client = await this._resolveClientSnapshot(connection, order.client_id, order.customer_name);
+            const invoiceType = this._resolveInvoiceLetter(invoiceData.invoice_type, client, { correct: !checkReceiverCondition });
             let pointOfSale = Number(invoiceData.point_of_sale);
             if (!pointOfSale || isNaN(pointOfSale)) {
                 const [compRows] = await connection.query('SELECT billing_pos FROM company_settings LIMIT 1');
@@ -1149,7 +1214,6 @@ class SalesService extends BaseService {
             const invoiceNumber = await this._nextInvoiceNumber(connection, invoiceType, pointOfSale);
             const invoiceId = crypto.randomUUID();
 
-            const client = await this._resolveClientSnapshot(connection, order.client_id, order.customer_name);
             const [plannedPaymentRows] = await connection.query(
                 'SELECT payment_method AS method, amount, check_payload FROM order_payments WHERE order_id = ? ORDER BY created_at ASC',
                 [orderId]
@@ -1361,16 +1425,15 @@ class SalesService extends BaseService {
             const items = invoiceData.items || [];
             if (items.length === 0) throw new Error('Invoice must contain items');
 
-            const invoiceType = invoiceData.invoice_type || 'B';
-            const pointOfSale = Number(invoiceData.point_of_sale || 1);
-            const invoiceNumber = await this._nextInvoiceNumber(connection, invoiceType, pointOfSale);
-            const invoiceId = crypto.randomUUID();
-
             const client = await this._resolveClientSnapshot(
                 connection,
                 invoiceData.client_id,
                 invoiceData.customer_name || 'Consumidor Final'
             );
+            const invoiceType = this._resolveInvoiceLetter(invoiceData.invoice_type, client);
+            const pointOfSale = Number(invoiceData.point_of_sale || 1);
+            const invoiceNumber = await this._nextInvoiceNumber(connection, invoiceType, pointOfSale);
+            const invoiceId = crypto.randomUUID();
 
             let netAmount = 0;
             let vatAmount = 0;

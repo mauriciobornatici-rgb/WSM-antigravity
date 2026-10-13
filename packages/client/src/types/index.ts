@@ -73,6 +73,7 @@ export interface Client {
     address: string
     current_account_balance: number
     credit_limit: number
+    tax_condition_id?: string | null
     loyalty_points?: number
     created_at: string
 }
@@ -136,6 +137,7 @@ export interface Order {
     counter_user_id?: string
     client_name?: string
     client_id?: string
+    client_tax_condition_id?: string | null
     status: 'pending' | 'picking' | 'packed' | 'dispatched' | 'delivered' | 'completed' | 'cancelled'
     payment_status?: 'pending' | 'partial' | 'paid' | 'voided' | 'credit_balance'
     payment_method?: string

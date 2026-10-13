@@ -100,6 +100,8 @@ export function CreditNotesTab({
         onSuccess: async () => {
             await queryClient.invalidateQueries({ queryKey: queryKeys.creditNotes.all })
         },
+        // Any attempt can settle or raise an ARCA alert (dashboard and menu).
+        onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.arcaAlerts }),
     })
 
     const creditNotes = creditNotesQuery.data ?? EMPTY_CREDIT_NOTES
