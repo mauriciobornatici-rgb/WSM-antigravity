@@ -173,7 +173,7 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
-// Route enumeration â€” development only
+// Route enumeration — development only
 if (env.isDevelopment) {
     app.get('/api/routes', (req, res) => {
         const routes = [];

@@ -2,7 +2,7 @@ import express from 'express';
 import * as salesController from '../controllers/salesController.js';
 import { validate, schemas, validateZod, zodSchemas } from '../middleware/validationMiddleware.js';
 import { authorizePermission } from '../middleware/authMiddleware.js';
-import { PERMISSIONS } from '@wsm/common';
+import { hasPermission, PERMISSIONS } from '@wsm/common';
 
 const router = express.Router();
 const canReadOrders = authorizePermission(PERMISSIONS.ORDERS_READ);
@@ -18,7 +18,20 @@ router.post('/pos/checkout', canSell, validateZod(zodSchemas.posCheckout), sales
 const canReviewPrices = authorizePermission(PERMISSIONS.ORDERS_PRICE_OVERRIDE);
 router.get('/pos/exceptions', canReviewPrices, validateZod(zodSchemas.posExceptionsQuery), salesController.listPosExceptions);
 router.post('/pos/exceptions/:id/review', canReviewPrices, validateZod(zodSchemas.posExceptionReview), salesController.reviewPosException);
-router.put('/orders/:id/status', canSell, validate(schemas.orderStatus), salesController.updateOrderStatus);
+// Starting and finishing the picking ('picking', 'packed') is also the warehouse's job: the
+// picking screen moves the order through these two states, and a warehouse user has the picking
+// permission but not the sales one. Either permission is enough for them (the counter keeps
+// doing it as before). Every other change keeps the sales permission.
+const PICKING_STATUSES = new Set(['picking', 'packed']);
+const canChangeOrderStatus = (req, res, next) => {
+    const role = req.user?.role;
+    const allowed = PICKING_STATUSES.has(String(req.body?.status || '').toLowerCase())
+        ? hasPermission(role, PERMISSIONS.ORDERS_PICK) || hasPermission(role, PERMISSIONS.ORDERS_SELL)
+        : hasPermission(role, PERMISSIONS.ORDERS_SELL);
+    if (!allowed) return res.status(403).json({ error: 'forbidden', message: 'No tiene permisos para realizar esta accion' });
+    return next();
+};
+router.put('/orders/:id/status', canChangeOrderStatus, validate(schemas.orderStatus), salesController.updateOrderStatus);
 // ADR-017/018: changing a charge after the order was made is a commercial concession: managers
 // and administrators (the same permission as changing prices), always audited.
 router.put('/orders/:id/shipping', authorizePermission(PERMISSIONS.ORDERS_PRICE_OVERRIDE), validateZod(zodSchemas.orderShippingCharge), salesController.updateOrderShipping);

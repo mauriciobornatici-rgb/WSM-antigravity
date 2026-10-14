@@ -172,6 +172,22 @@ async function run() {
             expected: 200
         },
         {
+            name: 'warehouse can start the picking of an order (unknown order -> 404, not 403)',
+            method: 'PUT',
+            endpoint: '/api/orders/00000000-0000-4000-8000-000000000000/status',
+            token: warehouse,
+            expected: 404,
+            body: { status: 'picking' }
+        },
+        {
+            name: 'warehouse cannot cancel an order',
+            method: 'PUT',
+            endpoint: '/api/orders/00000000-0000-4000-8000-000000000000/status',
+            token: warehouse,
+            expected: 403,
+            body: { status: 'cancelled' }
+        },
+        {
             name: 'warehouse cannot reissue an invoice',
             method: 'POST',
             endpoint: '/api/invoices/00000000-0000-4000-8000-000000000000/reissue',

@@ -131,6 +131,13 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
   Guía en `docs/execution/GUIA_SIMULACION.md`. `dev-local.ps1` cierra la simulación al volver.
 - [x] La simulación automática acepta `SIM_DB_NAME` (solo las dos bases locales). Dio 153/153 sobre la base nueva.
 - [x] AUD-012: revisión de seguridad y de UX, todo lo técnico corregido.
+- [x] PR #5 mergeado (`7fdc352`).
+
+## Correcciones al simular (2026-10-14, rama `fix/textos-y-datos-simulacion`)
+
+- [x] **Símbolos raros en pantalla:** había texto con doble codificación en 4 archivos del cliente (punto de venta, acreditaciones, débitos bancarios, etiquetas) y un comentario del servidor. Venía de ediciones de ADR-015/016. Se reparó, y una prueba nueva (`sourceEncoding.test.ts`) falla si vuelve a aparecer.
+- [x] **Error de permisos:** el rol Depósito no podía empezar ni terminar el picking (`PUT /orders/:id/status` exigía el permiso de venta). Ahora `picking` y `packed` aceptan el permiso de picking o el de venta. Las demás transiciones siguen pidiendo el de venta. Se agregaron 2 casos al smoke RBAC.
+- [x] **Simulación con movimientos iniciales:** caja abierta, 5 ventas de mostrador (A, B, cuenta corriente, sin factura), un pedido pendiente de picking y uno listo para retirar. `-SinMovimientos` arranca solo con los maestros. Los scripts muestran los acentos bien en la consola (UTF-8).
 
 ## Próximos pasos
 

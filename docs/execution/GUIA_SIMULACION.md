@@ -7,7 +7,8 @@ Entorno de práctica para recorrer **todos los procesos** con datos de una tiend
 | Qué | Comando (PowerShell, desde la carpeta del proyecto) |
 |---|---|
 | Levantar la simulación (la crea si no existe) | `powershell -File scripts\simulacion.ps1` |
-| Empezar de cero (borra y vuelve a cargar los datos) | `powershell -File scripts\simulacion.ps1 -Reiniciar` |
+| Empezar de cero (borra y vuelve a cargar los datos y los movimientos) | `powershell -File scripts\simulacion.ps1 -Reiniciar` |
+| Empezar de cero solo con datos maestros (caja cerrada, sin ventas ni pedidos) | `powershell -File scripts\simulacion.ps1 -Reiniciar -SinMovimientos` |
 | Volver al entorno de desarrollo habitual | `powershell -File scripts\dev-local.ps1` |
 
 La aplicación queda en **http://localhost:5173** y la API en el puerto 3001. Los dos entornos usan los mismos puertos: el script de cada uno cierra el otro antes de arrancar.
@@ -43,7 +44,16 @@ Contraseña de todos, solo para esta base de simulación: **`Simulacion2026!`**
   - **Escuela de Fútbol**, de cuenta corriente con límite de crédito.
 - **Proveedores:** Distribuidora Deportiva Sim SA y Textil Sim SRL.
 - **Compras:** una **orden de compra ya enviada** a la Distribuidora (pelotas, medias y paletas de pádel), lista para recibir.
-- **Caja:** "Caja Principal" sin turno abierto.
+- **Movimientos iniciales**, para que la simulación arranque con vida (se omiten con `-SinMovimientos`):
+  - **Caja Principal abierta** por el cajero, con $ 50.000 de fondo;
+  - **5 ventas de mostrador:**
+    - Juan Pérez, factura B en efectivo;
+    - Club Atlético, factura A con débito;
+    - Laura Gómez, factura B por transferencia;
+    - Escuela de Fútbol, factura A a cuenta corriente;
+    - una venta sin cliente ni factura;
+  - **un pedido con envío** a Escuela de Fútbol, pendiente de picking;
+  - **un pedido de Juan Pérez** ya preparado, que aparece en *Retiro Mostrador (1)* del POS.
 
 ## 4. Procesos a simular
 
@@ -63,7 +73,7 @@ Cada punto dice qué hacer y qué tiene que pasar. Conviene hacerlos en este ord
 2. **Conteo cíclico ciego** del salón: contá una unidad menos de un producto, completá y ajustá. El stock baja y queda el movimiento de ajuste.
 
 ### 4.3 Caja y mostrador (usuario Cajero)
-1. **Abrí el turno** de *Caja Principal* con un fondo inicial.
+1. **El turno de *Caja Principal* ya está abierto** con $ 50.000 y las 5 ventas iniciales. Con `-SinMovimientos` lo abrís vos desde *Gestión de caja*.
 2. **Venta a Consumidor Final** (Juan Pérez) con factura B, pagando en efectivo y con tarjeta. La caja suma solo el efectivo.
 3. **Venta a Club Atlético Simulado:** la letra cambia sola a **A**.
 4. **Venta a Gimnasio Sin Condición:** en el cobro aparece el aviso *"no tiene cargada la condición frente al IVA"*.

@@ -36,7 +36,7 @@ export function CartPanelCard({
                         Carrito
                         {cart.length > 0 && (
                             <span className="text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full font-mono">
-                                {cart.reduce((s, i) => s + i.quantity, 0)} Ã­tems
+                                {cart.reduce((s, i) => s + i.quantity, 0)} ítems
                             </span>
                         )}
                     </CardTitle>
@@ -93,7 +93,7 @@ export function CartPanelCard({
                                 ))}
                             </SelectContent>
                         </Select>
-                        <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={onOpenClientDialog} title="Crear cliente rÃ¡pido">
+                        <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={onOpenClientDialog} title="Crear cliente rápido">
                             <UserPlus className="h-4 w-4" />
                         </Button>
                     </div>
@@ -104,7 +104,7 @@ export function CartPanelCard({
                                 <div className="text-muted-foreground">{selectedClient.tax_id}</div>
                             </div>
                             <div className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20 px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1">
-                                <span>â­</span> {selectedClient.loyalty_points || 0} pts
+                                <span>⭐</span> {selectedClient.loyalty_points || 0} pts
                             </div>
                         </div>
                     ) : null}
@@ -114,9 +114,9 @@ export function CartPanelCard({
             <CardContent className="space-y-4 p-4 sm:p-5">
                 {cart.length === 0 ? (
                     <div className="py-8 text-center text-sm text-muted-foreground space-y-1">
-                        <p>AÃºn no agregaste productos.</p>
+                        <p>Aún no agregaste productos.</p>
                         <p className="text-xs text-muted-foreground/70">
-                            Presiona <kbd className="bg-muted px-1.5 py-0.5 rounded font-mono text-[10px]">F2</kbd> para buscar o escanea un cÃ³digo.
+                            Presiona <kbd className="bg-muted px-1.5 py-0.5 rounded font-mono text-[10px]">F2</kbd> para buscar o escanea un código.
                         </p>
                     </div>
                 ) : (
@@ -141,7 +141,7 @@ export function CartPanelCard({
                                             <div className="truncate font-medium text-sm">{item.name}</div>
                                             <div className="flex items-center gap-1.5 flex-wrap">
                                                 <div className="truncate text-[11px] font-medium text-primary">
-                                                    {[item.size ? `Talle ${item.size}` : "", item.color || ""].filter(Boolean).join(" Â· ") || "Producto sin variante"}
+                                                    {[item.size ? `Talle ${item.size}` : "", item.color || ""].filter(Boolean).join(" · ") || "Producto sin variante"}
                                                 </div>
                                                 {item.isPrepared ? (
                                                     <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 py-0 px-1 font-semibold">
@@ -224,9 +224,9 @@ export function CartPanelCard({
 
                 {!currentShift ? (
                     <p className="text-xs text-destructive text-center bg-destructive/10 p-2 rounded border border-destructive/20 font-medium">
-                        Caja cerrada. Ãbrela en{" "}
+                        Caja cerrada. Ábrela en{" "}
                         <Link to="/cash-management" className="underline font-bold">
-                            GestiÃ³n de caja
+                            Gestión de caja
                         </Link>
                         .
                     </p>
