@@ -18,6 +18,14 @@ function checksum(content) {
     return crypto.createHash('sha256').update(content).digest('hex');
 }
 
+// The same text with other line endings is the same migration: a checkout on Windows may
+// record CRLF while the repository (.gitattributes eol=lf) and Linux hand out LF. Only a real
+// change of content counts as "changed after execution".
+function matchesIgnoringLineEndings(recordedChecksum, content) {
+    const lf = String(content).replace(/\r\n/g, '\n');
+    return [content, lf, lf.replace(/\n/g, '\r\n')].some((variant) => checksum(variant) === recordedChecksum);
+}
+
 function isAcceptedHistoricalChecksum(file, recordedChecksum) {
     return ACCEPTED_HISTORICAL_CHECKSUMS.get(file)?.has(recordedChecksum) === true;
 }
@@ -317,6 +325,7 @@ function isRecoverableAlreadyAppliedDdl(error, statement) {
 
 export const migrationInternals = Object.freeze({
     checksum,
+    matchesIgnoringLineEndings,
     splitStatements,
     prepareMigrationStatement,
     splitAlterTableActions: splitTopLevelComma,
@@ -375,7 +384,7 @@ export const runMigrations = async () => {
             const recordedChecksum = executedMigrations.get(file);
 
             if (recordedChecksum !== undefined) {
-                if (recordedChecksum && recordedChecksum !== fileChecksum) {
+                if (recordedChecksum && !matchesIgnoringLineEndings(recordedChecksum, sql)) {
                     if (!isAcceptedHistoricalChecksum(file, recordedChecksum)) {
                         throw new Error(`Migration ${file} changed after execution; create a new migration instead`);
                     }
@@ -403,7 +412,7 @@ export const runMigrations = async () => {
                 const statementChecksum = checksum(statement);
                 const completedChecksum = completedSteps.get(index);
                 if (completedChecksum) {
-                    if (completedChecksum !== statementChecksum) {
+                    if (completedChecksum !== statementChecksum && !matchesIgnoringLineEndings(completedChecksum, statement)) {
                         throw new Error(`Statement ${index + 1} of ${file} changed after partial execution`);
                     }
                     continue;
