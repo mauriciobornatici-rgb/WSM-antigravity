@@ -299,19 +299,22 @@ export class ArcaAuthorizationService {
      */
     async listAlerts({ staleMinutes = ARCA_ALERT_STALE_MINUTES, unauthorizedHours = ARCA_ALERT_UNAUTHORIZED_HOURS } = {}) {
         const settings = await this._companySettings();
-        const arcaConfigured = Boolean(settings.billing_afip_crt && settings.billing_afip_key);
+        // Counted only from the moment ARCA was configured (user decision): earlier invoices were
+        // never meant to go to ARCA. Without that moment recorded, nothing is counted.
+        const configuredAt = settings.arca_configured_at || null;
+        const arcaConfigured = Boolean(settings.billing_afip_crt && settings.billing_afip_key && configuredAt);
         const filters = (fiscalOnly) => `deleted_at IS NULL AND (
                 status = 'arca_conflict'
                 OR (status = 'authorizing' AND (arca_requested_at IS NULL OR arca_requested_at < NOW() - INTERVAL ? MINUTE))
                 OR (status = 'issued' AND cae IS NULL AND arca_last_error IS NOT NULL)
                 ${arcaConfigured ? `OR (status = 'issued' AND cae IS NULL AND arca_last_error IS NULL AND arca_attempts = 0 AND ${fiscalOnly}
-                    AND created_at < NOW() - INTERVAL ? HOUR)` : ''}
+                    AND created_at < NOW() - INTERVAL ? HOUR AND created_at >= ?)` : ''}
             )`;
         const alertColumn = `CASE WHEN status = 'arca_conflict' THEN 'conflict'
                 WHEN status = 'authorizing' THEN 'stuck'
                 WHEN arca_last_error IS NOT NULL THEN 'rejected'
                 ELSE 'unauthorized' END AS alert`;
-        const params = arcaConfigured ? [staleMinutes, unauthorizedHours] : [staleMinutes];
+        const params = arcaConfigured ? [staleMinutes, unauthorizedHours, configuredAt] : [staleMinutes];
         const invoiceFilter = filters(`invoice_type IN ('A', 'B', 'C')`);
         // A credit note goes to ARCA only when it corrects an electronic invoice (not a ticket).
         const noteFilter = filters(`invoice_id IN (SELECT fi.id FROM invoices fi WHERE fi.invoice_type IN ('A', 'B', 'C'))`);

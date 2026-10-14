@@ -3,7 +3,7 @@ import { RefreshCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { arcaErrorText, canReissueInvoice, reissueLetters } from "@/lib/arca"
+import { arcaErrorText, canReissueInvoice, REISSUE_MAX_DAYS, reissueLetters } from "@/lib/arca"
 import { suggestedInvoiceLetter, taxConditionName } from "@/lib/taxConditions"
 import type { Client } from "@/types"
 import type { InvoiceView } from "./types"
@@ -48,6 +48,10 @@ export function InvoiceReissuePanel({ invoice, clients, companyIvaCondition, onR
         && (client.tax_id || "") === (invoice.client_tax_id || "")
     )
     const unchanged = letter === invoice.invoice_type && sameClient && sameData
+    // Same window as the server (ADR-022): later, only an administrator can reissue it.
+    const issuedAt = invoice.issue_date ? new Date(invoice.issue_date) : null
+    const ageDays = issuedAt && !Number.isNaN(issuedAt.getTime()) ? Math.floor((Date.now() - issuedAt.getTime()) / 86_400_000) : 0
+    const late = ageDays > REISSUE_MAX_DAYS
     const letterOptions = LETTERS.filter((option) => reissueLetters(invoice.invoice_type).includes(option.value))
 
     function chooseClient(value: string) {
@@ -77,6 +81,11 @@ export function InvoiceReissuePanel({ invoice, clients, companyIvaCondition, onR
                 <div>
                     <p className="font-medium">Factura sin autorizar en ARCA</p>
                     {error ? <p className="text-xs text-slate-600">Motivo: {error}</p> : null}
+                    {late ? (
+                        <p className="text-xs text-slate-600">
+                            Pasaron más de {REISSUE_MAX_DAYS} días desde la emisión: solo un administrador puede volver a emitirla.
+                        </p>
+                    ) : null}
                 </div>
                 {!open ? (
                     <Button type="button" size="sm" variant="outline" className={LIGHT_OUTLINE} onClick={() => setOpen(true)}>

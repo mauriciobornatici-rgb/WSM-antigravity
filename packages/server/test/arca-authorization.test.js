@@ -725,14 +725,14 @@ test('ADR-022: a document annulled meanwhile is never sent to ARCA', async () =>
     assert.equal(raced.stored.length, 0);
 });
 
-function alertsDb({ configured = false, counts = {}, rows = {} } = {}) {
+function alertsDb({ configured = false, configuredAt = '2026-10-01 00:00:00', counts = {}, rows = {} } = {}) {
     const queries = [];
     const db = {
         query: async (sql, params) => {
             const statement = String(sql);
             queries.push({ sql: statement, params });
             if (statement.includes('company_settings')) {
-                return [[configured ? { billing_afip_crt: 'crt', billing_afip_key: 'key' } : {}]];
+                return [[configured ? { billing_afip_crt: 'crt', billing_afip_key: 'key', arca_configured_at: configuredAt } : {}]];
             }
             const table = statement.includes('FROM credit_notes') ? 'credit_notes' : 'invoices';
             if (statement.includes('SUM(')) return [[counts[table] ?? {}]];
@@ -789,8 +789,18 @@ test('ADR-022: with ARCA configured, electronic invoices a day old without a CAE
     assert.match(invoices.sql, /invoice_type IN \('A', 'B', 'C'\)\s+AND created_at < NOW\(\) - INTERVAL \? HOUR/, 'tickets are not fiscal');
     assert.match(notes.sql, /invoice_id IN \(SELECT fi.id FROM invoices fi WHERE fi.invoice_type IN \('A', 'B', 'C'\)\)\s+AND created_at < NOW\(\) - INTERVAL \? HOUR/, 'credit notes of tickets do not go to ARCA');
     assert.match(invoices.sql, /arca_last_error IS NULL AND arca_attempts = 0 AND/, 'only documents never sent');
-    assert.deepEqual(invoices.params, [30, 48]);
+    assert.deepEqual(invoices.params, [30, 48, '2026-10-01 00:00:00'], 'only invoices issued since ARCA was configured');
+    assert.match(invoices.sql, /created_at < NOW\(\) - INTERVAL \? HOUR AND created_at >= \?/);
     assert.match(invoices.sql, /WHEN arca_last_error IS NOT NULL THEN 'rejected'/);
+});
+
+test('ADR-022: credentials without the configuration moment count no unauthorized invoice', async () => {
+    const { db, queries } = alertsDb({ configured: true, configuredAt: null });
+    const service = new ArcaAuthorizationService({ db, afipService: {} });
+    await service.listAlerts();
+    for (const { sql } of queries.filter((query) => !query.sql.includes('company_settings'))) {
+        assert.doesNotMatch(sql, /INTERVAL \? HOUR/);
+    }
 });
 
 test('ARCA alerts are empty when nothing needs a person', async () => {

@@ -123,8 +123,12 @@ test('ADR-022: an invoice with a CAE, in ARCA, unchanged or for the wrong custom
     await assert.rejects(() => salesService.reissueInvoice(invoice.id, {}, null), (error) => error.statusCode === 422 && error.errorCode === 'nothing_to_change');
     // The letter must suit the customer (a Consumidor Final receives B).
     await assert.rejects(() => salesService.reissueInvoice(invoice.id, { invoice_type: 'A' }, null), (error) => error.errorCode === 'invoice_cuit_required');
-    // An electronic invoice never becomes a ticket.
-    await assert.rejects(() => salesService.reissueInvoice(invoice.id, { invoice_type: 'TK' }, null), (error) => error.errorCode === 'reissue_letter_not_allowed');
+    // The VAT treatment is kept: a B never becomes a C.
+    await assert.rejects(() => salesService.reissueInvoice(invoice.id, { invoice_type: 'C' }, null), (error) => error.errorCode === 'reissue_letter_not_allowed');
+    // Past 5 days only an administrator (ADR-022).
+    await pool.query('UPDATE invoices SET issue_date = NOW() - INTERVAL 9 DAY WHERE id = ?', [invoice.id]);
+    await assert.rejects(() => salesService.reissueInvoice(invoice.id, { invoice_type: 'TK' }, null), (error) => error.errorCode === 'reissue_too_old');
+    await pool.query('UPDATE invoices SET issue_date = NOW() WHERE id = ?', [invoice.id]);
     // In verification with ARCA.
     await pool.query("UPDATE invoices SET status = 'authorizing' WHERE id = ?", [invoice.id]);
     await assert.rejects(() => salesService.reissueInvoice(invoice.id, { invoice_type: 'TK' }, null), (error) => error.statusCode === 409 && error.errorCode === 'invoice_not_reissuable');

@@ -19,12 +19,13 @@
   - el cheque conserva al cliente viejo como emisor;
   - una reversión manual simultánea del mismo asiento o un interbloqueo con el retiro responde 500 sin corrupción (sin reintento);
   - la carrera reemisión/toma ARCA y reemisión/cobro solo tienen prueba con mock.
-- **Decisiones de negocio pendientes:**
-  1. ¿Quién puede reemitir? Hoy cualquiera con permiso de facturación (incluye cajero); no se controla el límite de crédito del cliente nuevo.
-  2. Ticket: hoy una factura electrónica no puede pasar a ticket (conservador). ¿Se permite?
-  3. ¿Límite de antigüedad para reemitir? Sin ARCA configurado toda factura histórica es reemitible.
-  4. Fecha de la factura nueva y de la reversión cuando se cruza de mes (hoy: fecha del día, que es lo que ARCA exige).
-  5. Al configurar ARCA, todas las facturas previas sin CAE serán alerta de 24 h: ¿se cuentan solo las nuevas?
+- **Decisiones de negocio (usuario, 2026-10-14, ADR-023):**
+  1. [x] Cualquiera con permiso de facturación puede reemitir.
+  2. [x] Se permite A/B → ticket.
+  3. [x] 5 días corridos ("lo que se estile": plazo de ARCA para bienes); después solo el administrador, auditado.
+  4. [ ] El usuario entendió "reversión" como si correspondiera una nota de crédito. Hay que aclarar que la factura sin CAE no existe para ARCA, así que no admite NC fiscal. Pendiente de confirmar.
+  5. [x] La alerta de 24 h solo cuenta lo emitido después de configurar ARCA (`arca_configured_at`).
+  Evidencia: validate 0 (967 + 101); coverage 96,67/90,60/93,97; integración 114/114 ×2; RBAC OK; E2E 6/6; simulación 153/153.
 
 Evidencia: validate 0 (965 + 100); coverage 96,67/90,71/93,97; integración 114/114 ×2 (20 escenarios ARCA y 4 de reemisión con base real); RBAC OK (4 casos nuevos); E2E 6/6; simulación 153/153. El primer `validate` se cayó al cerrar Node por una aserción de libuv en Windows después de compilar bien; la segunda corrida dio 0.
 

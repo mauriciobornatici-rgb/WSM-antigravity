@@ -401,26 +401,31 @@ test('ADR-021: the customer VAT condition column exists without a foreign key (A
 });
 test('ADR-022: with ARCA configured, an electronic invoice a day old without any attempt is an alert; a ticket is not', async () => {
     await freshPointOfSale();
-    const [[previous]] = await pool.query('SELECT billing_afip_crt AS crt, billing_afip_key AS k FROM company_settings LIMIT 1');
+    const [[previous]] = await pool.query('SELECT billing_afip_crt AS crt, billing_afip_key AS k, arca_configured_at AS at FROM company_settings LIMIT 1');
     const service = new ArcaAuthorizationService({ afipService: fakeArca() });
     const forgotten = await seedInvoice({ total: 666 });
     const recent = await seedInvoice({ total: 777 });
     const ticket = await seedInvoice({ total: 888, type: 'TK' });
+    const beforeArca = await seedInvoice({ total: 999 });
     await pool.query('UPDATE invoices SET created_at = NOW() - INTERVAL 30 HOUR WHERE id IN (?, ?)', [forgotten, ticket]);
+    await pool.query('UPDATE invoices SET created_at = NOW() - INTERVAL 50 HOUR WHERE id = ?', [beforeArca]);
     try {
+        await pool.query('UPDATE company_settings SET billing_afip_crt = NULL, billing_afip_key = NULL, arca_configured_at = NULL');
         const notConfigured = await service.listAlerts();
         assert.equal(notConfigured.items.some((item) => item.id === forgotten), false, 'before ARCA is configured nothing is "unauthorized"');
 
-        await pool.query("UPDATE company_settings SET billing_afip_crt = 'crt-qa', billing_afip_key = 'key-qa'");
+        // Configured 40 h ago: only what was issued since then counts (user decision).
+        await pool.query("UPDATE company_settings SET billing_afip_crt = 'crt-qa', billing_afip_key = 'key-qa', arca_configured_at = NOW() - INTERVAL 40 HOUR");
         const alerts = await service.listAlerts();
         const byId = new Map(alerts.items.map((item) => [item.id, item]));
         assert.equal(byId.get(forgotten)?.alert, 'unauthorized');
         assert.equal(byId.has(recent), false);
         assert.equal(byId.has(ticket), false);
+        assert.equal(byId.has(beforeArca), false, 'issued before ARCA was configured');
         assert.ok(alerts.unauthorized >= 1);
     } finally {
-        await pool.query('UPDATE company_settings SET billing_afip_crt = ?, billing_afip_key = ?', [previous?.crt ?? null, previous?.k ?? null]);
-        await pool.query("UPDATE invoices SET status = 'cancelled', deleted_at = NOW() WHERE id IN (?, ?, ?)", [forgotten, recent, ticket]);
+        await pool.query('UPDATE company_settings SET billing_afip_crt = ?, billing_afip_key = ?, arca_configured_at = ?', [previous?.crt ?? null, previous?.k ?? null, previous?.at ?? null]);
+        await pool.query("UPDATE invoices SET status = 'cancelled', deleted_at = NOW() WHERE id IN (?, ?, ?, ?)", [forgotten, recent, ticket, beforeArca]);
     }
 });
 test('AUD-010: the label of an annulled invoice stays as it was when ARCA moves its provisional number', async () => {

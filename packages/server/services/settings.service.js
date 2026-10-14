@@ -175,6 +175,14 @@ class SettingsService {
             safeTnToken, safeTnStoreId, safeTnLocationId, safeTnClientId, safeTnSecret
         ]);
 
+        // ADR-022 (user): the "no CAE after 24 h" alert counts only invoices issued once ARCA is
+        // configured, so the moment the credentials are first complete is kept.
+        await connection.query(
+            `UPDATE company_settings SET arca_configured_at = NOW()
+             WHERE id = 1 AND arca_configured_at IS NULL
+               AND COALESCE(billing_afip_crt, '') <> '' AND COALESCE(billing_afip_key, '') <> ''`
+        );
+
         const [updatedRows] = await connection.query('SELECT * FROM company_settings WHERE id = 1 LIMIT 1');
         await auditService.log({
             user_id: actorId || null,

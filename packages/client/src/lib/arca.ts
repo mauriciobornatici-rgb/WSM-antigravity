@@ -89,14 +89,13 @@ export function canReissueInvoice(invoice?: { cae?: string | null | undefined; s
 
 /**
  * ADR-022 / AUD-010: the letters an annulled document can be issued again as (same rule as the
- * server). A and B are interchangeable, a ticket can become an A or a B, a C stays a C, and an
- * electronic invoice never becomes a ticket.
+ * server). A, B and the ticket are interchangeable; a C stays a C.
  */
 export function reissueLetters(oldLetter?: string | null): Array<"A" | "B" | "C" | "TK"> {
     switch (String(oldLetter || "").toUpperCase()) {
         case "A":
         case "B":
-            return ["A", "B"]
+            return ["A", "B", "TK"]
         case "TK":
             return ["TK", "A", "B"]
         case "C":
@@ -105,6 +104,9 @@ export function reissueLetters(oldLetter?: string | null): Array<"A" | "B" | "C"
             return []
     }
 }
+
+/** ADR-022: days an invoice ARCA never authorized can be reissued (later, only an administrator). */
+export const REISSUE_MAX_DAYS = 5
 
 /** Total for the menu badge. */
 export function arcaAlertCount(alerts?: { conflicts?: number; stuck?: number; rejected?: number; unauthorized?: number } | null): number {

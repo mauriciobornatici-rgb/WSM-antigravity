@@ -11,6 +11,9 @@ import stockLedger from '../domains/inventory/StockLedger.js';
 import { grossLineAmounts, lineAmounts } from '../utils/vatMath.js';
 import { businessError } from '../utils/businessError.js';
 import { CLIENT_TAX_CONDITIONS } from '@wsm/common';
+
+// ADR-022: days an invoice ARCA never authorized can still be reissued (ARCA's window for goods).
+export const REISSUE_MAX_DAYS = 5;
 import dispatchOrderUseCase from '../domains/sales/DispatchOrderUseCase.js';
 import deliverOrderUseCase from '../domains/sales/DeliverOrderUseCase.js';
 
@@ -1636,7 +1639,7 @@ class SalesService extends BaseService {
      * Only without a CAE and outside any ARCA attempt: 'issued' means ARCA holds no voucher
      * for it (ADR-020 releases a number only after ARCA confirms it does not exist).
      */
-    async reissueInvoice(invoiceId, { invoice_type: requestedType, client_id: requestedClientId } = {}, userId = null) {
+    async reissueInvoice(invoiceId, { invoice_type: requestedType, client_id: requestedClientId } = {}, userId = null, { allowLate = false } = {}) {
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
@@ -1649,6 +1652,20 @@ class SalesService extends BaseService {
                     message: old.cae
                         ? 'La factura ya tiene CAE: se corrige con una nota de crédito, no se anula.'
                         : 'La factura está en trámite con ARCA: esperá a que termine la verificación.',
+                });
+            }
+            // ADR-022 (user: "lo que se estile"): ARCA admits a sale of goods dated up to 5 days
+            // back, so that is the usual window to correct an invoice. Later only an administrator,
+            // and it is audited.
+            const [[age]] = await connection.query(
+                'SELECT DATEDIFF(CURDATE(), DATE(COALESCE(issue_date, created_at))) AS days FROM invoices WHERE id = ?',
+                [invoiceId]
+            );
+            const ageDays = Number(age?.days || 0);
+            if (ageDays > REISSUE_MAX_DAYS && !allowLate) {
+                throw businessError(409, {
+                    error: 'reissue_too_old',
+                    message: `La factura tiene ${ageDays} días: pasó el plazo de ${REISSUE_MAX_DAYS} días para volver a emitirla. Solo un administrador puede hacerlo.`,
                 });
             }
             const [notes] = await connection.query(
@@ -1803,6 +1820,7 @@ class SalesService extends BaseService {
                 old_values: {
                     invoice_id: invoiceId, label: oldLabel, order_id: old.order_id, client_id: old.client_id,
                     client_tax_id: old.client_tax_id, client_tax_condition: old.client_tax_condition, arca_last_error: old.arca_last_error,
+                    age_days: ageDays, ...(ageDays > REISSUE_MAX_DAYS ? { late_by_administrator: true } : {}),
                 },
                 new_values: {
                     invoice_id: newId, label: newLabel, client_id: client.client_id,
@@ -1821,14 +1839,14 @@ class SalesService extends BaseService {
     }
 
     /**
-     * ADR-022 / AUD-010: a reissue keeps the VAT treatment. A and B (both discriminate output
-     * VAT) are interchangeable, a ticket can become an A or a B, and a C (monotributo, no
-     * output VAT) stays a C. An electronic invoice never becomes a ticket: it would leave ARCA.
+     * ADR-022 / AUD-010: a reissue keeps the VAT treatment. A, B and the ticket (all three post
+     * output VAT) are interchangeable (the user allowed A/B to ticket, 2026-10-14), and a C
+     * (monotributo, no output VAT) stays a C.
      */
     _assertReissueLetter(oldLetter, newLetter) {
         const allowed = {
-            A: ['A', 'B'],
-            B: ['A', 'B'],
+            A: ['A', 'B', 'TK'],
+            B: ['A', 'B', 'TK'],
             TK: ['TK', 'A', 'B'],
             C: ['C'],
         }[oldLetter] || [oldLetter];

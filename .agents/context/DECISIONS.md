@@ -80,6 +80,13 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-023 — Decisiones del usuario sobre AUD-010 (2026-10-14)
+- **Quién reemite:** cualquiera con permiso de facturación (cajero incluido). Sin control de límite de crédito del cliente nuevo.
+- **A/B a ticket: permitido.** A, B y ticket son intercambiables (los tres asientan IVA débito). La C sigue solo a C.
+- **Antigüedad ("lo que se estile"):** 5 días corridos desde la emisión, el plazo que ARCA admite para fechar comprobantes de venta de bienes. Pasado ese plazo solo el administrador puede reemitir; queda auditado (`age_days`, `late_by_administrator`).
+- **Alerta de 24 h:** solo cuenta comprobantes emitidos después de configurar ARCA. `company_settings.arca_configured_at` (en la migración 061, que todavía no salió de local y QA) se fija la primera vez que las credenciales quedan completas. Si ya estaban configuradas, la migración la fija en el momento de aplicarse.
+- **Fecha y "reversión" (punto 4):** a confirmar con el usuario (ver AUD-010). La factura reemplazada nunca fue autorizada por ARCA, así que no admite nota de crédito fiscal.
+
 ### ADR-022 — Decisiones del usuario sobre AUD-009 (2026-10-13)
 - **Monotributista recibe B, nunca A** (legislación argentina, según el usuario; o C si el emisor es monotributista). Solo el Responsable Inscripto recibe A y es el único al que se le exige CUIT de 11 dígitos. Esto reemplaza lo dicho en ADR-021 sobre el Monotributista.
 - **Anular y volver a emitir** (`POST /api/invoices/:id/reissue`, permiso de facturación): solo para una factura sin CAE en estado 'issued' (rechazada, sin CUIT o nunca enviada). Si tiene CAE, se corrige con nota de crédito; si está en trámite con ARCA, se espera. En una sola transacción:

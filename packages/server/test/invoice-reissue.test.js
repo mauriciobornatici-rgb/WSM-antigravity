@@ -20,7 +20,7 @@ const CLIENTS = {
     'cli-ri': { id: 'cli-ri', name: 'Club SA', tax_id: '30-71234567-4', address: 'X', tax_condition_id: 'tc_RespInscripto' },
 };
 
-function setup(t, { old = OLD, creditNotes = [], paid = 500, pendingReturns = [], deletedClients = [], costLines = [] } = {}) {
+function setup(t, { old = OLD, creditNotes = [], paid = 500, pendingReturns = [], deletedClients = [], costLines = [], ageDays = 1 } = {}) {
     const calls = [];
     mockPool(t, async (sql, params = []) => {
         const statement = String(sql).replace(/\s+/g, ' ').trim();
@@ -30,6 +30,7 @@ function setup(t, { old = OLD, creditNotes = [], paid = 500, pendingReturns = []
         if (statement.includes('tax_condition_id FROM clients')) return [CLIENTS[params[0]] ? [CLIENTS[params[0]]] : []];
         if (statement.includes('SUM(amount), 0) AS paid')) return [[{ paid }]];
         if (statement.includes('FROM client_returns')) return [pendingReturns];
+        if (statement.includes('DATEDIFF')) return [[{ days: ageDays }]];
         if (statement.startsWith('SELECT id FROM clients WHERE id = ? AND deleted_at IS NULL')) {
             return [CLIENTS[params[0]] && !deletedClients.includes(params[0]) ? [{ id: params[0] }] : []];
         }
@@ -110,6 +111,14 @@ test('reissueInvoice to an anonymous buyer only when nothing is owed; the order 
     assert.equal(order.params[1], null, 'the order leaves the old customer too');
 });
 
+test('ADR-022: an electronic invoice can become a ticket, and an administrator can reissue past the window', async (t) => {
+    const { calls, audits } = setup(t, { ageDays: 12, paid: 1210 });
+    await salesService.reissueInvoice('inv-old', { invoice_type: 'TK' }, null, { allowLate: true });
+    const insert = calls.find(({ sql }) => sql.startsWith('INSERT INTO invoices'));
+    assert.equal(insert.params[7], 'TK');
+    assert.deepEqual([audits[0].old_values.age_days, audits[0].old_values.late_by_administrator], [12, true]);
+});
+
 test('reissueInvoice copies the cost entry instead of recalculating it (AUD-010)', async (t) => {
     const costLines = [
         { account_code: '5.1.01.01', debit: '412.37', credit: '0', notes: 'Costo de ventas (CMV)' },
@@ -155,7 +164,9 @@ test('reissueInvoice refuses what cannot be annulled and rolls back', async (t) 
     await reject(OLD, { invoice_type: 'A' }, (error) => error.errorCode === 'invoice_type_mismatch');
     // AUD-010: the VAT treatment is kept, a debt is never left without a debtor, a return in
     // progress blocks it, and a deleted customer cannot receive it.
-    await reject(OLD, { invoice_type: 'TK' }, (error) => error.errorCode === 'reissue_letter_not_allowed' && /solo se vuelve a emitir como factura A o factura B/.test(error.message));
+    await reject(OLD, { invoice_type: 'C' }, (error) => error.errorCode === 'reissue_letter_not_allowed' && error.message.includes('como factura A o factura B o ticket'));
+    // ADR-022: past 5 days only an administrator.
+    await reject(OLD, { invoice_type: 'A', client_id: 'cli-ri' }, (error) => error.statusCode === 409 && error.errorCode === 'reissue_too_old' && error.message.includes('12 días'), { ageDays: 12 });
     await reject({ ...OLD, invoice_type: 'C' }, { invoice_type: 'B' }, (error) => error.errorCode === 'reissue_letter_not_allowed');
     await reject(OLD, { invoice_type: 'B', client_id: null }, (error) => error.statusCode === 409 && error.errorCode === 'outstanding_requires_client');
     await reject(OLD, { invoice_type: 'A', client_id: 'cli-ri' }, (error) => error.errorCode === 'invoice_has_pending_returns', { pendingReturns: [{ id: 'r-1' }] });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { arcaAlertCount, canReissueInvoice, arcaAlertLink, arcaAlertSummary, arcaAlertTitle, arcaErrorText } from "./arca"
+import { arcaAlertCount, canReissueInvoice, reissueLetters, arcaAlertLink, arcaAlertSummary, arcaAlertTitle, arcaErrorText } from "./arca"
 import { suggestedInvoiceLetter, taxConditionCuitError, taxConditionName, TAX_CONDITION_OPTIONS } from "./taxConditions"
 
 describe("alertas de ARCA (ADR-021)", () => {
@@ -49,6 +49,13 @@ describe("reemisión de facturas sin autorizar (ADR-022)", () => {
         expect(canReissueInvoice({ status: "authorizing" })).toBe(false)
         expect(canReissueInvoice({ status: "authorized", cae: "1" })).toBe(false)
         expect(canReissueInvoice(null)).toBe(false)
+    })
+
+    it("conserva el tratamiento del IVA: A, B y ticket entre sí, C solo a C", () => {
+        expect(reissueLetters("B")).toEqual(["A", "B", "TK"])
+        expect(reissueLetters("TK")).toEqual(["TK", "A", "B"])
+        expect(reissueLetters("C")).toEqual(["C"])
+        expect(reissueLetters(null)).toEqual([])
     })
 })
 

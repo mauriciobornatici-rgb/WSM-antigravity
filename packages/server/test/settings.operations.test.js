@@ -141,6 +141,11 @@ test('updateCompanySettings creates a complete encrypted configuration from an e
     assert.ok(insert.params.includes('store-1'));
     assert.ok(insert.params.includes('location-1'));
     assert.ok(insert.params.includes('client-1'));
+    // ADR-022: the first time the credentials are complete is kept (only once, never overwritten).
+    const configured = calls.find(({ sql }) => sql.includes('SET arca_configured_at = NOW()'));
+    assert.ok(configured);
+    assert.match(configured.sql, /arca_configured_at IS NULL/);
+    assert.ok(calls.indexOf(configured) > calls.indexOf(insert));
     assert.equal(audited.user_id, 'admin-1');
     assert.equal(audited.ip_address, '127.0.0.1');
 });
