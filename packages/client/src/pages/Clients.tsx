@@ -227,7 +227,7 @@ export default function ClientsPage() {
                                     </TableRow>
                                 ) : filteredClients.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No se encontraron clientes.</TableCell>
+                                        <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">{onlyMissingCondition && !search.trim() ? "Todos los clientes tienen la condición IVA cargada." : "No se encontraron clientes."}</TableCell>
                                     </TableRow>
                                 ) : (
                                     filteredClients.map((client) => (
@@ -371,13 +371,17 @@ function CreateClientDialog({ open, onOpenChange, onSubmit }: { open: boolean, o
         tax_condition_id: NO_TAX_CONDITION as string
     })
 
+    const [cuitError, setCuitError] = useState<string | null>(null)
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
-        const cuitError = taxConditionCuitError(formData.tax_condition_id, formData.tax_id)
-        if (cuitError) {
-            toast.error(cuitError)
+        const error = taxConditionCuitError(formData.tax_condition_id, formData.tax_id)
+        if (error) {
+            setCuitError(error)
+            toast.error(error)
             return
         }
+        setCuitError(null)
         const data = {
             ...formData,
             credit_limit: parseFloat(formData.credit_limit)
@@ -407,7 +411,10 @@ function CreateClientDialog({ open, onOpenChange, onSubmit }: { open: boolean, o
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">
                         <Label htmlFor="tax_id" className="text-left sm:text-right">CUIT / DNI</Label>
-                        <Input id="tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} className="sm:col-span-3" required />
+                        <div className="space-y-1 sm:col-span-3">
+                            <Input id="tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} aria-invalid={cuitError ? true : undefined} aria-describedby={cuitError ? "tax_id-error" : undefined} required />
+                            {cuitError ? <p id="tax_id-error" className="text-xs text-destructive">{cuitError}</p> : null}
+                        </div>
                     </div>
                     <TaxConditionField id="tax_condition" value={formData.tax_condition_id} onChange={(value) => setFormData({ ...formData, tax_condition_id: value })} />
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">
@@ -444,13 +451,17 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
         tax_condition_id: client.tax_condition_id || NO_TAX_CONDITION
     })
 
+    const [cuitError, setCuitError] = useState<string | null>(null)
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
-        const cuitError = taxConditionCuitError(formData.tax_condition_id, formData.tax_id)
-        if (cuitError) {
-            toast.error(cuitError)
+        const error = taxConditionCuitError(formData.tax_condition_id, formData.tax_id)
+        if (error) {
+            setCuitError(error)
+            toast.error(error)
             return
         }
+        setCuitError(null)
         const data = {
             ...formData,
             credit_limit: parseFloat(formData.credit_limit)
@@ -474,7 +485,10 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">
                         <Label htmlFor="edit-tax_id" className="text-left sm:text-right">CUIT / DNI</Label>
-                        <Input id="edit-tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} className="sm:col-span-3" required />
+                        <div className="space-y-1 sm:col-span-3">
+                            <Input id="edit-tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} aria-invalid={cuitError ? true : undefined} aria-describedby={cuitError ? "edit-tax_id-error" : undefined} required />
+                            {cuitError ? <p id="edit-tax_id-error" className="text-xs text-destructive">{cuitError}</p> : null}
+                        </div>
                     </div>
                     <TaxConditionField id="edit-tax_condition" value={formData.tax_condition_id} onChange={(value) => setFormData({ ...formData, tax_condition_id: value })} />
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">

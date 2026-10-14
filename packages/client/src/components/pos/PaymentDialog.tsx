@@ -141,7 +141,7 @@ export function PaymentDialog({
                 <div className="space-y-4">
                     <div className="space-y-2">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <Label className="text-xs font-semibold">Cliente</Label>
+                            <Label htmlFor="payment-client" className="text-xs font-semibold">Cliente</Label>
                             <Button
                                 type="button"
                                 variant="outline"
@@ -159,7 +159,7 @@ export function PaymentDialog({
                                 onClientChange(value === CONSUMIDOR_FINAL_VALUE ? "" : value)
                             }
                         >
-                            <SelectTrigger className="h-9">
+                            <SelectTrigger id="payment-client" className="h-9">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -317,9 +317,9 @@ export function PaymentDialog({
                         </label>
                         {emitInvoice && (
                             <div className="flex items-center gap-2">
-                                <Label className="text-xs">Tipo:</Label>
+                                <Label htmlFor="payment-invoice-type" className="text-xs">Tipo:</Label>
                                 <Select value={invoiceType} onValueChange={(value) => onInvoiceTypeChange(value as InvoiceType)}>
-                                    <SelectTrigger className="h-7 w-28 text-xs">
+                                    <SelectTrigger id="payment-invoice-type" className="h-7 w-28 text-xs">
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -339,8 +339,21 @@ export function PaymentDialog({
                     ) : null}
 
                     {hasInvoiceCuitError ? (
-                        <p className="text-xs font-medium text-destructive bg-destructive/10 p-2 rounded border border-destructive/20">
-                            La factura A necesita un cliente con CUIT (11 dígitos). Elegí el cliente o emití una factura B.
+                        <p
+                            id="payment-invoice-cuit-error"
+                            role="alert"
+                            className="flex flex-wrap items-center gap-2 text-xs font-medium text-destructive bg-destructive/10 p-2 rounded border border-destructive/20"
+                        >
+                            <span>La factura A necesita un cliente con CUIT (11 dígitos). Elegí el cliente o emití una factura B.</span>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={() => onInvoiceTypeChange("B")}
+                            >
+                                Emitir factura B
+                            </Button>
                         </p>
                     ) : null}
 
@@ -374,6 +387,7 @@ export function PaymentDialog({
                         type="button"
                         className="font-bold h-10 px-6 shadow-md"
                         onClick={handleConfirm}
+                        aria-describedby={hasInvoiceCuitError ? "payment-invoice-cuit-error" : undefined}
                         disabled={processing || hasBalanceError || hasClientError || hasInvoiceCuitError}
                     >
                         {processing ? "Procesando..." : "Confirmar Cobro"}

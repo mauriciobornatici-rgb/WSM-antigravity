@@ -42,9 +42,9 @@ export const getInvoiceStatusBadge = (status?: string, type?: string) => {
         case "issued":
             return <Badge className="bg-blue-500">Emitida</Badge>
         case "authorizing":
-            return <Badge className="bg-amber-500" title={ARCA_VERIFYING_HELP}>{ARCA_VERIFYING_LABEL}</Badge>
+            return <Badge className="bg-amber-700" title={ARCA_VERIFYING_HELP}>{ARCA_VERIFYING_LABEL}</Badge>
         case "authorized":
-            return <Badge className="bg-green-500">Autorizada (CAE)</Badge>
+            return <Badge className="bg-green-700">Autorizada (CAE)</Badge>
         case "arca_conflict":
             return <Badge className="bg-red-600">{ARCA_CONFLICT_LABEL}</Badge>
         default:

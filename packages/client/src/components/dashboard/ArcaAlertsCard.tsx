@@ -49,7 +49,7 @@ export function ArcaAlertsCard() {
                     {arcaAlertSummary(data.conflicts, data.stuck, data.rejected ?? 0, data.unauthorized ?? 0)}.
                     {data.conflicts > 0 ? " Un conflicto no se resuelve solo: revisá el comprobante en ARCA antes de reintentar." : ""}
                     {data.stuck > 0 ? ` Sin confirmar: más de ${data.stale_minutes} minutos en verificación (ARCA no responde).` : ""}
-                    {(data.rejected ?? 0) > 0 ? " Rechazado: corregí el motivo, o anulá la factura y emitila de nuevo." : ""}
+                    {(data.rejected ?? 0) > 0 ? ` ${data.rejected === 1 ? "Rechazado" : "Rechazados"}: corregí el motivo, o anulá la factura y emitila de nuevo.` : ""}
                     {(data.unauthorized ?? 0) > 0 ? ` Sin autorizar: más de ${data.unauthorized_hours} h sin pedir el CAE.` : ""}
                 </CardDescription>
             </CardHeader>
@@ -64,9 +64,9 @@ export function ArcaAlertsCard() {
                                     <Link to={arcaAlertLink(item)} className="font-medium text-primary underline-offset-2 hover:underline">
                                         {arcaAlertTitle(item)}
                                     </Link>
-                                    <span className="text-muted-foreground"> · {item.customer || "Consumidor final"} · {formatMoney(item.amount)}</span>
+                                    <span className="text-muted-foreground"> · {item.customer || "Consumidor Final"} · {formatMoney(item.amount)}</span>
                                     {error ? (
-                                        <p className="truncate text-xs text-muted-foreground" title={error}>{error}</p>
+                                        <p className="line-clamp-2 text-xs text-muted-foreground">{error}</p>
                                     ) : null}
                                 </div>
                                 <Badge variant="outline" className={`shrink-0 ${badge.className}`}>{badge.label}</Badge>
@@ -74,9 +74,12 @@ export function ArcaAlertsCard() {
                         )
                     })}
                 </ul>
-                {total > VISIBLE_ITEMS ? (
-                    <p className="pt-2 text-xs text-muted-foreground">Y {total - Math.min(VISIBLE_ITEMS, data.items.length)} más.</p>
-                ) : null}
+                <div className="flex items-center justify-between gap-2 pt-2 text-xs">
+                    {total > VISIBLE_ITEMS ? (
+                        <p className="text-muted-foreground">Y {total - Math.min(VISIBLE_ITEMS, data.items.length)} más.</p>
+                    ) : <span />}
+                    <Link to="/invoices" className="font-medium text-primary underline-offset-2 hover:underline">Ver facturación</Link>
+                </div>
             </CardContent>
         </Card>
     )

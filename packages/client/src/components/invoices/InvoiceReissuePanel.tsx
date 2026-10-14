@@ -1,8 +1,10 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { RefreshCcw } from "lucide-react"
+import { hasPermission, PERMISSIONS } from "@wsm/common"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useAuth } from "@/context/AuthContext"
 import { arcaErrorText, canReissueInvoice, REISSUE_MAX_DAYS, reissueLetters } from "@/lib/arca"
 import { suggestedInvoiceLetter, taxConditionName } from "@/lib/taxConditions"
 import type { Client } from "@/types"
@@ -37,6 +39,24 @@ export function InvoiceReissuePanel({ invoice, clients, companyIvaCondition, onR
     const [saving, setSaving] = useState(false)
     const [clientId, setClientId] = useState<string>(invoice.client_id || ANONYMOUS)
     const [letter, setLetter] = useState<ReissueLetter>((invoice.invoice_type as ReissueLetter) || "B")
+    const [suggestedApplied, setSuggestedApplied] = useState(false)
+    const { user } = useAuth()
+    const triggerRef = useRef<HTMLButtonElement>(null)
+    const confirmRef = useRef<HTMLButtonElement>(null)
+    const wasOpenRef = useRef(false)
+
+    useEffect(() => {
+        if (open) {
+            document.getElementById("reissue-client")?.focus()
+        } else if (wasOpenRef.current) {
+            triggerRef.current?.focus()
+        }
+        wasOpenRef.current = open
+    }, [open])
+
+    useEffect(() => {
+        if (confirming) confirmRef.current?.focus()
+    }, [confirming])
 
     if (!canReissueInvoice(invoice)) return null
     const error = arcaErrorText(typeof invoice.arca_last_error === "string" ? invoice.arca_last_error : null)
@@ -52,6 +72,8 @@ export function InvoiceReissuePanel({ invoice, clients, companyIvaCondition, onR
     const issuedAt = invoice.issue_date ? new Date(invoice.issue_date) : null
     const ageDays = issuedAt && !Number.isNaN(issuedAt.getTime()) ? Math.floor((Date.now() - issuedAt.getTime()) / 86_400_000) : 0
     const late = ageDays > REISSUE_MAX_DAYS
+    const blockedByAge = late && !hasPermission(user?.role, PERMISSIONS.SETTINGS_MANAGE)
+    const letterName = (value?: string | null) => LETTERS.find((option) => option.value === value)?.label ?? String(value || "")
     const letterOptions = LETTERS.filter((option) => reissueLetters(invoice.invoice_type).includes(option.value))
 
     function chooseClient(value: string) {
@@ -59,7 +81,9 @@ export function InvoiceReissuePanel({ invoice, clients, companyIvaCondition, onR
         setConfirming(false)
         const next = clients.find((candidate) => candidate.id === value)
         const suggested = suggestedInvoiceLetter(next?.tax_condition_id, companyIvaCondition)
-        if (suggested && reissueLetters(invoice.invoice_type).includes(suggested)) setLetter(suggested)
+        const applies = Boolean(suggested && reissueLetters(invoice.invoice_type).includes(suggested))
+        if (suggested && applies) setLetter(suggested)
+        setSuggestedApplied(applies && suggested !== letter)
     }
 
     async function submit() {
@@ -87,12 +111,11 @@ export function InvoiceReissuePanel({ invoice, clients, companyIvaCondition, onR
                         </p>
                     ) : null}
                 </div>
-                {!open ? (
-                    <Button type="button" size="sm" variant="outline" className={LIGHT_OUTLINE} onClick={() => setOpen(true)}>
-                        <RefreshCcw className="mr-1 h-4 w-4" aria-hidden="true" />
-                        Anular y volver a emitir
-                    </Button>
-                ) : null}
+                {/* Always mounted (disabled while the panel is open) so the focus can come back to it. */}
+                <Button ref={triggerRef} type="button" size="sm" variant="outline" className={LIGHT_OUTLINE} onClick={() => setOpen(true)} disabled={open || blockedByAge}>
+                    <RefreshCcw className="mr-1 h-4 w-4" aria-hidden="true" />
+                    Anular y volver a emitir
+                </Button>
             </div>
             {open ? (
                 <div className="mt-3 space-y-3">
@@ -120,7 +143,7 @@ export function InvoiceReissuePanel({ invoice, clients, companyIvaCondition, onR
                         </div>
                         <div className="space-y-1">
                             <Label htmlFor="reissue-letter" className="text-slate-800">Tipo</Label>
-                            <Select value={letter} onValueChange={(value) => { setLetter(value as ReissueLetter); setConfirming(false) }}>
+                            <Select value={letter} onValueChange={(value) => { setLetter(value as ReissueLetter); setSuggestedApplied(false); setConfirming(false) }}>
                                 <SelectTrigger id="reissue-letter" className={LIGHT_FIELD}>
                                     <SelectValue />
                                 </SelectTrigger>
@@ -130,12 +153,23 @@ export function InvoiceReissuePanel({ invoice, clients, companyIvaCondition, onR
                                     ))}
                                 </SelectContent>
                             </Select>
+                            {suggestedApplied ? (
+                                <p className="text-xs text-slate-600">Letra sugerida por la condición IVA del cliente.</p>
+                            ) : null}
                         </div>
                     </div>
                     <p className="text-xs text-slate-600">
                         La factura actual queda anulada (nunca fue autorizada). La nueva lleva los mismos productos e importes;
                         los cobros y el pedido pasan a ella.
                     </p>
+                    <div aria-live="polite">
+                        {confirming ? (
+                            <p className="text-xs font-medium text-slate-800">
+                                Se anula {letterName(invoice.invoice_type)} a {invoice.client_name || "Consumidor Final"} y se emite{" "}
+                                {letterName(letter)} a {client?.name ?? "Consumidor Final"}{client?.tax_id ? `, CUIT/DNI ${client.tax_id}` : ""}.
+                            </p>
+                        ) : null}
+                    </div>
                     <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <Button type="button" size="sm" variant="ghost" className="text-slate-700 hover:bg-amber-100 hover:text-slate-900" onClick={() => { setOpen(false); setConfirming(false) }} disabled={saving}>
                             Cancelar
@@ -145,7 +179,7 @@ export function InvoiceReissuePanel({ invoice, clients, companyIvaCondition, onR
                                 Continuar
                             </Button>
                         ) : (
-                            <Button type="button" size="sm" variant="destructive" onClick={() => void submit()} disabled={saving}>
+                            <Button ref={confirmRef} type="button" size="sm" variant="destructive" onClick={() => void submit()} disabled={saving}>
                                 {saving ? "Emitiendo..." : "Confirmar anulación y nueva factura"}
                             </Button>
                         )}

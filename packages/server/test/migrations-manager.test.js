@@ -277,6 +277,7 @@ test('runMigrations executes every pending migration and releases its advisory l
             if (statement.includes('GET_LOCK')) return [[{ acquired: 1 }]];
             if (statement === 'SELECT name, checksum FROM _migrations') return [[]];
             if (statement.includes('SELECT statement_index')) return [[]];
+            if (statement === 'SELECT VERSION() AS version') return [[{ version: '8.0.36' }]];
             if (statement.startsWith('INSERT INTO _migration_steps')) recordedSteps.push(params);
             return [[]];
         },
@@ -545,4 +546,18 @@ test('a migration recorded with other line endings is the same migration; a real
     assert.equal(matchesIgnoringLineEndings(checksum(lf), crlf), true, 'recorded as LF, read as CRLF');
     assert.equal(matchesIgnoringLineEndings(checksum(lf), lf), true);
     assert.equal(matchesIgnoringLineEndings(checksum(lf), lf.replace('b INT', 'b BIGINT')), false, 'a real change still fails');
+});
+test('a CHECK constraint migration refuses a MySQL that would ignore it (before 8.0.16)', async () => {
+    const { assertCheckConstraintsEnforced } = migrationInternals;
+    const statement = 'ALTER TABLE t ADD CONSTRAINT chk_x CHECK (a > 0)';
+    const server = (version) => ({ query: async () => [[{ version }]] });
+    await assertCheckConstraintsEnforced(server('8.0.16'), '062.sql', statement);
+    await assertCheckConstraintsEnforced(server('8.0.36-log'), '062.sql', statement);
+    await assertCheckConstraintsEnforced(server('8.4.2'), '062.sql', statement);
+    await assert.rejects(() => assertCheckConstraintsEnforced(server('8.0.15'), '062.sql', statement), /needs MySQL 8.0.16/);
+    await assert.rejects(() => assertCheckConstraintsEnforced(server('5.7.44'), '062.sql', statement), /needs MySQL 8.0.16/);
+    // Other statements do not ask the server.
+    let asked = false;
+    await assertCheckConstraintsEnforced({ query: async () => { asked = true; return [[{}]]; } }, '061.sql', 'ALTER TABLE t ADD COLUMN a INT');
+    assert.equal(asked, false);
 });

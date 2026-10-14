@@ -150,13 +150,16 @@ class ClientService {
             throw businessError(409, { error: 'duplicate_tax_id', message: 'Ya existe un cliente con ese RUC/CI/CUIT' });
         }
 
+        // The CUIT rule is checked against the condition that will be stored (sent or kept): a
+        // form that does not send the condition cannot leave a Responsable Inscripto without CUIT.
+        const taxConditionId = taxConditionSent ? (body.tax_condition_id || null) : (existing[0].tax_condition_id ?? null);
+        if (taxConditionId === 'tc_RespInscripto' && String(tax_id || '').replace(/\D/g, '').length !== 11) {
+            throw businessError(422, { error: 'cuit_required', message: 'Un Responsable Inscripto necesita el CUIT (11 dígitos).' });
+        }
+
         await pool.query(
             'UPDATE clients SET name = ?, tax_id = ?, email = ?, phone = ?, address = ?, credit_limit = ?, tax_condition_id = ? WHERE id = ? AND deleted_at IS NULL',
-            [
-                name, tax_id, email, phone, address, credit_limit || 0,
-                taxConditionSent ? (body.tax_condition_id || null) : (existing[0].tax_condition_id ?? null),
-                id
-            ]
+            [name, tax_id, email, phone, address, credit_limit || 0, taxConditionId, id]
         );
 
         const [updated] = await pool.query('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL', [id]);

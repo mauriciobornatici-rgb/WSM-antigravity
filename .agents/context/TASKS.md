@@ -117,12 +117,25 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - [x] PR #3 (`codex/simulacion-operativa` → `main`) mergeado: `fb2a6be`. Los PR #1 y #2 ya estaban en `main`. El CI no despliega (solo pruebas).
 - [x] Entorno local listo para probar sobre `main`: API en 3001 con `.env.local` y migraciones 046-062 aplicadas en la base local; Vite en 5173; QA al día.
 - [x] Al cambiar a `main`, la API no arrancaba: la 054 tenía registrado el hash de un archivo de trabajo con otros finales de línea y comentarios. Se verificó que las 4 sentencias aplicadas eran idénticas y se actualizó el hash solo en local y QA.
-- [ ] PR #4 (`fix/migraciones-fin-de-linea`): el control de migraciones ignora diferencias de fin de línea (CRLF/LF). Pendiente de merge por el usuario (la autorización era única).
+- [x] PR #4 (`fix/migraciones-fin-de-linea`) mergeado con autorización del usuario: `95c3ab5`.
+
+## Entorno de simulación y mejoras (2026-10-14, rama `codex/simulacion-y-mejoras`)
+
+- [x] `scripts/simulacion.ps1`: base aparte `wsm_simulacion` en el MySQL local (con `-Reiniciar` arranca de cero). Carga por API:
+  - empresa;
+  - 4 usuarios, uno por rol;
+  - 19 productos con stock valuado;
+  - 6 clientes;
+  - 2 proveedores;
+  - una OC enviada.
+  Guía en `docs/execution/GUIA_SIMULACION.md`. `dev-local.ps1` cierra la simulación al volver.
+- [x] La simulación automática acepta `SIM_DB_NAME` (solo las dos bases locales). Dio 153/153 sobre la base nueva.
+- [x] AUD-012: revisión de seguridad y de UX, todo lo técnico corregido.
 
 ## Próximos pasos
 
-1. Usuario: probar sobre `main` en local y hacer la homologación de ARCA; mergear el PR #4.
-2. Usuario: correr en producción los runbooks (`docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`) y aplicar la migración 045 con el despliegue.
+1. Usuario: simular todos los procesos con `scripts/simulacion.ps1` según `docs/execution/GUIA_SIMULACION.md`, y hacer la homologación de ARCA con credenciales de prueba.
+2. Usuario: antes de desplegar, confirmar que producción usa MySQL 8.0.16 o posterior (lo exige la 062; el runner lo controla). Después, correr en producción los runbooks (`docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`) y aplicar las migraciones con el despliegue.
 3. I8: migración 063 (CHECK de inventario) — solo después de la reparación en producción (AP2).
 - [x] ADR-021 (AUD-009 corregido): condición IVA del cliente (migración 060, sin FK; Inscripto/Monotributista con CUIT), letra controlada antes de numerar (A siempre con CUIT; offline se corrige y audita), sugerencia de letra en POS y pedidos; alertas ARCA (conflicto, verificación > 10 min, rechazados) en el panel y contador en "Facturación". Evidencia: validate 0 (955 + 99); coverage 96,62/90,87/94,10; integración 108/108 ×2; RBAC OK; E2E 6/6; simulación 153/153. Decisiones pendientes del usuario en AUD-009 (anular factura no autorizable, alerta de facturas sin CAE por horas, carga de condiciones existentes, permiso, impresión "Sin especificar").
 - [x] ADR-022 (decisiones del usuario sobre AUD-009; AUD-010 corregido): anular y volver a emitir una factura no autorizada (migración 061), alerta de facturas sin CAE a las 24 h, condición IVA cargada en el momento (POS, pedidos, factura manual) y filtro en Clientes, Monotributista recibe B. Evidencia: validate 0 (965 + 100); coverage 96,67/90,71/93,97; integración 114/114 ×2; RBAC OK; E2E 6/6; simulación 153/153. Decisiones pendientes del usuario en AUD-010 (quién reemite, ticket, antigüedad, fecha al cruzar mes, alerta al configurar ARCA).

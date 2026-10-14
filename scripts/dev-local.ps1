@@ -1,6 +1,8 @@
-# Levanta el entorno LOCAL completo de WSM SportsERP (DB Docker + backend + frontend).
+﻿# Levanta el entorno LOCAL completo de WSM SportsERP (DB Docker + backend + frontend).
 # No toca la BD remota de produccion. Uso:  powershell -File scripts\dev-local.ps1
-$ErrorActionPreference = 'Stop'
+# 'Continue': en Windows PowerShell 5.1 las advertencias que los comandos nativos (docker, mysql)
+# escriben en stderr cortarían el script con 'Stop'. Los errores se controlan explícitamente.
+$ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
@@ -21,12 +23,19 @@ if (-not (docker ps -a --filter name=^/wsm_local_db$ --format '{{.Names}}')) {
 
 Write-Host '==> esperando a MySQL...'
 for ($i = 0; $i -lt 40; $i++) {
-    $r = docker exec wsm_local_db mysqladmin ping -h 127.0.0.1 -u wsm_user -pwsm_pass_2026 2>&1
+    $r = docker exec wsm_local_db mysqladmin ping -h 127.0.0.1 -u wsm_user -pwsm_pass_2026 2>$null
     if ($r -match 'mysqld is alive') { Write-Host '   DB lista'; break }
     Start-Sleep -Seconds 2
 }
 
+# Si quedó corriendo otra API o la app (por ejemplo la de la simulación), se cierran antes.
+foreach ($port in 3001, 5173) {
+    Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+        ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -Confirm:$false -ErrorAction SilentlyContinue }
+}
+
 # 2) Backend (aplica migraciones + seed del admin la primera vez)
+$env:DB_NAME = $null   # la base de desarrollo es la de .env.local (no la de la simulación)
 $env:ENV_FILE = '.env.local'
 $env:NODE_ENV = 'development'
 Write-Host '==> backend  -> http://localhost:3001'
@@ -38,7 +47,8 @@ Start-Process -FilePath 'node' -ArgumentList 'packages/server/index.js' `
 Write-Host '==> frontend -> http://localhost:5173'
 $npm = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
 if (-not $npm) { $npm = (Get-Command npm).Source }
-Start-Process -FilePath $npm -ArgumentList 'run','dev' -WorkingDirectory $root -WindowStyle Hidden
+Start-Process -FilePath $npm -ArgumentList 'run','dev' -WorkingDirectory $root -WindowStyle Hidden `
+    -RedirectStandardOutput "$env:TEMP\wsm_web.out.log" -RedirectStandardError "$env:TEMP\wsm_web.err.log"
 
 Write-Host ''
 Write-Host 'Listo. Login: admin@sports.store / Admin1234!'

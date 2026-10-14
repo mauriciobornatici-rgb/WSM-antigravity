@@ -20,7 +20,7 @@ const CLIENTS = {
     'cli-ri': { id: 'cli-ri', name: 'Club SA', tax_id: '30-71234567-4', address: 'X', tax_condition_id: 'tc_RespInscripto' },
 };
 
-function setup(t, { old = OLD, creditNotes = [], paid = 500, pendingReturns = [], deletedClients = [], costLines = [], ageDays = 1 } = {}) {
+function setup(t, { old = OLD, creditNotes = [], paid = 500, pendingReturns = [], deletedClients = [], costLines = [], ageDays = 1, truncatedChain = false } = {}) {
     const calls = [];
     mockPool(t, async (sql, params = []) => {
         const statement = String(sql).replace(/\s+/g, ' ').trim();
@@ -30,7 +30,7 @@ function setup(t, { old = OLD, creditNotes = [], paid = 500, pendingReturns = []
         if (statement.includes('tax_condition_id FROM clients')) return [CLIENTS[params[0]] ? [CLIENTS[params[0]]] : []];
         if (statement.includes('SUM(amount), 0) AS paid')) return [[{ paid }]];
         if (statement.includes('FROM client_returns')) return [pendingReturns];
-        if (statement.includes('DATEDIFF')) return [[{ days: ageDays }]];
+        if (statement.includes('DATEDIFF')) return [[{ days: ageDays, truncated: truncatedChain ? 1 : 0 }]];
         if (statement.includes('FROM credit_notes WHERE number LIKE')) return [[{ max_seq: null }]];
         if (statement.startsWith('SELECT id FROM clients WHERE id = ? AND deleted_at IS NULL')) {
             return [CLIENTS[params[0]] && !deletedClients.includes(params[0]) ? [{ id: params[0] }] : []];
@@ -195,6 +195,8 @@ test('reissueInvoice refuses what cannot be annulled and rolls back', async (t) 
     await reject(OLD, { invoice_type: 'C' }, (error) => error.errorCode === 'reissue_letter_not_allowed' && error.message.includes('como factura A o factura B o ticket'));
     // ADR-022: past 5 days only an administrator.
     await reject(OLD, { invoice_type: 'A', client_id: 'cli-ri' }, (error) => error.statusCode === 409 && error.errorCode === 'reissue_too_old' && error.message.includes('12 días'), { ageDays: 12 });
+    // Security review: a chain longer than the limit never restarts the window (fails closed).
+    await reject(OLD, { invoice_type: 'A', client_id: 'cli-ri' }, (error) => error.errorCode === 'reissue_too_old' && error.message.includes('demasiadas veces'), { ageDays: 0, truncatedChain: true });
     await reject({ ...OLD, invoice_type: 'C' }, { invoice_type: 'B' }, (error) => error.errorCode === 'reissue_letter_not_allowed');
     await reject(OLD, { invoice_type: 'B', client_id: null }, (error) => error.statusCode === 409 && error.errorCode === 'outstanding_requires_client');
     await reject(OLD, { invoice_type: 'A', client_id: 'cli-ri' }, (error) => error.errorCode === 'invoice_has_pending_returns', { pendingReturns: [{ id: 'r-1' }] });

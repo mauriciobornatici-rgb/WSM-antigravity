@@ -18,7 +18,7 @@ describe("alertas de ARCA (ADR-021)", () => {
         expect(arcaAlertLink({ document_kind: "invoice", id: "a b", letter: "B", point_of_sale: 1, number: 1 }))
             .toBe("/invoices?invoice_id=a%20b")
         expect(arcaAlertLink({ document_kind: "credit_note", id: "c", letter: "B", point_of_sale: 1, number: 1 }))
-            .toBe("/returns-warranties?tab=credits")
+            .toBe("/returns-warranties?tab=credits&credit_note_id=c")
     })
 
     it("resume conflictos y comprobantes sin confirmar", () => {

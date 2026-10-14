@@ -63,7 +63,7 @@ export function arcaAlertTitle(doc: ArcaAlertDocument): string {
 export function arcaAlertLink(doc: ArcaAlertDocument): string {
     return doc.document_kind === "invoice"
         ? `/invoices?invoice_id=${encodeURIComponent(doc.id)}`
-        : "/returns-warranties?tab=credits"
+        : `/returns-warranties?tab=credits&credit_note_id=${encodeURIComponent(doc.id)}`
 }
 
 /** Menu and dashboard text: "2 en conflicto · 1 sin confirmar". */
