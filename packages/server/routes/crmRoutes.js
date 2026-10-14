@@ -14,6 +14,8 @@ router.get('/clients', clientRoles, clientController.getClients);
 router.get('/clients/:id', clientRoles, validate(schemas.idParam), clientController.getClientById);
 router.post('/clients', clientRoles, validate(schemas.client), clientController.createClient);
 router.put('/clients/:id', clientRoles, validate(schemas.clientUpdate), clientController.updateClient);
+// ADR-022: VAT condition loaded at the moment of use (POS, invoices).
+router.put('/clients/:id/tax-condition', clientRoles, validate(schemas.clientTaxCondition), clientController.setClientTaxCondition);
 router.delete('/clients/:id', clientRoles, validate(schemas.idParam), clientController.deleteClient);
 
 // Suppliers

@@ -1,6 +1,8 @@
 import type { Invoice } from "@/types/api"
 
 export type InvoiceView = Invoice & {
+    /** ADR-022: label of the invoice this one replaced (annulled without authorization). */
+    replaces_label?: string | null
     client_name?: string
     client_tax_condition?: string
     client_tax_id?: string

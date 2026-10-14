@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ArcaAuthorizationService, ARCA_COOLDOWN_SECONDS, ARCA_ALERT_STALE_MINUTES } from '../domains/fiscal/ArcaAuthorizationService.js';
+import { ArcaAuthorizationService, ARCA_COOLDOWN_SECONDS, ARCA_ALERT_STALE_MINUTES, ARCA_ALERT_UNAUTHORIZED_HOURS } from '../domains/fiscal/ArcaAuthorizationService.js';
 import { invoiceArcaAdapter, creditNoteArcaAdapter } from '../domains/fiscal/arcaAdapters.js';
 import afipService, { arcaToday } from '../services/afip.service.js';
 import auditService from '../services/audit.service.js';
@@ -53,6 +53,7 @@ function createDb(state) {
             const fresh = 'fresh' in state ? state.fresh : state.doc;
             return [fresh ? [{ ...fresh }] : []];
         }
+        if (state.claimAffected !== undefined && statement.includes("SET status = 'authorizing'")) return [{ affectedRows: state.claimAffected }];
         if (statement.startsWith('SELECT id FROM docs')) {
             if (state.pendingError) throw state.pendingError;
             return [state.pendingRows ?? []];
@@ -348,7 +349,8 @@ test('a new voucher saves number, date, point of sale and type before asking ARC
     assert.equal(result.status, 'authorized');
     assert.deepEqual(order, ['saved', 'requestCae']);
     const saved = sqlOf(calls, "status = 'authorizing'");
-    assert.deepEqual(saved.params, [8, arcaToday(), 3, 6, 'd-1']);
+    assert.deepEqual(saved.params, [8, arcaToday(), 3, 6, 'd-1', 'issued']);
+    assert.match(saved.sql, /deleted_at IS NULL AND status IN \(\?, 'authorizing'\)/);
     assert.equal(saved.src, 'conn');
     assert.equal(afipCalls.voucherAt.length, 0, 'there was no earlier attempt to verify');
     assert.equal(stored.length, 1);
@@ -709,50 +711,94 @@ test('the recovery worker does not overlap with itself and frees the flag even o
 // listAlerts (ADR-021)
 // ---------------------------------------------------------------------------
 
-test('ARCA alerts list conflicts first, stale verifications and rejections, with exact counts', async () => {
+test('ADR-022: a document annulled meanwhile is never sent to ARCA', async () => {
+    // Annulled before the lock was taken.
+    const annulled = setup({ state: { snapshot: { id: 'd-1', status: 'issued' }, fresh: { id: 'd-1', status: 'cancelled', deleted_at: new Date() } } });
+    await assert.rejects(() => annulled.service.authorize(annulled.adapter, 'd-1', 'u-1'), (error) => error.statusCode === 409 && error.errorCode === 'cancelled');
+    assert.equal(annulled.afipCalls.requestCae.length, 0);
+    assert.equal(annulled.afipCalls.lastVoucherNumber, 0);
+
+    // Annulled between reading it and claiming it: the conditional claim changes nothing.
+    const raced = setup({ state: { claimAffected: 0 } });
+    await assert.rejects(() => raced.service.authorize(raced.adapter, 'd-1', 'u-1'), (error) => error.statusCode === 409 && error.errorCode === 'cancelled');
+    assert.equal(raced.afipCalls.requestCae.length, 0, 'no CAE for an annulled invoice');
+    assert.equal(raced.stored.length, 0);
+});
+
+function alertsDb({ configured = false, counts = {}, rows = {} } = {}) {
     const queries = [];
     const db = {
         query: async (sql, params) => {
             const statement = String(sql);
             queries.push({ sql: statement, params });
-            if (statement.includes('SUM(')) {
-                return statement.includes('FROM invoices')
-                    ? [[{ conflicts: '1', stuck: '150', rejected: '2' }]]
-                    : [[{ conflicts: null, stuck: '1', rejected: null }]];
+            if (statement.includes('company_settings')) {
+                return [[configured ? { billing_afip_crt: 'crt', billing_afip_key: 'key' } : {}]];
             }
-            if (statement.includes('FROM invoices')) {
-                return [[
-                    { document_kind: 'invoice', id: 'i-2', status: 'authorizing', amount: '100' },
-                    { document_kind: 'invoice', id: 'i-1', status: 'arca_conflict', amount: '1210.50' },
-                ]];
-            }
-            return [[{ document_kind: 'credit_note', id: 'c-1', status: 'arca_conflict', amount: null }]];
+            const table = statement.includes('FROM credit_notes') ? 'credit_notes' : 'invoices';
+            if (statement.includes('SUM(')) return [[counts[table] ?? {}]];
+            return [rows[table] ?? []];
         },
     };
+    return { db, queries };
+}
+
+test('ARCA alerts: conflicts first, stale verifications and rejections, with exact counts', async () => {
+    const { db, queries } = alertsDb({
+        counts: {
+            invoices: { conflict: '1', stuck: '150', rejected: '2', unauthorized: null },
+            credit_notes: { conflict: null, stuck: '1', rejected: null, unauthorized: null },
+        },
+        rows: {
+            invoices: [
+                { document_kind: 'invoice', id: 'i-2', alert: 'stuck', status: 'authorizing', amount: '100' },
+                { document_kind: 'invoice', id: 'i-1', alert: 'conflict', status: 'arca_conflict', amount: '1210.50' },
+            ],
+            credit_notes: [{ document_kind: 'credit_note', id: 'c-1', alert: 'conflict', status: 'arca_conflict', amount: null }],
+        },
+    });
     const service = new ArcaAuthorizationService({ db, afipService: {} });
     const alerts = await service.listAlerts();
-    assert.deepEqual([alerts.conflicts, alerts.stuck, alerts.rejected], [1, 151, 2], 'counts come from COUNT queries, not the capped list');
+    assert.deepEqual([alerts.conflicts, alerts.stuck, alerts.rejected, alerts.unauthorized], [1, 151, 2, 0], 'counts come from COUNT queries, not the capped list');
     assert.equal(alerts.stale_minutes, ARCA_ALERT_STALE_MINUTES);
+    assert.equal(alerts.unauthorized_hours, ARCA_ALERT_UNAUTHORIZED_HOURS);
     assert.deepEqual(alerts.items.map(({ id, amount }) => [id, amount]), [['i-1', 1210.5], ['c-1', 0], ['i-2', 100]]);
-    assert.equal(queries.length, 4);
-    for (const { sql, params } of queries) {
+    const documentQueries = queries.filter(({ sql }) => !sql.includes('company_settings'));
+    assert.equal(documentQueries.length, 4);
+    for (const { sql, params } of documentQueries) {
         assert.match(sql, /status = 'arca_conflict'/);
         assert.match(sql, /status = 'authorizing' AND \(arca_requested_at IS NULL OR arca_requested_at < NOW\(\) - INTERVAL \? MINUTE\)/);
         assert.match(sql, /status = 'issued' AND cae IS NULL AND arca_last_error IS NOT NULL/);
-        assert.match(sql, /deleted_at IS NULL/);
+        assert.doesNotMatch(sql, /INTERVAL \? HOUR/, 'without ARCA configured every invoice would be unauthorized');
         assert.deepEqual(params, [ARCA_ALERT_STALE_MINUTES]);
     }
-    assert.match(queries[0].sql, /COALESCE\(arca_expected_number, invoice_number\) AS number/);
-    assert.match(queries[0].sql, /ORDER BY \(status = 'arca_conflict'\) DESC/);
+    assert.match(documentQueries[0].sql, /COALESCE\(arca_expected_number, invoice_number\) AS number/);
+    assert.match(documentQueries[0].sql, /ORDER BY \(status = 'arca_conflict'\) DESC/);
+});
 
-    const custom = await service.listAlerts({ staleMinutes: 30 });
-    assert.equal(custom.stale_minutes, 30);
-    assert.deepEqual(queries.at(-1).params, [30]);
+test('ADR-022: with ARCA configured, electronic invoices a day old without a CAE are alerts too', async () => {
+    const { db, queries } = alertsDb({
+        configured: true,
+        counts: { invoices: { unauthorized: '3' }, credit_notes: { unauthorized: '1' } },
+        rows: { invoices: [{ document_kind: 'invoice', id: 'i-9', alert: 'unauthorized', status: 'issued', amount: '50' }] },
+    });
+    const service = new ArcaAuthorizationService({ db, afipService: {} });
+    const alerts = await service.listAlerts({ staleMinutes: 30, unauthorizedHours: 48 });
+    assert.equal(alerts.unauthorized, 4);
+    assert.equal(alerts.unauthorized_hours, 48);
+    const [invoices, notes] = queries.filter(({ sql }) => !sql.includes('company_settings') && !sql.includes('SUM('));
+    assert.match(invoices.sql, /invoice_type IN \('A', 'B', 'C'\)\s+AND created_at < NOW\(\) - INTERVAL \? HOUR/, 'tickets are not fiscal');
+    assert.match(notes.sql, /invoice_id IN \(SELECT fi.id FROM invoices fi WHERE fi.invoice_type IN \('A', 'B', 'C'\)\)\s+AND created_at < NOW\(\) - INTERVAL \? HOUR/, 'credit notes of tickets do not go to ARCA');
+    assert.match(invoices.sql, /arca_last_error IS NULL AND arca_attempts = 0 AND/, 'only documents never sent');
+    assert.deepEqual(invoices.params, [30, 48]);
+    assert.match(invoices.sql, /WHEN arca_last_error IS NOT NULL THEN 'rejected'/);
 });
 
 test('ARCA alerts are empty when nothing needs a person', async () => {
     const service = new ArcaAuthorizationService({ db: { query: async () => [[]] }, afipService: {} });
-    assert.deepEqual(await service.listAlerts(), { conflicts: 0, stuck: 0, rejected: 0, stale_minutes: ARCA_ALERT_STALE_MINUTES, items: [] });
+    assert.deepEqual(await service.listAlerts(), {
+        conflicts: 0, stuck: 0, rejected: 0, unauthorized: 0,
+        stale_minutes: ARCA_ALERT_STALE_MINUTES, unauthorized_hours: ARCA_ALERT_UNAUTHORIZED_HOURS, items: [],
+    });
 });
 // ---------------------------------------------------------------------------
 // Adapters

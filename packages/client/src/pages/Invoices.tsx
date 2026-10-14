@@ -250,6 +250,21 @@ export default function InvoicesPage() {
         toast.success("Libro IVA exportado exitosamente")
     }
 
+    // ADR-022: annul an invoice ARCA never authorized and issue it again.
+    const handleReissueInvoice = async (invoice: InvoiceView, data: { invoice_type: "A" | "B" | "C" | "TK"; client_id: string | null }) => {
+        try {
+            const reissued = await api.reissueInvoice(invoice.id, data)
+            toast.success("Factura anulada y emitida de nuevo", { description: "Ahora podés autorizarla con ARCA." })
+            setSelectedInvoice(reissued as InvoiceView)
+            if (invoiceIdFilter === invoice.id) setSearchParams({ invoice_id: String(reissued.id) })
+            void loadData()
+            void queryClient.invalidateQueries({ queryKey: queryKeys.arcaAlerts })
+        } catch (error) {
+            showErrorToast("No se pudo volver a emitir la factura", error)
+            throw error
+        }
+    }
+
     const handleAuthorizeInvoice = async (invoice: InvoiceView) => {
         // Any attempt can settle or raise an ARCA alert (dashboard and menu).
         const refreshArcaAlerts = () => void queryClient.invalidateQueries({ queryKey: queryKeys.arcaAlerts })
@@ -302,6 +317,8 @@ export default function InvoicesPage() {
                     onManualItemChange={setManualItem}
                     onAddItem={addDraftItem}
                     onCreateInvoice={handleCreateInvoice}
+                    companyIvaCondition={companySettings.billing?.iva_condition}
+                    onClientUpdated={(client) => setClients((current) => current.map((candidate) => (candidate.id === client.id ? { ...candidate, ...client } : candidate)))}
                 />
             </div>
 
@@ -345,6 +362,8 @@ export default function InvoicesPage() {
                 taxRateLabel={taxRateLabel}
                 onClose={() => setIsPreviewOpen(false)}
                 onAuthorize={handleAuthorizeInvoice}
+                clients={clients}
+                onReissue={handleReissueInvoice}
                 companySettings={companySettings}
                 onPrint={handlePrintInvoice}
                 onPrintThermal={handlePrintThermal}

@@ -30,6 +30,8 @@ export default function ClientsPage() {
     const [loading, setLoading] = useState(true)
     const [errorMessage, setErrorMessage] = useState<string | null>(null)
     const [search, setSearch] = useState("")
+    // ADR-022: the customers still without a VAT condition, to complete them in one go.
+    const [onlyMissingCondition, setOnlyMissingCondition] = useState(false)
     const [isCreateOpen, setIsCreateOpen] = useState(false)
     const [editingClient, setEditingClient] = useState<Client | null>(null)
     const [deletingClient, setDeletingClient] = useState<Client | null>(null)
@@ -62,10 +64,13 @@ export default function ClientsPage() {
         void loadClients()
     }, [loadClients])
 
+    const missingConditionCount = clients.filter((c) => !c.tax_condition_id).length
     const filteredClients = clients.filter(c =>
-        c.name.toLowerCase().includes(search.toLowerCase()) ||
-        c.tax_id.includes(search) ||
-        c.email?.toLowerCase().includes(search.toLowerCase())
+        (!onlyMissingCondition || !c.tax_condition_id) && (
+            c.name.toLowerCase().includes(search.toLowerCase()) ||
+            (c.tax_id || "").includes(search) ||
+            c.email?.toLowerCase().includes(search.toLowerCase())
+        )
     )
 
     const handleCreateClient = async (data: ClientFormValues) => {
@@ -165,7 +170,7 @@ export default function ClientsPage() {
                     <CardDescription>Lista completa de clientes registrados.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <div className="flex items-center py-4">
+                    <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
                         <div className="relative w-full max-w-sm">
                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                             <Input
@@ -173,8 +178,20 @@ export default function ClientsPage() {
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 className="pl-8"
+                                aria-label="Buscar clientes"
                             />
                         </div>
+                        {missingConditionCount > 0 || onlyMissingCondition ? (
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant={onlyMissingCondition ? "default" : "outline"}
+                                aria-pressed={onlyMissingCondition}
+                                onClick={() => setOnlyMissingCondition((value) => !value)}
+                            >
+                                Sin condición IVA ({missingConditionCount})
+                            </Button>
+                        ) : null}
                     </div>
 
                     {errorMessage && !loading ? (

@@ -37,6 +37,8 @@ router.get('/invoices', canInvoice, validate(schemas.invoiceFilters), salesContr
 router.get('/invoices/:id', canInvoice, validate(schemas.idParam), salesController.getInvoiceById);
 router.post('/invoices', canInvoice, validate(schemas.manualInvoice), salesController.createManualInvoice);
 router.post('/invoices/:id/authorize', canInvoice, validate(schemas.idParam), salesController.authorizeInvoice);
+// ADR-022: annul an invoice ARCA never authorized and issue it again.
+router.post('/invoices/:id/reissue', canInvoice, validate(schemas.invoiceReissue), salesController.reissueInvoice);
 router.post('/invoices/:id/payments', canInvoice, validateZod(zodSchemas.invoicePayment), salesController.registerInvoicePayments);
 router.get('/invoice-items', canInvoice, validate(schemas.invoiceItemsQuery), salesController.getInvoiceItems);
 

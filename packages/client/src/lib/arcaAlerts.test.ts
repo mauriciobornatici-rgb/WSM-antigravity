@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { arcaAlertLink, arcaAlertSummary, arcaAlertTitle, arcaErrorText } from "./arca"
+import { arcaAlertCount, canReissueInvoice, arcaAlertLink, arcaAlertSummary, arcaAlertTitle, arcaErrorText } from "./arca"
 import { suggestedInvoiceLetter, taxConditionCuitError, taxConditionName, TAX_CONDITION_OPTIONS } from "./taxConditions"
 
 describe("alertas de ARCA (ADR-021)", () => {
@@ -28,6 +28,9 @@ describe("alertas de ARCA (ADR-021)", () => {
         expect(arcaAlertSummary(0, 0)).toBe("")
         expect(arcaAlertSummary(1, 0, 1)).toBe("1 en conflicto · 1 rechazado")
         expect(arcaAlertSummary(0, 0, 3)).toBe("3 rechazados")
+        expect(arcaAlertSummary(0, 1, 0, 2)).toBe("1 sin confirmar · 2 sin autorizar")
+        expect(arcaAlertCount({ conflicts: 1, stuck: 2, rejected: 3, unauthorized: 4 })).toBe(10)
+        expect(arcaAlertCount(null)).toBe(0)
     })
 
     it("muestra los errores de red en español y deja los motivos de ARCA tal cual", () => {
@@ -36,6 +39,16 @@ describe("alertas de ARCA (ADR-021)", () => {
         expect(arcaErrorText("(10016) El número no es el siguiente")).toBe("(10016) El número no es el siguiente")
         expect(arcaErrorText("  ")).toBeNull()
         expect(arcaErrorText(null)).toBeNull()
+    })
+})
+
+describe("reemisión de facturas sin autorizar (ADR-022)", () => {
+    it("solo se anula una factura sin CAE y fuera de trámite con ARCA", () => {
+        expect(canReissueInvoice({ status: "issued", cae: null })).toBe(true)
+        expect(canReissueInvoice({ status: "issued", cae: "123" })).toBe(false)
+        expect(canReissueInvoice({ status: "authorizing" })).toBe(false)
+        expect(canReissueInvoice({ status: "authorized", cae: "1" })).toBe(false)
+        expect(canReissueInvoice(null)).toBe(false)
     })
 })
 
@@ -49,9 +62,9 @@ describe("condición frente al IVA del cliente (ADR-021)", () => {
         expect(taxConditionName("desconocida")).toBeNull()
     })
 
-    it("sugiere A para inscriptos y monotributistas, B para el resto", () => {
+    it("sugiere A para inscriptos y B para el resto, monotributistas incluidos", () => {
         expect(suggestedInvoiceLetter("tc_RespInscripto")).toBe("A")
-        expect(suggestedInvoiceLetter("tc_Monotributo", "Responsable Inscripto")).toBe("A")
+        expect(suggestedInvoiceLetter("tc_Monotributo", "Responsable Inscripto")).toBe("B")
         expect(suggestedInvoiceLetter("tc_ConsFinal")).toBe("B")
         expect(suggestedInvoiceLetter("tc_Exento")).toBe("B")
     })
@@ -62,9 +75,10 @@ describe("condición frente al IVA del cliente (ADR-021)", () => {
         expect(suggestedInvoiceLetter("tc_RespInscripto", "Monotributo")).toBeNull()
     })
 
-    it("exige CUIT de 11 dígitos a inscriptos y monotributistas", () => {
+    it("exige CUIT de 11 dígitos solo al responsable inscripto", () => {
         expect(taxConditionCuitError("tc_RespInscripto", "28999000")).toMatch(/CUIT \(11 dígitos\)/)
-        expect(taxConditionCuitError("tc_Monotributo", "")).not.toBeNull()
+        expect(taxConditionCuitError("tc_RespInscripto", "")).not.toBeNull()
+        expect(taxConditionCuitError("tc_Monotributo", "28999000")).toBeNull()
         expect(taxConditionCuitError("tc_RespInscripto", "30-71234567-4")).toBeNull()
         expect(taxConditionCuitError("tc_ConsFinal", "28999000")).toBeNull()
         expect(taxConditionCuitError("none", "")).toBeNull()

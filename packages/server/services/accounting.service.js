@@ -152,7 +152,8 @@ class AccountingService {
         return entryId;
     }
 
-    async postInvoiceAccountingEntries(connection, invoiceId) {
+    // includeCost: false when the caller posts the cost itself (ADR-022 reissue copies it).
+    async postInvoiceAccountingEntries(connection, invoiceId, { includeCost = true } = {}) {
         const [invoiceRows] = await connection.query('SELECT * FROM invoices WHERE id = ? FOR UPDATE', [invoiceId]);
         if (invoiceRows.length === 0) throw new Error('Invoice not found');
         const invoice = invoiceRows[0];
@@ -206,7 +207,7 @@ class AccountingService {
             WHERE je.reference_type = 'invoice' AND je.reference_id = ? AND jel.account_code = '5.1.01.01'
             LIMIT 1
         `, [invoiceId]);
-        if (cmvRows.length === 0) {
+        if (includeCost && cmvRows.length === 0) {
             // The cost recorded when the stock left (sale movements carry it, ADR-013): the same
             // cost a return reverses. Today's product cost only when the movement has none.
             const [itemCosts] = await connection.query(`
@@ -653,6 +654,42 @@ class AccountingService {
             new_values: null
         });
         return { success: true };
+    }
+
+    /**
+     * Counter-entries (never deletes) for the entries of a document that touch any of the given
+     * accounts and were not reversed yet. Used to annul an invoice ARCA never authorized
+     * (ADR-022): its sale and cost entries are reversed, its collections are kept.
+     */
+    async reverseDocumentEntries(connection, { referenceType, referenceId, accountCodes, description }) {
+        const [entries] = await connection.query(
+            `SELECT DISTINCT je.id, je.entry_number, je.description
+             FROM journal_entries je
+             JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+             WHERE je.reference_type = ? AND je.reference_id = ? AND jel.account_code IN (?)
+               AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reversal_of_entry_id = je.id)
+             ORDER BY je.id`,
+            [referenceType, referenceId, accountCodes]
+        );
+        const reversed = [];
+        for (const entry of entries) {
+            const [lines] = await connection.query('SELECT * FROM journal_entry_lines WHERE journal_entry_id = ?', [entry.id]);
+            reversed.push(await this.createJournalEntry(connection, {
+                date: new Date(),
+                description: `${description}: ${entry.description}`,
+                reference_type: 'reversal',
+                reference_id: entry.id,
+                reversal_of_entry_id: entry.id,
+                // A zero line of an old entry carries nothing to reverse.
+                lines: lines.filter((line) => Number(line.debit || 0) !== 0 || Number(line.credit || 0) !== 0).map((line) => ({
+                    account_code: line.account_code,
+                    debit: Number(line.credit || 0),
+                    credit: Number(line.debit || 0),
+                    notes: `Reversión de asiento ${entry.entry_number ?? ''}`.trim(),
+                })),
+            }));
+        }
+        return reversed;
     }
 
     async reverseJournalEntry(id, userId) {

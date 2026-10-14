@@ -44,6 +44,12 @@ export const orderDeliverSchema = z.object({
   delivery_notes: z.string().nullable().optional(),
 });
 
+// ADR-022: annul an invoice ARCA never authorized and issue it again (letter and/or customer).
+export const invoiceReissueSchema = z.object({
+  invoice_type: z.enum(['A', 'B', 'C', 'TK']).optional(),
+  client_id: z.string().uuid().nullable().optional(),
+});
+
 export const orderInvoiceSchema = z.object({
   invoice_type: z.enum(['A', 'B', 'C', 'TK']).optional(),
   point_of_sale: z.coerce.number().int().min(1).optional(),
@@ -349,6 +355,13 @@ export const CLIENT_TAX_CONDITIONS = [
 export type ClientTaxConditionId = typeof CLIENT_TAX_CONDITIONS[number]['id'];
 const clientTaxConditionIds = CLIENT_TAX_CONDITIONS.map((condition) => condition.id) as [ClientTaxConditionId, ...ClientTaxConditionId[]];
 
+// A Responsable Inscripto is invoiced with an A, which needs the CUIT. A Monotributista
+// receives a B (or a C from a monotributista), like everyone else (ADR-022, user 2026-10-13).
+function clientCuitRule(data: { tax_condition_id?: string | null | undefined; tax_id?: string | null | undefined }) {
+  return data.tax_condition_id !== 'tc_RespInscripto' || String(data.tax_id || '').replace(/\D/g, '').length === 11;
+}
+const clientCuitIssue = { message: 'Un Responsable Inscripto necesita el CUIT (11 dígitos).', path: ['tax_id'] };
+
 export const clientSchema = z.object({
   name: z.string().min(2).max(255),
   email: z.string().email().nullable().or(z.literal('')).optional(),
@@ -357,12 +370,14 @@ export const clientSchema = z.object({
   address: z.string().nullable().optional(),
   credit_limit: z.coerce.number().min(0).optional(),
   tax_condition_id: z.enum(clientTaxConditionIds).nullable().optional(),
-}).refine(
-  // A Responsable Inscripto or a Monotributista is invoiced with an A, which needs the CUIT.
-  (data) => !['tc_RespInscripto', 'tc_Monotributo'].includes(String(data.tax_condition_id))
-    || String(data.tax_id || '').replace(/\D/g, '').length === 11,
-  { message: 'Un Responsable Inscripto o Monotributista necesita el CUIT (11 dígitos).', path: ['tax_id'] },
-);
+}).refine(clientCuitRule, clientCuitIssue);
+
+
+// ADR-022: load the VAT condition (and the CUIT it may need) at the moment of use.
+export const clientTaxConditionSchema = z.object({
+  tax_condition_id: z.enum(clientTaxConditionIds),
+  tax_id: z.string().max(50).nullable().optional(),
+});
 
 // 9. Suppliers
 export const supplierSchema = z.object({

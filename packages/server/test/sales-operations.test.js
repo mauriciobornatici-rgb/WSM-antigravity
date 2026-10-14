@@ -504,16 +504,16 @@ test('_resolveClientSnapshot copies the customer VAT condition (ADR-021)', async
 test('_assertInvoiceTypeForClient follows ARCA receiver rules only when the condition is known', () => {
     const known = (condition) => ({ client_tax_condition: condition, tax_condition_known: true });
     const mismatch = (error) => error.statusCode === 422 && error.errorCode === 'invoice_type_mismatch';
-    // A only for Responsable Inscripto or Monotributista.
+    // A only for a Responsable Inscripto: a Monotributista receives B (user, 2026-10-13).
     assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('A', known('Responsable Inscripto')));
-    assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('a', known('Monotributista')));
+    assert.throws(() => salesService._assertInvoiceTypeForClient('a', known('Monotributista')), mismatch);
     assert.throws(() => salesService._assertInvoiceTypeForClient('A', known('Consumidor Final')), mismatch);
     assert.throws(() => salesService._assertInvoiceTypeForClient('A', known('Exento')), /factura B/);
     // B for everyone else.
     assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('B', known('Consumidor Final')));
     assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('B', known('Exento')));
     assert.throws(() => salesService._assertInvoiceTypeForClient('B', known('Responsable Inscripto')), /corresponde una factura A/);
-    assert.throws(() => salesService._assertInvoiceTypeForClient('B', known('Monotributista')), mismatch);
+    assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('B', known('Monotributista')));
     // C, tickets and unknown conditions are not checked.
     assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('C', known('Consumidor Final')));
     assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('TK', known('Responsable Inscripto')));
@@ -532,7 +532,8 @@ test('_resolveInvoiceLetter: a Factura A always needs a CUIT, and an offline rep
     assert.throws(() => salesService._resolveInvoiceLetter('A', client(null, '28999000')), cuitRequired);
     assert.throws(() => salesService._resolveInvoiceLetter('A', client('Responsable Inscripto', null)), cuitRequired);
     assert.equal(salesService._resolveInvoiceLetter('a', client(null)), 'A');
-    assert.equal(salesService._resolveInvoiceLetter('A', client('Monotributista')), 'A');
+    assert.throws(() => salesService._resolveInvoiceLetter('A', client('Monotributista')), /solo se emite a un Responsable Inscripto/);
+    assert.equal(salesService._resolveInvoiceLetter('B', client('Monotributista')), 'B');
     assert.throws(() => salesService._resolveInvoiceLetter('A', client('Exento')), /factura B/);
     assert.throws(() => salesService._resolveInvoiceLetter('B', client('Responsable Inscripto')), /corresponde una factura A/);
     assert.equal(salesService._resolveInvoiceLetter(undefined, null), 'B');
@@ -544,7 +545,9 @@ test('_resolveInvoiceLetter: a Factura A always needs a CUIT, and an offline rep
     assert.equal(fix('A', client('Consumidor Final')), 'B');
     assert.equal(fix('A', client(null)), 'A');
     assert.equal(fix('B', client('Responsable Inscripto')), 'A');
-    assert.equal(fix('B', client('Monotributista', '28999000')), 'B', 'no CUIT: B stays (ARCA will report it)');
+    assert.equal(fix('B', client('Responsable Inscripto', '28999000')), 'B', 'no CUIT: B stays (ARCA will report it)');
+    assert.equal(fix('A', client('Monotributista')), 'B');
+    assert.equal(fix('B', client('Monotributista')), 'B');
     assert.equal(fix('B', client(null)), 'B');
     assert.equal(fix('C', client('Responsable Inscripto')), 'C');
 });

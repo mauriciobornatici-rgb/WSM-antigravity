@@ -750,6 +750,12 @@ export default function POSPage() {
                 onConfirm={() => {
                     void handleCheckout();
                 }}
+                onClientUpdated={(updated) => {
+                    // The condition loaded right here also sets the letter it calls for.
+                    const merged = clients.map((client) => (client.id === updated.id ? { ...client, ...updated } : client));
+                    setClients(merged);
+                    selectClient(updated.id, merged);
+                }}
             />
 
             <QuickClientDialog

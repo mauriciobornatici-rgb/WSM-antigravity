@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label"
 import type { Order } from "@/types"
 import type { InvoiceType } from "@/types/orders"
 import { suggestedInvoiceLetter, taxConditionName } from "@/lib/taxConditions"
+import { ClientTaxConditionNotice } from "@/components/clients/ClientTaxConditionNotice"
 
 interface InvoiceDialogProps {
     open: boolean
@@ -83,10 +84,14 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
     const [choice, setChoice] = useState<{ orderId: string; type: InvoiceType } | null>(null)
     // Same rule as the POS: a monotributista company issues C, so nothing is suggested then.
     const companySettings = useQuery({ queryKey: queryKeys.companySettings, queryFn: fetchCompanySettingsSafe, staleTime: 5 * 60_000 })
-    const suggestedType: InvoiceType = suggestedInvoiceLetter(order?.client_tax_condition_id, companySettings.data?.billing?.iva_condition) ?? "B"
+    // A condition loaded here (ADR-022) applies at once, before the order list refreshes.
+    const [loaded, setLoaded] = useState<{ clientId: string; taxConditionId: string; taxId: string } | null>(null)
+    const loadedHere = loaded && loaded.clientId === order?.client_id ? loaded : null
+    const clientTaxConditionId = loadedHere?.taxConditionId ?? order?.client_tax_condition_id
+    const suggestedType: InvoiceType = suggestedInvoiceLetter(clientTaxConditionId, companySettings.data?.billing?.iva_condition) ?? "B"
     const invoiceType: InvoiceType = choice && choice.orderId === order?.id ? choice.type : suggestedType
     const setInvoiceType = (type: InvoiceType) => { if (order) setChoice({ orderId: order.id, type }) }
-    const clientTaxCondition = taxConditionName(order?.client_tax_condition_id)
+    const clientTaxCondition = taxConditionName(clientTaxConditionId)
 
     const createInvoiceMutation = useMutation({
         mutationFn: ({ orderId, payload }: { orderId: string; payload: Parameters<typeof api.createInvoiceFromOrder>[1] }) =>
@@ -137,6 +142,20 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                             </div>
                         ) : null}
                     </div>
+
+                    <ClientTaxConditionNotice
+                        client={order?.client_id ? {
+                            id: order.client_id,
+                            name: order.client_name || order.customer_name || "El cliente",
+                            tax_id: loadedHere?.taxId ?? order.client_tax_id ?? "",
+                            tax_condition_id: clientTaxConditionId ?? null,
+                        } : null}
+                        onUpdated={(client) => {
+                            if (order) setChoice(null)
+                            setLoaded({ clientId: client.id, taxConditionId: client.tax_condition_id || "", taxId: client.tax_id || "" })
+                            void queryClient.invalidateQueries({ queryKey: queryKeys.orders.all })
+                        }}
+                    />
 
                     <div className="grid gap-3 sm:grid-cols-2">
                         <div className="space-y-2">

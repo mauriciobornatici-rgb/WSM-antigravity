@@ -80,6 +80,28 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-022 — Decisiones del usuario sobre AUD-009 (2026-10-13)
+- **Monotributista recibe B, nunca A** (legislación argentina, según el usuario; o C si el emisor es monotributista). Solo el Responsable Inscripto recibe A y es el único al que se le exige CUIT de 11 dígitos. Esto reemplaza lo dicho en ADR-021 sobre el Monotributista.
+- **Anular y volver a emitir** (`POST /api/invoices/:id/reissue`, permiso de facturación): solo para una factura sin CAE en estado 'issued' (rechazada, sin CUIT o nunca enviada). Si tiene CAE, se corrige con nota de crédito; si está en trámite con ARCA, se espera. En una sola transacción:
+  - se crea una factura nueva con las mismas líneas e importes, la letra y el cliente elegidos, numerada de nuevo y con `replaces_invoice_id` (migración 061);
+  - la anterior queda 'cancelled', con baja lógica (sale de listados, libro IVA y cuenta corriente) y sin pedido (una factura por pedido); el pedido apunta a la nueva;
+  - contabilidad: contra-asientos de la venta y del costo de la anterior y asientos de la nueva; los asientos de cobro se conservan;
+  - los cobros (y cheques) pasan a la nueva y al cliente nuevo, junto con el saldo pendiente;
+  - se audita `REISSUE_INVOICE`. Se rechaza si tiene notas de crédito o si no cambia nada (mismo cliente con datos actualizados sí se permite: refresca CUIT y condición).
+  - Ajustes de AUD-010:
+    - el IVA se conserva: A y B entre sí, ticket a A o B, C solo a C; una factura electrónica nunca pasa a ticket;
+    - un saldo pendiente nunca queda sin deudor (no se reemite a Consumidor Final si se debe algo);
+    - una devolución en curso del pedido lo bloquea, y el pedido sigue siempre al cliente de la factura;
+    - el costo se copia del asiento revertido en vez de recalcularse;
+    - la anulada guarda su rótulo (`annulled_label`), porque su número provisorio puede moverse si ARCA se lo da a otra;
+    - no se reemite a un cliente dado de baja.
+  - La toma de la autorización ARCA es condicional: un documento anulado nunca se envía a ARCA (también si se anula mientras otro intenta autorizarlo).
+- **Alerta de 24 h:** facturas electrónicas (A, B, C) y NC de facturas electrónicas sin CAE y sin ningún intento después de 24 h. Solo cuando ARCA está configurado (si no, todas lo serían).
+- **Clientes sin condición:** no se cargan uno por uno. Donde se factura (cobro del POS, facturación de pedidos, factura manual) aparece el aviso "sin condición frente al IVA" con "Cargar ahora" (`PUT /api/clients/:id/tax-condition`, con lock y auditoría), que aplica la letra al instante. En Clientes, un filtro "Sin condición IVA (N)".
+- **Sin permiso especial** para cargar la condición.
+- **Impresión:** sin condición cargada se imprime "Consumidor Final".
+- **Migración 061.** El CHECK de inventario pasa a 062.
+
 ### ADR-021 — Condición de IVA del cliente y alertas de ARCA (usuario, 2026-10-13: pasos 2 y 3)
 - **Condición de IVA del cliente:** `clients.tax_condition_id` (migración 060, sin FK: los nombres salen de la lista compartida `CLIENT_TAX_CONDITIONS`), con las 4 condiciones existentes. Inscripto y Monotributista exigen CUIT de 11 dígitos. Vacía significa "sin especificar". Se carga en el alta y la edición de clientes, y en el alta rápida del POS y de pedidos.
   - **Factura:** copia el nombre de la condición, y ARCA recibe ese código (RG 5616). Sin condición cargada, sigue el comportamiento anterior: Consumidor Final, o Responsable Inscripto en una Factura A.
@@ -89,7 +111,7 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **Alertas de ARCA:** `GET /api/fiscal/arca-alerts` (permiso de facturación) lista facturas y NC en conflicto, las que llevan más de 10 minutos en verificación y las rechazadas (pendientes sin CAE y con motivo). Los 10 minutos equivalen a varias pasadas fallidas del worker, que corre cada 2 minutos.
   - **Panel:** muestra una tarjeta con enlace a cada comprobante, solo si hay alertas.
   - **Menú:** "Facturación" muestra un contador, que se actualiza cada 2 minutos y tras cada intento de autorizar.
-- **Migración 060.** El CHECK de inventario pasa a 061.
+- **Migración 060.** (La regla del Monotributista y el CHECK, ahora 062, se actualizan en ADR-022.)
 
 ### ADR-020 — Autorización ARCA sólida (usuario, 2026-10-13: "dejar sólido lo vinculado a ARCA")
 - **Problemas encontrados:**
@@ -247,7 +269,7 @@ El usuario aprobó corregir lo que encontró la simulación operativa. Desde aho
 
 ### ADR-012 — Reglas de negocio de la revisión del refactor (usuario, 2026-10-12)
 - **Estados de orden de compra (cambio manual):** solo hacia adelante: borrador → enviada → parcial → recibida; cancelar solo antes de recibir algo (borrador o enviada). `recibida` y `cancelada` son finales. Otra transición → 409.
-- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 061 (046-060 agregan cuentas, NC fiscal, tesorería e idempotencia, precios a 4 decimales, débitos bancarios, alícuotas y ajustes de pedido, corrigen totales previos y agregan la condición de IVA del cliente; ADR-013/014/015/016/021).
+- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 062 (046-061 agregan cuentas, NC fiscal, tesorería e idempotencia, precios a 4 decimales, débitos bancarios, alícuotas y ajustes de pedido, corrigen totales previos agregan la condición de IVA del cliente y la reemisión de facturas; ADR-013/014/015/016/021/022).
 - **Aplicación (coordinador, tras la revisión del guardián):**
   - "Recibir algo" incluye la mercadería en control de calidad: una OC con recepciones `pending_qc` o cantidades recibidas no se puede anular (409 `purchase_order_has_receptions`). La UI oculta "Anular orden" en ese caso.
   - Aprobar una recepción bloquea la OC antes que sus ítems. Contra una OC anulada responde 409 (`purchase_order_cancelled`), y nunca hace retroceder una OC `received`.

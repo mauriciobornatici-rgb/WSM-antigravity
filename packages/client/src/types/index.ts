@@ -137,6 +137,7 @@ export interface Order {
     counter_user_id?: string
     client_name?: string
     client_id?: string
+    client_tax_id?: string | null
     client_tax_condition_id?: string | null
     status: 'pending' | 'picking' | 'packed' | 'dispatched' | 'delivered' | 'completed' | 'cancelled'
     payment_status?: 'pending' | 'partial' | 'paid' | 'voided' | 'credit_balance'

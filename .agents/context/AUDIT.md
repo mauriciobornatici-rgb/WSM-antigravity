@@ -1,5 +1,33 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-010 — 2026-10-14 — `guardian-integridad` sobre ADR-022 (reemisión, alerta de 24 h, condición en el momento)
+
+- [x] **Alta: la deuda desaparecía si se reemitía a Consumidor Final.** El mayor dejaba de conciliar con la cuenta corriente. Ahora responde 409 `outstanding_requires_client`.
+- [x] **Media:**
+  - Cambios de letra entre familias (A/B ↔ C/ticket) cambiaban el IVA asentado. Ahora: A↔B, ticket→A/B, C→C; nunca electrónica→ticket (422 `reissue_letter_not_allowed`).
+  - Pedido y devoluciones con el cliente viejo: el pedido sigue siempre al cliente de la factura y una devolución en curso bloquea la reemisión.
+  - Costo recalculado distinto del revertido: ahora se copian las líneas del asiento de costo.
+  - Rótulo incoherente de la anulada si ARCA mueve su número provisorio: se guarda `annulled_label` (migración 061, reaplicada en local y QA).
+- [x] **Baja:**
+  - Saldo guardado con piso en cero.
+  - Líneas en cero de asientos viejos se omiten al revertir.
+  - Alerta de 24 h solo sin intentos y solo NC de facturas electrónicas.
+  - No se reemite a un cliente dado de baja.
+  - Mismo cliente y letra: se permite si cambiaron CUIT o condición.
+  - TASKS ya dice 062.
+- **Queda anotado (bajo):**
+  - el cheque conserva al cliente viejo como emisor;
+  - una reversión manual simultánea del mismo asiento o un interbloqueo con el retiro responde 500 sin corrupción (sin reintento);
+  - la carrera reemisión/toma ARCA y reemisión/cobro solo tienen prueba con mock.
+- **Decisiones de negocio pendientes:**
+  1. ¿Quién puede reemitir? Hoy cualquiera con permiso de facturación (incluye cajero); no se controla el límite de crédito del cliente nuevo.
+  2. Ticket: hoy una factura electrónica no puede pasar a ticket (conservador). ¿Se permite?
+  3. ¿Límite de antigüedad para reemitir? Sin ARCA configurado toda factura histórica es reemitible.
+  4. Fecha de la factura nueva y de la reversión cuando se cruza de mes (hoy: fecha del día, que es lo que ARCA exige).
+  5. Al configurar ARCA, todas las facturas previas sin CAE serán alerta de 24 h: ¿se cuentan solo las nuevas?
+
+Evidencia: validate 0 (965 + 100); coverage 96,67/90,71/93,97; integración 114/114 ×2 (20 escenarios ARCA y 4 de reemisión con base real); RBAC OK (4 casos nuevos); E2E 6/6; simulación 153/153. El primer `validate` se cayó al cerrar Node por una aserción de libuv en Windows después de compilar bien; la segunda corrida dio 0.
+
 ## AUD-009 — 2026-10-13 — `guardian-integridad` sobre ADR-021 (condición IVA del cliente y alertas ARCA)
 
 - [x] **Alta: la letra A quedaba pegada en el POS** y el servidor aceptaba una Factura A sin cliente o sin CUIT. Era una factura que nunca se iba a poder autorizar ni anular.

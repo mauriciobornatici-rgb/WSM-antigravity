@@ -171,6 +171,57 @@ class ClientService {
         return updated[0];
     }
 
+    /**
+     * ADR-022: the VAT condition (and the CUIT a Responsable Inscripto needs) loaded at the
+     * moment of use, from the POS or the invoice screens, without touching the other fields.
+     * The row is locked so two terminals completing the same customer do not overwrite each
+     * other silently.
+     */
+    async setTaxCondition({ id, body, actorId, ip }) {
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [rows] = await connection.query('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [id]);
+            const existing = rows[0];
+            if (!existing) throw businessError(404, { error: 'not_found', message: 'Cliente no encontrado' });
+
+            const taxId = body.tax_id != null && String(body.tax_id).trim() !== '' ? String(body.tax_id).trim() : existing.tax_id;
+            if (body.tax_condition_id === 'tc_RespInscripto' && String(taxId || '').replace(/\D/g, '').length !== 11) {
+                throw businessError(422, { error: 'cuit_required', message: 'Un Responsable Inscripto necesita el CUIT (11 dígitos).' });
+            }
+            if (taxId !== existing.tax_id) {
+                const [duplicate] = await connection.query('SELECT id FROM clients WHERE tax_id = ? AND id != ? AND deleted_at IS NULL', [taxId, id]);
+                if (duplicate.length > 0) {
+                    throw businessError(409, { error: 'duplicate_tax_id', message: 'Ya existe un cliente con ese RUC/CI/CUIT' });
+                }
+            }
+
+            await connection.query('UPDATE clients SET tax_condition_id = ?, tax_id = ? WHERE id = ?', [body.tax_condition_id, taxId, id]);
+            const [updated] = await connection.query(`
+                SELECT c.*, ${CLIENT_BALANCE_SQL} AS computed_balance
+                FROM clients c
+                ${CLIENT_BALANCE_JOINS}
+                WHERE c.id = ?
+            `, [id]);
+            await auditService.log({
+                user_id: actorId || null,
+                action: 'UPDATE_CLIENT_TAX_CONDITION',
+                entity_type: 'client',
+                entity_id: id,
+                old_values: { tax_condition_id: existing.tax_condition_id ?? null, tax_id: existing.tax_id },
+                new_values: { tax_condition_id: body.tax_condition_id, tax_id: taxId },
+                ip_address: ip
+            }, connection);
+            await connection.commit();
+            return withBalance(updated[0]);
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
     async deleteClient({ id, actorId, ip }) {
         const [existing] = await pool.query(`
         SELECT c.id, c.name, ${CLIENT_BALANCE_SQL} AS computed_balance

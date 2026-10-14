@@ -1,7 +1,8 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { InvoiceDocument } from "./InvoiceDocument"
 import type { InvoiceView } from "./types"
-import type { CompanySettings } from "@/types"
+import type { Client, CompanySettings } from "@/types"
+import { InvoiceReissuePanel } from "./InvoiceReissuePanel"
 
 type InvoicePreviewDialogProps = {
     open: boolean
@@ -17,6 +18,8 @@ type InvoicePreviewDialogProps = {
     companySettings?: CompanySettings
     onPrint?: (invoice: InvoiceView) => void
     onPrintThermal?: (invoice: InvoiceView) => void
+    clients?: Client[]
+    onReissue?: (invoice: InvoiceView, data: { invoice_type: "A" | "B" | "C" | "TK"; client_id: string | null }) => Promise<void>
 }
 
 export function InvoicePreviewDialog({
@@ -33,6 +36,8 @@ export function InvoicePreviewDialog({
     companySettings,
     onPrint,
     onPrintThermal,
+    clients = [],
+    onReissue,
 }: InvoicePreviewDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -40,6 +45,20 @@ export function InvoicePreviewDialog({
                 <DialogHeader className="sr-only">
                     <DialogTitle>Previsualización de comprobante</DialogTitle>
                 </DialogHeader>
+                {invoice && onReissue ? (
+                    <InvoiceReissuePanel
+                        key={invoice.id}
+                        invoice={invoice}
+                        clients={clients}
+                        companyIvaCondition={companySettings?.billing?.iva_condition}
+                        onReissue={onReissue}
+                    />
+                ) : null}
+                {invoice?.replaces_label ? (
+                    <p className="mb-3 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+                        Reemplaza a la factura {invoice.replaces_label}, anulada sin autorizar.
+                    </p>
+                ) : null}
                 {invoice ? (
                     <InvoiceDocument
                         invoice={invoice}

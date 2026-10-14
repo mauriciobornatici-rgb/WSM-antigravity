@@ -7,6 +7,8 @@ import { businessError } from '../../utils/businessError.js';
 export const ARCA_COOLDOWN_SECONDS = 120;
 // The recovery worker runs every 2 minutes: 10 minutes in verification is several failed runs.
 export const ARCA_ALERT_STALE_MINUTES = 10;
+// ADR-022 (user): an electronic invoice still without a CAE a day later needs someone.
+export const ARCA_ALERT_UNAUTHORIZED_HOURS = 24;
 
 /**
  * ADR-020 / AUD-008 — ARCA authorization that never issues twice and never loses a CAE.
@@ -81,6 +83,9 @@ export class ArcaAuthorizationService {
         const [rows] = await connection.query(`SELECT * FROM ${adapter.table} WHERE id = ?`, [id]);
         const doc = rows[0];
         if (!doc || doc.status === 'authorized') return {};
+        if (doc.deleted_at || String(doc.status).toLowerCase() === 'cancelled') {
+            return { error: businessError(409, { error: 'cancelled', message: `${adapter.label} está anulada.` }) };
+        }
 
         // 1. A number already requested: what does ARCA have there?
         if (doc.arca_expected_number) {
@@ -117,12 +122,17 @@ export class ArcaAuthorizationService {
             return { error: businessError(503, { error: 'arca_unreachable', message: `No se pudo consultar a ARCA (${error.message}). Reintentá.` }) };
         }
         const requestDate = arcaToday();
-        await connection.query(
+        // The claim is conditional: a document annulled meanwhile (ADR-022 reissue, which locks
+        // the row and only takes 'issued') is never sent to ARCA.
+        const [claim] = await connection.query(
             `UPDATE ${adapter.table} SET status = 'authorizing', arca_expected_number = ?, arca_request_date = ?, arca_pos = ?,
                 arca_voucher_type = ?, arca_requested_at = NOW(), arca_attempts = arca_attempts + 1, arca_last_error = NULL
-             WHERE id = ?`,
-            [number, requestDate, request.pos, request.voucherType, id]
+             WHERE id = ? AND deleted_at IS NULL AND status IN (?, 'authorizing')`,
+            [number, requestDate, request.pos, request.voucherType, id, adapter.pendingStatus]
         );
+        if (claim && claim.affectedRows === 0) {
+            return { error: businessError(409, { error: 'cancelled', message: `${adapter.label} fue anulada o cambió mientras se autorizaba.` }) };
+        }
         const requested = { ...doc, arca_expected_number: number, arca_request_date: requestDate };
 
         let result;
@@ -276,52 +286,71 @@ export class ArcaAuthorizationService {
     }
 
     /**
-     * ADR-021 / AUD-009: what someone has to look at.
+     * ADR-021 / AUD-009 / ADR-022: what someone has to look at, each row with its `alert`:
      * - conflict: ARCA holds a voucher with that number that is not this document's (never
      *   resolves on its own);
      * - stuck: still in verification after `staleMinutes` (the worker cannot reach ARCA);
      * - rejected: back to pending with ARCA's reason and no CAE (it will not authorize by
-     *   retrying as it is).
+     *   retrying as it is: correct it, or annul it and issue it again);
+     * - unauthorized: an electronic invoice (A, B or C) or a fiscal credit note without a CAE
+     *   and without any attempt after `unauthorizedHours`. Only once ARCA is configured:
+     *   before that every invoice would be one.
      * Counts are exact; the list shows conflicts first and is capped.
      */
-    async listAlerts({ staleMinutes = ARCA_ALERT_STALE_MINUTES } = {}) {
-        const pendingFilter = `deleted_at IS NULL AND (
+    async listAlerts({ staleMinutes = ARCA_ALERT_STALE_MINUTES, unauthorizedHours = ARCA_ALERT_UNAUTHORIZED_HOURS } = {}) {
+        const settings = await this._companySettings();
+        const arcaConfigured = Boolean(settings.billing_afip_crt && settings.billing_afip_key);
+        const filters = (fiscalOnly) => `deleted_at IS NULL AND (
                 status = 'arca_conflict'
                 OR (status = 'authorizing' AND (arca_requested_at IS NULL OR arca_requested_at < NOW() - INTERVAL ? MINUTE))
                 OR (status = 'issued' AND cae IS NULL AND arca_last_error IS NOT NULL)
+                ${arcaConfigured ? `OR (status = 'issued' AND cae IS NULL AND arca_last_error IS NULL AND arca_attempts = 0 AND ${fiscalOnly}
+                    AND created_at < NOW() - INTERVAL ? HOUR)` : ''}
             )`;
-        const order = `ORDER BY (status = 'arca_conflict') DESC, arca_requested_at ASC LIMIT 100`;
-        const counts = `SUM(status = 'arca_conflict') AS conflicts, SUM(status = 'authorizing') AS stuck, SUM(status = 'issued') AS rejected`;
+        const alertColumn = `CASE WHEN status = 'arca_conflict' THEN 'conflict'
+                WHEN status = 'authorizing' THEN 'stuck'
+                WHEN arca_last_error IS NOT NULL THEN 'rejected'
+                ELSE 'unauthorized' END AS alert`;
+        const params = arcaConfigured ? [staleMinutes, unauthorizedHours] : [staleMinutes];
+        const invoiceFilter = filters(`invoice_type IN ('A', 'B', 'C')`);
+        // A credit note goes to ARCA only when it corrects an electronic invoice (not a ticket).
+        const noteFilter = filters(`invoice_id IN (SELECT fi.id FROM invoices fi WHERE fi.invoice_type IN ('A', 'B', 'C'))`);
+        const order = `ORDER BY (status = 'arca_conflict') DESC, COALESCE(arca_requested_at, created_at) ASC LIMIT 100`;
+        const counts = `SUM(status = 'arca_conflict') AS conflict, SUM(status = 'authorizing') AS stuck,
+                SUM(status = 'issued' AND arca_last_error IS NOT NULL) AS rejected,
+                SUM(status = 'issued' AND arca_last_error IS NULL) AS unauthorized`;
         // The number at stake is the one asked of ARCA, when there is one.
         const [invoices] = await this.db.query(
             `SELECT 'invoice' AS document_kind, id, invoice_type AS letter,
                     COALESCE(arca_pos, point_of_sale) AS point_of_sale,
                     COALESCE(arca_expected_number, invoice_number) AS number,
-                    client_name AS customer, total_amount AS amount,
-                    status, arca_last_error, arca_requested_at, arca_attempts
-             FROM invoices WHERE ${pendingFilter} ${order}`,
-            [staleMinutes]
+                    client_name AS customer, total_amount AS amount, ${alertColumn},
+                    status, arca_last_error, arca_requested_at, arca_attempts, created_at
+             FROM invoices WHERE ${invoiceFilter} ${order}`,
+            params
         );
         const [creditNotes] = await this.db.query(
             `SELECT 'credit_note' AS document_kind, id, credit_note_type AS letter,
                     COALESCE(arca_pos, point_of_sale) AS point_of_sale,
                     COALESCE(arca_voucher_number, arca_expected_number, number) AS number,
-                    customer_name AS customer, amount,
-                    status, arca_last_error, arca_requested_at, arca_attempts
-             FROM credit_notes WHERE ${pendingFilter} ${order}`,
-            [staleMinutes]
+                    customer_name AS customer, amount, ${alertColumn},
+                    status, arca_last_error, arca_requested_at, arca_attempts, created_at
+             FROM credit_notes WHERE ${noteFilter} ${order}`,
+            params
         );
-        const [[invoiceCounts = {}]] = await this.db.query(`SELECT ${counts} FROM invoices WHERE ${pendingFilter}`, [staleMinutes]);
-        const [[noteCounts = {}]] = await this.db.query(`SELECT ${counts} FROM credit_notes WHERE ${pendingFilter}`, [staleMinutes]);
+        const [[invoiceCounts = {}]] = await this.db.query(`SELECT ${counts} FROM invoices WHERE ${invoiceFilter}`, params);
+        const [[noteCounts = {}]] = await this.db.query(`SELECT ${counts} FROM credit_notes WHERE ${noteFilter}`, params);
         const total = (key) => Number(invoiceCounts[key] || 0) + Number(noteCounts[key] || 0);
         const items = [...invoices, ...creditNotes]
             .map((row) => ({ ...row, amount: Number(row.amount || 0) }))
-            .sort((a, b) => Number(b.status === 'arca_conflict') - Number(a.status === 'arca_conflict'));
+            .sort((a, b) => Number(b.alert === 'conflict') - Number(a.alert === 'conflict'));
         return {
-            conflicts: total('conflicts'),
+            conflicts: total('conflict'),
             stuck: total('stuck'),
             rejected: total('rejected'),
+            unauthorized: total('unauthorized'),
             stale_minutes: staleMinutes,
+            unauthorized_hours: unauthorizedHours,
             items,
         };
     }

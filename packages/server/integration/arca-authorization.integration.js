@@ -361,11 +361,16 @@ test('ADR-021: ARCA receives the receiver VAT condition copied from the customer
         return realRequestCae(request, number, requestDate);
     };
     const service = new ArcaAuthorizationService({ afipService: arca });
-    const id = await seedInvoice({ total: 1210, type: 'A' });
-    await pool.query("UPDATE invoices SET client_tax_id = '30712345674', client_tax_condition = 'Monotributista' WHERE id = ?", [id]);
+    // A Monotributista receives a B (ADR-022) and ARCA gets its real code.
+    const id = await seedInvoice({ total: 1210, type: 'B' });
+    await pool.query("UPDATE invoices SET client_tax_id = '20123456786', client_tax_condition = 'Monotributista' WHERE id = ?", [id]);
     const invoice = await service.authorize(invoiceArcaAdapter, id, null);
     assert.equal(invoice.status, 'authorized');
-    assert.deepEqual(seen, [6], 'Monotributista is code 6, not the Responsable Inscripto default');
+    // A Responsable Inscripto with an A.
+    const company = await seedInvoice({ total: 2420, type: 'A' });
+    await pool.query("UPDATE invoices SET client_tax_id = '30712345674', client_tax_condition = 'Responsable Inscripto' WHERE id = ?", [company]);
+    assert.equal((await service.authorize(invoiceArcaAdapter, company, null)).status, 'authorized');
+    assert.deepEqual(seen, [6, 1]);
 });
 
 test('AUD-009: a rejection with no CAE is an alert, shown with the number asked of ARCA', async () => {
@@ -393,4 +398,43 @@ test('ADR-021: the customer VAT condition column exists without a foreign key (A
          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clients' AND COLUMN_NAME = 'tax_condition_id' AND REFERENCED_TABLE_NAME IS NOT NULL`
     );
     assert.equal(fks.length, 0);
+});
+test('ADR-022: with ARCA configured, an electronic invoice a day old without any attempt is an alert; a ticket is not', async () => {
+    await freshPointOfSale();
+    const [[previous]] = await pool.query('SELECT billing_afip_crt AS crt, billing_afip_key AS k FROM company_settings LIMIT 1');
+    const service = new ArcaAuthorizationService({ afipService: fakeArca() });
+    const forgotten = await seedInvoice({ total: 666 });
+    const recent = await seedInvoice({ total: 777 });
+    const ticket = await seedInvoice({ total: 888, type: 'TK' });
+    await pool.query('UPDATE invoices SET created_at = NOW() - INTERVAL 30 HOUR WHERE id IN (?, ?)', [forgotten, ticket]);
+    try {
+        const notConfigured = await service.listAlerts();
+        assert.equal(notConfigured.items.some((item) => item.id === forgotten), false, 'before ARCA is configured nothing is "unauthorized"');
+
+        await pool.query("UPDATE company_settings SET billing_afip_crt = 'crt-qa', billing_afip_key = 'key-qa'");
+        const alerts = await service.listAlerts();
+        const byId = new Map(alerts.items.map((item) => [item.id, item]));
+        assert.equal(byId.get(forgotten)?.alert, 'unauthorized');
+        assert.equal(byId.has(recent), false);
+        assert.equal(byId.has(ticket), false);
+        assert.ok(alerts.unauthorized >= 1);
+    } finally {
+        await pool.query('UPDATE company_settings SET billing_afip_crt = ?, billing_afip_key = ?', [previous?.crt ?? null, previous?.k ?? null]);
+        await pool.query("UPDATE invoices SET status = 'cancelled', deleted_at = NOW() WHERE id IN (?, ?, ?)", [forgotten, recent, ticket]);
+    }
+});
+test('AUD-010: the label of an annulled invoice stays as it was when ARCA moves its provisional number', async () => {
+    const posUsed = await freshPointOfSale();
+    const service = new ArcaAuthorizationService({ afipService: fakeArca() });
+    const annulled = await seedInvoice({ provisional: 1 });
+    const label = `B-${String(posUsed).padStart(4, '0')}-00000001`;
+    await pool.query("UPDATE invoices SET status = 'cancelled', deleted_at = NOW(), annulled_label = ? WHERE id = ?", [label, annulled]);
+    const id = await seedInvoice({ total: 999, provisional: 2 });
+    await pool.query('UPDATE invoices SET replaces_invoice_id = ? WHERE id = ?', [annulled, id]);
+    const invoice = await service.authorize(invoiceArcaAdapter, id, null);
+    assert.deepEqual([invoice.status, invoice.invoice_number], ['authorized', 1]);
+    const [[row]] = await pool.query('SELECT invoice_number FROM invoices WHERE id = ?', [annulled]);
+    assert.notEqual(row.invoice_number, 1, 'the number is unique: the annulled one moves');
+    const { default: salesService } = await import('../services/sales.service.js');
+    assert.equal((await salesService.getInvoiceById(id)).replaces_label, label, 'the trace keeps the label it had');
 });

@@ -39,6 +39,8 @@ export const invoiceArcaAdapter = {
             const scope = `invoice:${String(doc.invoice_type).toUpperCase()}:${pos}`;
             // The number ARCA gave may be the provisional number of another invoice not
             // authorized yet: that one (not a fiscal document yet) moves to a new provisional number.
+            // An invoice annulled before authorization (ADR-022) moves too (the number is unique);
+            // its label at annulment is kept in `annulled_label`.
             const [holders] = await connection.query(
                 'SELECT id, status, invoice_number FROM invoices WHERE invoice_type = ? AND point_of_sale = ? AND invoice_number = ? AND id <> ? FOR UPDATE',
                 [doc.invoice_type, pos, number, doc.id]

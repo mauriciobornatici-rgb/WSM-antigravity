@@ -67,16 +67,50 @@ export function arcaAlertLink(doc: ArcaAlertDocument): string {
 }
 
 /** Menu and dashboard text: "2 en conflicto · 1 sin confirmar". */
-export function arcaAlertSummary(conflicts: number, stuck: number, rejected = 0): string {
+export function arcaAlertSummary(conflicts: number, stuck: number, rejected = 0, unauthorized = 0): string {
     const parts: string[] = []
     if (conflicts > 0) parts.push(`${conflicts} en conflicto`)
     if (stuck > 0) parts.push(`${stuck} sin confirmar`)
     if (rejected > 0) parts.push(`${rejected} ${rejected === 1 ? "rechazado" : "rechazados"}`)
+    if (unauthorized > 0) parts.push(`${unauthorized} sin autorizar`)
     return parts.join(" · ")
 }
 
 /** Rejected by ARCA: back to pending with the reason and no CAE (AUD-009). */
 export const ARCA_REJECTED_LABEL = "Rechazado por ARCA"
+
+/** An electronic invoice still without a CAE and without any attempt after a day (ADR-022). */
+export const ARCA_UNAUTHORIZED_LABEL = "Sin autorizar"
+
+/** ADR-022: only an invoice ARCA never authorized can be annulled (with a CAE it takes a credit note). */
+export function canReissueInvoice(invoice?: { cae?: string | null | undefined; status?: string | null | undefined } | null): boolean {
+    return Boolean(invoice && !invoice.cae && invoice.status === "issued")
+}
+
+/**
+ * ADR-022 / AUD-010: the letters an annulled document can be issued again as (same rule as the
+ * server). A and B are interchangeable, a ticket can become an A or a B, a C stays a C, and an
+ * electronic invoice never becomes a ticket.
+ */
+export function reissueLetters(oldLetter?: string | null): Array<"A" | "B" | "C" | "TK"> {
+    switch (String(oldLetter || "").toUpperCase()) {
+        case "A":
+        case "B":
+            return ["A", "B"]
+        case "TK":
+            return ["TK", "A", "B"]
+        case "C":
+            return ["C"]
+        default:
+            return []
+    }
+}
+
+/** Total for the menu badge. */
+export function arcaAlertCount(alerts?: { conflicts?: number; stuck?: number; rejected?: number; unauthorized?: number } | null): number {
+    if (!alerts) return 0
+    return (alerts.conflicts ?? 0) + (alerts.stuck ?? 0) + (alerts.rejected ?? 0) + (alerts.unauthorized ?? 0)
+}
 
 const NETWORK_ERROR = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|timeout|network/i
 

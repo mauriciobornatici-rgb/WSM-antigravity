@@ -495,7 +495,7 @@ class SalesService extends BaseService {
 
     async getOrders(filters = {}, options = {}) {
         let filteredQuery = `
-            SELECT o.*, c.name AS client_name, c.tax_condition_id AS client_tax_condition_id
+            SELECT o.*, c.name AS client_name, c.tax_id AS client_tax_id, c.tax_condition_id AS client_tax_condition_id
             FROM orders o
             LEFT JOIN clients c ON o.client_id = c.id
             WHERE (o.deleted_at IS NULL)
@@ -803,7 +803,8 @@ class SalesService extends BaseService {
      * The letter ARCA will accept (RG 5616), decided before numbering. A Factura A always needs
      * the customer's CUIT (ARCA refuses it otherwise, and an invoice that can never be
      * authorized cannot be undone). With the condition loaded, A goes only to a Responsable
-     * Inscripto or a Monotributista and B to everyone else. Without it only the CUIT is checked
+     * Inscripto and B to everyone else, a Monotributista included (Argentine rule, user
+     * 2026-10-13). Without it only the CUIT is checked
      * (customers created before ADR-021).
      *
      * `correct`: an offline sale being replayed already happened and its number is still
@@ -815,7 +816,7 @@ class SalesService extends BaseService {
         const hasCuit = String(client?.client_tax_id || '').replace(/\D/g, '').length === 11;
         const known = Boolean(client?.tax_condition_known);
         const condition = String(client?.client_tax_condition || '').toLowerCase();
-        const takesA = known && (condition.includes('inscripto') || condition.includes('monotribut'));
+        const takesA = known && condition.includes('inscripto');
         if (correct) {
             if (letter === 'A' && (!hasCuit || (known && !takesA))) return 'B';
             if (letter === 'B' && takesA && hasCuit) return 'A';
@@ -836,11 +837,11 @@ class SalesService extends BaseService {
         const letter = String(invoiceType || '').toUpperCase();
         if (letter !== 'A' && letter !== 'B') return;
         const condition = String(client.client_tax_condition || '').toLowerCase();
-        const takesA = condition.includes('inscripto') || condition.includes('monotribut');
+        const takesA = condition.includes('inscripto');
         if (letter === 'A' && !takesA) {
             throw businessError(422, {
                 error: 'invoice_type_mismatch',
-                message: `Una factura A solo se emite a un Responsable Inscripto o Monotributista. El cliente es ${client.client_tax_condition}: emití una factura B.`
+                message: `Una factura A solo se emite a un Responsable Inscripto. El cliente es ${client.client_tax_condition}: emití una factura B.`
             });
         }
         if (letter === 'B' && takesA) {
@@ -1626,9 +1627,225 @@ class SalesService extends BaseService {
         return invoiceAuthorizationUseCase.execute(invoiceId, userId);
     }
 
+    /**
+     * ADR-022: annul an invoice ARCA never authorized and issue it again, with another letter
+     * and/or customer, in one transaction. Same lines and amounts, so the money does not move:
+     * the collections pass to the new invoice, the order points to it, the sale and cost entries
+     * of the old one are reversed and posted again for the new one. The old invoice stays as a
+     * record (cancelled, soft deleted) and the new one keeps `replaces_invoice_id`.
+     * Only without a CAE and outside any ARCA attempt: 'issued' means ARCA holds no voucher
+     * for it (ADR-020 releases a number only after ARCA confirms it does not exist).
+     */
+    async reissueInvoice(invoiceId, { invoice_type: requestedType, client_id: requestedClientId } = {}, userId = null) {
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [rows] = await connection.query('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [invoiceId]);
+            const old = rows[0];
+            if (!old) throw businessError(404, { error: 'not_found', message: 'Factura no encontrada.' });
+            if (old.cae || old.status !== 'issued') {
+                throw businessError(409, {
+                    error: 'invoice_not_reissuable',
+                    message: old.cae
+                        ? 'La factura ya tiene CAE: se corrige con una nota de crédito, no se anula.'
+                        : 'La factura está en trámite con ARCA: esperá a que termine la verificación.',
+                });
+            }
+            const [notes] = await connection.query(
+                "SELECT id FROM credit_notes WHERE invoice_id = ? AND deleted_at IS NULL AND (status IS NULL OR status != 'cancelled') LIMIT 1",
+                [invoiceId]
+            );
+            if (notes.length > 0) {
+                throw businessError(409, { error: 'invoice_has_credit_notes', message: 'La factura tiene notas de crédito: no se puede anular.' });
+            }
+            // A return in progress was opened against the current customer and invoice (AUD-010).
+            if (old.order_id) {
+                const [returns] = await connection.query(
+                    "SELECT id FROM client_returns WHERE order_id = ? AND status IN ('draft', 'initiated', 'pending') LIMIT 1",
+                    [old.order_id]
+                );
+                if (returns.length > 0) {
+                    throw businessError(409, { error: 'invoice_has_pending_returns', message: 'El pedido tiene una devolución en curso: resolvela antes de volver a emitir la factura.' });
+                }
+            }
+
+            const clientId = requestedClientId === undefined ? old.client_id : requestedClientId;
+            if (clientId && clientId !== old.client_id) {
+                const [found] = await connection.query('SELECT id FROM clients WHERE id = ? AND deleted_at IS NULL', [clientId]);
+                if (found.length === 0) throw businessError(404, { error: 'client_not_found', message: 'Cliente no encontrado.' });
+            }
+            const client = await this._resolveClientSnapshot(connection, clientId, old.customer_name || old.client_name);
+            if (clientId && !client.client_id) throw businessError(404, { error: 'client_not_found', message: 'Cliente no encontrado.' });
+
+            const oldLetter = String(old.invoice_type || '').toUpperCase();
+            const invoiceType = this._resolveInvoiceLetter(requestedType || oldLetter, client);
+            this._assertReissueLetter(oldLetter, invoiceType);
+
+            const sameClient = (client.client_id || null) === (old.client_id || null);
+            const sameSnapshot = sameClient
+                && (client.client_tax_id || null) === (old.client_tax_id || null)
+                && (client.client_tax_condition || null) === (old.client_tax_condition || null);
+            if (invoiceType === oldLetter && sameSnapshot) {
+                throw businessError(422, { error: 'nothing_to_change', message: 'Elegí otra letra u otro cliente para volver a emitir.' });
+            }
+
+            // What is still owed moves with the sale: it can never be left without a debtor.
+            const [paid] = await connection.query(
+                "SELECT COALESCE(SUM(amount), 0) AS paid FROM transactions WHERE reference_id = ? AND type = 'sale'",
+                [invoiceId]
+            );
+            const outstanding = this._roundMoney(Number(old.total_amount || 0) - Number(paid[0]?.paid || 0));
+            if (outstanding > 0 && old.client_id && !client.client_id) {
+                throw businessError(409, {
+                    error: 'outstanding_requires_client',
+                    message: 'La factura tiene saldo pendiente en cuenta corriente: elegí el cliente que lo debe.',
+                });
+            }
+
+            const pointOfSale = Number(old.point_of_sale || 1);
+            const invoiceNumber = await this._nextInvoiceNumber(connection, invoiceType, pointOfSale);
+            const newId = crypto.randomUUID();
+            // Annulled first: it frees its order (one invoice per order, uq_invoices_order_id). The
+            // link stays in the audit and in the new invoice's replaces_invoice_id.
+            const oldLabel = `${old.invoice_type}-${String(old.point_of_sale).padStart(4, '0')}-${String(old.invoice_number).padStart(8, '0')}`;
+            const newLabel = `${invoiceType}-${String(pointOfSale).padStart(4, '0')}-${String(invoiceNumber).padStart(8, '0')}`;
+            await connection.query(
+                "UPDATE invoices SET status = 'cancelled', deleted_at = NOW(), order_id = NULL, annulled_label = ? WHERE id = ?",
+                [oldLabel, invoiceId]
+            );
+
+            await connection.query(`
+                INSERT INTO invoices (
+                    id, order_id, client_id, client_name, client_tax_id, client_address, client_tax_condition,
+                    invoice_type, point_of_sale, invoice_number, issue_date, due_date,
+                    net_amount, vat_amount, exempt_amount, total_amount, status, notes, created_by,
+                    customer_name, subtotal, tax_amount, payment_method, payment_status, replaces_invoice_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+                newId, old.order_id, client.client_id, client.client_name, client.client_tax_id, client.client_address,
+                client.client_tax_condition, invoiceType, pointOfSale, invoiceNumber, old.due_date || null,
+                old.net_amount, old.vat_amount, old.exempt_amount || 0, old.total_amount, old.notes || null, userId || null,
+                client.client_id ? client.client_name : (old.customer_name || client.client_name),
+                old.subtotal, old.tax_amount, old.payment_method, old.payment_status, invoiceId,
+            ]);
+            await connection.query(`
+                INSERT INTO invoice_items (
+                    id, invoice_id, product_id, description, quantity, unit_price,
+                    discount_percentage, vat_rate, vat_amount, total_line, product_name, sku, adjustment_kind
+                )
+                SELECT UUID(), ?, product_id, description, quantity, unit_price,
+                       discount_percentage, vat_rate, vat_amount, total_line, product_name, sku, adjustment_kind
+                FROM invoice_items WHERE invoice_id = ?
+            `, [newId, invoiceId]);
+
+            // The ledger: counter-entries for the old sale and cost; the sale is posted again for
+            // the new invoice and the cost copied as it was (today's product cost may differ).
+            const [costLines] = await connection.query(
+                `SELECT jel.account_code, jel.debit, jel.credit, jel.notes
+                 FROM journal_entries je
+                 JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+                 WHERE je.reference_type = 'invoice' AND je.reference_id = ?
+                   AND je.id IN (SELECT journal_entry_id FROM journal_entry_lines WHERE account_code = '5.1.01.01')
+                   AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reversal_of_entry_id = je.id)`,
+                [invoiceId]
+            );
+            await accountingService.reverseDocumentEntries(connection, {
+                referenceType: 'invoice',
+                referenceId: invoiceId,
+                accountCodes: ['4.1.01.01', '5.1.01.01'],
+                description: `Anulación de factura sin autorizar ${oldLabel} (reemplazada por ${newLabel})`,
+            });
+            await accountingService.postInvoiceAccountingEntries(connection, newId, { includeCost: costLines.length === 0 });
+            if (costLines.length > 0) {
+                await accountingService.createJournalEntry(connection, {
+                    date: new Date(),
+                    description: `Costo de Mercadería Vendida - Factura ${newLabel}`,
+                    reference_type: 'invoice',
+                    reference_id: newId,
+                    lines: costLines.map((line) => ({
+                        account_code: line.account_code, debit: Number(line.debit || 0), credit: Number(line.credit || 0), notes: line.notes,
+                    })),
+                });
+            }
+
+            // The collections go with the sale, and with the customer when it changed.
+            await connection.query(
+                "UPDATE transactions SET reference_id = ?, client_id = ? WHERE reference_id = ? AND type = 'sale'",
+                [newId, client.client_id, invoiceId]
+            );
+            await connection.query('UPDATE customer_check_allocations SET invoice_id = ? WHERE invoice_id = ?', [newId, invoiceId]);
+            if (outstanding > 0 && !sameClient) {
+                if (old.client_id) {
+                    await connection.query(
+                        'UPDATE clients SET current_account_balance = GREATEST(COALESCE(current_account_balance, 0) - ?, 0) WHERE id = ?',
+                        [outstanding, old.client_id]
+                    );
+                }
+                if (client.client_id) {
+                    await connection.query(
+                        'UPDATE clients SET current_account_balance = COALESCE(current_account_balance, 0) + ? WHERE id = ?',
+                        [outstanding, client.client_id]
+                    );
+                }
+            }
+            if (old.order_id) {
+                // The order follows the invoice's customer (returns are opened from the order).
+                await connection.query(
+                    `UPDATE orders SET invoice_id = ?${sameClient ? '' : ', client_id = ?'} WHERE id = ? AND invoice_id = ?`,
+                    sameClient ? [newId, old.order_id, invoiceId] : [newId, client.client_id, old.order_id, invoiceId]
+                );
+            }
+            await auditService.log({
+                user_id: userId,
+                action: 'REISSUE_INVOICE',
+                entity_type: 'invoice',
+                entity_id: newId,
+                old_values: {
+                    invoice_id: invoiceId, label: oldLabel, order_id: old.order_id, client_id: old.client_id,
+                    client_tax_id: old.client_tax_id, client_tax_condition: old.client_tax_condition, arca_last_error: old.arca_last_error,
+                },
+                new_values: {
+                    invoice_id: newId, label: newLabel, client_id: client.client_id,
+                    client_tax_id: client.client_tax_id, client_tax_condition: client.client_tax_condition,
+                },
+            }, connection);
+
+            await connection.commit();
+            return this.getInvoiceById(newId);
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
+    /**
+     * ADR-022 / AUD-010: a reissue keeps the VAT treatment. A and B (both discriminate output
+     * VAT) are interchangeable, a ticket can become an A or a B, and a C (monotributo, no
+     * output VAT) stays a C. An electronic invoice never becomes a ticket: it would leave ARCA.
+     */
+    _assertReissueLetter(oldLetter, newLetter) {
+        const allowed = {
+            A: ['A', 'B'],
+            B: ['A', 'B'],
+            TK: ['TK', 'A', 'B'],
+            C: ['C'],
+        }[oldLetter] || [oldLetter];
+        if (!allowed.includes(newLetter)) {
+            const names = { A: 'factura A', B: 'factura B', C: 'factura C', TK: 'ticket' };
+            throw businessError(422, {
+                error: 'reissue_letter_not_allowed',
+                message: `Un comprobante ${names[oldLetter] ? `de tipo ${names[oldLetter]}` : oldLetter} solo se vuelve a emitir como ${allowed.map((letter) => names[letter] || letter).join(' o ')}.`,
+            });
+        }
+    }
+
     async getInvoices(filters = {}) {
         let query = `
-            SELECT i.*, c.tax_id AS client_tax_id, c.address AS client_address
+            SELECT i.*, COALESCE(i.client_tax_id, c.tax_id) AS client_tax_id, COALESCE(i.client_address, c.address) AS client_address,
+                   (SELECT COALESCE(r.annulled_label, CONCAT(r.invoice_type, '-', LPAD(r.point_of_sale, 4, '0'), '-', LPAD(r.invoice_number, 8, '0')))
+                    FROM invoices r WHERE r.id = i.replaces_invoice_id) AS replaces_label
             FROM invoices i
             LEFT JOIN clients c ON i.client_id = c.id
             WHERE (i.deleted_at IS NULL)
@@ -1663,7 +1880,9 @@ class SalesService extends BaseService {
 
     async getInvoiceById(invoiceId) {
         const [rows] = await pool.query(`
-            SELECT i.*, c.tax_id AS client_tax_id, c.address AS client_address
+            SELECT i.*, COALESCE(i.client_tax_id, c.tax_id) AS client_tax_id, COALESCE(i.client_address, c.address) AS client_address,
+                   (SELECT COALESCE(r.annulled_label, CONCAT(r.invoice_type, '-', LPAD(r.point_of_sale, 4, '0'), '-', LPAD(r.invoice_number, 8, '0')))
+                    FROM invoices r WHERE r.id = i.replaces_invoice_id) AS replaces_label
             FROM invoices i
             LEFT JOIN clients c ON i.client_id = c.id
             WHERE i.id = ? AND (i.deleted_at IS NULL)

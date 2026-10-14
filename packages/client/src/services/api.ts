@@ -318,7 +318,9 @@ export type ArcaAlertItem = {
     number: number | string | null;
     customer: string | null;
     amount: number;
+    alert: "conflict" | "stuck" | "rejected" | "unauthorized";
     status: "arca_conflict" | "authorizing" | "issued";
+    created_at?: string | null;
     arca_last_error: string | null;
     arca_requested_at: string | null;
     arca_attempts: number;
@@ -328,7 +330,9 @@ export type ArcaAlerts = {
     conflicts: number;
     stuck: number;
     rejected: number;
+    unauthorized: number;
     stale_minutes: number;
+    unauthorized_hours: number;
     items: ArcaAlertItem[];
 };
 
@@ -518,6 +522,10 @@ export const api = {
 
     updateClient: (id: string, data: ClientUpsertInput) =>
         httpClient.put<Client>(`/api/clients/${id}`, data),
+
+    // ADR-022: only the VAT condition (and the CUIT it may need), at the moment of use.
+    setClientTaxCondition: (id: string, data: { tax_condition_id: string; tax_id?: string | null }) =>
+        httpClient.put<Client>(`/api/clients/${id}/tax-condition`, data),
 
     deleteClient: (id: string) =>
         httpClient.del<{ success: boolean }>(`/api/clients/${id}`),
@@ -997,6 +1005,10 @@ export const api = {
         httpClient.post<{ id: string; success: boolean }>("/api/quality-checks", data),
 
     // ==================== INVOICING ====================
+    // ADR-022: annul an invoice ARCA never authorized and issue it again (letter and/or customer).
+    reissueInvoice: (id: string, data: { invoice_type?: "A" | "B" | "C" | "TK"; client_id?: string | null }) =>
+        httpClient.post<Invoice>(`/api/invoices/${id}/reissue`, data),
+
     getArcaAlerts: () =>
         httpClient.get<ArcaAlerts>("/api/fiscal/arca-alerts"),
 

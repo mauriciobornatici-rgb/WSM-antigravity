@@ -100,6 +100,14 @@ export const zodSchemas = {
         }),
         body: commonSchemas.orderDeliverSchema
     }),
+    invoiceReissue: z.object({
+        params: z.object({ id: commonSchemas.uuidSchema }),
+        body: commonSchemas.invoiceReissueSchema
+    }),
+    clientTaxCondition: z.object({
+        params: z.object({ id: commonSchemas.uuidSchema }),
+        body: commonSchemas.clientTaxConditionSchema
+    }),
     orderInvoice: z.object({
         params: z.object({
             id: commonSchemas.uuidSchema

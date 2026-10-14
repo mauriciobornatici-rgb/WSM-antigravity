@@ -182,6 +182,10 @@ export const getInvoiceItems = catchAsync(async (req, res) => {
     res.json(rows);
 });
 
+export const reissueInvoice = catchAsync(async (req, res) => {
+    res.json(await salesService.reissueInvoice(req.params.id, req.body, req.user?.id));
+});
+
 export const getArcaAlerts = catchAsync(async (req, res) => {
     res.json(await arcaAuthorizationService.listAlerts());
 });
