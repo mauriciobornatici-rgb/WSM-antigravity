@@ -19,9 +19,9 @@
   - **Plazo de 5 días:** se cuenta desde la venta original.
   - **Notas anónimas:** se muestra el nombre del comprador.
 - **Queda anotado (bajo):** el año de la NCI sale de la hora del servidor, igual que en las NC. El CHECK requiere MySQL 8.0.16 o posterior, igual que la 044.
-- **Decisiones que confirmar con el usuario:**
-  - `arca_configured_at` se fija una sola vez y no se reinicia al pasar de homologación a producción;
-  - una nota interna no se puede anular, por diseño.
+- **Decisiones confirmadas por el usuario (2026-10-14):**
+  - [x] `arca_configured_at` se fija una sola vez y no se reinicia al pasar de homologación a producción;
+  - [x] una nota interna no se puede anular, por diseño.
 - **Pruebas:** también falló la integración por datos acumulados en QA (más de 100 alertas de corridas anteriores). Ahora el archivo de pruebas ARCA limpia al empezar sus propios puntos de venta de prueba (≥ 9000).
 
 Evidencia: validate 0 (969 + 101); coverage 96,68/90,61/93,97; integración 115/115 ×2 (5 escenarios de reemisión y nota interna con base real, incluido el CHECK); RBAC OK; E2E 6/6; simulación 153/153. Prueba manual en la app local: la nota NCI-2026-0001 se creó con su texto, la autorización respondió 409 y la nota no aparece en la cuenta del cliente.
