@@ -24,6 +24,7 @@ import { InventoryABCTab } from "@/components/inventory/InventoryABCTab";
 import { InventoryTransferDialog } from "@/components/inventory/InventoryTransferDialog";
 import { InventoryProcureDialog } from "@/components/inventory/InventoryProcureDialog";
 import { analyzeInventoryABC } from "@/lib/inventoryAnalytics";
+import { grossPrice } from "@/lib/pricing";
 import { ProductCatalogMastersTab } from "@/components/inventory/ProductCatalogMastersTab";
 
 export default function InventoryPage() {
@@ -326,9 +327,12 @@ export default function InventoryPage() {
 
                             const csvData = filteredProducts.map(p => {
                                 const metrics = abcMap[p.id] || { abcClass: "C", grossMarginPercent: 0, markupPercent: 0 };
-                                const cost = Number(p.purchase_price || 0);
-                                const price = Number(p.sale_price || 0);
-                                const marginAmount = price - cost;
+                                // Margin is computed on net values; price and cost are exported as final (VAT-included) figures.
+                                const netCost = Number(p.purchase_price || 0);
+                                const netPrice = Number(p.sale_price || 0);
+                                const cost = grossPrice(netCost, p.vat_rate);
+                                const price = grossPrice(netPrice, p.vat_rate);
+                                const marginAmount = netPrice - netCost;
                                 return {
                                     id: p.id,
                                     name: p.name,
@@ -351,9 +355,9 @@ export default function InventoryPage() {
                                 { key: "name" as const, label: "Producto" },
                                 { key: "category" as const, label: "Categoría" },
                                 { key: "abc_class" as const, label: "Clase ABC" },
-                                { key: "price" as const, label: "Precio Venta" },
-                                { key: "cost" as const, label: "Costo Compra" },
-                                { key: "margin_amount" as const, label: "Margen Bruto $" },
+                                { key: "price" as const, label: "Precio Venta (IVA incl.)" },
+                                { key: "cost" as const, label: "Costo Compra (IVA incl.)" },
+                                { key: "margin_amount" as const, label: "Margen Bruto $ (neto)" },
                                 { key: "margin_percent" as const, label: "Margen %" },
                                 { key: "markup_percent" as const, label: "Markup %" },
                                 { key: "stock" as const, label: "Stock Actual" },
@@ -620,6 +624,7 @@ export default function InventoryPage() {
                         category: p.category,
                         location: p.location || "Depósito Central",
                         sale_price: p.sale_price,
+                        vat_rate: p.vat_rate,
                         quantity_received: p.stock_current ?? 1,
                     })),
                 }}

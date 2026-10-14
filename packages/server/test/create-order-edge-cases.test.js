@@ -5,8 +5,7 @@ import { CreateOrderUseCase, resolvePriceOverrides } from '../domains/sales/Crea
 import { InvoiceAuthorizationUseCase } from '../domains/sales/InvoiceAuthorizationUseCase.js';
 import pool from '../config/db.js';
 import auditService from '../services/audit.service.js';
-import accountingService from '../services/accounting.service.js';
-import afipService from '../services/afip.service.js';
+import { invoiceArcaAdapter } from '../domains/fiscal/arcaAdapters.js';
 import { mockPool } from './helpers/mockDb.js';
 
 test('inventory reservation rejects malformed quantities and ignores zero-available rows', async () => {
@@ -89,14 +88,16 @@ test('order creation resolves cashier, catalog prices, mixed checks and loyalty 
         client_id: 'c', counter_name: ' ', points_redeemed: 50,
         items: [{ product_id: 'p', quantity: 2, unit_price: 'bad' }],
         payments: [
-            { method: 'cash', amount: 1000 },
-            { method: 'credit_account', amount: 1000, check: { note: 'metadata' } }
+            { method: 'cash', amount: 1210 },
+            { method: 'credit_account', amount: 1210, check: { note: 'metadata' } }
         ]
     }, 'u');
-    assert.equal(result.total_amount, 1800);
+    // ADR-015: el pedido se cobra con IVA (2 x 1000 x 1.21 = 2420; sin vat_rate en catálogo rige 21 %);
+    // menos 20 puntos canjeados ($200) quedan 2220, que dan 2 puntos.
+    assert.equal(result.total_amount, 2220);
     assert.equal(result.points_redeemed, 20);
-    assert.equal(result.points_earned, 1);
-    assert.equal(audit.new_values.total_amount, 1800);
+    assert.equal(result.points_earned, 2);
+    assert.equal(audit.new_values.total_amount, 2220);
     const orderInsert = calls.find((call) => call.sql.includes('INSERT INTO orders'));
     assert.ok(orderInsert.params.includes('Cajero QA'));
     assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO order_payments')).length, 2);
@@ -124,44 +125,13 @@ test('duplicate external order races recover the committed remote order', async 
     assert.ok(connection);
 });
 
-test('invoice authorization handles missing, replay, success and AFIP rollback', async (t) => {
-    let mode = 'missing';
-    mockPool(t, async (sql) => {
-        const statement = String(sql);
-        if (statement.includes('FOR UPDATE')) {
-            if (mode === 'missing') return [[]];
-            if (mode === 'replay') return [[{ id: 'i', status: 'authorized' }]];
-            return [[{ id: 'i', status: 'issued', invoice_type: 'B' }]];
-        }
-        if (statement.includes('company_settings')) return [[]];
-        if (statement.includes('invoice_items')) return [[{ quantity: 1 }]];
-        if (statement.startsWith('SELECT * FROM invoices WHERE id = ?')) return [[{ id: 'i', status: 'authorized' }]];
-        return [[]];
-    });
-    const useCase = new InvoiceAuthorizationUseCase();
-    await assert.rejects(() => useCase.execute('i', 'u'), (e) => e.statusCode === 404);
-    mode = 'replay';
-    assert.equal((await useCase.execute('i', 'u')).status, 'authorized');
-
-    const originals = {
-        afip: afipService.authorizeVoucher,
-        journal: accountingService.postInvoiceAccountingEntries,
-        audit: auditService.log
-    };
-    afipService.authorizeVoucher = async () => ({ cae: 'CAE', cae_expiration_date: '2026-09-01', invoice_number: 2 });
-    accountingService.postInvoiceAccountingEntries = async () => {};
-    auditService.log = async () => {};
-    t.after(() => {
-        afipService.authorizeVoucher = originals.afip;
-        accountingService.postInvoiceAccountingEntries = originals.journal;
-        auditService.log = originals.audit;
-    });
-    mode = 'success';
-    assert.equal((await useCase.execute('i', 'u')).status, 'authorized');
-    afipService.authorizeVoucher = async () => { throw new Error('AFIP offline'); };
-    await assert.rejects(() => useCase.execute('i', 'u'), /AFIP offline/);
+test('invoice authorization delegates to the shared ARCA flow with the invoice adapter (ADR-020)', async () => {
+    const calls = [];
+    const arcaAuthorization = { authorize: async (...args) => { calls.push(args); return { id: 'i', status: 'authorized' }; } };
+    const result = await new InvoiceAuthorizationUseCase({ arcaAuthorization }).execute('i', 'u');
+    assert.equal(result.status, 'authorized');
+    assert.deepEqual(calls, [[invoiceArcaAdapter, 'i', 'u']]);
 });
-
 test('order creation with VAT and payments matches full gross total (POS checkout)', async (t) => {
     const calls = [];
     mockPool(t, async (sql, params) => {
@@ -235,8 +205,8 @@ test('a POS counter sale deducts physical stock and records sale movements inste
     ]);
     const movements = calls.filter((call) => call.sql.includes('INSERT INTO inventory_movements'));
     assert.equal(movements.length, 3);
-    assert.ok(movements.every((call) => call.sql.includes("'sale'") && call.params.at(-1) === 'cashier-1'));
-    assert.equal(movements.reduce((sum, call) => sum + call.params[3], 0), 6);
+    assert.ok(movements.every((call) => call.params[1] === 'sale' && call.params.at(-1) === 'cashier-1'));
+    assert.equal(movements.reduce((sum, call) => sum + call.params[4], 0), 6);
 
     assert.equal(calls.some((call) => call.sql.includes('reserved_quantity = reserved_quantity +')), false);
     assert.equal(calls.some((call) => call.sql.includes('order_item_allocations')), false);
@@ -260,7 +230,9 @@ test('a POS order with shipping keeps the reservation flow', async (t) => {
     auditService.log = async () => {};
     t.after(() => { auditService.log = originalAudit; });
 
-    await new CreateOrderUseCase({ onStockChanged: async () => { throw new Error('must not sync'); } }).execute({
+    // ADR-019: a reservation changes what the online store can sell, so it syncs too.
+    const synced = [];
+    await new CreateOrderUseCase({ onStockChanged: async (ids) => { synced.push(...ids); } }).execute({
         external_source: 'pos',
         external_id: 'c5b8f1c4-4a8e-4e0c-9d5e-2f1f1f1f1f1f',
         shipping_method: 'delivery',
@@ -270,6 +242,8 @@ test('a POS order with shipping keeps the reservation flow', async (t) => {
     assert.equal(calls.find((call) => call.sql.includes('INSERT INTO orders')).params[6], 'pending');
     assert.ok(calls.some((call) => call.sql.includes('reserved_quantity = reserved_quantity +')));
     assert.equal(calls.some((call) => call.sql.includes('SET quantity = quantity - ?')), false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(synced, ['p']);
 });
 
 test('price policy: catalog price unless authorized, imported, or captured offline (ADR-008)', () => {
@@ -328,4 +302,51 @@ test('an authorized price override is audited in the same transaction as the sal
     assert.deepEqual(override.entry.new_values, {
         source: 'authorized_user', role: 'manager', lines: [{ product_id: 'p', catalog_price: 100, unit_price: 80 }],
     });
+});
+
+test('resolveUnitPrice keeps the catalog net price for a rounded request and 4 decimals for overrides', async () => {
+    const { resolveUnitPrice } = await import('../domains/sales/CreateOrderUseCase.js');
+    const prices = new Map([['p', 82.6446]]);
+    assert.equal(resolveUnitPrice({ product_id: 'p' }, prices), 82.6446);
+    assert.equal(resolveUnitPrice({ product_id: 'p', unit_price: 82.64 }, prices), 82.6446);
+    assert.equal(resolveUnitPrice({ product_id: 'p', unit_price: 70.123456 }, prices), 70.1235);
+    assert.equal(resolveUnitPrice({ product_id: 'p', unit_price: -1 }, prices), 82.6446);
+});
+
+test('an offline sale queued before per-line VAT rounding absorbs the cents in its last payment (audited)', async (t) => {
+    const inserts = [];
+    const audits = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        if (statement.includes('SELECT id, sale_price, name, vat_rate FROM products')) {
+            return [[{ id: 'a', sale_price: 10.0041, name: 'A', vat_rate: 21 }, { id: 'b', sale_price: 10.0041, name: 'B', vat_rate: 21 }, { id: 'c', sale_price: 10.0041, name: 'C', vat_rate: 21 }]];
+        }
+        if (statement.includes('INSERT INTO order_payments')) inserts.push(params);
+        return [[]];
+    });
+    const originalAudit = auditService.log;
+    auditService.log = async (entry) => { audits.push(entry); };
+    t.after(() => { auditService.log = originalAudit; });
+    const useCase = new CreateOrderUseCase();
+    // Per line: round2(10.0041 × 1.21) = 12.10, total 36.30. The old client rounded the total:
+    // round2(30.0123 × 1.21) = 36.31, one cent away.
+    const order = {
+        external_source: 'pos',
+        external_id: 'offline-1',
+        offline_captured_at: new Date(Date.now() - 60_000).toISOString(),
+        items: ['a', 'b', 'c'].map((id) => ({ product_id: id, quantity: 1, unit_price: 10.0041 })),
+        payments: [{ method: 'card', amount: 20 }, { method: 'cash', amount: 16.33 }],
+    };
+    try {
+        await useCase.execute(order, 'u', { role: 'cashier' });
+    } catch {
+        // The mock does not model the whole sale: only the payment resolution matters here.
+    }
+    assert.deepEqual(inserts.map((params) => params[3]), [20, 16.3]);
+    assert.ok(audits.some((entry) => entry.action === 'OFFLINE_SALE_PAYMENT_ROUNDING'));
+    // Online, the same gap is still rejected.
+    await assert.rejects(
+        () => useCase.execute({ ...order, offline_captured_at: undefined }, 'u', { role: 'cashier' }),
+        (e) => e.errorCode === 'INVALID_ORDER_PAYMENT_ALLOCATION'
+    );
 });

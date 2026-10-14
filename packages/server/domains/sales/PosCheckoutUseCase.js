@@ -67,21 +67,37 @@ export class PosCheckoutUseCase {
             );
             const replay = existing.length > 0;
             let order;
+            let payments = orderData.payments;
             if (replay) {
                 order = { id: existing[0].id, total_amount: Number(existing[0].total_amount || 0), invoice_id: existing[0].invoice_id };
+                // The payments stored with the order (an offline sale may have absorbed cents).
+                const [stored] = await connection.query(
+                    'SELECT payment_method AS method, amount, check_payload FROM order_payments WHERE order_id = ? ORDER BY created_at, id',
+                    [order.id]
+                );
+                if (stored.length > 0) {
+                    payments = stored.map((row) => ({
+                        method: row.method,
+                        amount: Number(row.amount),
+                        check: typeof row.check_payload === 'string' ? JSON.parse(row.check_payload) : row.check_payload || null,
+                    }));
+                }
             } else {
                 const created = await this.createOrderUseCase.execute(orderData, userId, actor, connection);
                 syncStock = created.syncStock;
+                payments = created.payments ?? orderData.payments;
                 order = { id: created.id, total_amount: created.total_amount, invoice_id: null };
             }
 
             let invoice = null;
             if (emitInvoice && !order.invoice_id) {
+                // ADR-021 / AUD-009: a sale made offline is never lost over the invoice letter:
+                // its number is still provisional, so a letter ARCA would refuse is corrected.
                 invoice = await this.salesService.createInvoice(order.id, {
                     invoice_type: invoiceType,
                     point_of_sale: pointOfSale,
-                    payments: orderData.payments,
-                }, userId, connection);
+                    payments,
+                }, userId, connection, { checkReceiverCondition: !isOfflineReplay(orderData) });
             } else if (order.invoice_id) {
                 const [invoices] = await connection.query('SELECT * FROM invoices WHERE id = ?', [order.invoice_id]);
                 invoice = invoices[0] || null;
@@ -90,7 +106,7 @@ export class PosCheckoutUseCase {
             const cash = await recordShiftSalePayments(connection, {
                 shiftId: shift.shiftId,
                 orderId: order.id,
-                payments: orderData.payments,
+                payments,
             });
 
             await this.auditService.log({
@@ -103,6 +119,9 @@ export class PosCheckoutUseCase {
                     shift_id: shift.shiftId,
                     ...(shift.reassigned ? { original_shift_id: shift.originalShiftId, reason: 'offline sale synced after shift close' } : {}),
                     invoice_id: invoice?.id || null,
+                    ...(invoice && invoiceType && String(invoice.invoice_type).toUpperCase() !== String(invoiceType).toUpperCase()
+                        ? { invoice_type_requested: invoiceType, invoice_type_issued: invoice.invoice_type }
+                        : {}),
                     shift_payments: cash.inserted,
                 },
             }, connection);

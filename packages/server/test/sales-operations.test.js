@@ -129,7 +129,7 @@ test('getOrders returns populated rows directly when pagination totals are not r
         if (statement.includes('FROM order_payments')) return [[]];
         return [[]];
     });
-    assert.deepEqual(await salesService.getOrders(), [{ id: 'o-direct', status: 'pending', items: [], payments: [] }]);
+    assert.deepEqual(await salesService.getOrders(), [{ id: 'o-direct', status: 'pending', items: [], adjustments: [], payments: [] }]);
 });
 
 test('dispatchOrder completes pickup immediately and records an audit', async (t) => {
@@ -477,6 +477,79 @@ test('_resolveClientSnapshot returns registered and fallback customer identities
     assert.equal(fallback.client_name, 'Mostrador');
     const defaultFallback = await salesService._resolveClientSnapshot({ query: async () => [[]] }, null, '');
     assert.equal(defaultFallback.client_name, 'Consumidor Final');
+    // ADR-021: without a stored condition the invoice keeps Consumidor Final, marked as unknown.
+    assert.equal(client.client_tax_condition, 'Consumidor Final');
+    assert.equal(client.tax_condition_known, false);
+    assert.equal(defaultFallback.tax_condition_known, false);
+});
+
+test('_resolveClientSnapshot copies the customer VAT condition (ADR-021)', async () => {
+    let sql = '';
+    const connection = {
+        query: async (statement) => {
+            sql = String(statement);
+            return [[{ id: 'c-1', name: 'Club SA', tax_id: '30712345678', address: 'X', tax_condition_id: 'tc_RespInscripto' }]];
+        },
+    };
+    const client = await salesService._resolveClientSnapshot(connection, 'c-1');
+    assert.match(sql, /tax_condition_id FROM clients/);
+    assert.equal(sql.includes('tax_conditions'), false, 'names come from the shared list (AUD-009)');
+    assert.equal(client.client_tax_condition, 'Responsable Inscripto');
+    assert.equal(client.tax_condition_known, true);
+
+    const unknownId = await salesService._resolveClientSnapshot({ query: async () => [[{ id: 'c-2', name: 'Viejo', tax_condition_id: 'otro' }]] }, 'c-2');
+    assert.deepEqual([unknownId.client_tax_condition, unknownId.tax_condition_known], ['Consumidor Final', false]);
+});
+
+test('_assertInvoiceTypeForClient follows ARCA receiver rules only when the condition is known', () => {
+    const known = (condition) => ({ client_tax_condition: condition, tax_condition_known: true });
+    const mismatch = (error) => error.statusCode === 422 && error.errorCode === 'invoice_type_mismatch';
+    // A only for a Responsable Inscripto: a Monotributista receives B (user, 2026-10-13).
+    assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('A', known('Responsable Inscripto')));
+    assert.throws(() => salesService._assertInvoiceTypeForClient('a', known('Monotributista')), mismatch);
+    assert.throws(() => salesService._assertInvoiceTypeForClient('A', known('Consumidor Final')), mismatch);
+    assert.throws(() => salesService._assertInvoiceTypeForClient('A', known('Exento')), /factura B/);
+    // B for everyone else.
+    assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('B', known('Consumidor Final')));
+    assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('B', known('Exento')));
+    assert.throws(() => salesService._assertInvoiceTypeForClient('B', known('Responsable Inscripto')), /corresponde una factura A/);
+    assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('B', known('Monotributista')));
+    // C, tickets and unknown conditions are not checked.
+    assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('C', known('Consumidor Final')));
+    assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('TK', known('Responsable Inscripto')));
+    assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient(undefined, known('Responsable Inscripto')));
+    assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('A', { client_tax_condition: 'Consumidor Final', tax_condition_known: false }));
+    assert.doesNotThrow(() => salesService._assertInvoiceTypeForClient('A', null));
+});
+
+test('_resolveInvoiceLetter: a Factura A always needs a CUIT, and an offline replay is corrected instead of refused (AUD-009)', () => {
+    const client = (condition, taxId = '30-71234567-4') => ({
+        client_tax_id: taxId, client_tax_condition: condition || 'Consumidor Final', tax_condition_known: Boolean(condition),
+    });
+    const cuitRequired = (error) => error.statusCode === 422 && error.errorCode === 'invoice_cuit_required';
+    // Strict (online): A needs the CUIT even without a loaded condition.
+    assert.throws(() => salesService._resolveInvoiceLetter('A', null), cuitRequired);
+    assert.throws(() => salesService._resolveInvoiceLetter('A', client(null, '28999000')), cuitRequired);
+    assert.throws(() => salesService._resolveInvoiceLetter('A', client('Responsable Inscripto', null)), cuitRequired);
+    assert.equal(salesService._resolveInvoiceLetter('a', client(null)), 'A');
+    assert.throws(() => salesService._resolveInvoiceLetter('A', client('Monotributista')), /solo se emite a un Responsable Inscripto/);
+    assert.equal(salesService._resolveInvoiceLetter('B', client('Monotributista')), 'B');
+    assert.throws(() => salesService._resolveInvoiceLetter('A', client('Exento')), /factura B/);
+    assert.throws(() => salesService._resolveInvoiceLetter('B', client('Responsable Inscripto')), /corresponde una factura A/);
+    assert.equal(salesService._resolveInvoiceLetter(undefined, null), 'B');
+    assert.equal(salesService._resolveInvoiceLetter('tk', client('Responsable Inscripto')), 'TK');
+    assert.equal(salesService._resolveInvoiceLetter('C', null), 'C');
+    // Offline replay: corrected to what ARCA accepts.
+    const fix = (letter, customer) => salesService._resolveInvoiceLetter(letter, customer, { correct: true });
+    assert.equal(fix('A', null), 'B');
+    assert.equal(fix('A', client('Consumidor Final')), 'B');
+    assert.equal(fix('A', client(null)), 'A');
+    assert.equal(fix('B', client('Responsable Inscripto')), 'A');
+    assert.equal(fix('B', client('Responsable Inscripto', '28999000')), 'B', 'no CUIT: B stays (ARCA will report it)');
+    assert.equal(fix('A', client('Monotributista')), 'B');
+    assert.equal(fix('B', client('Monotributista')), 'B');
+    assert.equal(fix('B', client(null)), 'B');
+    assert.equal(fix('C', client('Responsable Inscripto')), 'C');
 });
 
 test('_transferOrderReceivablePayments skips, validates and transfers advances', async (t) => {
@@ -674,6 +747,56 @@ test('createInvoice records the remaining client debt for a partial payment', as
     assert.equal(result.paid_amount, 40);
     assert.ok(calls.some(({ sql, params }) => sql.includes('current_account_balance') && params[0] === 60));
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE orders SET invoice_id') && params[1] === 'packed'));
+});
+
+test('createInvoice refuses a letter the customer VAT condition does not take, unless told not to check (ADR-021)', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement === 'SELECT * FROM orders WHERE id = ? FOR UPDATE') {
+            return [[{ id: 'o-cf', status: 'packed', client_id: 'client-1', customer_name: 'Ana', payment_method: 'cash' }]];
+        }
+        if (statement.includes('FROM order_items oi')) {
+            return [[{ product_id: 'p-1', quantity: 1, picked_quantity: 1, unit_price: 100, vat_rate: 21, product_name: 'Producto' }]];
+        }
+        if (statement.includes('tax_condition_id FROM clients')) {
+            return [[{ id: 'client-1', name: 'Ana', tax_id: '20123456789', address: null, tax_condition_id: 'tc_ConsFinal' }]];
+        }
+        return [[]];
+    });
+    const originals = {
+        next: salesService._nextInvoiceNumber,
+        transfer: salesService._transferOrderReceivablePayments,
+        accounting: accountingService.postInvoiceAccountingEntries,
+        finance: financeService._registerInvoicePayments,
+        audit: auditService.log,
+    };
+    salesService._nextInvoiceNumber = async () => 1;
+    salesService._transferOrderReceivablePayments = async () => 0;
+    accountingService.postInvoiceAccountingEntries = async () => {};
+    financeService._registerInvoicePayments = async () => {};
+    auditService.log = async () => {};
+    t.after(() => {
+        salesService._nextInvoiceNumber = originals.next;
+        salesService._transferOrderReceivablePayments = originals.transfer;
+        accountingService.postInvoiceAccountingEntries = originals.accounting;
+        financeService._registerInvoicePayments = originals.finance;
+        auditService.log = originals.audit;
+    });
+
+    await assert.rejects(
+        () => salesService.createInvoice('o-cf', { invoice_type: 'A', point_of_sale: 1 }, 'u-1'),
+        (error) => error.statusCode === 422 && error.errorCode === 'invoice_type_mismatch'
+    );
+    assert.equal(calls.some(({ sql }) => sql.includes('INSERT INTO invoices (')), false);
+    assert.equal(calls.some(({ sql }) => sql.includes('document_sequences') || sql.includes('MAX(invoice_number)')), false, 'refused before numbering');
+
+    // An offline sale being replayed is invoiced with the letter ARCA accepts (AUD-009).
+    const invoice = await salesService.createInvoice('o-cf', { invoice_type: 'A', point_of_sale: 1 }, 'u-1', null, { checkReceiverCondition: false });
+    assert.equal(invoice.client_tax_condition, 'Consumidor Final');
+    assert.equal(invoice.invoice_type, 'B');
+    assert.ok(calls.some(({ sql }) => sql.includes('INSERT INTO invoices (')));
 });
 
 test('createInvoice preserves safe defaults for an anonymous unpaid order', async (t) => {

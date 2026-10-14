@@ -1,5 +1,7 @@
 import type { InvoiceView } from "./types"
 import type { CompanySettings } from "@/types"
+import { formatMoney } from "@/lib/formatters"
+import { grossLineTotal, grossPrice, lineAmounts, vatRateOf } from "@/lib/pricing"
 import { formatInvoiceNumber } from "./invoiceUtils"
 import { buildAfipQrUrlFromInvoice } from "./afipQr"
 import { AfipQrImage } from "./AfipQrImage"
@@ -32,6 +34,8 @@ export function PrintableThermalTicket({
     if (!invoice) return null
 
     const isTicket = invoice.invoice_type === "TK"
+    const isInvoiceA = invoice.invoice_type === "A"
+    const isInvoiceC = invoice.invoice_type === "C"
     const taxRateLabel = companySettings?.operation?.tax_rate 
         ? `${Number(companySettings.operation.tax_rate * 100).toFixed(0)}%`
         : "21%"
@@ -79,14 +83,20 @@ export function PrintableThermalTicket({
             <div className="py-2 border-b border-dashed border-slate-400">
                 <div className="flex justify-between text-[10px] font-bold pb-1">
                     <span>Producto / Detalle</span>
-                    <span>Total</span>
+                    <span>{isInvoiceA ? "Neto" : "Total"}</span>
                 </div>
                 <div className="space-y-1.5 pt-1">
                     {invoice.items && invoice.items.length > 0 ? (
                         invoice.items.map((item, index) => {
                             const qty = Number(item.quantity || 1);
-                            const unitPrice = Number(item.unit_price || 0);
-                            const totalLine = Number(item.total_line != null ? item.total_line : qty * unitPrice);
+                            // Stored unit prices are net (ADR-015): the consumer ticket shows final prices;
+                            // a Factura A keeps the net detail with the VAT rate spelled out.
+                            const unitPrice = isInvoiceA
+                                ? Number(item.unit_price || 0)
+                                : grossPrice(item.unit_price, item.vat_rate);
+                            const totalLine = isInvoiceA
+                                ? lineAmounts(qty, item.unit_price, item.vat_rate).net
+                                : Number(item.total_line != null ? item.total_line : grossLineTotal(qty, item.unit_price, item.vat_rate));
                             return (
                                 <div key={index} className="text-[10px] space-y-0.5 border-b border-dotted border-slate-200 pb-1.5 last:border-b-0">
                                     <div className="flex justify-between items-start gap-2">
@@ -94,13 +104,13 @@ export function PrintableThermalTicket({
                                             {item.product_name || item.description || "Producto"}
                                         </span>
                                         <span className="font-bold shrink-0 text-slate-900">
-                                            ${totalLine.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            {formatMoney(totalLine)}
                                         </span>
                                     </div>
                                     <div className="text-[9px] text-slate-600 flex justify-between">
                                         <span>
-                                            {qty} un. x ${unitPrice.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                            {item.vat_rate != null ? ` (IVA ${item.vat_rate}%)` : ""}
+                                            {qty} un. x {formatMoney(unitPrice)}
+                                            {isInvoiceA ? ` (+ IVA ${vatRateOf(item.vat_rate)}%)` : ""}
                                         </span>
                                         {item.sku && <span className="font-mono text-slate-400">SKU: {item.sku}</span>}
                                     </div>
@@ -110,7 +120,7 @@ export function PrintableThermalTicket({
                     ) : (
                         <div className="flex justify-between text-[10px] text-slate-500 italic py-1">
                             <span>Comprobante sin ítems asociados</span>
-                            <span>${Number(invoice.total_amount || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span>{formatMoney(invoice.total_amount || 0)}</span>
                         </div>
                     )}
                 </div>
@@ -118,17 +128,27 @@ export function PrintableThermalTicket({
 
             {/* Totals Section */}
             <div className="py-2 space-y-1 text-right text-[10px]">
-                <div className="flex justify-between">
-                    <span>Neto Gravado:</span>
-                    <span>${Number(invoice.net_amount || invoice.subtotal || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                </div>
-                <div className="flex justify-between">
-                    <span>IVA ({taxRateLabel}):</span>
-                    <span>${Number(invoice.vat_amount || invoice.tax_amount || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                </div>
+                {isInvoiceA ? (
+                    <>
+                        <div className="flex justify-between">
+                            <span>Neto Gravado:</span>
+                            <span>{formatMoney(Number(invoice.net_amount || invoice.subtotal || 0))}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span>IVA ({taxRateLabel}):</span>
+                            <span>{formatMoney(Number(invoice.vat_amount || invoice.tax_amount || 0))}</span>
+                        </div>
+                    </>
+                ) : !isInvoiceC ? (
+                    // Ley 27.743 (Transparencia Fiscal al Consumidor): B and tickets show the VAT contained in the final price.
+                    <div className="flex justify-between">
+                        <span>IVA contenido:</span>
+                        <span>{formatMoney(Number(invoice.vat_amount || invoice.tax_amount || 0))}</span>
+                    </div>
+                ) : null}
                 <div className="flex justify-between text-sm font-black border-t border-dashed border-slate-400 pt-1.5 mt-1">
                     <span>TOTAL FACTURADO:</span>
-                    <span>${Number(invoice.total_amount || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span>{formatMoney(invoice.total_amount || 0)}</span>
                 </div>
             </div>
 

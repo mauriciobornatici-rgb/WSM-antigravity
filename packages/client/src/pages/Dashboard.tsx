@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { showErrorToast } from "@/lib/errorHandling";
 import { api } from "@/services/api";
 import { SizeColorHeatmapCard } from "@/components/dashboard/SizeColorHeatmapCard";
+import { ArcaAlertsCard } from "@/components/dashboard/ArcaAlertsCard";
 import { useQuery } from "@tanstack/react-query";
 import { formatMoney } from "@/lib/formatters";
 
@@ -98,7 +99,7 @@ export default function Dashboard() {
                     trend: `${data.todayOperations} operaciones (${salesDelta})`,
                 },
                 {
-                    title: "Pedidos de deposito",
+                    title: "Pedidos de depósito",
                     value: String(data.pendingOrders),
                     icon: Package,
                     trend: `${data.readyToDispatch} listos para despacho`,
@@ -107,7 +108,7 @@ export default function Dashboard() {
                     title: "Stock bajo",
                     value: String(data.lowStockCount),
                     icon: AlertCircle,
-                    trend: data.lowStockCount > 0 ? "Requiere reposicion" : "Sin alertas",
+                    trend: data.lowStockCount > 0 ? "Requiere reposición" : "Sin alertas",
                     className: data.lowStockCount > 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400",
                 },
                 {
@@ -151,6 +152,8 @@ export default function Dashboard() {
 
     return (
         <div className="space-y-6">
+            <ArcaAlertsCard />
+
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
                 {stats.map((stat) => (
                     <Card key={stat.title}>
@@ -169,7 +172,7 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 gap-6 md:grid-cols-7">
                 <Card className="md:col-span-4">
                     <CardHeader>
-                        <CardTitle>Ventas de los ultimos 7 dias</CardTitle>
+                        <CardTitle>Ventas de los últimos 7 días</CardTitle>
                     </CardHeader>
                     <CardContent>
                         {dailySales.length === 0 ? (

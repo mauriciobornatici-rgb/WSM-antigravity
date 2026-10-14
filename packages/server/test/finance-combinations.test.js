@@ -172,6 +172,11 @@ test('supplier settlement selects cash, bank and third-party cheque accounts', a
             id: 'supplier-invoice', supplier_id: 'supplier', total_amount: 100, invoice_number: 'A-10'
         }]];
         if (statement.includes('SUM(amount)')) return [[{ paid_amount: null }]];
+        // The cash line leaves the drawer of the single open shift, which holds enough (ADR-014).
+        if (statement.includes("FROM cash_shifts WHERE id = ? AND status = 'open' FOR UPDATE")) return [[{ id: 'shift-1' }]];
+        if (statement.includes("FROM cash_shifts WHERE status = 'open'")) return [[{ id: 'shift-1' }]];
+        if (statement.includes('FROM shift_payments')) return [[{ inflow: 100, outflow: 0 }]];
+        if (statement.includes('SELECT opening_balance')) return [[{ opening_balance: 0 }]];
         return [[]];
     });
     const originals = {
@@ -201,4 +206,9 @@ test('supplier settlement selects cash, bank and third-party cheque accounts', a
     assert.deepEqual(journals.map((entry) => entry.lines[1].account_code), ['1.1.01.01', '1.1.02.01', '1.1.02.02']);
     assert.ok(calls.some(({ sql }) => sql.includes('INSERT INTO outgoing_check_allocations')));
     assert.ok(calls.some(({ params }) => params?.includes('TR-1')));
+    // Only the cash line takes money out of the drawer (as an 'expense' of the open shift).
+    const drawer = calls.filter(({ sql }) => sql.includes('INSERT INTO shift_payments'));
+    assert.equal(drawer.length, 1);
+    // ADR-015: el tipo del movimiento viaja como parametro (4to), no como literal del SQL.
+    assert.deepEqual([drawer[0].params[1], drawer[0].params[2], drawer[0].params[3]], ['shift-1', 20, 'expense']);
 });

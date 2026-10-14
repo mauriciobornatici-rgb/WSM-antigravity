@@ -7,7 +7,10 @@ import { formatMoney } from "@/lib/formatters";
 
 /** Spanish label for the exception type badge (never color-only). */
 export function formatPosExceptionTypeLabel(type: PosException["type"]): string {
-    return type === "price" ? "Precio distinto" : "Faltante de stock";
+    if (type === "price") return "Precio distinto";
+    // ADR-019: an online-store order recorded without enough stock to reserve.
+    if (type === "channel_stock_shortage") return "Pedido online sin stock";
+    return "Faltante de stock";
 }
 
 function shortenProductId(productId: string): string {
@@ -47,7 +50,9 @@ export function formatPosExceptionDetail(
     return lines
         .map((line) => {
             const label = resolveProductLabel(line.product_id, productNameById);
-            return `${label}: faltaron ${line.shortage} de ${line.requested} unidades`;
+            return exception.type === "channel_stock_shortage"
+                ? `${label}: sin reservar ${line.shortage} de ${line.requested} unidades`
+                : `${label}: faltaron ${line.shortage} de ${line.requested} unidades`;
         })
         .join(" · ");
 }

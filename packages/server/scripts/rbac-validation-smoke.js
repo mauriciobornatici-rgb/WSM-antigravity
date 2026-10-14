@@ -165,6 +165,52 @@ async function run() {
             expected: 400
         },
         {
+            name: 'cashier can read ARCA alerts',
+            method: 'GET',
+            endpoint: '/api/fiscal/arca-alerts',
+            token: cashier,
+            expected: 200
+        },
+        {
+            name: 'warehouse cannot reissue an invoice',
+            method: 'POST',
+            endpoint: '/api/invoices/00000000-0000-4000-8000-000000000000/reissue',
+            token: warehouse,
+            expected: 403,
+            body: { invoice_type: 'B' }
+        },
+        {
+            name: 'reissue of an unknown invoice is 404',
+            method: 'POST',
+            endpoint: '/api/invoices/00000000-0000-4000-8000-000000000000/reissue',
+            token: cashier,
+            expected: 404,
+            body: { invoice_type: 'B' }
+        },
+        {
+            name: 'warehouse cannot load a customer VAT condition',
+            method: 'PUT',
+            endpoint: '/api/clients/00000000-0000-4000-8000-000000000000/tax-condition',
+            token: warehouse,
+            expected: 403,
+            body: { tax_condition_id: 'tc_ConsFinal' }
+        },
+        {
+            name: 'an unknown VAT condition is rejected',
+            method: 'PUT',
+            endpoint: '/api/clients/00000000-0000-4000-8000-000000000000/tax-condition',
+            token: cashier,
+            expected: 400,
+            body: { tax_condition_id: 'tc_Inventada' }
+        },
+        {
+            name: 'warehouse cannot read ARCA alerts',
+            method: 'GET',
+            endpoint: '/api/fiscal/arca-alerts',
+            token: warehouse,
+            expected: 403
+        },
+        {
             name: 'manager can list POS exceptions',
             method: 'GET',
             endpoint: '/api/pos/exceptions',

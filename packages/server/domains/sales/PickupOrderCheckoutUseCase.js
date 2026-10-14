@@ -3,8 +3,10 @@ import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import salesService from '../../services/sales.service.js';
 import { calculateShiftExpectedBalance } from '../../services/cashShift.service.js';
-import { resolvePriceOverrides } from './CreateOrderUseCase.js';
+import { resolvePriceOverrides, resolveUnitPrice } from './CreateOrderUseCase.js';
 import defaultStockLedger from '../inventory/StockLedger.js';
+import accountingService from '../../services/accounting.service.js';
+import { lineAmounts } from '../../utils/vatMath.js';
 
 export class PickupOrderCheckoutUseCase {
     constructor(dependencies = {}) {
@@ -93,7 +95,9 @@ export class PickupOrderCheckoutUseCase {
                 // Stable lock order (by product) so two counters cannot deadlock each other.
                 const extraItems = [...payload.extra_items]
                     .sort((a, b) => String(a.product_id).localeCompare(String(b.product_id)));
-                const lockedRows = await this.stockLedger.lockSellableRows(connection, extraItems.map((item) => item.product_id));
+                // Extras added at the counter come from the sales floor first (ADR-015).
+                const lockedRows = await this.stockLedger.lockSellableRows(connection, extraItems.map((item) => item.product_id), { channel: 'counter' });
+                const unitCosts = await accountingService.productUnitCosts(connection, extraItems.map((item) => item.product_id));
                 for (const item of extraItems) {
                     const qty = parseInt(String(item.quantity), 10);
                     if (!Number.isFinite(qty) || qty <= 0) {
@@ -124,10 +128,8 @@ export class PickupOrderCheckoutUseCase {
                         actor
                     );
                     priceOverrides.push(...overrides.map((line) => ({ ...line, source: overrideSource })));
-                    const requestedPrice = Number(item.unit_price);
-                    const unitPrice = Number.isFinite(requestedPrice) && requestedPrice >= 0
-                        ? requestedPrice
-                        : Number(product.sale_price || 0);
+                    // Same unit price rule as any sale (catalog's 4 decimals when it is the catalog price).
+                    const unitPrice = resolveUnitPrice(item, new Map([[product.id, Number(product.sale_price || 0)]]));
 
                     // The customer takes it now: deduct unreserved stock, never below zero.
                     await this.stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
@@ -136,21 +138,21 @@ export class PickupOrderCheckoutUseCase {
                         quantity: qty,
                         orderId,
                         userId,
-                        reason: 'Mostrador POS - agregado a pedido'
+                        reason: 'Mostrador POS - agregado a pedido',
+                        unitCost: unitCosts.get(item.product_id) || 0,
                     });
 
                     // Record order item as already physically picked
                     const orderItemId = crypto.randomUUID();
                     const subtotal = Math.round(qty * unitPrice * 100) / 100;
                     await connection.query(
-                        `INSERT INTO order_items (id, order_id, product_id, quantity, picked_quantity, unit_price, subtotal)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                        [orderItemId, orderId, item.product_id, qty, qty, unitPrice, subtotal]
+                        `INSERT INTO order_items (id, order_id, product_id, quantity, picked_quantity, unit_price, subtotal, vat_rate)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [orderItemId, orderId, item.product_id, qty, qty, unitPrice, subtotal, product.vat_rate == null ? 21 : Number(product.vat_rate)]
                     );
 
-                    // Order totals are gross: net + catalog VAT (ADR-008).
-                    const vatRate = product.vat_rate == null ? 21 : Number(product.vat_rate);
-                    const grossLine = Math.round((subtotal + Math.round(subtotal * vatRate) / 100) * 100) / 100;
+                    // Order totals are gross: quantity × the final price (ADR-008, ADR-015).
+                    const grossLine = lineAmounts(qty, unitPrice, product.vat_rate).gross;
                     await connection.query(
                         'UPDATE orders SET total_amount = total_amount + ? WHERE id = ?',
                         [grossLine, orderId]

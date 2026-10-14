@@ -72,6 +72,28 @@ import { httpClient, isApiError } from "./httpClient";
 
 type GenericRecord = Record<string, unknown>;
 
+/** Funds for "Caja 2" movements (ADR-015); "initial" only sends (opening balance). */
+export type TreasuryFund = "drawer" | "treasury" | "bank" | "initial";
+
+/** Bank debit that accompanies a movement or a card settlement (VAT included as debited). */
+export type BankChargeConcept = "commission" | "maintenance" | "debits_credits_tax" | "withholding" | "other";
+
+export type BankCharge = {
+    concept: BankChargeConcept;
+    amount: number;
+    vat_rate?: number;
+    notes?: string | null;
+};
+
+export type VatRate = { id: string; name: string; rate: number; is_default: boolean; active: boolean };
+
+export type VatRateInput = { name: string; rate: number; is_default?: boolean; active?: boolean };
+
+export type BankSummary = {
+    balance: number;
+    movements: Array<{ id: string; date: string; description: string; reference_type: string; amount: number }>;
+};
+
 export type ReturnsAnalyticsResponse = {
     totalLossAmount?: number;
     topReasons?: Array<{
@@ -253,7 +275,7 @@ type ProductUpsertInput =
         status?: "active" | "inactive";
     };
 
-export type PosExceptionType = "price" | "stock_shortage";
+export type PosExceptionType = "price" | "stock_shortage" | "channel_stock_shortage";
 
 export type PosExceptionPriceDetails = {
     source: "offline_pos";
@@ -285,6 +307,33 @@ export type PosException = {
     created_at: string;
     details: PosExceptionPriceDetails | PosExceptionStockShortageDetails | Record<string, unknown>;
     review: PosExceptionReview | null;
+};
+
+/** ADR-021: ARCA documents that need someone (conflict, or stuck in verification). */
+export type ArcaAlertItem = {
+    document_kind: "invoice" | "credit_note";
+    id: string;
+    letter: string | null;
+    point_of_sale: number | null;
+    number: number | string | null;
+    customer: string | null;
+    amount: number;
+    alert: "conflict" | "stuck" | "rejected" | "unauthorized";
+    status: "arca_conflict" | "authorizing" | "issued";
+    created_at?: string | null;
+    arca_last_error: string | null;
+    arca_requested_at: string | null;
+    arca_attempts: number;
+};
+
+export type ArcaAlerts = {
+    conflicts: number;
+    stuck: number;
+    rejected: number;
+    unauthorized: number;
+    stale_minutes: number;
+    unauthorized_hours: number;
+    items: ArcaAlertItem[];
 };
 
 export type PosExceptionReviewInput = {
@@ -332,9 +381,13 @@ type OrderCreateInput = {
     delivery_notes?: string;
     notes?: string;
     total_amount?: number;
+    /** Envío (importe final con IVA). Si charge_customer es false queda a cargo del negocio y no se cobra. */
+    shipping_charge?: { amount: number; charge_customer: boolean; vat_rate?: number };
     items: Array<{ product_id: string; quantity: number; unit_price?: number; vat_rate?: number }>;
     [key: string]: unknown;
 };
+
+export type OrderShippingInput = { amount: number; charge_customer: boolean; vat_rate?: number };
 
 type ReturnCreateInput = {
     supplier_id: string;
@@ -352,6 +405,8 @@ type ClientReturnCreateInput = {
     customer_name?: string;
     order_id?: string;
     reason?: string;
+    /** Bonificar el envío cobrado (solo tiene efecto si la devolución tiene pedido). */
+    refund_shipping?: boolean;
     items?: Array<{
         product_id: string;
         quantity: number;
@@ -387,6 +442,8 @@ type WarrantyStatusUpdateInput = {
 type CreditNoteCreateInput = {
     idempotency_key?: string;
     client_id: string;
+    /** Invoice the note corrects (ADR-014: required, ARCA needs the associated voucher). */
+    invoice_id: string;
     amount: number;
     reason?: string;
     reference_type?: "return" | "warranty" | "discount" | "other" | "manual";
@@ -394,9 +451,21 @@ type CreditNoteCreateInput = {
     notes?: string;
 };
 
+export type SupplierInvoiceCreateResult = {
+    id: string;
+    success: boolean;
+    total_amount: number;
+    // Neto recibido al costo y diferencia contra el neto de la factura (solo con remitos vinculados).
+    receptions_net?: number;
+    receptions_difference?: number;
+};
+
 type ReceptionRecord = {
     id: string;
     reception_number: string;
+    remito_number?: string | null;
+    // Factura de proveedor que ya cubre este remito.
+    supplier_invoice_id?: string | null;
     supplier_name: string;
     po_number?: string;
     reception_date?: string;
@@ -454,6 +523,10 @@ export const api = {
     updateClient: (id: string, data: ClientUpsertInput) =>
         httpClient.put<Client>(`/api/clients/${id}`, data),
 
+    // ADR-022: only the VAT condition (and the CUIT it may need), at the moment of use.
+    setClientTaxCondition: (id: string, data: { tax_condition_id: string; tax_id?: string | null }) =>
+        httpClient.put<Client>(`/api/clients/${id}/tax-condition`, data),
+
     deleteClient: (id: string) =>
         httpClient.del<{ success: boolean }>(`/api/clients/${id}`),
 
@@ -479,9 +552,9 @@ export const api = {
         httpClient.get<InventoryItem[]>("/api/inventory"),
     getWarehouseLocations: () =>
         httpClient.get<WarehouseLocation[]>("/api/inventory/locations"),
-    createWarehouseLocation: (data: { code: string; name: string; description?: string }) =>
+    createWarehouseLocation: (data: { code: string; name: string; description?: string; is_sales_floor?: boolean }) =>
         httpClient.post<WarehouseLocation>("/api/inventory/locations", data),
-    updateWarehouseLocation: (id: string, data: { code?: string; name?: string; description?: string | null; active?: boolean }) =>
+    updateWarehouseLocation: (id: string, data: { code?: string; name?: string; description?: string | null; active?: boolean; is_sales_floor?: boolean }) =>
         httpClient.put<WarehouseLocation>(`/api/inventory/locations/${id}`, data),
     getStockAuditDashboard: (filters?: { status?: import("@/types").StockAuditStatus; abc_class?: import("@/types").StockAuditScope; location_code?: string }) =>
         httpClient.get<import("@/types").StockAuditDashboard>(withQuery("/api/inventory/audits/dashboard", filters)),
@@ -506,6 +579,9 @@ export const api = {
 
     createOrder: (data: OrderCreateInput) =>
         httpClient.post<{ id: string; total_amount: number }>("/api/orders", data),
+
+    updateOrderShipping: (orderId: string, body: OrderShippingInput) =>
+        httpClient.put<{ id: string; total_amount: number; shipping: unknown }>(`/api/orders/${orderId}/shipping`, body),
 
     // Counter sale in one server transaction: sale + stock + optional invoice + cash-shift payments.
     posCheckout: (data: PosCheckoutInput) =>
@@ -651,8 +727,31 @@ export const api = {
         httpClient.put<GenericRecord>(`/api/warranties/${id}/status`, data),
 
     // ==================== CREDIT NOTES ====================
-    getCreditNotes: (filters?: { client_id?: string }) =>
+    // ADR-024: internal notes (annulment of an invoice ARCA did not authorize) only on request.
+    getCreditNotes: (filters?: { client_id?: string; include_internal?: "true" }) =>
         httpClient.get<GenericRecord[]>(withQuery("/api/credit-notes", filters)),
+
+    getTreasury: () =>
+        httpClient.get<{ balance: number; movements: Array<{ id: string; date: string; description: string; reference_type: string; amount: number }> }>("/api/treasury"),
+    createTreasuryTransfer: (data: { idempotency_key: string; from: TreasuryFund; to: Exclude<TreasuryFund, "initial">; amount: number; cash_register_id?: string; notes?: string | null; charges?: BankCharge[] }) =>
+        httpClient.post<{ id: string; amount: number; charges_total?: number; idempotent_replay?: boolean }>("/api/treasury/transfers", data),
+
+    getCardSettlements: () =>
+        httpClient.get<{ pending_balance: number; settlements: Array<{ id: string; amount: number; description: string; date: string }> }>("/api/card-settlements"),
+    createCardSettlement: (data: { idempotency_key: string; amount: number; fee_amount?: number; fee_vat_rate?: number; charges?: BankCharge[]; reference?: string | null }) =>
+        httpClient.post<{ id: string; amount: number; deposited?: number; idempotent_replay?: boolean }>("/api/card-settlements", data),
+
+    getBank: () =>
+        httpClient.get<BankSummary>("/api/bank"),
+    createBankCharges: (data: { idempotency_key: string; date?: string | null; reference?: string | null; charges: BankCharge[] }) =>
+        httpClient.post<{ id: string; total: number; idempotent_replay?: boolean }>("/api/bank/charges", data),
+
+    getVatRates: (all = false) =>
+        httpClient.get<VatRate[]>(withQuery("/api/vat-rates", all ? { all: "true" } : undefined)),
+    createVatRate: (data: VatRateInput) =>
+        httpClient.post<VatRate>("/api/vat-rates", data),
+    updateVatRate: (id: string, data: VatRateInput) =>
+        httpClient.put<VatRate>(`/api/vat-rates/${id}`, data),
 
     createCreditNote: (data: CreditNoteCreateInput) =>
         httpClient.post<GenericRecord>("/api/credit-notes", data),
@@ -691,7 +790,7 @@ export const api = {
     getTiendanubeConfig: () =>
         httpClient.get<import("@/types").TiendaNubeIntegrationConfig>("/api/integrations/tiendanube/config"),
 
-    updateTiendanubeConfig: (config: { clientId: string; clientSecret?: string; locationId: string }) =>
+    updateTiendanubeConfig: (config: { clientId: string; clientSecret?: string; locationId: string; safetyStockEnabled?: boolean; safetyStock?: number }) =>
         httpClient.patch<import("@/types").TiendaNubeIntegrationConfig>("/api/integrations/tiendanube/config", config),
 
     getOnlineStoreOverview: () =>
@@ -850,16 +949,19 @@ export const api = {
         invoice_number: string;
         invoice_type: "A" | "B" | "C" | "M";
         supplier_id: string;
-        reception_id?: string;
+        reception_ids?: string[];
         purchase_order_id?: string;
         issue_date: string;
         due_date?: string;
         net_amount: number;
         vat_amount: number;
+        vat_rate?: number;
+        purchase_kind?: "goods" | "shipping" | "expense";
+        vat_lines?: Array<{ vat_rate: number; net_amount: number; vat_amount: number }>;
         other_taxes?: number;
         total_amount?: number;
         notes?: string;
-    }) => httpClient.post<{ id: string; success: boolean; total_amount: number }>("/api/supplier-invoices", data),
+    }) => httpClient.post<SupplierInvoiceCreateResult>("/api/supplier-invoices", data),
 
     // ==================== PURCHASE ORDERS ====================
     getPurchaseOrders: (filters?: { supplier_id?: string; status?: string }) =>
@@ -904,6 +1006,13 @@ export const api = {
         httpClient.post<{ id: string; success: boolean }>("/api/quality-checks", data),
 
     // ==================== INVOICING ====================
+    // ADR-022: annul an invoice ARCA never authorized and issue it again (letter and/or customer).
+    reissueInvoice: (id: string, data: { invoice_type?: "A" | "B" | "C" | "TK"; client_id?: string | null }) =>
+        httpClient.post<Invoice>(`/api/invoices/${id}/reissue`, data),
+
+    getArcaAlerts: () =>
+        httpClient.get<ArcaAlerts>("/api/fiscal/arca-alerts"),
+
     getTaxConditions: () =>
         httpClient.get<Array<{ id: string; name: string; code: string }>>("/api/tax-conditions"),
 

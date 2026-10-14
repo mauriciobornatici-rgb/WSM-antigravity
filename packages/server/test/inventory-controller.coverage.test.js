@@ -648,14 +648,15 @@ test('updateBatch and updateSerialNumber audit only when a record was updated', 
 test('getWarehouseLocations coerces numeric aggregates and booleans', async (t) => {
     installPool(t, {
         poolQuery: async () => [[
-            { id: 'l1', code: 'A', active: 1, sku_count: '3', total_quantity: '12.5' },
+            { id: 'l1', code: 'A', active: 1, is_sales_floor: 1, sku_count: '3', total_quantity: '12.5' },
             { id: 'l2', code: 'B', active: 0, sku_count: null, total_quantity: null }
         ]]
     });
     const result = await runHandler(controller.getWarehouseLocations);
+    // ADR-015: is_sales_floor también se devuelve como boolean (ausente => false).
     assert.deepEqual(result.body, [
-        { id: 'l1', code: 'A', active: true, sku_count: 3, total_quantity: 12.5 },
-        { id: 'l2', code: 'B', active: false, sku_count: 0, total_quantity: 0 }
+        { id: 'l1', code: 'A', active: true, is_sales_floor: true, sku_count: 3, total_quantity: 12.5 },
+        { id: 'l2', code: 'B', active: false, is_sales_floor: false, sku_count: 0, total_quantity: 0 }
     ]);
 });
 
@@ -701,9 +702,16 @@ test('createWarehouseLocation maps duplicate codes to 409 and rethrows other err
     await assert.rejects(runHandler(controller.createWarehouseLocation, { body: { code: 'A' } }), /conn lost/);
 });
 
+// updateLocation runs in a transaction: the location pool answers on a tracked connection.
+function installLocationPool(t, query) {
+    const tracked = createTrackedConnection(query);
+    installPool(t, { tracked });
+    return tracked.calls;
+}
+
 function locationPool({ existing, usage = 0, updateError } = {}) {
     return async (statement) => {
-        if (statement === 'SELECT * FROM warehouse_locations WHERE id = ?') {
+        if (statement === 'SELECT * FROM warehouse_locations WHERE id = ? FOR UPDATE' || statement === 'SELECT * FROM warehouse_locations WHERE id = ?') {
             return [existing ? [existing] : []];
         }
         if (statement.includes('AS usage_count')) return [[{ usage_count: usage }]];
@@ -717,11 +725,11 @@ function locationPool({ existing, usage = 0, updateError } = {}) {
 
 test('updateWarehouseLocation answers 404 for unknown ids and 400 for blank code or name', async (t) => {
     installAudit(t);
-    installPool(t, { poolQuery: locationPool({ existing: null }) });
+    installLocationPool(t, locationPool({ existing: null }));
     const missing = await runHandler(controller.updateWarehouseLocation, { params: { id: 'x' }, body: {} });
     assert.equal(missing.status, 404);
 
-    installPool(t, { poolQuery: locationPool({ existing: { id: 'l1', code: 'A', name: 'Alpha', description: null, active: 1 } }) });
+    installLocationPool(t, locationPool({ existing: { id: 'l1', code: 'A', name: 'Alpha', description: null, active: 1 } }));
     const blank = await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { code: ' ' } });
     assert.equal(blank.status, 400);
     const blankName = await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { name: '' } });
@@ -731,9 +739,7 @@ test('updateWarehouseLocation answers 404 for unknown ids and 400 for blank code
 });
 
 test('updateWarehouseLocation blocks code changes while stock or products use the location', async (t) => {
-    const calls = installPool(t, {
-        poolQuery: locationPool({ existing: { id: 'l1', code: 'A', name: 'Alpha', description: null, active: 1 }, usage: '2' })
-    });
+    const calls = installLocationPool(t, locationPool({ existing: { id: 'l1', code: 'A', name: 'Alpha', description: null, active: 1 }, usage: '2' }));
     const result = await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { code: 'Z' } });
     assert.equal(result.status, 409);
     assert.equal(result.body.error, 'location_in_use');
@@ -743,7 +749,7 @@ test('updateWarehouseLocation blocks code changes while stock or products use th
 
 test('updateWarehouseLocation allows renaming codes of unused locations and edits other fields freely', async (t) => {
     const existing = { id: 'l1', code: 'A', name: 'Alpha', description: 'old', active: 1 };
-    const calls = installPool(t, { poolQuery: locationPool({ existing, usage: 0 }) });
+    const calls = installLocationPool(t, locationPool({ existing, usage: 0 }));
     const audit = installAudit(t);
 
     const renamed = await runHandler(controller.updateWarehouseLocation, {
@@ -753,23 +759,28 @@ test('updateWarehouseLocation allows renaming codes of unused locations and edit
     });
     assert.equal(renamed.status, 200);
     const update = calls.find((call) => call.statement.startsWith('UPDATE'));
-    assert.deepEqual(update.params, ['Z', 'Alpha', null, false, 'l1']);
+    assert.deepEqual(update.params, ['Z', 'Alpha', null, false, false, 'l1']);
     assert.equal(audit[0].action, 'UPDATE_WAREHOUSE_LOCATION');
 
     calls.length = 0;
     await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { name: 'Beta', description: 'new' } });
     assert.equal(calls.some((call) => call.statement.includes('AS usage_count')), false, 'no usage check if code is unchanged');
     const second = calls.find((call) => call.statement.startsWith('UPDATE'));
-    assert.deepEqual(second.params, ['A', 'Beta', 'new', true, 'l1']);
+    assert.deepEqual(second.params, ['A', 'Beta', 'new', true, false, 'l1']);
+
+    calls.length = 0;
+    await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { is_sales_floor: true } });
+    const third = calls.find((call) => call.statement.startsWith('UPDATE'));
+    assert.deepEqual(third.params, ['A', 'Alpha', 'old', true, true, 'l1']);
 });
 
 test('updateWarehouseLocation maps duplicates to 409 and rethrows other DB errors', async (t) => {
     const existing = { id: 'l1', code: 'A', name: 'Alpha', description: null, active: 1 };
-    installPool(t, { poolQuery: locationPool({ existing, updateError: dupError() }) });
+    installLocationPool(t, locationPool({ existing, updateError: dupError() }));
     const dup = await runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { name: 'B' } });
     assert.equal(dup.status, 409);
     assert.equal(dup.body.error, 'duplicate_location');
 
-    installPool(t, { poolQuery: locationPool({ existing, updateError: new Error('io') }) });
+    installLocationPool(t, locationPool({ existing, updateError: new Error('io') }));
     await assert.rejects(runHandler(controller.updateWarehouseLocation, { params: { id: 'l1' }, body: { name: 'B' } }), /io/);
 });

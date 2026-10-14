@@ -83,9 +83,10 @@ test('consumeAvailable spreads across rows, updates them in place and traces eve
     assert.deepEqual(updates.map((call) => call.params), [[2, 'r1', 2], [1, 'r3', 1]]);
     assert.match(updates[0].sql, /WHERE id = \? AND quantity - reserved_quantity >= \?/);
     const movements = connection.calls.filter((call) => call.sql.includes('inventory_movements'));
-    assert.deepEqual(movements.map((call) => [call.params[1], call.params[2], call.params[3], call.params[4], call.params[5], call.params[6]]), [
-        ['p', 'General', 2, 'Venta', 'o-1', 'u-1'],
-        ['p', 'C-3', 1, 'Venta', 'o-1', 'u-1'],
+    // [type, product, from, qty, unit_cost, reason, reference_type, reference_id, user]
+    assert.deepEqual(movements.map((call) => call.params.slice(1)), [
+        ['sale', 'p', 'General', 2, 0, 'Venta', 'order', 'o-1', 'u-1'],
+        ['sale', 'p', 'C-3', 1, 0, 'Venta', 'order', 'o-1', 'u-1'],
     ]);
     assert.deepEqual(rows.map((row) => row.quantity), [0, 5, 3]);
 

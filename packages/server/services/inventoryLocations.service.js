@@ -17,6 +17,7 @@ class InventoryLocationsService {
         return rows.map((row) => ({
             ...row,
             active: Boolean(row.active),
+            is_sales_floor: Boolean(row.is_sales_floor),
             sku_count: Number(row.sku_count || 0),
             total_quantity: Number(row.total_quantity || 0)
         }));
@@ -26,15 +27,16 @@ class InventoryLocationsService {
         const code = String(body?.code || '').trim();
         const name = String(body?.name || code).trim();
         const description = String(body?.description || '').trim() || null;
+        const isSalesFloor = Boolean(body?.is_sales_floor);
         if (!code || !name) {
             throw businessError(400, { error: 'invalid_location', message: 'Código y nombre son obligatorios' });
         }
         const id = crypto.randomUUID();
         try {
             await pool.query(
-                `INSERT INTO warehouse_locations (id, code, name, description, active, created_by)
-             VALUES (?, ?, ?, ?, TRUE, ?)`,
-                [id, code, name, description, userId || null]
+                `INSERT INTO warehouse_locations (id, code, name, description, active, created_by, is_sales_floor)
+             VALUES (?, ?, ?, ?, TRUE, ?, ?)`,
+                [id, code, name, description, userId || null, isSalesFloor]
             );
         } catch (error) {
             if (error?.code === 'ER_DUP_ENTRY') {
@@ -47,15 +49,33 @@ class InventoryLocationsService {
             action: 'CREATE_WAREHOUSE_LOCATION',
             entity_type: 'warehouse_location',
             entity_id: id,
-            new_values: { code, name, description },
+            new_values: { code, name, description, is_sales_floor: isSalesFloor },
             ip_address: ipAddress
         });
         const [rows] = await pool.query('SELECT * FROM warehouse_locations WHERE id = ?', [id]);
         return rows[0];
     }
 
+    // The rename is atomic: the location is locked and the "no stock here" check uses locking
+    // reads, so stock cannot enter the old code between the check and the rename (it is rare,
+    // so the cost of those locks is acceptable).
     async updateLocation(id, body, userId, ipAddress) {
-        const [existingRows] = await pool.query('SELECT * FROM warehouse_locations WHERE id = ?', [id]);
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const result = await this._updateLocation(connection, id, body, userId, ipAddress);
+            await connection.commit();
+            return result;
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async _updateLocation(connection, id, body, userId, ipAddress) {
+        const [existingRows] = await connection.query('SELECT * FROM warehouse_locations WHERE id = ? FOR UPDATE', [id]);
         if (existingRows.length === 0) {
             throw businessError(404, { error: 'not_found', message: 'Ubicación no encontrada' });
         }
@@ -64,14 +84,16 @@ class InventoryLocationsService {
         const name = String(body?.name ?? existing.name).trim();
         const description = body?.description == null ? existing.description : String(body.description).trim() || null;
         const active = body?.active == null ? Boolean(existing.active) : Boolean(body.active);
+        // ADR-015: the counter sells from sales-floor locations first.
+        const isSalesFloor = body?.is_sales_floor == null ? Boolean(existing.is_sales_floor) : Boolean(body.is_sales_floor);
         if (!code || !name) {
             throw businessError(400, { error: 'invalid_location', message: 'Código y nombre son obligatorios' });
         }
         if (code !== existing.code) {
-            const [[usage]] = await pool.query(`
+            const [[usage]] = await connection.query(`
             SELECT
-              (SELECT COUNT(*) FROM inventory WHERE location = ?) +
-              (SELECT COUNT(*) FROM products WHERE location = ?) AS usage_count
+              (SELECT COUNT(*) FROM inventory WHERE location = ? FOR SHARE) +
+              (SELECT COUNT(*) FROM products WHERE location = ? FOR SHARE) AS usage_count
         `, [existing.code, existing.code]);
             if (Number(usage?.usage_count || 0) > 0) {
                 throw businessError(409, {
@@ -81,9 +103,9 @@ class InventoryLocationsService {
             }
         }
         try {
-            await pool.query(
-                'UPDATE warehouse_locations SET code = ?, name = ?, description = ?, active = ? WHERE id = ?',
-                [code, name, description, active, id]
+            await connection.query(
+                'UPDATE warehouse_locations SET code = ?, name = ?, description = ?, active = ?, is_sales_floor = ? WHERE id = ?',
+                [code, name, description, active, isSalesFloor, id]
             );
         } catch (error) {
             if (error?.code === 'ER_DUP_ENTRY') {
@@ -97,10 +119,10 @@ class InventoryLocationsService {
             entity_type: 'warehouse_location',
             entity_id: id,
             old_values: existing,
-            new_values: { code, name, description, active },
+            new_values: { code, name, description, active, is_sales_floor: isSalesFloor },
             ip_address: ipAddress
-        });
-        const [rows] = await pool.query('SELECT * FROM warehouse_locations WHERE id = ?', [id]);
+        }, connection);
+        const [rows] = await connection.query('SELECT * FROM warehouse_locations WHERE id = ?', [id]);
         return rows[0];
     }
 }

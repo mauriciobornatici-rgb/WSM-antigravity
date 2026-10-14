@@ -44,4 +44,6 @@ export const queryKeys = {
     posExceptions: {
         byStatus: (status: "pending" | "reviewed") => ["pos-exceptions", status] as const,
     },
+    arcaAlerts: ["fiscal", "arca-alerts"] as const,
+    companySettings: ["settings", "company"] as const,
 } as const;

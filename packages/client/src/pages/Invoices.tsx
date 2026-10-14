@@ -1,8 +1,12 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
+import { queryKeys } from "@/lib/queryKeys"
 import { toast } from "sonner"
 import { api } from "@/services/api"
 import { showErrorToast } from "@/lib/errorHandling"
+import { netFromGross } from "@/lib/pricing"
+import { reportArcaAuthorizeError } from "@/lib/arca"
 import type { Client, CompanySettings } from "@/types"
 import type { InvoiceItem } from "@/types/api"
 import {
@@ -22,9 +26,12 @@ import type { DraftInvoice, DraftInvoiceItem, InvoiceView } from "@/components/i
 
 export default function InvoicesPage() {
     const [searchParams, setSearchParams] = useSearchParams()
+    const queryClient = useQueryClient()
     const [invoices, setInvoices] = useState<InvoiceView[]>([])
     const [loading, setLoading] = useState(true)
     const [isCreateOpen, setIsCreateOpen] = useState(false)
+    const [isCreating, setIsCreating] = useState(false)
+    const creatingRef = useRef(false)
     const [isPreviewOpen, setIsPreviewOpen] = useState(false)
     const [selectedInvoice, setSelectedInvoice] = useState<InvoiceView | null>(null)
     const [activePrintLayout, setActivePrintLayout] = useState<'a4' | 'thermal' | null>(null)
@@ -74,7 +81,13 @@ export default function InvoicesPage() {
 
     const addDraftItem = () => {
         if (!manualItem.description || manualItem.unit_price <= 0) return
-        setDraftInvoice((prev) => ({ ...prev, items: [...prev.items, { ...manualItem }] }))
+        if (!(manualItem.quantity > 0)) {
+            toast.error("La cantidad debe ser mayor a 0")
+            return
+        }
+        // The price is typed as the final one (VAT included); the draft keeps the net price the server expects (ADR-015).
+        const netItem = { ...manualItem, unit_price: netFromGross(manualItem.unit_price, manualItem.vat_rate) }
+        setDraftInvoice((prev) => ({ ...prev, items: [...prev.items, netItem] }))
         setManualItem({
             description: "",
             quantity: 1,
@@ -94,6 +107,9 @@ export default function InvoicesPage() {
     }
 
     const handleCreateInvoice = async () => {
+        if (creatingRef.current) return
+        creatingRef.current = true
+        setIsCreating(true)
         try {
             if (!draftInvoice.client_id) {
                 toast.error("Seleccione un cliente")
@@ -111,6 +127,9 @@ export default function InvoicesPage() {
             void loadData()
         } catch (error) {
             showErrorToast("Error al emitir factura", error)
+        } finally {
+            creatingRef.current = false
+            setIsCreating(false)
         }
     }
 
@@ -231,7 +250,24 @@ export default function InvoicesPage() {
         toast.success("Libro IVA exportado exitosamente")
     }
 
+    // ADR-022: annul an invoice ARCA never authorized and issue it again.
+    const handleReissueInvoice = async (invoice: InvoiceView, data: { invoice_type: "A" | "B" | "C" | "TK"; client_id: string | null }) => {
+        try {
+            const reissued = await api.reissueInvoice(invoice.id, data)
+            toast.success("Factura anulada y emitida de nuevo", { description: "Ahora podés autorizarla con ARCA." })
+            setSelectedInvoice(reissued as InvoiceView)
+            if (invoiceIdFilter === invoice.id) setSearchParams({ invoice_id: String(reissued.id) })
+            void loadData()
+            void queryClient.invalidateQueries({ queryKey: queryKeys.arcaAlerts })
+        } catch (error) {
+            showErrorToast("No se pudo volver a emitir la factura", error)
+            throw error
+        }
+    }
+
     const handleAuthorizeInvoice = async (invoice: InvoiceView) => {
+        // Any attempt can settle or raise an ARCA alert (dashboard and menu).
+        const refreshArcaAlerts = () => void queryClient.invalidateQueries({ queryKey: queryKeys.arcaAlerts })
         try {
             const updatedInvoice = await api.authorizeInvoice(invoice.id)
             toast.success("Factura autorizada exitosamente con CAE")
@@ -241,8 +277,18 @@ export default function InvoicesPage() {
             
             // Reload the list of invoices
             void loadData()
+            refreshArcaAlerts()
         } catch (error) {
-            showErrorToast("Error al autorizar factura", error)
+            reportArcaAuthorizeError("Error al autorizar factura", error)
+            refreshArcaAlerts()
+            // The invoice keeps its new state (rejected with reason, or in verification): refresh list and open preview.
+            try {
+                const [refreshed, fresh] = await Promise.all([api.getInvoices(), api.getInvoice(invoice.id)])
+                setInvoices(refreshed as InvoiceView[])
+                setSelectedInvoice((prev) => (prev?.id === invoice.id ? { ...prev, ...(fresh as InvoiceView) } : prev))
+            } catch {
+                // The list refresh is best effort; the authorize error was already reported.
+            }
             throw error
         }
     }
@@ -266,10 +312,13 @@ export default function InvoicesPage() {
                     draftInvoice={draftInvoice}
                     manualItem={manualItem}
                     total={calculateDraftTotal(draftInvoice)}
+                    isSubmitting={isCreating}
                     onDraftChange={setDraftInvoice}
                     onManualItemChange={setManualItem}
                     onAddItem={addDraftItem}
                     onCreateInvoice={handleCreateInvoice}
+                    companyIvaCondition={companySettings.billing?.iva_condition}
+                    onClientUpdated={(client) => setClients((current) => current.map((candidate) => (candidate.id === client.id ? { ...candidate, ...client } : candidate)))}
                 />
             </div>
 
@@ -313,6 +362,8 @@ export default function InvoicesPage() {
                 taxRateLabel={taxRateLabel}
                 onClose={() => setIsPreviewOpen(false)}
                 onAuthorize={handleAuthorizeInvoice}
+                clients={clients}
+                onReissue={handleReissueInvoice}
                 companySettings={companySettings}
                 onPrint={handlePrintInvoice}
                 onPrintThermal={handlePrintThermal}

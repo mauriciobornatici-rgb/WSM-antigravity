@@ -30,11 +30,37 @@ function parsePositiveQuantity(quantity, productName) {
  */
 export class StockLedger {
     /**
+     * Location codes flagged as sales floor (ADR-015). Read without locking: it only orders
+     * rows that are locked separately.
+     */
+    async salesFloorCodes(connection) {
+        const result = await connection.query('SELECT code FROM warehouse_locations WHERE is_sales_floor = 1 AND active = 1');
+        const rows = Array.isArray(result?.[0]) ? result[0] : [];
+        return new Set(rows.map((row) => row.code));
+    }
+
+    /**
+     * Orders a product's rows for consumption (ADR-015): the counter sells from the sales
+     * floor first; orders are picked in the back, from the warehouse first. Within the same
+     * kind of location, the row with more available stock goes first.
+     */
+    orderByChannel(rows, salesFloor, channel) {
+        const floorFirst = channel === 'counter';
+        return [...rows].sort((a, b) => {
+            const aFloor = salesFloor.has(a.location) ? 1 : 0;
+            const bFloor = salesFloor.has(b.location) ? 1 : 0;
+            if (aFloor !== bFloor) return floorFirst ? bFloor - aFloor : aFloor - bFloor;
+            return available(b) - available(a);
+        });
+    }
+
+    /**
      * Locks every sellable inventory row of the given products in one statement with a
      * stable order, so two carts with the same products in different order cannot deadlock.
-     * @returns {Promise<Map<string, Array<object>>>} rows per product, most available first
+     * @returns {Promise<Map<string, Array<object>>>} rows per product, in consumption order
+     * for the channel ('counter': sales floor first; otherwise most available first)
      */
-    async lockSellableRows(connection, productIds) {
+    async lockSellableRows(connection, productIds, { channel = null } = {}) {
         const uniqueIds = [...new Set(productIds)].sort();
         const rowsByProduct = new Map(uniqueIds.map((id) => [id, []]));
         if (uniqueIds.length === 0) return rowsByProduct;
@@ -50,8 +76,9 @@ export class StockLedger {
         for (const row of rows) {
             rowsByProduct.get(row.product_id)?.push(row);
         }
-        for (const productRows of rowsByProduct.values()) {
-            productRows.sort((a, b) => available(b) - available(a));
+        const salesFloor = channel ? await this.salesFloorCodes(connection) : new Set();
+        for (const [productId, productRows] of rowsByProduct) {
+            rowsByProduct.set(productId, this.orderByChannel(productRows, salesFloor, channel));
         }
         return rowsByProduct;
     }
@@ -62,7 +89,10 @@ export class StockLedger {
      * `lockedRows` must come from lockSellableRows in the same transaction; they are
      * updated in place so several lines of the same product see the remaining stock.
      */
-    async consumeAvailable(connection, lockedRows, { productId, productName, quantity, orderId, userId, reason, allowShortage = false }) {
+    async consumeAvailable(connection, lockedRows, {
+        productId, productName, quantity, orderId, userId, reason, allowShortage = false,
+        movementType = 'sale', referenceType = 'order', unitCost = 0,
+    }) {
         const name = productName || productId;
         const requestedQty = parsePositiveQuantity(quantity, name);
         const availableQty = lockedRows.reduce((sum, row) => sum + Math.max(available(row), 0), 0);
@@ -94,8 +124,8 @@ export class StockLedger {
             await connection.query(
                 `INSERT INTO inventory_movements (
                     id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
-                ) VALUES (?, 'sale', ?, ?, ?, 0, ?, 'order', ?, ?)`,
-                [crypto.randomUUID(), productId, row.location || 'General', consume, reason, orderId, userId || null]
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [crypto.randomUUID(), movementType, productId, row.location || 'General', consume, unitCost, reason, referenceType, orderId, userId || null]
             );
             remaining -= consume;
         }

@@ -4,6 +4,15 @@ import { api } from "@/services/api";
 import { showErrorToast } from "@/lib/errorHandling";
 import type { Invoice, InvoiceItem } from "@/types/api";
 import { formatMoney } from "@/lib/formatters";
+import { ArcaLastError } from "@/components/invoices/ArcaLastError";
+import {
+    ARCA_VERIFYING_HELP,
+    ARCA_VERIFYING_LABEL,
+    arcaAuthorizeButtonLabel,
+    isArcaAuthorizing,
+    reportArcaAuthorizeError,
+} from "@/lib/arca";
+import { grossLineTotal, grossPrice } from "@/lib/pricing";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -109,8 +118,16 @@ export function POSHistoryDialog({
             if (selectedInvoice?.id === invoiceId) {
                 setSelectedInvoice(prev => prev ? { ...prev, ...updated } : null);
             }
-        } catch {
-            toast.error("Error al autorizar factura con AFIP");
+        } catch (error) {
+            reportArcaAuthorizeError("Error al autorizar factura con ARCA", error);
+            // Rejected (with reason) or in verification: show the new state of the invoice.
+            try {
+                const fresh = await api.getInvoice(invoiceId);
+                setInvoices(prev => prev.map(inv => inv.id === invoiceId ? { ...inv, ...fresh } : inv));
+                setSelectedInvoice(prev => prev && prev.id === invoiceId ? { ...prev, ...fresh } : prev);
+            } catch {
+                // Best effort; the authorize error was already reported.
+            }
         } finally {
             setAuthorizingId(null);
         }
@@ -180,7 +197,11 @@ export function POSHistoryDialog({
         if (invoice.cae) {
             return <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30">Autorizada (CAE)</Badge>;
         }
-        
+
+        if (isArcaAuthorizing(invoice.status)) {
+            return <Badge title={ARCA_VERIFYING_HELP} className="bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30">{ARCA_VERIFYING_LABEL}</Badge>;
+        }
+
         return <Badge className="bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30">Pendiente CAE</Badge>;
     };
 
@@ -401,7 +422,7 @@ export function POSHistoryDialog({
                                                         <TableRow className="border-border hover:bg-transparent">
                                                             <TableHead className="text-[10px] text-muted-foreground py-1.5">Desc</TableHead>
                                                             <TableHead className="text-[10px] text-muted-foreground text-center py-1.5">Cant</TableHead>
-                                                            <TableHead className="text-[10px] text-muted-foreground text-right py-1.5">P.Unit</TableHead>
+                                                            <TableHead className="text-[10px] text-muted-foreground text-right py-1.5">P.Unit (IVA incl.)</TableHead>
                                                             <TableHead className="text-[10px] text-muted-foreground text-right py-1.5 pr-2">Total</TableHead>
                                                         </TableRow>
                                                     </TableHeader>
@@ -415,9 +436,9 @@ export function POSHistoryDialog({
                                                                     </div>
                                                                 </TableCell>
                                                                 <TableCell className="text-center font-bold font-mono py-2">{item.quantity}</TableCell>
-                                                                <TableCell className="text-right font-mono py-2">{formatMoney(item.unit_price)}</TableCell>
+                                                                <TableCell className="text-right font-mono py-2">{formatMoney(grossPrice(item.unit_price, item.vat_rate))}</TableCell>
                                                                 <TableCell className="text-right font-mono py-2 pr-2 font-semibold">
-                                                                    {formatMoney(item.total_line != null ? item.total_line : (item.quantity * item.unit_price))}
+                                                                    {formatMoney(item.total_line != null ? item.total_line : grossLineTotal(item.quantity, item.unit_price, item.vat_rate))}
                                                                 </TableCell>
                                                             </TableRow>
                                                         ))}
@@ -448,8 +469,15 @@ export function POSHistoryDialog({
                                                     <div className="flex items-start gap-1.5 text-amber-600 dark:text-amber-400">
                                                         <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                                                         <div className="space-y-0.5 font-sans">
-                                                            <p className="font-semibold">Requiere CAE de AFIP</p>
-                                                            <p className="text-[10px] text-muted-foreground">Esta factura A/B requiere autorización fiscal de validez legal.</p>
+                                                            <p className="font-semibold">
+                                                                {isArcaAuthorizing(selectedInvoice.status) ? ARCA_VERIFYING_LABEL : "Requiere CAE de AFIP"}
+                                                            </p>
+                                                            <p className="text-[10px] text-muted-foreground">
+                                                                {isArcaAuthorizing(selectedInvoice.status)
+                                                                    ? `${ARCA_VERIFYING_HELP}.`
+                                                                    : "Esta factura A/B requiere autorización fiscal de validez legal."}
+                                                            </p>
+                                                            <ArcaLastError doc={selectedInvoice} />
                                                         </div>
                                                     </div>
                                                     <Button 
@@ -461,7 +489,7 @@ export function POSHistoryDialog({
                                                         {authorizingId === selectedInvoice.id ? (
                                                             <><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> Autorizando...</>
                                                         ) : (
-                                                            "Solicitar CAE AFIP ahora"
+                                                            arcaAuthorizeButtonLabel(selectedInvoice.status, "Solicitar CAE ahora")
                                                         )}
                                                     </Button>
                                                 </div>

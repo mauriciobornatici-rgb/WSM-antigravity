@@ -100,6 +100,14 @@ export const zodSchemas = {
         }),
         body: commonSchemas.orderDeliverSchema
     }),
+    invoiceReissue: z.object({
+        params: z.object({ id: commonSchemas.uuidSchema }),
+        body: commonSchemas.invoiceReissueSchema
+    }),
+    clientTaxCondition: z.object({
+        params: z.object({ id: commonSchemas.uuidSchema }),
+        body: commonSchemas.clientTaxConditionSchema
+    }),
     orderInvoice: z.object({
         params: z.object({
             id: commonSchemas.uuidSchema
@@ -117,6 +125,12 @@ export const zodSchemas = {
             id: commonSchemas.uuidSchema
         }),
         body: commonSchemas.invoicePaymentSchema
+    }),
+    orderShippingCharge: z.object({
+        params: z.object({
+            id: commonSchemas.uuidSchema
+        }),
+        body: commonSchemas.orderShippingChargeSchema
     }),
     orderItemPick: z.object({
         params: z.object({
@@ -247,6 +261,22 @@ export const zodSchemas = {
     }),
     cashTransaction: z.object({
         body: commonSchemas.cashTransactionSchema
+    }),
+    treasuryTransfer: z.object({
+        body: commonSchemas.treasuryTransferSchema
+    }),
+    cardSettlement: z.object({
+        body: commonSchemas.cardSettlementSchema
+    }),
+    bankCharges: z.object({
+        body: commonSchemas.bankChargesSchema
+    }),
+    vatRateCreate: z.object({
+        body: commonSchemas.vatRateSchema
+    }),
+    vatRateUpdate: z.object({
+        params: z.object({ id: z.coerce.number().int().positive() }),
+        body: commonSchemas.vatRateSchema
     }),
     cashShiftOpen: z.object({
         params: z.object({

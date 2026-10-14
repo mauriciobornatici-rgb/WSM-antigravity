@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import type { CartItem, POSProduct } from "@/components/pos/types";
 import { playScanErrorBeep, playScanSuccessBeep } from "@/lib/scanAudio";
 import { createClientUuid } from "@/lib/clientUuid";
+import { lineAmounts } from "@/lib/pricing";
 
 function roundMoney(value: number): number {
     return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -128,27 +129,20 @@ export function usePOSCart() {
         setCart([]);
     }
 
-    const subtotal = useMemo(
-        () => roundMoney(cart.reduce((sum, item) => sum + Number(item.sale_price || 0) * item.quantity, 0)),
-        [cart]
-    );
-
-    const taxAmount = useMemo(
-        () => roundMoney(
-            cart.reduce((sum, item) => {
-                const itemVatRate = item.vat_rate != null ? Number(item.vat_rate) : 21.00;
-                const lineNet = roundMoney(item.quantity * Number(item.sale_price || 0));
-                const lineVat = roundMoney(lineNet * (itemVatRate / 100));
-                return sum + lineVat;
-            }, 0)
-        ),
-        [cart]
-    );
-
-    const grandTotal = useMemo(
-        () => roundMoney(subtotal + taxAmount),
-        [subtotal, taxAmount]
-    );
+    // ADR-015: same per-line formula as the server (gross first), so the total to pay is
+    // exactly the sum of the VAT-included lines on screen and what the checkout charges.
+    const { subtotal, taxAmount, grandTotal } = useMemo(() => {
+        let net = 0;
+        let gross = 0;
+        for (const item of cart) {
+            const line = lineAmounts(item.quantity, item.sale_price, item.vat_rate);
+            net += line.net;
+            gross += line.gross;
+        }
+        const roundedNet = roundMoney(net);
+        const roundedGross = roundMoney(gross);
+        return { subtotal: roundedNet, taxAmount: roundMoney(roundedGross - roundedNet), grandTotal: roundedGross };
+    }, [cart]);
 
     function parkCurrentCart(label?: string, clientId?: string): boolean {
         if (cart.length === 0) {

@@ -8,23 +8,10 @@ import { CreateOrderUseCase } from "../domains/sales/CreateOrderUseCase.js";
 import { InvoiceAuthorizationUseCase } from "../domains/sales/InvoiceAuthorizationUseCase.js";
 import { returnsService as clientReturnsService } from "../services/warranties.service.js";
 import financeService from "../services/finance.service.js";
-import afipService from "../services/afip.service.js";
 import { formatMoney } from "../utils/currency.js";
 
 test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Factura -> Pago -> Venta POS -> CAE -> Devolución Cliente -> Devolución Proveedor -> Balance", async (t) => {
     const executedQueries = [];
-
-    // Mock de AFIP
-    const origAuthorizeVoucher = afipService.authorizeVoucher;
-    afipService.authorizeVoucher = async () => ({
-        cae: "74328910293847",
-        cae_expiration_date: "20261231",
-        invoice_number: 5001
-    });
-
-    t.after(() => {
-        afipService.authorizeVoucher = origAuthorizeVoucher;
-    });
 
     // Simulación del estado persistente en memoria para validar coherencia en cada paso
     const memoryState = {
@@ -171,6 +158,15 @@ test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Fact
             }]];
         }
 
+        // ADR-016: what each product was charged on the invoice, its discounts and earlier refunds.
+        if (sql.includes("product_id IS NOT NULL GROUP BY")) {
+            return [[{ product_id: memoryState.product.id, vat_rate: 21, quantity: 2, gross: 266200, vat: 46200 }]];
+        }
+        if (sql.includes("product_id IS NULL AND total_line < 0") || sql.includes("r.status = 'approved'")
+            || sql.includes("FROM order_adjustments") || sql.includes("GROUP BY ii.product_id")) {
+            return [[]];
+        }
+
         // Client Return queries
         if (sql.includes("SELECT * FROM client_returns WHERE id = ?")) {
             return [[{
@@ -270,10 +266,12 @@ test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Fact
         const paymentRes = await supplierPaymentService.createSupplierPayment({
             supplier_id: memoryState.supplier.id,
             notes: "Pago total factura compra Nike 20 pares",
-            payments: [{ method: "bank_transfer", amount: 1210000, notes: "Transferencia Banco Galicia" }]
+            payments: [{ payment_method: "Transferencia", amount: 1210000, notes: "Transferencia Banco Galicia" }]
         }, "admin-1");
 
         assert.equal(paymentRes.success, true);
+        // A transfer never touches the cash drawer (ADR-014): only cash payments need an open shift.
+        assert.equal(executedQueries.some(q => q.sql.includes("INSERT INTO shift_payments")), false);
         // Cuenta corriente con el proveedor queda saldada
         memoryState.supplier.account_balance = 0;
         assert.equal(memoryState.supplier.account_balance, 0);
@@ -294,7 +292,8 @@ test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Fact
         }, "admin-1");
 
         assert.ok(orderRes.id);
-        assert.equal(orderRes.total_amount, 220000);
+        // ADR-015: el pedido se cobra con IVA incluido (220.000 neto x 1,21).
+        assert.equal(orderRes.total_amount, 266200);
 
         // Stock físico disminuye de 20 u a 18 u
         memoryState.product.stock_current = 18;

@@ -7,16 +7,21 @@ import * as z from "zod";
 import { createProductSchema } from "@wsm/common";
 import type { Product, ProductCatalogOption } from "@/types";
 import { api } from "@/services/api";
+import { formatMoney } from "@/lib/formatters";
+import { VAT_RATE_OPTIONS, formatVatRate, grossPrice, netForTypedFinalPrice, netFromGross, vatRateOf } from "@/lib/pricing";
 import { Button } from "@/components/ui/button";
 import {
     Form,
     FormControl,
+    FormDescription,
     FormField,
     FormItem,
     FormLabel,
     FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CatalogOptionSelect } from "@/components/products/CatalogOptionSelect";
 
@@ -29,7 +34,11 @@ const productSchema = createProductSchema.extend({
     purchase_price: z.union([z.string(), z.number()]).transform(v => String(v)),
     sale_price: z.union([z.string(), z.number()]).transform(v => String(v)),
     stock_initial: z.union([z.string(), z.number()]).transform(v => String(v)),
-});
+}).refine(
+    // Opening stock is valued at cost (the server refuses it without one).
+    (values) => !(Number(values.stock_initial || 0) > 0) || Number(values.purchase_price || 0) > 0,
+    { message: "Para cargar stock inicial indicá el precio de compra", path: ["purchase_price"] }
+);
 
 type ProductFormSchema = z.infer<typeof productSchema>;
 const productFormResolver = zodResolver(productSchema) as Resolver<ProductFormSchema>;
@@ -52,8 +61,10 @@ export type ProductFormSubmitData = {
     location?: string;
     purchase_price: number;
     sale_price: number;
+    vat_rate: number;
     stock_initial?: number;
     image_url?: string;
+    tiendanube_safety_stock?: number | null;
 };
 
 interface ProductFormProps {
@@ -109,13 +120,22 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             color: initialData?.color ?? "",
             location: initialData?.location ?? "",
             purchase_price: String(initialData?.purchase_price ?? 0),
-            sale_price: String(initialData?.sale_price ?? 0),
+            // The sale price is typed as the final (VAT-included) one and stored net (ADR-015).
+            sale_price: String(grossPrice(initialData?.sale_price ?? 0, initialData?.vat_rate)),
             stock_initial: "0",
             image_url: initialData?.image_url ?? "",
+            tiendanube_safety_stock: initialData?.tiendanube_safety_stock ?? null,
         },
     });
 
     const isEditMode = Boolean(initialData);
+    // The chosen rate drives every net/final calculation; the typed final price is kept when it changes.
+    const [vatRateValue, setVatRateValue] = useState(String(vatRateOf(initialData?.vat_rate)));
+    const vatRate = vatRateOf(vatRateValue);
+    const purchaseWatch = useWatch({ control: form.control, name: "purchase_price" });
+    const saleFinalWatch = useWatch({ control: form.control, name: "sale_price" });
+    const saleNet = netFromGross(saleFinalWatch, vatRate);
+    const saleVat = Math.round((Number(saleFinalWatch || 0) - saleNet) * 100) / 100;
     const imageValue = useWatch({ control: form.control, name: "image_url" }) ?? "";
 
     const [scanDialogOpen, setScanDialogOpen] = useState(false);
@@ -344,8 +364,10 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             size: values.size?.trim() || null,
             color: values.color?.trim() || null,
             purchase_price: Number(values.purchase_price),
-            sale_price: Number(values.sale_price),
+            sale_price: netForTypedFinalPrice(values.sale_price, initialData?.sale_price, vatRate),
+            vat_rate: vatRate,
             image_url: values.image_url?.trim() || "",
+            tiendanube_safety_stock: values.tiendanube_safety_stock ?? null,
         };
 
         const location = values.location?.trim() || "";
@@ -656,16 +678,35 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 )}
                             />
 
+                            <div className="space-y-2 md:max-w-xs">
+                                <Label htmlFor="product-vat-rate">Alícuota de IVA</Label>
+                                <Select value={vatRateValue} onValueChange={setVatRateValue}>
+                                    <SelectTrigger id="product-vat-rate" aria-label="Alícuota de IVA">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {VAT_RATE_OPTIONS.map((rate) => (
+                                            <SelectItem key={rate} value={String(rate)}>
+                                                {formatVatRate(rate)}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
                             <div className="grid gap-3 md:grid-cols-2">
                                 <FormField<ProductFormSchema>
                                     control={form.control}
                                     name="purchase_price"
                                     render={({ field }) => (
                                         <FormItem>
-                                            <FormLabel>Precio compra</FormLabel>
+                                            <FormLabel>Precio compra neto (s/IVA)</FormLabel>
                                             <FormControl>
                                                 <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} value={field.value ?? ""} />
                                             </FormControl>
+                                            <FormDescription className="text-xs" aria-live="polite">
+                                                Final c/IVA: {formatMoney(grossPrice(purchaseWatch, vatRate))}
+                                            </FormDescription>
                                             <FormMessage />
                                         </FormItem>
                                     )}
@@ -675,15 +716,48 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     name="sale_price"
                                     render={({ field }) => (
                                         <FormItem>
-                                            <FormLabel>Precio venta</FormLabel>
+                                            <FormLabel>Precio de venta final (IVA incl.)</FormLabel>
                                             <FormControl>
                                                 <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} value={field.value ?? ""} />
                                             </FormControl>
+                                            <FormDescription className="text-xs" aria-live="polite">
+                                                Precio final con IVA; se guarda el neto. Neto: {formatMoney(saleNet)} · IVA {vatRate}%: {formatMoney(saleVat)}
+                                            </FormDescription>
                                             <FormMessage />
                                         </FormItem>
                                     )}
                                 />
                             </div>
+                        </div>
+
+                        <div className="mt-3 grid gap-3 md:max-w-xs">
+                            <FormField<ProductFormSchema>
+                                control={form.control}
+                                name="tiendanube_safety_stock"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>Stock de seguridad en la tienda online <span className="text-xs font-normal text-muted-foreground">(opcional)</span></FormLabel>
+                                        <FormControl>
+                                            <Input
+                                                inputMode="numeric"
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                placeholder="Usa el valor general"
+                                                name={field.name}
+                                                ref={field.ref}
+                                                onBlur={field.onBlur}
+                                                value={field.value ?? ""}
+                                                onChange={(event) => field.onChange(event.target.value === "" ? null : event.target.value)}
+                                            />
+                                        </FormControl>
+                                        <FormDescription className="text-xs">
+                                            Solo aplica si la política de stock de seguridad está activa. Vacío = usa el valor general.
+                                        </FormDescription>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
                         </div>
 
                         {!isEditMode ? (

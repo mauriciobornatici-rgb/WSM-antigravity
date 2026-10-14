@@ -44,6 +44,12 @@ export const orderDeliverSchema = z.object({
   delivery_notes: z.string().nullable().optional(),
 });
 
+// ADR-022: annul an invoice ARCA never authorized and issue it again (letter and/or customer).
+export const invoiceReissueSchema = z.object({
+  invoice_type: z.enum(['A', 'B', 'C', 'TK']).optional(),
+  client_id: z.string().uuid().nullable().optional(),
+});
+
 export const orderInvoiceSchema = z.object({
   invoice_type: z.enum(['A', 'B', 'C', 'TK']).optional(),
   point_of_sale: z.coerce.number().int().min(1).optional(),
@@ -143,7 +149,11 @@ export const supplierPaymentFiltersSchema = z.object({
 });
 
 export const supplierPaymentCreateSchema = z.object({
+  // One key per payment attempt: a retry returns the payment already registered (ADR-015).
+  idempotency_key: uuidSchema.optional(),
   supplier_id: uuidSchema,
+  // Drawer the cash comes from when paying in cash and more than one register is open.
+  cash_register_id: optionalUuidSchema,
   payment_date: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
   payments: z.array(
@@ -170,9 +180,30 @@ export const supplierInvoiceCreateSchema = z.object({
   due_date: z.string().nullable().optional(),
   net_amount: z.coerce.number().min(0),
   vat_amount: z.coerce.number().min(0),
+  // ADR-016: the invoice's VAT rate, so the fiscal credit lands in its own account.
+  // null / empty means "not sent" (z.coerce would turn null into 0 %).
+  vat_rate: z.preprocess(
+    (value) => (value === null || value === '' ? undefined : value),
+    z.coerce.number().refine((rate) => [0, 2.5, 5, 10.5, 21, 27].includes(rate), {
+      message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
+    }).optional()
+  ),
   other_taxes: z.coerce.number().min(0).optional(),
   total_amount: z.coerce.number().min(0).optional(),
   notes: z.string().nullable().optional(),
+  // ADR-017: an invoice with several VAT rates: one line per rate (net and VAT). When sent,
+  // net_amount and vat_amount must be their sums.
+  vat_lines: z.array(z.object({
+    vat_rate: z.coerce.number().refine((rate) => [0, 2.5, 5, 10.5, 21, 27].includes(rate), {
+      message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
+    }),
+    net_amount: z.coerce.number().min(0),
+    vat_amount: z.coerce.number().min(0),
+  })).max(6).optional(),
+  // ADR-019: the delivery notes (receptions) the invoice covers: one or several.
+  reception_ids: z.array(uuidSchema).max(50).optional(),
+  // ADR-017: goods (inventory), freight (Fletes y envíos) or another expense.
+  purchase_kind: z.enum(['goods', 'shipping', 'expense']).optional(),
 });
 
 // 5. Quality QC
@@ -314,6 +345,23 @@ export const serialUpdateSchema = z.object({
 });
 
 // 8. Clients
+// ADR-021: the customer's VAT condition, as seeded in `tax_conditions`.
+export const CLIENT_TAX_CONDITIONS = [
+  { id: 'tc_ConsFinal', name: 'Consumidor Final', code: '05' },
+  { id: 'tc_RespInscripto', name: 'Responsable Inscripto', code: '01' },
+  { id: 'tc_Monotributo', name: 'Monotributista', code: '06' },
+  { id: 'tc_Exento', name: 'Exento', code: '04' },
+] as const;
+export type ClientTaxConditionId = typeof CLIENT_TAX_CONDITIONS[number]['id'];
+const clientTaxConditionIds = CLIENT_TAX_CONDITIONS.map((condition) => condition.id) as [ClientTaxConditionId, ...ClientTaxConditionId[]];
+
+// A Responsable Inscripto is invoiced with an A, which needs the CUIT. A Monotributista
+// receives a B (or a C from a monotributista), like everyone else (ADR-022, user 2026-10-13).
+function clientCuitRule(data: { tax_condition_id?: string | null | undefined; tax_id?: string | null | undefined }) {
+  return data.tax_condition_id !== 'tc_RespInscripto' || String(data.tax_id || '').replace(/\D/g, '').length === 11;
+}
+const clientCuitIssue = { message: 'Un Responsable Inscripto necesita el CUIT (11 dígitos).', path: ['tax_id'] };
+
 export const clientSchema = z.object({
   name: z.string().min(2).max(255),
   email: z.string().email().nullable().or(z.literal('')).optional(),
@@ -321,6 +369,14 @@ export const clientSchema = z.object({
   tax_id: z.string().nullable().optional(),
   address: z.string().nullable().optional(),
   credit_limit: z.coerce.number().min(0).optional(),
+  tax_condition_id: z.enum(clientTaxConditionIds).nullable().optional(),
+}).refine(clientCuitRule, clientCuitIssue);
+
+
+// ADR-022: load the VAT condition (and the CUIT it may need) at the moment of use.
+export const clientTaxConditionSchema = z.object({
+  tax_condition_id: z.enum(clientTaxConditionIds),
+  tax_id: z.string().max(50).nullable().optional(),
 });
 
 // 9. Suppliers
@@ -407,6 +463,68 @@ export const cashTransactionSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
+// VAT rates accepted by ARCA (ADR-016): the only ones a fee or charge can use.
+export const ARCA_VAT_RATES = [0, 2.5, 5, 10.5, 21, 27] as const;
+const vatRateValueSchema = z.coerce.number().refine((rate) => (ARCA_VAT_RATES as readonly number[]).includes(rate), {
+  message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
+});
+
+// A bank debit (ADR-016): commission and maintenance carry VAT (fiscal credit at the rate
+// picked, default 21 %); the tax on debits and credits and withholdings do not.
+export const bankChargeConcepts = ['commission', 'maintenance', 'debits_credits_tax', 'withholding', 'other'] as const;
+export const bankChargeSchema = z.object({
+  concept: z.enum(bankChargeConcepts),
+  amount: z.coerce.number().positive(),
+  vat_rate: vatRateValueSchema.optional(),
+  notes: z.string().trim().max(120).nullable().optional(),
+});
+
+export const bankChargesSchema = z.object({
+  idempotency_key: uuidSchema,
+  date: z.string().nullable().optional(),
+  reference: z.string().trim().max(120).nullable().optional(),
+  charges: z.array(bankChargeSchema).min(1).max(20),
+});
+
+export const vatRateSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  rate: vatRateValueSchema,
+  is_default: z.boolean().optional(),
+  active: z.boolean().optional(),
+});
+
+// "Caja 2" (ADR-015): moves cash between the POS drawer, treasury cash and the bank.
+export const treasuryTransferSchema = z.object({
+  // Required: a double click must never move cash twice.
+  idempotency_key: uuidSchema,
+  from: z.enum(['drawer', 'treasury', 'bank', 'initial']),
+  to: z.enum(['drawer', 'treasury', 'bank']),
+  amount: z.coerce.number().positive(),
+  cash_register_id: optionalUuidSchema,
+  notes: z.string().trim().max(200).nullable().optional(),
+  // The bank's own debits on a bank movement (ADR-016).
+  charges: z.array(bankChargeSchema).max(20).optional(),
+}).refine((data) => data.from !== data.to, { message: 'Origen y destino deben ser distintos', path: ['to'] })
+  .refine((data) => !data.charges?.length || data.from === 'bank' || data.to === 'bank', {
+    message: 'Los débitos bancarios solo acompañan un movimiento del banco',
+    path: ['charges'],
+  });
+
+// Card/QR settlement: the processor deposits in the bank what was collected, minus its fee
+// (VAT at the rate picked, ADR-016) and its other debits (withholdings, taxes).
+export const cardSettlementSchema = z.object({
+  idempotency_key: uuidSchema.optional(),
+  amount: z.coerce.number().positive(),
+  fee_amount: z.coerce.number().min(0).optional(),
+  fee_vat_rate: vatRateValueSchema.optional(),
+  charges: z.array(bankChargeSchema).max(20).optional(),
+  settlement_date: z.string().nullable().optional(),
+  reference: z.string().trim().max(255).nullable().optional(),
+}).refine((data) => (data.fee_amount ?? 0) + (data.charges ?? []).reduce((sum, charge) => sum + charge.amount, 0) < data.amount, {
+  message: 'La comisión y los débitos deben ser menores al monto acreditado',
+  path: ['fee_amount'],
+});
+
 export const cashShiftOpenSchema = z.object({
   opening_balance: z.coerce.number().min(0),
   opened_by: optionalUuidSchema,
@@ -478,16 +596,23 @@ export const clientReturnCreateSchema = z.object({
       unit_price: z.coerce.number().min(0).optional(),
     })
   ).min(1).optional(),
+  // ADR-017: give the shipping back too (a commercial decision per return). The credit note
+  // then includes what is left of the shipping charged on the order.
+  refund_shipping: z.boolean().optional(),
 });
 
 export const creditNotesFiltersSchema = z.object({
   client_id: optionalUuidSchema,
+  // ADR-024: internal notes (annulment of an invoice ARCA did not authorize) only on request.
+  include_internal: z.enum(['true', 'false']).optional(),
 });
 
 export const creditNoteCreateSchema = z.object({
   // One key per issuing attempt: a retry with the same key returns the note already issued.
   idempotency_key: uuidSchema.optional(),
   client_id: uuidSchema,
+  // ADR-014: the invoice the note corrects (required by the service; ARCA needs the associated voucher).
+  invoice_id: optionalUuidSchema,
   amount: z.coerce.number().positive(),
   reason: z.string().nullable().optional(),
   reference_type: z.enum(['return', 'warranty', 'discount', 'other', 'manual']).nullable().optional(),

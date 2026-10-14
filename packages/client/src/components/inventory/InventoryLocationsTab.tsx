@@ -33,6 +33,7 @@ export function InventoryLocationsTab({
     const [code, setCode] = useState("");
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
+    const [isSalesFloor, setIsSalesFloor] = useState(false);
     const [saving, setSaving] = useState(false);
 
     function openLocationDialog(location?: WarehouseLocation) {
@@ -40,6 +41,7 @@ export function InventoryLocationsTab({
         setCode(location?.code ?? "");
         setName(location?.name ?? "");
         setDescription(location?.description ?? "");
+        setIsSalesFloor(Boolean(location?.is_sales_floor));
         setLocationDialogOpen(true);
     }
 
@@ -55,6 +57,7 @@ export function InventoryLocationsTab({
                     code: code.trim(),
                     name: name.trim(),
                     description: description.trim() || null,
+                    is_sales_floor: isSalesFloor,
                 });
                 toast.success("Ubicación actualizada");
             } else {
@@ -62,6 +65,7 @@ export function InventoryLocationsTab({
                     code: code.trim(),
                     name: name.trim(),
                     ...(description.trim() ? { description: description.trim() } : {}),
+                    is_sales_floor: isSalesFloor,
                 });
                 toast.success("Ubicación creada");
             }
@@ -122,6 +126,11 @@ export function InventoryLocationsTab({
                                         </Button>
                                     </div>
                                 </div>
+                                {location.is_sales_floor ? (
+                                    <span className="mt-2 inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
+                                        Salón de ventas · el mostrador vende primero de acá
+                                    </span>
+                                ) : null}
                                 <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{location.description || "Sin descripción"}</p>
                                 <p className="mt-2 text-[10px] text-muted-foreground">{location.sku_count ?? 0} SKU · {location.total_quantity ?? 0} unidades</p>
                             </div>
@@ -251,6 +260,20 @@ export function InventoryLocationsTab({
                                 <Label htmlFor="warehouse-location-description">Descripción</Label>
                                 <Input id="warehouse-location-description" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Opcional" />
                             </div>
+                            <label className="flex items-start gap-2 text-sm">
+                                <input
+                                    type="checkbox"
+                                    className="mt-0.5 h-4 w-4"
+                                    checked={isSalesFloor}
+                                    onChange={(event) => setIsSalesFloor(event.target.checked)}
+                                />
+                                <span>
+                                    Salón de ventas
+                                    <span className="block text-xs text-muted-foreground">
+                                        La venta de mostrador descuenta primero de estas ubicaciones; los pedidos se preparan primero desde el depósito.
+                                    </span>
+                                </span>
+                            </label>
                         </div>
                         <DialogFooter>
                             <Button variant="outline" onClick={() => setLocationDialogOpen(false)}>Cancelar</Button>

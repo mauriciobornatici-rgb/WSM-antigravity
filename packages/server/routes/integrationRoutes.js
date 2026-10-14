@@ -22,7 +22,10 @@ const fulfillmentParams = z.object({ params: z.object({ id: z.string().trim().mi
 const tiendanubeConfigBody = z.object({
     clientId: z.string().trim().max(255),
     clientSecret: z.string().max(2000).optional(),
-    locationId: z.string().trim().max(255)
+    locationId: z.string().trim().max(255),
+    // ADR-019: optional safety stock (policy) for the online store.
+    safetyStockEnabled: z.boolean().optional(),
+    safetyStock: z.coerce.number().int().min(0).max(100000).optional()
 });
 
 // Tienda Nube OAuth

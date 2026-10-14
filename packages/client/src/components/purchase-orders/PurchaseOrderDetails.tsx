@@ -4,6 +4,8 @@ import { api } from "@/services/api";
 import type { PurchaseOrder } from "@/types";
 import type { AuditLogEntry } from "@/types/api";
 import { showErrorToast } from "@/lib/errorHandling";
+import { formatMoney } from "@/lib/formatters";
+import { grossLineTotal, grossPrice } from "@/lib/pricing";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { BadgeProps } from "@/components/ui/badge";
@@ -98,6 +100,11 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
     }
 
     const items: PurchaseOrderItem[] = order.items ?? [];
+    // The order total is the sum of the VAT-included line totals, as the lines above (ADR-015).
+    const orderGrossTotal = items.reduce(
+        (sum, item) => sum + grossLineTotal(item.quantity_ordered ?? item.quantity ?? 0, item.unit_cost, item.vat_rate),
+        0
+    );
     // Goods already in (approved or in quality control) belong to the order: it can no longer be cancelled.
     const hasArrivedGoods = items.some(
         (item) => Number(item.quantity_received ?? item.received_quantity ?? 0) > 0 || Number(item.quantity_pending_qc ?? 0) > 0
@@ -150,8 +157,8 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
                                 <TableHead className="text-slate-700 dark:text-slate-300">Producto</TableHead>
                                 <TableHead className="text-right text-slate-700 dark:text-slate-300">Cant. pedida</TableHead>
                                 <TableHead className="text-right text-slate-700 dark:text-slate-300">Cant. recibida</TableHead>
-                                <TableHead className="text-right text-slate-700 dark:text-slate-300">Costo unitario</TableHead>
-                                <TableHead className="text-right text-slate-700 dark:text-slate-300">Subtotal</TableHead>
+                                <TableHead className="text-right text-slate-700 dark:text-slate-300">Costo unitario (IVA incl.)</TableHead>
+                                <TableHead className="text-right text-slate-700 dark:text-slate-300">Subtotal (IVA incl.)</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -175,9 +182,9 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
                                             </TableCell>
                                             <TableCell className="text-right text-slate-800 dark:text-slate-200">{ordered}</TableCell>
                                             <TableCell className="text-right text-slate-800 dark:text-slate-200">{received}</TableCell>
-                                            <TableCell className="text-right text-slate-800 dark:text-slate-200">${unitCost.toLocaleString("es-AR")}</TableCell>
+                                            <TableCell className="text-right text-slate-800 dark:text-slate-200">{formatMoney(grossPrice(unitCost, item.vat_rate))}</TableCell>
                                             <TableCell className="text-right font-medium text-slate-950 dark:text-slate-100">
-                                                ${(ordered * unitCost).toLocaleString("es-AR")}
+                                                {formatMoney(grossLineTotal(ordered, unitCost, item.vat_rate))}
                                             </TableCell>
                                         </TableRow>
                                     );
@@ -235,8 +242,8 @@ export function PurchaseOrderDetails({ orderId, onClose }: PurchaseOrderDetailsP
 
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between lg:justify-end lg:gap-6">
                     <div className="text-right">
-                        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total OC</span>
-                        <div className="text-2xl font-bold text-blue-600">${Number(order.total_amount ?? 0).toLocaleString("es-AR")}</div>
+                        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total OC (IVA incl.)</span>
+                        <div className="text-2xl font-bold text-blue-600">{formatMoney(orderGrossTotal)}</div>
                     </div>
                     <Button onClick={onClose} variant="secondary">
                         Cerrar

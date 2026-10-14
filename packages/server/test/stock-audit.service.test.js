@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import pool from '../config/db.js';
 import auditService from '../services/audit.service.js';
+import accountingService from '../services/accounting.service.js';
 import stockAuditService, { classifyStockByValue } from '../services/stockAudit.service.js';
 import { mockPool } from './helpers/mockDb.js';
 
@@ -308,10 +309,26 @@ test('applyAdjustments reconciles positive and negative differences atomically',
         }
         if (statement.includes('FROM stock_audit_sessions session')) return [[detailSession({ status: 'adjusted' })]];
         if (statement.includes('FROM stock_audit_items item')) return [[detailItem({ counted_quantity: 3, variance: -2 })]];
+        if (statement.includes('purchase_price, cost_price FROM products')) return [[
+            { id: 'product-1', purchase_price: 10 }, { id: 'product-2', purchase_price: 20 }, { id: 'product-3', purchase_price: 5 },
+        ]];
         return [{ affectedRows: 1 }];
     });
+    const entries = [];
+    const originalEntry = accountingService.createJournalEntry;
+    accountingService.createJournalEntry = async (_c, entry) => { entries.push(entry); return 'je'; };
+    t.after(() => { accountingService.createJournalEntry = originalEntry; });
     const result = await stockAuditService.applyAdjustments('audit-1', 'manager-1');
     assert.equal(result.status, 'adjusted');
+    // Net variance value: −2 × 10 + 4 × 20 = +60 surplus → Inventario / Pérdidas por faltantes.
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].reference_type, 'stock_audit');
+    assert.deepEqual(entries[0].lines.map((l) => [l.account_code, l.debit, l.credit]), [
+        ['1.1.04.01', 60, 0],
+        ['5.1.02.02', 0, 60],
+    ]);
+    const movementCosts = calls.filter(({ sql }) => sql.includes('INSERT INTO inventory_movements')).map(({ params }) => params[5]);
+    assert.deepEqual(movementCosts, [10, 20], 'movements carry the same cost the entry used');
     assert.ok(calls.some(({ sql }) => sql.startsWith('UPDATE inventory SET quantity = ?')));
     assert.ok(calls.some(({ sql }) => sql.startsWith('INSERT INTO inventory (id, product_id')));
     assert.equal(calls.filter(({ sql }) => sql.includes('INSERT INTO inventory_movements')).length, 2);

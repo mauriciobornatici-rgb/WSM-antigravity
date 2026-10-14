@@ -68,8 +68,15 @@ export function commandFor(mode) {
     return command;
 }
 
-export function executeQaCommand(mode, sourceEnvironment = process.env) {
+export function executeQaCommand(mode, sourceEnvironment = process.env, only = null) {
     const command = commandFor(mode);
+    // `integration <file>` runs a single suite (only files inside integration/).
+    const args = mode === 'integration' && only
+        ? (() => {
+            if (!/^integration[\\/][\w.-]+\.integration\.js$/.test(only)) throw new Error('Solo se admite un archivo de integration/*.integration.js');
+            return ['--test', '--test-concurrency=1', only];
+        })()
+        : command.args;
     const environment = command.environment === 'isolated'
         ? buildIsolatedTestEnvironment(sourceEnvironment)
         : buildQaEnvironment(sourceEnvironment);
@@ -83,7 +90,7 @@ export function executeQaCommand(mode, sourceEnvironment = process.env) {
     }
 
     console.log(`[QA] ${command.description}`);
-    const result = spawnSync(process.execPath, command.args, {
+    const result = spawnSync(process.execPath, args, {
         cwd: command.cwd,
         env: environment,
         stdio: 'inherit',
@@ -109,7 +116,7 @@ if (isDirectRun) {
         process.exitCode = mode ? 0 : 2;
     } else {
         try {
-            process.exitCode = executeQaCommand(mode);
+            process.exitCode = executeQaCommand(mode, process.env, process.argv[3] || null);
         } catch (error) {
             console.error(`[QA] ${error.message}`);
             process.exitCode = 1;

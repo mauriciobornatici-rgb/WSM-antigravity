@@ -1,3 +1,4 @@
+/** Margins are computed on NET prices and costs (ADR-015): VAT is neither margin nor cost. */
 export interface ProductAnalyticsInput {
     id: string;
     name: string;

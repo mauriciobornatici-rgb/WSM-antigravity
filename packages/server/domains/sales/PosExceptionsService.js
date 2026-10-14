@@ -8,12 +8,15 @@ import defaultAuditService from '../../services/audit.service.js';
 export const EXCEPTION_TYPES = Object.freeze({
     PRICE: 'price',
     STOCK_SHORTAGE: 'stock_shortage',
+    // ADR-019: an online-store order recorded without enough stock to reserve.
+    CHANNEL_SHORTAGE: 'channel_stock_shortage',
 });
 export const REVIEW_ACTION = 'POS_EXCEPTION_REVIEWED';
 
 const EXCEPTION_FILTER_SQL = `(
     (a.action = 'ORDER_PRICE_OVERRIDE' AND JSON_UNQUOTE(JSON_EXTRACT(a.new_values, '$.source')) = 'offline_pos')
     OR a.action = 'OFFLINE_SALE_STOCK_SHORTAGE'
+    OR a.action = 'CHANNEL_ORDER_STOCK_SHORTAGE'
 )`;
 
 function parseJson(value) {
@@ -52,7 +55,9 @@ export class PosExceptionsService {
         );
         return rows.map((row) => ({
             id: row.id,
-            type: row.action === 'OFFLINE_SALE_STOCK_SHORTAGE' ? EXCEPTION_TYPES.STOCK_SHORTAGE : EXCEPTION_TYPES.PRICE,
+            type: row.action === 'OFFLINE_SALE_STOCK_SHORTAGE'
+                ? EXCEPTION_TYPES.STOCK_SHORTAGE
+                : row.action === 'CHANNEL_ORDER_STOCK_SHORTAGE' ? EXCEPTION_TYPES.CHANNEL_SHORTAGE : EXCEPTION_TYPES.PRICE,
             order_id: row.order_id,
             customer_name: row.customer_name,
             total_amount: row.total_amount == null ? null : Number(row.total_amount),

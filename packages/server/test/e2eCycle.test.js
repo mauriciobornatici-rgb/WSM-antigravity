@@ -6,21 +6,9 @@ import { GoodsReceptionService } from "../domains/procurement/GoodsReceptionServ
 import { CreateOrderUseCase } from "../domains/sales/CreateOrderUseCase.js";
 import { InvoiceAuthorizationUseCase } from "../domains/sales/InvoiceAuthorizationUseCase.js";
 import financeService from "../services/finance.service.js";
-import afipService from "../services/afip.service.js";
 
 test("Circuito E2E Operativo Completo: Compra -> Stock -> Venta -> Cta Cte -> Cobro -> Caja", async (t) => {
     const executedQueries = [];
-
-    const origAuthorizeVoucher = afipService.authorizeVoucher;
-    afipService.authorizeVoucher = async () => ({
-        cae: "71234567890123",
-        cae_expiration_date: "20261231",
-        invoice_number: 1001
-    });
-
-    t.after(() => {
-        afipService.authorizeVoucher = origAuthorizeVoucher;
-    });
 
     mockPool(t, async (sql, params) => {
         executedQueries.push({ sql, params });
@@ -95,10 +83,12 @@ test("Circuito E2E Operativo Completo: Compra -> Stock -> Venta -> Cta Cte -> Co
         const res = await supplierPaymentService.createSupplierPayment({
             supplier_id: "sup-100",
             notes: "Pago parcial E2E",
-            payments: [{ method: "bank_transfer", amount: 300000, notes: "Transferencia bancaria" }]
+            payments: [{ payment_method: "Transferencia", amount: 300000, notes: "Transferencia bancaria" }]
         }, "user-100");
 
         assert.equal(res.success, true);
+        // A transfer never touches the cash drawer (ADR-014): only cash payments need an open shift.
+        assert.equal(executedQueries.some(q => q.sql.includes("INSERT INTO shift_payments")), false);
         assert.ok(res.ids.length > 0);
         assert.ok(executedQueries.some(q => q.sql.includes("INSERT INTO supplier_payments")));
         assert.ok(executedQueries.some(q => q.sql.toLowerCase().includes("suppliers")));
@@ -115,7 +105,8 @@ test("Circuito E2E Operativo Completo: Compra -> Stock -> Venta -> Cta Cte -> Co
         }, "user-100");
 
         assert.ok(orderRes.id);
-        assert.equal(orderRes.total_amount, 240000);
+        // ADR-015: el pedido se cobra con IVA incluido (2 x 120.000 neto x 1,21).
+        assert.equal(orderRes.total_amount, 290400);
         assert.ok(executedQueries.some(q => q.sql.includes("INSERT INTO orders")));
     });
 

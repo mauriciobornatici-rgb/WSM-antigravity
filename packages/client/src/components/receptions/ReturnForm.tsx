@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Trash2, Save, Search } from 'lucide-react';
 import { api } from '@/services/api';
 import { showErrorToast } from '@/lib/errorHandling';
+import { formatMoney } from '@/lib/formatters';
+import { grossLineTotal, grossPrice } from '@/lib/pricing';
 import { toast } from 'sonner';
 import type { Product, Supplier } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -138,7 +140,9 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
         }
     };
 
-    const totalAmount = items.reduce((sum, item) => sum + item.quantity * item.unit_cost, 0);
+    // The cost is typed net (supplier invoice); what is shown is the final one (ADR-015).
+    const vatRateOfItem = (item: ReturnItem) => products.find((p) => p.id === item.product_id)?.vat_rate;
+    const totalAmount = items.reduce((sum, item) => sum + grossLineTotal(item.quantity, item.unit_cost, vatRateOfItem(item)), 0);
 
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -201,7 +205,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                         <div className="hidden grid-cols-12 gap-2 px-2 text-xs font-semibold text-muted-foreground sm:grid">
                             <div className="col-span-5">Producto</div>
                             <div className="col-span-2 text-center">Cantidad</div>
-                            <div className="col-span-2 text-right">Costo Unit.</div>
+                            <div className="col-span-2 text-right">Costo Unit. neto</div>
                             <div className="col-span-2">Motivo</div>
                             <div className="col-span-1" />
                         </div>
@@ -225,7 +229,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                                     />
                                 </div>
                                 <div className="sm:col-span-2">
-                                    <Label className="mb-1 text-xs sm:hidden">Costo unitario</Label>
+                                    <Label className="mb-1 text-xs sm:hidden">Costo unitario neto</Label>
                                     <Input
                                         type="number"
                                         min="0"
@@ -234,6 +238,9 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                                         onChange={(e) => handleUpdateItem(index, 'unit_cost', Number.parseFloat(e.target.value) || 0)}
                                         className="h-8 text-right"
                                     />
+                                    <p className="mt-0.5 text-right text-[11px] text-muted-foreground">
+                                        Costo final (c/IVA): {formatMoney(grossPrice(item.unit_cost, vatRateOfItem(item)))}
+                                    </p>
                                 </div>
                                 <div className="sm:col-span-2">
                                     <Label className="mb-1 text-xs sm:hidden">Motivo</Label>
@@ -263,8 +270,8 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
 
                 {items.length > 0 && (
                     <div className="mt-4 flex items-center justify-end gap-4 border-t pt-4">
-                        <span className="text-sm font-medium">Total Estimado de Devolución:</span>
-                        <span className="text-xl font-bold text-slate-900 dark:text-white">${totalAmount.toLocaleString()}</span>
+                        <span className="text-sm font-medium">Total Estimado de Devolución (IVA incl.):</span>
+                        <span className="text-xl font-bold text-slate-900 dark:text-white">{formatMoney(totalAmount)}</span>
                     </div>
                 )}
             </div>

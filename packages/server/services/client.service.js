@@ -13,7 +13,8 @@ const CLIENT_BALANCE_JOINS = `
     LEFT JOIN (
         SELECT client_id, COALESCE(SUM(amount), 0) AS total_credit_notes
         FROM credit_notes
-        WHERE deleted_at IS NULL AND (status IS NULL OR status != 'cancelled')
+        WHERE deleted_at IS NULL AND (status IS NULL OR status NOT IN ('cancelled', 'internal'))
+          AND COALESCE(credit_note_type, '') <> 'INT'
         GROUP BY client_id
     ) cn ON cn.client_id = c.id
     LEFT JOIN (
@@ -41,6 +42,12 @@ const CLIENT_BALANCE_JOINS = `
         GROUP BY t.client_id
     ) pay ON pay.client_id = c.id
     LEFT JOIN (
+        SELECT client_id, COALESCE(SUM(amount), 0) AS total_refunded
+        FROM transactions
+        WHERE type = 'refund' AND client_id IS NOT NULL
+        GROUP BY client_id
+    ) ref ON ref.client_id = c.id
+    LEFT JOIN (
         SELECT credit_orders.client_id, COALESCE(SUM(credit_orders.credit_amount), 0) AS total_uninvoiced_credit
         FROM (
             SELECT o.id, o.client_id,
@@ -65,7 +72,8 @@ const CLIENT_BALANCE_SQL = `
         COALESCE(inv.total_invoiced, 0)
         + COALESCE(ord.total_uninvoiced_credit, 0)
         - COALESCE(cn.total_credit_notes, 0)
-        - COALESCE(pay.total_paid, 0),
+        - COALESCE(pay.total_paid, 0)
+        + COALESCE(ref.total_refunded, 0),
         2
     )
 `;
@@ -102,7 +110,7 @@ class ClientService {
     }
 
     async createClient({ body, actorId, ip }) {
-        const { name, tax_id, email, phone, address, credit_limit } = body;
+        const { name, tax_id, email, phone, address, credit_limit, tax_condition_id } = body;
         const id = crypto.randomUUID();
 
         const [existing] = await pool.query('SELECT id FROM clients WHERE tax_id = ? AND deleted_at IS NULL', [tax_id]);
@@ -111,8 +119,8 @@ class ClientService {
         }
 
         await pool.query(
-            'INSERT INTO clients (id, name, tax_id, email, phone, address, credit_limit) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [id, name, tax_id, email, phone, address, credit_limit || 0]
+            'INSERT INTO clients (id, name, tax_id, email, phone, address, credit_limit, tax_condition_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [id, name, tax_id, email, phone, address, credit_limit || 0, tax_condition_id || null]
         );
 
         const [newItem] = await pool.query('SELECT * FROM clients WHERE id = ?', [id]);
@@ -129,6 +137,8 @@ class ClientService {
 
     async updateClient({ id, body, actorId, ip }) {
         const { name, tax_id, email, phone, address, credit_limit } = body;
+        // A form that does not send the VAT condition keeps the stored one.
+        const taxConditionSent = Object.prototype.hasOwnProperty.call(body, 'tax_condition_id');
 
         const [existing] = await pool.query('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL', [id]);
         if (existing.length === 0) {
@@ -141,8 +151,12 @@ class ClientService {
         }
 
         await pool.query(
-            'UPDATE clients SET name = ?, tax_id = ?, email = ?, phone = ?, address = ?, credit_limit = ? WHERE id = ? AND deleted_at IS NULL',
-            [name, tax_id, email, phone, address, credit_limit || 0, id]
+            'UPDATE clients SET name = ?, tax_id = ?, email = ?, phone = ?, address = ?, credit_limit = ?, tax_condition_id = ? WHERE id = ? AND deleted_at IS NULL',
+            [
+                name, tax_id, email, phone, address, credit_limit || 0,
+                taxConditionSent ? (body.tax_condition_id || null) : (existing[0].tax_condition_id ?? null),
+                id
+            ]
         );
 
         const [updated] = await pool.query('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL', [id]);
@@ -158,6 +172,57 @@ class ClientService {
         return updated[0];
     }
 
+    /**
+     * ADR-022: the VAT condition (and the CUIT a Responsable Inscripto needs) loaded at the
+     * moment of use, from the POS or the invoice screens, without touching the other fields.
+     * The row is locked so two terminals completing the same customer do not overwrite each
+     * other silently.
+     */
+    async setTaxCondition({ id, body, actorId, ip }) {
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [rows] = await connection.query('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [id]);
+            const existing = rows[0];
+            if (!existing) throw businessError(404, { error: 'not_found', message: 'Cliente no encontrado' });
+
+            const taxId = body.tax_id != null && String(body.tax_id).trim() !== '' ? String(body.tax_id).trim() : existing.tax_id;
+            if (body.tax_condition_id === 'tc_RespInscripto' && String(taxId || '').replace(/\D/g, '').length !== 11) {
+                throw businessError(422, { error: 'cuit_required', message: 'Un Responsable Inscripto necesita el CUIT (11 dígitos).' });
+            }
+            if (taxId !== existing.tax_id) {
+                const [duplicate] = await connection.query('SELECT id FROM clients WHERE tax_id = ? AND id != ? AND deleted_at IS NULL', [taxId, id]);
+                if (duplicate.length > 0) {
+                    throw businessError(409, { error: 'duplicate_tax_id', message: 'Ya existe un cliente con ese RUC/CI/CUIT' });
+                }
+            }
+
+            await connection.query('UPDATE clients SET tax_condition_id = ?, tax_id = ? WHERE id = ?', [body.tax_condition_id, taxId, id]);
+            const [updated] = await connection.query(`
+                SELECT c.*, ${CLIENT_BALANCE_SQL} AS computed_balance
+                FROM clients c
+                ${CLIENT_BALANCE_JOINS}
+                WHERE c.id = ?
+            `, [id]);
+            await auditService.log({
+                user_id: actorId || null,
+                action: 'UPDATE_CLIENT_TAX_CONDITION',
+                entity_type: 'client',
+                entity_id: id,
+                old_values: { tax_condition_id: existing.tax_condition_id ?? null, tax_id: existing.tax_id },
+                new_values: { tax_condition_id: body.tax_condition_id, tax_id: taxId },
+                ip_address: ip
+            }, connection);
+            await connection.commit();
+            return withBalance(updated[0]);
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
     async deleteClient({ id, actorId, ip }) {
         const [existing] = await pool.query(`
         SELECT c.id, c.name, ${CLIENT_BALANCE_SQL} AS computed_balance
@@ -166,7 +231,7 @@ class ClientService {
         WHERE c.id = ? AND c.deleted_at IS NULL
         LIMIT 1
     `, [id]);
-        if (existing.length === 0) throw businessError(404, { error: 'not_found' });
+        if (existing.length === 0) throw businessError(404, { error: 'not_found', message: 'Cliente no encontrado' });
 
         const balance = Number(existing[0].computed_balance || 0);
         if (Math.abs(balance) > 0.000001) {

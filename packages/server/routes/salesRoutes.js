@@ -19,6 +19,9 @@ const canReviewPrices = authorizePermission(PERMISSIONS.ORDERS_PRICE_OVERRIDE);
 router.get('/pos/exceptions', canReviewPrices, validateZod(zodSchemas.posExceptionsQuery), salesController.listPosExceptions);
 router.post('/pos/exceptions/:id/review', canReviewPrices, validateZod(zodSchemas.posExceptionReview), salesController.reviewPosException);
 router.put('/orders/:id/status', canSell, validate(schemas.orderStatus), salesController.updateOrderStatus);
+// ADR-017/018: changing a charge after the order was made is a commercial concession: managers
+// and administrators (the same permission as changing prices), always audited.
+router.put('/orders/:id/shipping', authorizePermission(PERMISSIONS.ORDERS_PRICE_OVERRIDE), validateZod(zodSchemas.orderShippingCharge), salesController.updateOrderShipping);
 router.put('/orders/:id/dispatch', canDispatch, validate(schemas.orderDispatch), salesController.dispatchOrder);
 router.put('/orders/:id/deliver', canDispatch, validate(schemas.orderDeliver), salesController.deliverOrder);
 router.post('/orders/:id/pickup-checkout', canSell, validate(schemas.pickupOrderCheckout), salesController.checkoutPickupOrder);
@@ -34,8 +37,13 @@ router.get('/invoices', canInvoice, validate(schemas.invoiceFilters), salesContr
 router.get('/invoices/:id', canInvoice, validate(schemas.idParam), salesController.getInvoiceById);
 router.post('/invoices', canInvoice, validate(schemas.manualInvoice), salesController.createManualInvoice);
 router.post('/invoices/:id/authorize', canInvoice, validate(schemas.idParam), salesController.authorizeInvoice);
+// ADR-022: annul an invoice ARCA never authorized and issue it again.
+router.post('/invoices/:id/reissue', canInvoice, validate(schemas.invoiceReissue), salesController.reissueInvoice);
 router.post('/invoices/:id/payments', canInvoice, validateZod(zodSchemas.invoicePayment), salesController.registerInvoicePayments);
 router.get('/invoice-items', canInvoice, validate(schemas.invoiceItemsQuery), salesController.getInvoiceItems);
+
+// ADR-021: ARCA documents in conflict or stuck in verification (panel and menu alert).
+router.get('/fiscal/arca-alerts', canInvoice, salesController.getArcaAlerts);
 
 // Tax data
 router.get('/tax-conditions', canInvoice, salesController.getTaxConditions);

@@ -19,6 +19,7 @@ export type ClientReturnItemRow = {
     sku?: string;
     quantity: number;
     unit_price: number;
+    vat_rate?: number;
     condition_status?: string;
 };
 
@@ -44,6 +45,10 @@ export type CreditNoteRow = {
     credit_note_type?: string | undefined;
     cae?: string | undefined;
     cae_expiration_date?: string | undefined;
+    arca_voucher_number?: number | undefined;
+    arca_last_error?: string | null | undefined;
+    arca_attempts?: number | undefined;
+    arca_requested_at?: string | null | undefined;
     reference_type?: string | undefined;
     reference_id?: string | undefined;
     customer_name?: string | undefined;
@@ -69,6 +74,7 @@ export type SupplierReturnItem = {
     sku: string;
     quantity: number;
     unit_cost: number;
+    vat_rate?: number;
     reason?: string;
 };
 

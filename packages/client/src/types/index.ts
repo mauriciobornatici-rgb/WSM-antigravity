@@ -29,6 +29,8 @@ export interface Product {
     tiendanube_sync_enabled?: boolean | number
     tiendanube_product_id?: string
     tiendanube_variant_id?: string
+    // Stock de seguridad propio en la tienda online; null/ausente = usa el valor general.
+    tiendanube_safety_stock?: number | null
 }
 
 export interface InventoryItem {
@@ -71,6 +73,7 @@ export interface Client {
     address: string
     current_account_balance: number
     credit_limit: number
+    tax_condition_id?: string | null
     loyalty_points?: number
     created_at: string
 }
@@ -99,6 +102,7 @@ export interface OrderItem {
     quantity: number
     picked_quantity?: number
     unit_price: number
+    vat_rate?: number
     picked?: boolean
 }
 
@@ -116,6 +120,16 @@ export interface OrderItemAllocation {
     inventory_location?: string
 }
 
+/** Shipping / discount / surcharge line of an order (amount VAT included, negative for a discount). */
+export interface OrderAdjustment {
+    kind: 'shipping' | 'shipping_discount' | 'discount' | 'surcharge'
+    description: string
+    amount: number
+    vat_rate?: number
+    /** false = envío a cargo del negocio (no se cobra ni se factura). */
+    billable?: boolean
+}
+
 export interface Order {
     id: string
     customer_name: string
@@ -123,6 +137,8 @@ export interface Order {
     counter_user_id?: string
     client_name?: string
     client_id?: string
+    client_tax_id?: string | null
+    client_tax_condition_id?: string | null
     status: 'pending' | 'picking' | 'packed' | 'dispatched' | 'delivered' | 'completed' | 'cancelled'
     payment_status?: 'pending' | 'partial' | 'paid' | 'voided' | 'credit_balance'
     payment_method?: string
@@ -131,6 +147,9 @@ export interface Order {
     invoice_id?: string
     items: OrderItem[]
     payments?: Array<{ id: string; method: string; amount: number }>
+    adjustments?: OrderAdjustment[]
+    // Sales channel that created the order ('pos', 'tiendanube'); null for orders made here.
+    external_source?: string | null
     cancellation_credit_amount?: number
     cancellation_financial_status?: 'client_credit' | 'debt_voided'
 
@@ -252,6 +271,7 @@ export interface PurchaseOrderItem {
     quantity?: number
     quantity_ordered?: number
     unit_cost: number
+    vat_rate?: number
     received_quantity?: number
     quantity_received?: number
     quantity_pending_qc?: number
@@ -359,6 +379,8 @@ export interface WarehouseLocation {
     name: string
     description?: string | null
     active: boolean
+    /** The counter (POS) sells from these locations first (ADR-015). */
+    is_sales_floor?: boolean
     sku_count?: number
     total_quantity?: number
 }
@@ -384,4 +406,6 @@ export interface TiendaNubeIntegrationConfig {
     clientId: string
     clientSecretConfigured: boolean
     locationId: string
+    safetyStockEnabled: boolean
+    safetyStock: number
 }

@@ -1,11 +1,16 @@
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { CircleDashed, Package, FileText, Truck } from "lucide-react"
+import { hasPermission, PERMISSIONS } from "@wsm/common"
 import { api } from "@/services/api"
+import { useAuth } from "@/context/AuthContext"
 import { formatMoney } from "@/lib/formatters"
+import { grossLineTotal, grossPrice } from "@/lib/pricing"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { renderStatusBadge } from "./helpers"
+import { OrderShippingDialog } from "./OrderShippingDialog"
 import type { Order, OrderItem } from "@/types"
 
 interface OrderDetailDialogProps {
@@ -16,6 +21,10 @@ interface OrderDetailDialogProps {
 }
 
 export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint }: OrderDetailDialogProps) {
+    const { user } = useAuth()
+    // Changing a charge after the order was made is a concession: managers and admins (ADR-018).
+    const canEditShipping = hasPermission(user?.role, PERMISSIONS.ORDERS_PRICE_OVERRIDE)
+    const [shippingOpen, setShippingOpen] = useState(false)
     const orderDetailQuery = useQuery({
         queryKey: ["orders", "detail", orderId ?? ""],
         queryFn: () => api.getOrderSummary(orderId!),
@@ -180,13 +189,13 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                                     <TableHead>Producto</TableHead>
                                                     <TableHead className="text-right">Cantidad</TableHead>
                                                     <TableHead className="text-right">Preparado</TableHead>
-                                                    <TableHead className="text-right">Unitario</TableHead>
-                                                    <TableHead className="text-right">Subtotal</TableHead>
+                                                    <TableHead className="text-right">Unitario (IVA incl.)</TableHead>
+                                                    <TableHead className="text-right">Subtotal (IVA incl.)</TableHead>
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
                                                 {detailItems.map((item: OrderItem, idx: number) => {
-                                                    const subtotal = Number(item.quantity || 0) * Number(item.unit_price || 0)
+                                                    const subtotal = grossLineTotal(item.quantity, item.unit_price, item.vat_rate)
                                                     return (
                                                         <TableRow key={`${item.id}-${idx}`} className="border-border">
                                                             <TableCell className="font-mono font-bold text-xs">
@@ -210,10 +219,38 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                                                 </span>
                                                             </TableCell>
                                                             <TableCell className="text-right font-mono">
-                                                                {formatMoney(item.unit_price || 0)}
+                                                                {formatMoney(grossPrice(item.unit_price, item.vat_rate))}
                                                             </TableCell>
                                                             <TableCell className="text-right font-mono font-bold">
                                                                 {formatMoney(subtotal)}
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    )
+                                                })}
+                                                {(detailOrder.adjustments ?? []).map((adjustment, idx) => {
+                                                    // Envío a cargo del negocio: se muestra pero no se cobra ni se suma.
+                                                    const notCharged = adjustment.billable === false
+                                                    return (
+                                                        <TableRow key={`adjustment-${idx}`} className="border-border bg-muted/20">
+                                                            <TableCell colSpan={6} className="text-sm font-medium">
+                                                                {adjustment.description}
+                                                                {notCharged ? (
+                                                                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                                                                        (a cargo del negocio, no se cobra)
+                                                                    </span>
+                                                                ) : null}
+                                                            </TableCell>
+                                                            <TableCell
+                                                                className={`text-right font-mono font-bold ${
+                                                                    notCharged
+                                                                        ? "text-muted-foreground line-through"
+                                                                        : adjustment.amount < 0
+                                                                        ? "text-emerald-600 dark:text-emerald-400"
+                                                                        : ""
+                                                                }`}
+                                                            >
+                                                                {adjustment.amount < 0 ? "-" : ""}
+                                                                {formatMoney(Math.abs(adjustment.amount))}
                                                             </TableCell>
                                                         </TableRow>
                                                     )
@@ -305,11 +342,25 @@ export function OrderDetailDialog({ open, onOpenChange, orderId, onTriggerPrint 
                                             <Truck className="mr-2 h-4 w-4" />
                                             Imprimir Etiqueta (10x15)
                                         </Button>
+                                        {canEditShipping &&
+                                        !detailOrder.external_source &&
+                                        !detailOrder.invoice_id &&
+                                        detailOrder.status !== "cancelled" ? (
+                                            <Button type="button" variant="outline" onClick={() => setShippingOpen(true)}>
+                                                <Truck className="mr-2 h-4 w-4" />
+                                                Editar envío
+                                            </Button>
+                                        ) : null}
                                     </div>
                                     <Button type="button" onClick={() => onOpenChange(false)}>
                                         Cerrar
                                     </Button>
                                 </div>
+                                <OrderShippingDialog
+                                    open={shippingOpen}
+                                    onOpenChange={setShippingOpen}
+                                    order={detailOrder}
+                                />
                             </div>
                         )
                     })()

@@ -2,6 +2,8 @@
 import { Trash2, Plus } from 'lucide-react';
 import { api } from '@/services/api';
 import { showErrorToast } from '@/lib/errorHandling';
+import { formatMoney } from '@/lib/formatters';
+import { grossLineTotal, grossPrice } from '@/lib/pricing';
 import type { Product, Supplier } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,6 +21,7 @@ interface OrderItem {
     product_name: string;
     quantity_ordered: number;
     unit_cost: number;
+    vat_rate?: number | undefined;
 }
 
 export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps) {
@@ -69,6 +72,7 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
             product_name: product.name,
             quantity_ordered: Number.parseFloat(quantity),
             unit_cost: Number.parseFloat(unitCost),
+            vat_rate: product.vat_rate,
         };
 
         setItems((prev) => [...prev, newItem]);
@@ -82,7 +86,7 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
     };
 
     const calculateTotal = () => {
-        return items.reduce((sum, item) => sum + item.quantity_ordered * item.unit_cost, 0);
+        return items.reduce((sum, item) => sum + grossLineTotal(item.quantity_ordered, item.unit_cost, item.vat_rate), 0);
     };
 
     const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -193,7 +197,7 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
                         />
                     </div>
                     <div>
-                        <Label htmlFor="unitCost">Costo Unit.</Label>
+                        <Label htmlFor="unitCost">Costo Unit. neto (s/IVA)</Label>
                         <Input
                             id="unitCost"
                             type="number"
@@ -203,6 +207,9 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
                             onChange={(e) => setUnitCost(e.target.value)}
                             placeholder="0.00"
                         />
+                        <p className="mt-1 text-xs text-muted-foreground">
+                            Final c/IVA: {formatMoney(grossPrice(unitCost, products.find((p) => p.id === selectedProduct)?.vat_rate))}
+                        </p>
                     </div>
                 </div>
                 <Button type="button" onClick={handleAddProduct} className="mt-3 w-full sm:w-auto" variant="outline">
@@ -215,13 +222,14 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
                 <div className="overflow-hidden rounded-lg border">
                     <div className="overflow-x-auto">
                         <table className="w-full min-w-[760px]">
-                        <thead className="bg-gray-50">
+                        <thead className="bg-gray-50 dark:bg-slate-800">
                             <tr>
-                                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Producto</th>
-                                <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Cantidad</th>
-                                <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Costo Unit.</th>
-                                <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Subtotal</th>
-                                <th className="px-4 py-2 text-center text-sm font-medium text-gray-700">Accion</th>
+                                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700 dark:text-gray-200">Producto</th>
+                                <th className="px-4 py-2 text-right text-sm font-medium text-gray-700 dark:text-gray-200">Cantidad</th>
+                                <th className="px-4 py-2 text-right text-sm font-medium text-gray-700 dark:text-gray-200">Costo Unit. neto</th>
+                                <th className="px-4 py-2 text-right text-sm font-medium text-gray-700 dark:text-gray-200">Costo final (c/IVA)</th>
+                                <th className="px-4 py-2 text-right text-sm font-medium text-gray-700 dark:text-gray-200">Subtotal (IVA incl.)</th>
+                                <th className="px-4 py-2 text-center text-sm font-medium text-gray-700 dark:text-gray-200">Accion</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y">
@@ -229,9 +237,10 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
                                 <tr key={`${item.product_id}-${index}`}>
                                     <td className="px-4 py-2 text-sm">{item.product_name}</td>
                                     <td className="px-4 py-2 text-right text-sm">{item.quantity_ordered}</td>
-                                    <td className="px-4 py-2 text-right text-sm">${item.unit_cost.toFixed(2)}</td>
+                                    <td className="px-4 py-2 text-right text-sm">{formatMoney(item.unit_cost)}</td>
+                                    <td className="px-4 py-2 text-right text-sm">{formatMoney(grossPrice(item.unit_cost, item.vat_rate))}</td>
                                     <td className="px-4 py-2 text-right text-sm font-medium">
-                                        ${(item.quantity_ordered * item.unit_cost).toFixed(2)}
+                                        {formatMoney(grossLineTotal(item.quantity_ordered, item.unit_cost, item.vat_rate))}
                                     </td>
                                     <td className="px-4 py-2 text-center">
                                         <Button
@@ -246,10 +255,10 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
                                 </tr>
                             ))}
                         </tbody>
-                        <tfoot className="bg-gray-50 font-bold">
+                        <tfoot className="bg-gray-50 font-bold dark:bg-slate-800">
                             <tr>
-                                <td colSpan={3} className="px-4 py-3 text-right">Total:</td>
-                                <td className="px-4 py-3 text-right text-lg">${calculateTotal().toFixed(2)}</td>
+                                <td colSpan={4} className="px-4 py-3 text-right">Total (IVA incl.):</td>
+                                <td className="px-4 py-3 text-right text-lg">{formatMoney(calculateTotal())}</td>
                                 <td />
                             </tr>
                         </tfoot>

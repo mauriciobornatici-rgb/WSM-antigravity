@@ -2,8 +2,10 @@ import crypto from 'crypto';
 import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import auditService from './audit.service.js';
+import { businessError } from '../utils/businessError.js';
 import { normalizeProductImageUrl } from '../utils/imagePolicy.js';
 import goodsReceptionService from '../domains/procurement/GoodsReceptionService.js';
+import accountingService from './accounting.service.js';
 
 class InventoryService extends BaseService {
     constructor() {
@@ -247,6 +249,17 @@ class InventoryService extends BaseService {
         const stockInitial = Number.isFinite(rawStockInitial) ? Math.max(0, Math.floor(rawStockInitial)) : 0;
         delete normalized.stock_initial;
 
+        // ADR-018: opening stock is valued at cost (inventory and ledger move together): without a
+        // cost it would enter stock without its entry and later sales would credit inventory
+        // that was never debited.
+        const openingCost = Number(normalized.purchase_price ?? normalized.cost_price ?? 0);
+        if (stockInitial > 0 && !(openingCost > 0)) {
+            throw businessError(400, {
+                error: 'initial_stock_requires_cost',
+                message: 'Para cargar stock inicial indicá el precio de compra (costo) del producto.'
+            });
+        }
+
         if (normalized.cost_price != null && normalized.purchase_price == null) {
             normalized.purchase_price = normalized.cost_price;
         }
@@ -259,33 +272,50 @@ class InventoryService extends BaseService {
         delete normalized.family_name;
         normalized.family_id = await this.resolveProductFamily(familyName, normalized);
 
-        const data = { id, ...normalized };
+        // ADR-017: where the product was created (the ERP), so price fixes never have to guess.
+        const data = { id, ...normalized, origin: 'erp' };
         const result = await this.create(data);
 
         if (stockInitial > 0) {
             const initialLocation = normalized.location || 'General';
-            await pool.query(
-                `INSERT INTO inventory (id, product_id, location, quantity)
-                 VALUES (?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
-                [crypto.randomUUID(), id, initialLocation, stockInitial]
-            );
-
-            await pool.query(
-                `INSERT INTO inventory_movements (
-                    id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
-                ) VALUES (?, 'initial_stock', ?, ?, ?, ?, ?, 'product', ?, ?)`,
-                [
-                    crypto.randomUUID(),
-                    id,
-                    initialLocation,
-                    stockInitial,
-                    Number(normalized.purchase_price || 0),
-                    'Initial stock on product creation',
-                    id,
-                    userId || null
-                ]
-            );
+            const connection = await pool.getConnection();
+            try {
+                await connection.beginTransaction();
+                await connection.query(
+                    `INSERT INTO inventory (id, product_id, location, quantity)
+                     VALUES (?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
+                    [crypto.randomUUID(), id, initialLocation, stockInitial]
+                );
+                await connection.query(
+                    `INSERT INTO inventory_movements (
+                        id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
+                    ) VALUES (?, 'initial_stock', ?, ?, ?, ?, ?, 'product', ?, ?)`,
+                    [
+                        crypto.randomUUID(),
+                        id,
+                        initialLocation,
+                        stockInitial,
+                        Number(normalized.purchase_price || 0),
+                        'Stock inicial al crear el producto',
+                        id,
+                        userId || null
+                    ]
+                );
+                // Every stock movement leaves its entry (ADR-013): the opening stock is valued at cost.
+                await accountingService.postInitialStock(connection, {
+                    productId: id,
+                    quantity: stockInitial,
+                    unitCost: Number(normalized.purchase_price || 0),
+                    description: `Stock inicial de ${normalized.name || normalized.sku || 'producto'}`,
+                });
+                await connection.commit();
+            } catch (error) {
+                await connection.rollback();
+                throw error;
+            } finally {
+                connection.release();
+            }
         }
 
         await auditService.log({
@@ -370,9 +400,9 @@ class InventoryService extends BaseService {
         // We do this without await so it doesn't block the database transaction
         setImmediate(async () => {
             try {
-                const totalStock = await this.getProductStock(movementData.product_id);
+                // ADR-019: available stock (physical minus reserved), only when it changed.
                 const tiendanubeService = (await import('./tiendanube.service.js')).default;
-                await tiendanubeService.syncStock(movementData.product_id, totalStock);
+                await tiendanubeService.pushAvailableStock([movementData.product_id]);
             } catch (err) {
                 console.error('[TiendaNube Sync] Error calculating stock for sync:', err);
             }
@@ -502,14 +532,14 @@ class InventoryService extends BaseService {
     async transferStock(productId, fromLocation, toLocation, quantity, userId) {
         const qty = Number(quantity);
         if (!qty || qty <= 0) {
-            throw new Error('La cantidad a transferir debe ser mayor a cero.');
+            throw businessError(400, { error: 'invalid_quantity', message: 'La cantidad a transferir debe ser mayor a cero.' });
         }
 
         const normalizedFrom = String(fromLocation || 'General').trim();
         const normalizedTo = String(toLocation || 'General').trim();
 
         if (normalizedFrom === normalizedTo) {
-            throw new Error('La ubicación de origen y destino no pueden ser iguales.');
+            throw businessError(400, { error: 'same_location', message: 'La ubicación de origen y destino no pueden ser iguales.' });
         }
 
         const connection = await pool.getConnection();
@@ -522,7 +552,7 @@ class InventoryService extends BaseService {
             );
 
             if (sourceRows.length === 0) {
-                throw new Error(`Stock insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: 0 (Físico: 0, Reservado: 0)`);
+                throw businessError(409, { error: 'insufficient_stock', message: `Stock insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: 0 (Físico: 0, Reservado: 0)` });
             }
 
             const physicalQty = sourceRows[0].quantity;
@@ -530,7 +560,7 @@ class InventoryService extends BaseService {
             const availableQty = physicalQty - reservedQty;
 
             if (availableQty < qty) {
-                throw new Error(`Stock disponible insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: ${availableQty} (Físico: ${physicalQty}, Reservado: ${reservedQty})`);
+                throw businessError(409, { error: 'insufficient_stock', message: `Stock disponible insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: ${availableQty} (Físico: ${physicalQty}, Reservado: ${reservedQty})` });
             }
 
             const sourceId = sourceRows[0].id;

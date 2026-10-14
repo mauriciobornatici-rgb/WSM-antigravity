@@ -16,6 +16,8 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { showErrorToast } from "@/lib/errorHandling"
 import type { ClientUpsertInput } from "@/types/api"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { NO_TAX_CONDITION, TAX_CONDITION_OPTIONS, taxConditionCuitError, taxConditionName } from "@/lib/taxConditions"
 
 function toSafeMoney(value: unknown): number {
     const num = Number(value)
@@ -28,6 +30,8 @@ export default function ClientsPage() {
     const [loading, setLoading] = useState(true)
     const [errorMessage, setErrorMessage] = useState<string | null>(null)
     const [search, setSearch] = useState("")
+    // ADR-022: the customers still without a VAT condition, to complete them in one go.
+    const [onlyMissingCondition, setOnlyMissingCondition] = useState(false)
     const [isCreateOpen, setIsCreateOpen] = useState(false)
     const [editingClient, setEditingClient] = useState<Client | null>(null)
     const [deletingClient, setDeletingClient] = useState<Client | null>(null)
@@ -60,10 +64,13 @@ export default function ClientsPage() {
         void loadClients()
     }, [loadClients])
 
+    const missingConditionCount = clients.filter((c) => !c.tax_condition_id).length
     const filteredClients = clients.filter(c =>
-        c.name.toLowerCase().includes(search.toLowerCase()) ||
-        c.tax_id.includes(search) ||
-        c.email?.toLowerCase().includes(search.toLowerCase())
+        (!onlyMissingCondition || !c.tax_condition_id) && (
+            c.name.toLowerCase().includes(search.toLowerCase()) ||
+            (c.tax_id || "").includes(search) ||
+            c.email?.toLowerCase().includes(search.toLowerCase())
+        )
     )
 
     const handleCreateClient = async (data: ClientFormValues) => {
@@ -74,7 +81,8 @@ export default function ClientsPage() {
                 phone: data.phone,
                 tax_id: data.tax_id,
                 address: data.address,
-                credit_limit: data.credit_limit
+                credit_limit: data.credit_limit,
+                tax_condition_id: data.tax_condition_id === NO_TAX_CONDITION ? null : data.tax_condition_id
             }
             await api.createClient(payload)
             await loadClients()
@@ -94,7 +102,8 @@ export default function ClientsPage() {
                 phone: data.phone,
                 tax_id: data.tax_id,
                 address: data.address,
-                credit_limit: data.credit_limit
+                credit_limit: data.credit_limit,
+                tax_condition_id: data.tax_condition_id === NO_TAX_CONDITION ? null : data.tax_condition_id
             }
             await api.updateClient(editingClient.id, payload)
             await loadClients()
@@ -161,7 +170,7 @@ export default function ClientsPage() {
                     <CardDescription>Lista completa de clientes registrados.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <div className="flex items-center py-4">
+                    <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
                         <div className="relative w-full max-w-sm">
                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                             <Input
@@ -169,8 +178,20 @@ export default function ClientsPage() {
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 className="pl-8"
+                                aria-label="Buscar clientes"
                             />
                         </div>
+                        {missingConditionCount > 0 || onlyMissingCondition ? (
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant={onlyMissingCondition ? "default" : "outline"}
+                                aria-pressed={onlyMissingCondition}
+                                onClick={() => setOnlyMissingCondition((value) => !value)}
+                            >
+                                Sin condición IVA ({missingConditionCount})
+                            </Button>
+                        ) : null}
                     </div>
 
                     {errorMessage && !loading ? (
@@ -232,7 +253,10 @@ export default function ClientsPage() {
                                                     </div>
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="font-mono">{client.tax_id}</TableCell>
+                                            <TableCell>
+                                                <div className="font-mono">{client.tax_id}</div>
+                                                <div className="text-xs text-muted-foreground">{taxConditionName(client.tax_condition_id) ?? "Condición IVA sin especificar"}</div>
+                                            </TableCell>
                                             <TableCell className="text-right">
                                                 <Badge variant={client.current_account_balance > 0 ? "secondary" : "outline"} className={cn(
                                                     "font-mono",
@@ -295,6 +319,26 @@ interface ClientFormValues {
     tax_id: string
     address: string
     credit_limit: number
+    tax_condition_id: string
+}
+
+function TaxConditionField({ id, value, onChange }: { id: string, value: string, onChange: (value: string) => void }) {
+    return (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">
+            <Label htmlFor={id} className="text-left sm:text-right">Condición IVA</Label>
+            <Select value={value} onValueChange={onChange}>
+                <SelectTrigger id={id} className="sm:col-span-3">
+                    <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value={NO_TAX_CONDITION}>Sin especificar</SelectItem>
+                    {TAX_CONDITION_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
+        </div>
+    )
 }
 
 function StatusCard({ title, count, icon: Icon, description, color, isCurrency }: { title: string, count: number | string, icon: LucideIcon, description: string, color?: string, isCurrency?: boolean }) {
@@ -323,17 +367,23 @@ function CreateClientDialog({ open, onOpenChange, onSubmit }: { open: boolean, o
         phone: "",
         tax_id: "",
         address: "",
-        credit_limit: "5000000"
+        credit_limit: "5000000",
+        tax_condition_id: NO_TAX_CONDITION as string
     })
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
+        const cuitError = taxConditionCuitError(formData.tax_condition_id, formData.tax_id)
+        if (cuitError) {
+            toast.error(cuitError)
+            return
+        }
         const data = {
             ...formData,
             credit_limit: parseFloat(formData.credit_limit)
         }
         onSubmit(data)
-        setFormData({ name: "", email: "", phone: "", tax_id: "", address: "", credit_limit: "5000000" })
+        setFormData({ name: "", email: "", phone: "", tax_id: "", address: "", credit_limit: "5000000", tax_condition_id: NO_TAX_CONDITION })
     }
 
     return (
@@ -359,8 +409,9 @@ function CreateClientDialog({ open, onOpenChange, onSubmit }: { open: boolean, o
                         <Label htmlFor="tax_id" className="text-left sm:text-right">CUIT / DNI</Label>
                         <Input id="tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} className="sm:col-span-3" required />
                     </div>
+                    <TaxConditionField id="tax_condition" value={formData.tax_condition_id} onChange={(value) => setFormData({ ...formData, tax_condition_id: value })} />
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">
-                        <Label htmlFor="email" className="text-left sm:text-right">Correo electronico</Label>
+                        <Label htmlFor="email" className="text-left sm:text-right">Correo electrónico</Label>
                         <Input id="email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="sm:col-span-3" />
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">
@@ -389,11 +440,17 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
         phone: client.phone || "",
         tax_id: client.tax_id,
         address: client.address || "",
-        credit_limit: client.credit_limit.toString()
+        credit_limit: client.credit_limit.toString(),
+        tax_condition_id: client.tax_condition_id || NO_TAX_CONDITION
     })
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
+        const cuitError = taxConditionCuitError(formData.tax_condition_id, formData.tax_id)
+        if (cuitError) {
+            toast.error(cuitError)
+            return
+        }
         const data = {
             ...formData,
             credit_limit: parseFloat(formData.credit_limit)
@@ -419,8 +476,9 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
                         <Label htmlFor="edit-tax_id" className="text-left sm:text-right">CUIT / DNI</Label>
                         <Input id="edit-tax_id" value={formData.tax_id} onChange={(e) => setFormData({ ...formData, tax_id: e.target.value })} className="sm:col-span-3" required />
                     </div>
+                    <TaxConditionField id="edit-tax_condition" value={formData.tax_condition_id} onChange={(value) => setFormData({ ...formData, tax_condition_id: value })} />
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">
-                        <Label htmlFor="edit-email" className="text-left sm:text-right">Correo electronico</Label>
+                        <Label htmlFor="edit-email" className="text-left sm:text-right">Correo electrónico</Label>
                         <Input id="edit-email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="sm:col-span-3" />
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4 sm:items-center sm:gap-4">

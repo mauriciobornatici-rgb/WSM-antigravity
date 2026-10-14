@@ -1,14 +1,19 @@
 import { useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { fetchCompanySettingsSafe } from "@/lib/companySettings"
 import { toast } from "sonner"
 import { api } from "@/services/api"
 import { queryKeys } from "@/lib/queryKeys"
+import { formatMoney } from "@/lib/formatters"
+import { grossLineTotal, grossPrice } from "@/lib/pricing"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import type { Order } from "@/types"
 import type { InvoiceType } from "@/types/orders"
+import { suggestedInvoiceLetter, taxConditionName } from "@/lib/taxConditions"
+import { ClientTaxConditionNotice } from "@/components/clients/ClientTaxConditionNotice"
 
 interface InvoiceDialogProps {
     open: boolean
@@ -24,18 +29,69 @@ const INVOICE_TYPES: Array<{ value: InvoiceType; label: string }> = [
     { value: "TK", label: "Ticket" },
 ]
 
+const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
+
+// Same rules as the server invoice (sales.service createInvoice, ADR-016): once picking
+// started only picked units are billed, a discount keeps its percentage over what was picked
+// of its VAT rate (never more than those products), shipping and surcharges are billed whole.
 function getInvoiceTotal(order: Order): number {
     const items = order.items || []
-    const picked = items
-        .filter((item) => Number(item.picked_quantity || 0) > 0)
-        .reduce((sum, item) => sum + Number(item.picked_quantity || 0) * Number(item.unit_price || 0), 0)
-    if (picked > 0) return picked
-    return items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_price || 0), 0)
+    const anyPicked = items.some((item) => Number(item.picked_quantity || 0) > 0)
+    const ordered = new Map<number, number>()
+    const billed = new Map<number, number>()
+    for (const item of items) {
+        const rate = item.vat_rate == null ? 21 : Number(item.vat_rate)
+        ordered.set(rate, (ordered.get(rate) || 0) + grossLineTotal(item.quantity, item.unit_price, item.vat_rate))
+        const quantity = anyPicked ? Number(item.picked_quantity || 0) : Number(item.quantity)
+        billed.set(rate, (billed.get(rate) || 0) + grossLineTotal(quantity, item.unit_price, item.vat_rate))
+    }
+    let total = round2([...billed.values()].reduce((sum, value) => sum + value, 0))
+    // Shipping paid by the business (billable=false) is neither charged nor invoiced.
+    const adjustments = (order.adjustments || []).filter((adjustment) => adjustment.billable !== false)
+    const orderedTotal = round2([...ordered.values()].reduce((sum, value) => sum + value, 0))
+    const external = Boolean(order.external_source) && order.external_source !== "pos"
+    if (external && adjustments.length === 0 && Math.abs(total - orderedTotal) < 0.005) {
+        // Channel orders imported before ADR-016: the invoice matches what the customer paid.
+        return round2(Number(order.total_amount || total))
+    }
+    // Charges first: a discount on the shipping can use the shipping line as room.
+    const picked = new Map(billed)
+    const sorted = [...adjustments].sort((a, b) => Number(b.amount) - Number(a.amount))
+    for (const adjustment of sorted) {
+        const rate = Number(adjustment.vat_rate)
+        let amount = round2(Number(adjustment.amount || 0))
+        if (amount > 0) {
+            billed.set(rate, (billed.get(rate) || 0) + amount)
+        } else if (amount < 0) {
+            const orderedGross = ordered.get(rate) || 0
+            const pickedGross = picked.get(rate) || 0
+            const available = round2(billed.get(rate) || 0)
+            // A shipping discount follows the shipping, billed whole on a partial delivery.
+            if (adjustment.kind !== "shipping_discount" && orderedGross > 0 && pickedGross < orderedGross) {
+                amount = round2(amount * pickedGross / orderedGross)
+            }
+            amount = Math.max(amount, -available)
+            billed.set(rate, available + amount)
+        }
+        total += amount
+    }
+    return round2(total)
 }
 
 export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: InvoiceDialogProps) {
     const queryClient = useQueryClient()
-    const [invoiceType, setInvoiceType] = useState<InvoiceType>("B")
+    // ADR-021: the letter starts from the customer's VAT condition, and a choice is kept per order.
+    const [choice, setChoice] = useState<{ orderId: string; type: InvoiceType } | null>(null)
+    // Same rule as the POS: a monotributista company issues C, so nothing is suggested then.
+    const companySettings = useQuery({ queryKey: queryKeys.companySettings, queryFn: fetchCompanySettingsSafe, staleTime: 5 * 60_000 })
+    // A condition loaded here (ADR-022) applies at once, before the order list refreshes.
+    const [loaded, setLoaded] = useState<{ clientId: string; taxConditionId: string; taxId: string } | null>(null)
+    const loadedHere = loaded && loaded.clientId === order?.client_id ? loaded : null
+    const clientTaxConditionId = loadedHere?.taxConditionId ?? order?.client_tax_condition_id
+    const suggestedType: InvoiceType = suggestedInvoiceLetter(clientTaxConditionId, companySettings.data?.billing?.iva_condition) ?? "B"
+    const invoiceType: InvoiceType = choice && choice.orderId === order?.id ? choice.type : suggestedType
+    const setInvoiceType = (type: InvoiceType) => { if (order) setChoice({ orderId: order.id, type }) }
+    const clientTaxCondition = taxConditionName(clientTaxConditionId)
 
     const createInvoiceMutation = useMutation({
         mutationFn: ({ orderId, payload }: { orderId: string; payload: Parameters<typeof api.createInvoiceFromOrder>[1] }) =>
@@ -78,6 +134,7 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                         <div>
                             <span className="text-muted-foreground">Cliente: </span>
                             <strong className="text-foreground">{order?.customer_name || order?.client_name || "Consumidor final"}</strong>
+                            {clientTaxCondition ? <span className="text-muted-foreground"> · {clientTaxCondition}</span> : null}
                         </div>
                         {order?.id ? (
                             <div className="text-muted-foreground">
@@ -86,11 +143,25 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                         ) : null}
                     </div>
 
+                    <ClientTaxConditionNotice
+                        client={order?.client_id ? {
+                            id: order.client_id,
+                            name: order.client_name || order.customer_name || "El cliente",
+                            tax_id: loadedHere?.taxId ?? order.client_tax_id ?? "",
+                            tax_condition_id: clientTaxConditionId ?? null,
+                        } : null}
+                        onUpdated={(client) => {
+                            if (order) setChoice(null)
+                            setLoaded({ clientId: client.id, taxConditionId: client.tax_condition_id || "", taxId: client.tax_id || "" })
+                            void queryClient.invalidateQueries({ queryKey: queryKeys.orders.all })
+                        }}
+                    />
+
                     <div className="grid gap-3 sm:grid-cols-2">
                         <div className="space-y-2">
-                            <Label>Tipo de factura</Label>
+                            <Label htmlFor="order-invoice-type">Tipo de factura</Label>
                             <Select value={invoiceType} onValueChange={(value) => setInvoiceType(value as InvoiceType)}>
-                                <SelectTrigger>
+                                <SelectTrigger id="order-invoice-type">
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -118,16 +189,16 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                                     <tr>
                                         <th className="p-2 font-medium">Producto</th>
                                         <th className="p-2 font-medium text-center">Cant.</th>
-                                        <th className="p-2 font-medium text-right">Precio Unit.</th>
-                                        <th className="p-2 font-medium text-right">Subtotal</th>
+                                        <th className="p-2 font-medium text-right">Precio Unit. (IVA incl.)</th>
+                                        <th className="p-2 font-medium text-right">Subtotal (IVA incl.)</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y">
                                     {order?.items && order.items.length > 0 ? (
                                         order.items.map((item) => {
                                             const billedQty = Number(item.picked_quantity || 0) > 0 ? Number(item.picked_quantity) : Number(item.quantity || 1)
-                                            const unitPrice = Number(item.unit_price || 0)
-                                            const subtotal = billedQty * unitPrice
+                                            const unitPrice = grossPrice(item.unit_price, item.vat_rate)
+                                            const subtotal = grossLineTotal(billedQty, item.unit_price, item.vat_rate)
                                             return (
                                                 <tr key={item.id || item.product_id} className="hover:bg-muted/20">
                                                     <td className="p-2">
@@ -143,10 +214,10 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                                                         ) : null}
                                                     </td>
                                                     <td className="p-2 text-right text-muted-foreground">
-                                                        ${unitPrice.toLocaleString("es-AR")}
+                                                        {formatMoney(unitPrice)}
                                                     </td>
                                                     <td className="p-2 text-right font-semibold text-foreground">
-                                                        ${subtotal.toLocaleString("es-AR")}
+                                                        {formatMoney(subtotal)}
                                                     </td>
                                                 </tr>
                                             )
@@ -158,6 +229,15 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                                             </td>
                                         </tr>
                                     )}
+                                    {(order?.adjustments ?? []).filter((adjustment) => adjustment.billable !== false).map((adjustment, idx) => (
+                                        <tr key={`adjustment-${idx}`} className="bg-muted/20">
+                                            <td colSpan={3} className="p-2 font-medium text-foreground">{adjustment.description}</td>
+                                            <td className={`p-2 text-right font-semibold ${adjustment.amount < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}`}>
+                                                {adjustment.amount < 0 ? "-" : ""}
+                                                {formatMoney(Math.abs(adjustment.amount))}
+                                            </td>
+                                        </tr>
+                                    ))}
                                 </tbody>
                             </table>
                         </div>
@@ -167,7 +247,7 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                         <div className="flex items-center justify-between text-base">
                             <span className="text-muted-foreground font-medium">Total factura</span>
                             <strong className="text-foreground text-lg">
-                                ${invoiceTotalAmount.toLocaleString("es-AR")}
+                                {formatMoney(invoiceTotalAmount)}
                             </strong>
                         </div>
                         <p className="border-t pt-2 text-xs text-muted-foreground">

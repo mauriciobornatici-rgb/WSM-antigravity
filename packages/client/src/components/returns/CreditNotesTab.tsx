@@ -17,8 +17,16 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { QueryErrorBanner, QueryLoadingState } from "./QueryStates"
-import { mapCreditNoteRows, creditNoteStatusLabel } from "./helpers"
+import { mapCreditNoteRows, creditNoteStatusLabel, isInternalCreditNote } from "./helpers"
 import { CreditNotePreviewDialog } from "@/components/invoices/CreditNotePreviewDialog"
+import { ArcaLastError } from "@/components/invoices/ArcaLastError"
+import {
+    ARCA_VERIFYING_HELP,
+    arcaAuthorizeButtonLabel,
+    creditNoteFiscalNumber,
+    isArcaAuthorizing,
+    reportArcaAuthorizeError,
+} from "@/lib/arca"
 import type { CompanySettings, Client } from "@/types"
 import type { CreditNoteRow, ClientReturnRow } from "@/types/returns"
 
@@ -52,6 +60,7 @@ export function CreditNotesTab({
 
     const [createOpen, setCreateOpen] = useState(false)
     const [clientId, setClientId] = useState("")
+    const [invoiceId, setInvoiceId] = useState("")
     const [amount, setAmount] = useState(0)
     const [reason, setReason] = useState("")
     // One key per issuing attempt, kept across retries until the note is confirmed: a retry
@@ -63,13 +72,21 @@ export function CreditNotesTab({
 
     const creditNotesQuery = useQuery({
         queryKey: queryKeys.creditNotes.all,
-        queryFn: async () => mapCreditNoteRows(await api.getCreditNotes()),
+        queryFn: async () => mapCreditNoteRows(await api.getCreditNotes({ include_internal: "true" })),
     })
 
     const clientsQuery = useQuery({
         queryKey: queryKeys.clients.all,
         queryFn: () => api.getClients(),
     })
+
+    // A credit note corrects one invoice of the client (ADR-014).
+    const clientInvoicesQuery = useQuery({
+        queryKey: ["invoices", "by-client", clientId],
+        queryFn: () => api.getInvoices({ client_id: clientId }),
+        enabled: createOpen && Boolean(clientId),
+    })
+    const clientInvoices = (clientInvoicesQuery.data ?? []).filter((invoice) => invoice.status !== "cancelled")
 
     const createCreditNoteMutation = useMutation({
         mutationFn: (payload: Parameters<typeof api.createCreditNote>[0]) => api.createCreditNote(payload),
@@ -83,6 +100,8 @@ export function CreditNotesTab({
         onSuccess: async () => {
             await queryClient.invalidateQueries({ queryKey: queryKeys.creditNotes.all })
         },
+        // Any attempt can settle or raise an ARCA alert (dashboard and menu).
+        onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.arcaAlerts }),
     })
 
     const creditNotes = creditNotesQuery.data ?? EMPTY_CREDIT_NOTES
@@ -91,8 +110,8 @@ export function CreditNotesTab({
     const hasLoadError = creditNotesQuery.isError || clientsQuery.isError
 
     async function handleCreateCreditNote() {
-        if (!clientId || amount <= 0) {
-            toast.error("Cliente y monto son obligatorios")
+        if (!clientId || !invoiceId || amount <= 0) {
+            toast.error("Cliente, factura y monto son obligatorios")
             return
         }
 
@@ -101,6 +120,7 @@ export function CreditNotesTab({
             const created = await createCreditNoteMutation.mutateAsync({
                 idempotency_key: idempotencyKey,
                 client_id: clientId,
+                invoice_id: invoiceId,
                 amount: Number(amount),
                 ...(trimmedReason ? { reason: trimmedReason, notes: trimmedReason } : {}),
                 reference_type: "manual",
@@ -114,6 +134,7 @@ export function CreditNotesTab({
             setIdempotencyKey(createClientUuid())
             setCreateOpen(false)
             setClientId("")
+            setInvoiceId("")
             setAmount(0)
             setReason("")
         } catch (error) {
@@ -135,7 +156,11 @@ export function CreditNotesTab({
                 setPreviewCreditNote(mapCreditNoteRows([updated])[0] ?? null)
             }
         } catch (error) {
-            showErrorToast("No se pudo autorizar la nota de crédito", error)
+            reportArcaAuthorizeError("No se pudo autorizar la nota de crédito", error)
+            // The note keeps its new state (rejected with reason, or in verification): refresh list and open preview.
+            const refreshed = await creditNotesQuery.refetch()
+            const row = refreshed.data?.find((item) => item.id === cn.id)
+            if (row && previewCreditNote?.id === cn.id) setPreviewCreditNote(row)
         }
     }
 
@@ -181,14 +206,30 @@ export function CreditNotesTab({
                                     creditNotes.map((row) => (
                                         <TableRow key={row.id}>
                                             <TableCell>{new Date(row.created_at).toLocaleDateString("es-AR")}</TableCell>
-                                            <TableCell className="font-mono font-bold">{row.number}</TableCell>
+                                            <TableCell className="font-mono font-bold">
+                                                {creditNoteFiscalNumber(row) ?? row.number}
+                                                {creditNoteFiscalNumber(row) ? (
+                                                    <span className="block text-xs font-normal text-muted-foreground">{row.number}</span>
+                                                ) : null}
+                                            </TableCell>
                                             <TableCell>
                                                 {row.client_name || row.customer_name || "Consumidor Final"}
                                             </TableCell>
                                             <TableCell>
-                                                <Badge variant={row.status === "authorized" ? "default" : "outline"}>
+                                                <Badge
+                                                    variant={row.status === "authorized" ? "default" : "outline"}
+                                                    title={isArcaAuthorizing(row.status) ? ARCA_VERIFYING_HELP : undefined}
+                                                >
                                                     {creditNoteStatusLabel(row.status)}
                                                 </Badge>
+                                                {isArcaAuthorizing(row.status) ? (
+                                                    <p className="mt-1 max-w-[220px] text-xs text-muted-foreground">{ARCA_VERIFYING_HELP}</p>
+                                                ) : null}
+                                                {isInternalCreditNote(row) ? (
+                                                    <p className="mt-1 max-w-[280px] text-xs text-muted-foreground">{row.notes}</p>
+                                                ) : (
+                                                    <ArcaLastError doc={row} className="mt-1 max-w-[220px]" />
+                                                )}
                                             </TableCell>
                                             <TableCell>
                                                 {row.cae ? (
@@ -203,7 +244,10 @@ export function CreditNotesTab({
                                                 {formatMoney(row.amount)}
                                             </TableCell>
                                             <TableCell className="flex justify-end gap-1 text-right">
-                                                {row.status === "issued" && (
+                                                {isInternalCreditNote(row) ? (
+                                                    <span className="text-xs text-muted-foreground">Comprobante interno, no fiscal</span>
+                                                ) : (<>
+                                                {(row.status === "issued" || isArcaAuthorizing(row.status)) && (
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
@@ -212,7 +256,7 @@ export function CreditNotesTab({
                                                         disabled={authorizeCreditNoteMutation.isPending}
                                                         title="Autorizar con ARCA/AFIP"
                                                     >
-                                                        Autorizar
+                                                        {arcaAuthorizeButtonLabel(row.status, "Autorizar")}
                                                     </Button>
                                                 )}
                                                 <Button
@@ -242,6 +286,7 @@ export function CreditNotesTab({
                                                 >
                                                     <ReceiptText className="h-4 w-4 text-slate-400" />
                                                 </Button>
+                                                </>)}
                                             </TableCell>
                                         </TableRow>
                                     ))
@@ -261,8 +306,14 @@ export function CreditNotesTab({
                     <div className="space-y-3">
                         <div className="space-y-2">
                             <Label>Cliente</Label>
-                            <Select value={clientId} onValueChange={setClientId}>
-                                <SelectTrigger>
+                            <Select
+                                value={clientId}
+                                onValueChange={(value) => {
+                                    setClientId(value)
+                                    setInvoiceId("")
+                                }}
+                            >
+                                <SelectTrigger aria-label="Cliente">
                                     <SelectValue placeholder="Seleccionar" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -273,6 +324,36 @@ export function CreditNotesTab({
                                     ))}
                                 </SelectContent>
                             </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Factura que corrige</Label>
+                            <Select value={invoiceId} onValueChange={setInvoiceId} disabled={!clientId}>
+                                <SelectTrigger aria-label="Factura que corrige">
+                                    <SelectValue
+                                        placeholder={
+                                            !clientId
+                                                ? "Elegí primero el cliente"
+                                                : clientInvoicesQuery.isLoading
+                                                    ? "Cargando facturas…"
+                                                    : clientInvoices.length === 0
+                                                        ? "El cliente no tiene facturas"
+                                                        : "Seleccionar factura"
+                                        }
+                                    />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {clientInvoices.map((invoice) => (
+                                        <SelectItem key={invoice.id} value={invoice.id}>
+                                            {invoice.invoice_type ?? ""} {String(invoice.point_of_sale ?? 1).padStart(4, "0")}-
+                                            {String(invoice.invoice_number ?? "").padStart(8, "0")} · {formatMoney(invoice.total_amount)}
+                                            {invoice.cae ? "" : " · sin CAE"}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">
+                                La nota se autoriza en ARCA asociada a esta factura y no puede superar su saldo acreditable.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <Label>Monto</Label>

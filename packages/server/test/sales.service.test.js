@@ -17,6 +17,8 @@ test('_decreaseInventoryForOrder throws 409 when total stock is insufficient', a
                     { id: 'inv-2', location: 'A-02', quantity: 2, reserved_quantity: 0, available_quantity: 2 }
                 ]];
             }
+            // ADR-015: orders reorder the rows by sales-floor codes (none configured here).
+            if (statement.includes('FROM warehouse_locations WHERE is_sales_floor = 1')) return [[]];
             throw new Error(`Unexpected SQL in insufficient-stock test: ${statement}`);
         }
     };
@@ -35,7 +37,9 @@ test('_decreaseInventoryForOrder throws 409 when total stock is insufficient', a
         }
     );
 
-    assert.equal(calls.length, 1);
+    // Stock lookup + sales-floor codes lookup; nothing is reserved.
+    assert.equal(calls.length, 2);
+    assert.equal(calls.some((call) => call.sql.startsWith('UPDATE')), false);
 });
 
 test('_decreaseInventoryForOrder consumes inventory across locations and registers reservations', async () => {
@@ -54,6 +58,8 @@ test('_decreaseInventoryForOrder consumes inventory across locations and registe
             if (statement.startsWith('UPDATE inventory SET reserved_quantity = reserved_quantity + ? WHERE id = ?')) {
                 return [{ affectedRows: 1 }];
             }
+
+            if (statement.includes('FROM warehouse_locations WHERE is_sales_floor = 1')) return [[]];
 
             throw new Error(`Unexpected SQL in stock-consumption test: ${statement}`);
         }
@@ -190,6 +196,7 @@ test('createOrder persists external source and id for imported marketplace order
             if (statement.includes('INSERT INTO order_item_allocations')) {
                 return [{ affectedRows: 1 }];
             }
+            if (statement.includes('FROM warehouse_locations WHERE is_sales_floor = 1')) return [[]];
 
             throw new Error(`Unexpected SQL inside createOrder external ref test: ${statement}`);
         }
@@ -372,7 +379,7 @@ test('createManualInvoice computes granular Mixed-VAT and rounds line-by-line co
             if (statement.includes('INSERT INTO journal_entry_lines')) {
                 return [{ affectedRows: 1 }];
             }
-            if (statement.includes('SELECT id, name, tax_id, address FROM clients')) {
+            if (statement.includes('tax_condition_id FROM clients')) {
                 return [[{ id: 'client-1', name: 'Cliente Test', tax_id: '20-12345678-9', address: 'Calle Falsa 123' }]];
             }
             if (statement.includes('UPDATE clients')) {
@@ -407,7 +414,7 @@ test('createManualInvoice computes granular Mixed-VAT and rounds line-by-line co
             invoice_type: 'A',
             point_of_sale: 1,
             client_id: 'client-1',
-            payments: [{ method: 'cash', amount: 331.50 }],
+            payments: [{ method: 'cash', amount: 331.51 }],
             items: [
                 {
                     product_id: 'p1',
@@ -420,7 +427,9 @@ test('createManualInvoice computes granular Mixed-VAT and rounds line-by-line co
                     product_id: 'p2',
                     product_name: 'Mixed VAT item 10.5%',
                     quantity: 1,
-                    unit_price: 81.00, // 81 net + 8.505 VAT (8.50 rounded in JS float) = 89.50 total
+                    // ADR-015: the gross is rounded first (81 x 1.105 = 89.505 -> 89.51) and VAT is
+                    // gross - net = 8.51. The old line-VAT rounding gave 8.50 / 89.50 (+-1 cent).
+                    unit_price: 81.00,
                     vat_rate: 10.5
                 }
             ]
@@ -429,9 +438,9 @@ test('createManualInvoice computes granular Mixed-VAT and rounds line-by-line co
         const result = await salesService.createManualInvoice(invoiceData, 'user-1');
 
         assert.equal(result.status, 'issued');
-        assert.equal(result.total_amount, 331.50); // 242.00 + 89.50 = 331.50
-        assert.equal(result.paid_amount, 331.50); // paid as specified in payment line
-        assert.equal(result.payment_status, 'paid'); // 331.50 paid, 331.50 total
+        assert.equal(result.total_amount, 331.51); // 242.00 + 89.51 = 331.51
+        assert.equal(result.paid_amount, 331.51); // paid as specified in payment line
+        assert.equal(result.payment_status, 'paid'); // 331.51 paid, 331.51 total
 
         // Validate insert query net and vat amounts
         const invoiceInsertCall = connectionCalls.find(c => c.sql.includes('INSERT INTO invoices'));
@@ -441,8 +450,8 @@ test('createManualInvoice computes granular Mixed-VAT and rounds line-by-line co
         const [net_amount, vat_amount, total_amount_param] = invoiceInsertCall.params.slice(10, 13);
 
         assert.equal(net_amount, 281.00); // 200 + 81
-        assert.equal(vat_amount, 50.50); // 42.00 + 8.50
-        assert.equal(total_amount_param, 331.50);
+        assert.equal(vat_amount, 50.51); // 42.00 + 8.51
+        assert.equal(total_amount_param, 331.51);
         assert.equal(auditCalls.length, 1);
         assert.equal(auditCalls[0].action, 'CREATE_MANUAL_INVOICE');
         assert.equal(auditCalls[0].entity_type, 'invoice');
@@ -494,7 +503,9 @@ test('authorizeInvoice stores CAE expiration date in audit payload without rolli
             const statement = String(sql);
             connectionCalls.push({ sql: statement, params });
 
-            if (statement.startsWith('UPDATE invoices SET status = "authorized"')) {
+            // ADR-020: the invoice is claimed, then a ticket is authorized locally.
+            if (statement.startsWith("UPDATE invoices SET status = 'authorizing'")
+                || statement.startsWith("UPDATE invoices SET status = 'authorized'")) {
                 return [{ affectedRows: 1 }];
             }
             if (statement.startsWith('SELECT * FROM invoices WHERE id = ?')) {
@@ -533,8 +544,10 @@ test('authorizeInvoice stores CAE expiration date in audit payload without rolli
         const statement = String(sql);
         poolCalls.push({ sql: statement, params });
 
+        // The unlocked first read sees the pending invoice; the result is read back once stored.
         if (statement.startsWith('SELECT * FROM invoices WHERE id = ?')) {
-            return [[issuedInvoice]];
+            if (statement.includes('deleted_at IS NULL')) return [[issuedInvoice]];
+            return [[authorizedInvoice]];
         }
         if (statement.startsWith('SELECT * FROM company_settings')) {
             return [[{}]];

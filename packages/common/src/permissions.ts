@@ -26,6 +26,8 @@ export const PERMISSIONS = {
   CASH_MANAGE: 'cash.manage',
   COLLECTIONS_MANAGE: 'collections.manage',
   ACCOUNTING_MANAGE: 'accounting.manage',
+  // See the "Caja 2" balance and movements (ADR-016); moving money stays ACCOUNTING_MANAGE.
+  TREASURY_READ: 'treasury.read',
   SETTINGS_MANAGE: 'settings.manage',
   USERS_MANAGE: 'users.manage',
   INTEGRATIONS_MANAGE: 'integrations.manage',
@@ -57,6 +59,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<UserRole, readonly Permission[]>>
     PERMISSIONS.RECEPTIONS_MANAGE,
     PERMISSIONS.SUPPLIER_RETURNS_MANAGE,
     PERMISSIONS.SUPPLIER_PAYMENTS_MANAGE,
+    PERMISSIONS.TREASURY_READ,
     PERMISSIONS.QUALITY_MANAGE,
     PERMISSIONS.WARRANTIES_MANAGE,
     PERMISSIONS.COLLECTIONS_MANAGE,

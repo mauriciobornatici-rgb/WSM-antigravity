@@ -54,7 +54,15 @@ test('catchAsync answers business errors and forwards everything else', async ()
 
 test('a manual credit note is not issued when its audit fails (audit inside the transaction)', async (t) => {
     const lifecycle = [];
-    const connection = mockPool(t, async (sql) => (String(sql).includes('MAX(CAST') ? [[{ max_seq: 0 }]] : [[]]));
+    const connection = mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('MAX(CAST')) return [[{ max_seq: 0 }]];
+        if (statement.startsWith('SELECT * FROM invoices')) {
+            return [[{ id: 'inv-1', client_id: 'c-1', invoice_type: 'B', point_of_sale: 1, total_amount: 1000, vat_amount: 173.55 }]];
+        }
+        if (statement.includes('AS credited')) return [[{ credited: 0 }]];
+        return [[]];
+    });
     connection.commit = async () => { lifecycle.push('commit'); };
     connection.rollback = async () => { lifecycle.push('rollback'); };
     const originalLog = auditService.log;
@@ -63,7 +71,7 @@ test('a manual credit note is not issued when its audit fails (audit inside the 
     t.after(() => { auditService.log = originalLog; });
 
     await assert.rejects(
-        () => creditNotesService.createManualCreditNote({ client_id: 'c-1', amount: 100 }, 'u-1', '127.0.0.1'),
+        () => creditNotesService.createManualCreditNote({ client_id: 'c-1', invoice_id: 'inv-1', amount: 100 }, 'u-1', '127.0.0.1'),
         /audit store unavailable/
     );
     assert.equal(auditExecutor, connection, 'the audit runs on the transaction connection');

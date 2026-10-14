@@ -3,9 +3,18 @@ import type { CheckoutSuccessDialogProps } from "@/components/pos/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/services/api";
+import { formatMoney } from "@/lib/formatters";
 import { toast } from "sonner";
 import { Loader2, Printer, ShieldCheck, AlertTriangle } from "lucide-react";
 import type { Invoice } from "@/types/api";
+import { ArcaLastError } from "@/components/invoices/ArcaLastError";
+import {
+    ARCA_VERIFYING_HELP,
+    ARCA_VERIFYING_LABEL,
+    arcaAuthorizeButtonLabel,
+    isArcaAuthorizing,
+    reportArcaAuthorizeError,
+} from "@/lib/arca";
 
 export function CheckoutSuccessDialog({
     open,
@@ -55,14 +64,22 @@ export function CheckoutSuccessDialog({
             }
             setInvoiceState(nextInvoice);
             toast.success("Factura autorizada exitosamente con CAE");
-        } catch {
-            toast.error("Error al autorizar factura con AFIP");
+        } catch (error) {
+            reportArcaAuthorizeError("Error al autorizar factura con ARCA", error);
+            // Rejected (with reason) or in verification: show the new state of the invoice.
+            try {
+                const fresh = await api.getInvoice(invoiceState.id);
+                setInvoiceState((prev) => (prev ? { ...prev, ...fresh } : prev));
+            } catch {
+                // Best effort; the authorize error was already reported.
+            }
         } finally {
             setAuthorizing(false);
         }
     };
 
     const isTicket = invoiceState?.invoice_type === "TK";
+    const verifying = isArcaAuthorizing(invoiceState?.status);
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -87,7 +104,7 @@ export function CheckoutSuccessDialog({
                         </p>
                         <p className="flex justify-between border-b border-slate-800 pb-1">
                             <span className="text-slate-400">Total:</span> 
-                            <span className="font-bold text-emerald-500">${grandTotal.toLocaleString("es-AR", { minimumFractionDigits: 2 })}</span>
+                            <span className="font-bold text-emerald-500">{formatMoney(grandTotal)}</span>
                         </p>
                         {invoiceState?.cae ? (
                             <p className="flex justify-between border-b border-slate-800 pb-1 text-emerald-400">
@@ -98,8 +115,13 @@ export function CheckoutSuccessDialog({
                             <div className="rounded border border-amber-500/20 bg-amber-500/10 p-3 mt-2 text-xs flex flex-col gap-2">
                                 <p className="flex items-start gap-1 text-amber-500 font-sans">
                                     <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
-                                    <span>Esta factura A/B requiere CAE para validez legal fiscal.</span>
+                                    <span>
+                                        {verifying
+                                            ? `${ARCA_VERIFYING_LABEL}. ${ARCA_VERIFYING_HELP}.`
+                                            : "Esta factura A/B requiere CAE para validez legal fiscal."}
+                                    </span>
                                 </p>
+                                <ArcaLastError doc={invoiceState} className="text-red-400" />
                                 <Button 
                                     size="sm" 
                                     className="bg-amber-600 hover:bg-amber-700 text-white font-sans w-full"
@@ -107,9 +129,9 @@ export function CheckoutSuccessDialog({
                                     disabled={authorizing}
                                 >
                                     {authorizing ? (
-                                        <><Loader2 className="mr-2 h-3 w-3 animate-spin" /> Autorizando con AFIP...</>
+                                        <><Loader2 className="mr-2 h-3 w-3 animate-spin" /> {verifying ? "Verificando con ARCA..." : "Autorizando con ARCA..."}</>
                                     ) : (
-                                        "Autorizar con ARCA/AFIP ahora"
+                                        arcaAuthorizeButtonLabel(invoiceState.status, "Autorizar con ARCA ahora")
                                     )}
                                 </Button>
                             </div>

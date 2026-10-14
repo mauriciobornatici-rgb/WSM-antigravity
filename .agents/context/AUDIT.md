@@ -1,5 +1,216 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-011 — 2026-10-14 — `guardian-integridad` sobre ADR-024 (nota de crédito interna)
+
+- **Verificado sano:** ningún camino lleva una nota interna a ARCA. Se revisaron:
+  - el endpoint de autorización, el servicio y el adaptador;
+  - el worker de recuperación y las escrituras internas de ARCA;
+  - los otros dos lugares que crean notas (devolución y manual).
+  La nota no se cuenta dos veces en cuenta corriente, caja, asientos ni topes de NC.
+- [x] **Media:**
+  - **La 061 se había editado después de aplicarse.** Volvió a la versión del commit, y el CHECK pasó a una migración 062 nueva. El reset de local y QA quedó documentado.
+  - **La nota decía "error de ARCA" aunque ARCA no hubiera intervenido** (ticket, o factura nunca enviada). Ahora el texto y el `reference_type` dependen del caso real.
+- [x] **Baja:**
+  - **CHECK:** quedó estricto en las dos direcciones y no deja pasar valores vacíos.
+  - **Notas internas:** se reconocen por estado o por tipo, en todos lados.
+  - **Migraciones:** el runner tolera un CHECK ya creado.
+  - **Numeración NCI:** concilia contra el máximo existente.
+  - **Reemisión:** se rechaza si hay un número de ARCA pendiente.
+  - **Plazo de 5 días:** se cuenta desde la venta original.
+  - **Notas anónimas:** se muestra el nombre del comprador.
+- **Queda anotado (bajo):** el año de la NCI sale de la hora del servidor, igual que en las NC. El CHECK requiere MySQL 8.0.16 o posterior, igual que la 044.
+- **Decisiones confirmadas por el usuario (2026-10-14):**
+  - [x] `arca_configured_at` se fija una sola vez y no se reinicia al pasar de homologación a producción;
+  - [x] una nota interna no se puede anular, por diseño.
+- **Pruebas:** también falló la integración por datos acumulados en QA (más de 100 alertas de corridas anteriores). Ahora el archivo de pruebas ARCA limpia al empezar sus propios puntos de venta de prueba (≥ 9000).
+
+Evidencia: validate 0 (969 + 101); coverage 96,68/90,61/93,97; integración 115/115 ×2 (5 escenarios de reemisión y nota interna con base real, incluido el CHECK); RBAC OK; E2E 6/6; simulación 153/153. Prueba manual en la app local: la nota NCI-2026-0001 se creó con su texto, la autorización respondió 409 y la nota no aparece en la cuenta del cliente.
+
+## AUD-010 — 2026-10-14 — `guardian-integridad` sobre ADR-022 (reemisión, alerta de 24 h, condición en el momento)
+
+- [x] **Alta: la deuda desaparecía si se reemitía a Consumidor Final.** El mayor dejaba de conciliar con la cuenta corriente. Ahora responde 409 `outstanding_requires_client`.
+- [x] **Media:**
+  - Cambios de letra entre familias (A/B ↔ C/ticket) cambiaban el IVA asentado. Ahora: A↔B, ticket→A/B, C→C; nunca electrónica→ticket (422 `reissue_letter_not_allowed`).
+  - Pedido y devoluciones con el cliente viejo: el pedido sigue siempre al cliente de la factura y una devolución en curso bloquea la reemisión.
+  - Costo recalculado distinto del revertido: ahora se copian las líneas del asiento de costo.
+  - Rótulo incoherente de la anulada si ARCA mueve su número provisorio: se guarda `annulled_label` (migración 061, reaplicada en local y QA).
+- [x] **Baja:**
+  - Saldo guardado con piso en cero.
+  - Líneas en cero de asientos viejos se omiten al revertir.
+  - Alerta de 24 h solo sin intentos y solo NC de facturas electrónicas.
+  - No se reemite a un cliente dado de baja.
+  - Mismo cliente y letra: se permite si cambiaron CUIT o condición.
+  - TASKS ya dice 062.
+- **Queda anotado (bajo):**
+  - el cheque conserva al cliente viejo como emisor;
+  - una reversión manual simultánea del mismo asiento o un interbloqueo con el retiro responde 500 sin corrupción (sin reintento);
+  - la carrera reemisión/toma ARCA y reemisión/cobro solo tienen prueba con mock.
+- **Decisiones de negocio (usuario, 2026-10-14, ADR-023):**
+  1. [x] Cualquiera con permiso de facturación puede reemitir.
+  2. [x] Se permite A/B → ticket.
+  3. [x] 5 días corridos ("lo que se estile": plazo de ARCA para bienes); después solo el administrador, auditado.
+  4. [ ] El usuario entendió "reversión" como si correspondiera una nota de crédito. Hay que aclarar que la factura sin CAE no existe para ARCA, así que no admite NC fiscal. Pendiente de confirmar.
+  5. [x] La alerta de 24 h solo cuenta lo emitido después de configurar ARCA (`arca_configured_at`).
+  Evidencia: validate 0 (967 + 101); coverage 96,67/90,60/93,97; integración 114/114 ×2; RBAC OK; E2E 6/6; simulación 153/153.
+
+Evidencia: validate 0 (965 + 100); coverage 96,67/90,71/93,97; integración 114/114 ×2 (20 escenarios ARCA y 4 de reemisión con base real); RBAC OK (4 casos nuevos); E2E 6/6; simulación 153/153. El primer `validate` se cayó al cerrar Node por una aserción de libuv en Windows después de compilar bien; la segunda corrida dio 0.
+
+## AUD-009 — 2026-10-13 — `guardian-integridad` sobre ADR-021 (condición IVA del cliente y alertas ARCA)
+
+- [x] **Alta: la letra A quedaba pegada en el POS** y el servidor aceptaba una Factura A sin cliente o sin CUIT. Era una factura que nunca se iba a poder autorizar ni anular.
+  - Ahora toda Factura A exige un cliente con CUIT de 11 dígitos (422 `invoice_cuit_required`). El control se hace antes de numerar, y también cuando la condición no está cargada.
+  - El POS vuelve a B al limpiar o cambiar el cliente si no hay sugerencia.
+- [x] **Media:**
+  - Responsable Inscripto o Monotributista con DNI: el esquema y los formularios exigen CUIT de 11 dígitos para esas condiciones.
+  - Venta offline reproducida: ya no se emite con una letra que ARCA rechaza. La letra se corrige (el número sigue siendo provisorio) y el cambio queda en la auditoría de `POS_CHECKOUT` (`invoice_type_requested` / `invoice_type_issued`).
+  - Las alertas ahora incluyen los rechazados (pendientes sin CAE y con motivo). Los contadores son exactos, los conflictos van primero y se muestra el número pedido a ARCA.
+  - Migración 060 sin FK a `tax_conditions`: en producción los ids o la intercalación podrían ser otros, y la migración corre al arrancar. Los nombres salen de la lista compartida `CLIENT_TAX_CONDITIONS`. La 060 solo estaba en local y QA: se deshizo y se volvió a aplicar.
+- [x] **Baja:**
+  - Los errores de red se muestran en español en la tarjeta.
+  - La facturación de pedidos considera la condición de la empresa, igual que el POS.
+  - TASKS ya dice 061 para el CHECK de inventario.
+- **Queda anotado (bajo):**
+  - La cola offline vieja (ventas sin turno) pasa por `POST /api/invoices` con el control estricto: una letra incorrecta da 422 en cada reintento.
+  - La edición de cliente no usa lock: dos ediciones simultáneas se pisan, aunque queda auditado.
+  - `offline_captured_at` declarado por el cliente evita el control estricto (se corrige la letra en vez de rechazar). Es el mismo riesgo aceptado en ADR-011.
+- **Decisiones de negocio pendientes:**
+  1. Camino para anular una factura emitida que no se puede autorizar (hoy no existe).
+  2. ¿Las alertas deben incluir facturas sin CAE después de X horas, sin ningún intento?
+  3. Cargar la condición de los clientes existentes. Sin ella, a un Inscripto se le sigue facturando B sin control.
+  4. ¿Hace falta un permiso para cambiar la condición? Hoy la puede cargar el cajero en el alta rápida.
+  5. ¿La factura debe imprimir "Sin especificar" en vez de "Consumidor Final" cuando la condición es desconocida?
+  6. Confirmar en homologación que el Monotributista recibe A (RG 5616).
+- **Antes de desplegar en producción:** nada, porque la 060 ya no depende de `tax_conditions`. Reversión: `ALTER TABLE clients DROP COLUMN tax_condition_id`.
+
+Evidencia: validate 0 (955 + 99); coverage 96,62/90,87/94,10; integración 108/108 ×2 (18 escenarios ARCA con base real); RBAC OK; E2E 6/6; simulación 153/153.
+
+## AUD-008 — 2026-10-13 — `guardian-integridad` sobre ADR-020 (autorización ARCA)
+
+El guardián encontró 3 caminos altos a doble CAE en la primera versión y varios medios. Se rediseñó el flujo:
+- [x] **Alta:**
+  - Al vencer el lock se borraba el número pedido de un documento que podía estar en curso. Ahora "ocupado" responde 409 sin tocar el documento, y el estado ARCA solo lo modifica quien tiene el lock.
+  - Ante una falta de respuesta se liberaba en el acto. Ahora el documento nunca se libera sin que ARCA confirme que el número no existe y sin pasar 2 minutos de enfriamiento.
+  - Los rechazos se clasificaban sin verificar. Ahora también se verifica antes de liberar: si el comprobante se emitió igual, se adopta.
+- [x] **Media:**
+  - Todo el trabajo de base bajo el lock usa la misma conexión, así el pool no puede trabarse.
+  - El documento pasa a 'authorizing' solo cuando su número queda guardado.
+  - El worker no se superpone consigo mismo, no espera el lock y nunca crea comprobantes.
+  - `_finish` no repite la autorización ni la auditoría.
+  - Un conflicto de numeración después de emitido el CAE deja el documento en estado terminal 'arca_conflict', con el CAE guardado, y nunca pide otro.
+  - Se guardan el punto de venta y el tipo pedidos (migración 059) y se verifica contra ellos.
+  - Si no se puede consultar a ARCA antes de pedir, nada cambia (503 `arca_unreachable`).
+- [x] **Baja:**
+  - Una respuesta sin CAE se trata como incierta y se verifica.
+  - La pantalla distingue "en verificación" (informativo) de "no se pudo consultar" (error) y del conflicto.
+- **Verificado en el SDK 1.2.3:** `getVoucherInfo` devuelve null ante el código 602 (no existe) y lanza los demás errores; los rechazos son `AfipWebServiceError` con el código de ARCA.
+- **Solo verificable en homologación de ARCA:** la NC con `CbtesAsoc`; Factura C y NC C sin `Iva`; `CondicionIVAReceptorId` (RG 5616), que ahora se envía desde la condición guardada en la factura (A va a Responsable Inscripto salvo que diga Monotributo); un pedido que llega tarde después de un timeout.
+- **Decisiones de negocio pendientes:**
+  - procedimiento manual ante 'arca_conflict';
+  - si se permite cambiar el punto de venta con comprobantes en verificación (el sistema verifica igual en el punto de venta original);
+  - si la fecha impresa debe ser la de autorización.
+
+Evidencia: validate 0 (946 + 91); coverage 96,63/90,85/94,13; integración 104/104 ×3 (14 escenarios ARCA con base real); RBAC OK; E2E 6/6.
+
+## AUD-007 — 2026-10-13 — `guardian-integridad` sobre ADR-018/019 (delta sin commitear)
+
+El coordinador verificó y corrigió cada hallazgo técnico:
+- [x] **Alta:**
+  - Un pedido online sin asignaciones caía en la rama "legacy" y, al cancelarse, liberaba reservas de otros pedidos. Ahora los pedidos que se reservan por asignaciones se marcan (`orders.allocation_tracked`, migración 057) y nunca usan esa rama. Hay test MySQL.
+  - Las unidades pickeadas por encima de lo reservado no se descontaban al empacar. Ahora salen del disponible, sin quedar negativo. Hay test MySQL.
+  - Republicar el producto mandaba otro número y no actualizaba el estado. Ahora usa el mismo disponible y lo registra, y una variante re-vinculada se vuelve a publicar.
+- [x] **Media:**
+  - Backoff por producto (de 30 s a 1 h) y `failed_syncs` ya no reinicia los intentos.
+  - La corrida se corta tras 5 fallos seguidos.
+  - Se publica un producto a la vez, leyendo el valor justo antes de enviar.
+  - Una corrida completa pedida durante otra no se pierde.
+  - La ventana incremental usa el reloj de la base, con índice en `inventory.updated_at`.
+  - Un aumento (o una primera publicación) espera mientras hay pedidos online sin importar de los últimos 30 minutos.
+  - Lo que deben los pedidos online se descuenta de lo publicado y se reserva solo cuando entra stock, empezando por el pedido más viejo. Hay test MySQL.
+  - Un producto borrado se publica con 0.
+  - Dos facturas simultáneas sobre un remito: la segunda recibe 409, no 500.
+- [x] **Baja:**
+  - La lista de ubicaciones no vendibles se toma de `StockLedger`.
+  - Publicación forzada diaria, que corrige ediciones hechas a mano en el panel de Tiendanube.
+- **Pendiente / decisión:**
+  - [x] Facturar remitos con control de calidad pendiente: bloqueado por decisión del usuario (409 `reception_not_approved`).
+  - Varias instancias del servidor duplicarían las corridas: hoy hay una sola.
+
+Evidencia: validate 0 (890 + 87); coverage 96,81/90,29/94,24; integración 88/88 ×3; RBAC OK; E2E 6/6; simulación 153/153.
+
+## AUD-006 — 2026-10-12 — `guardian-integridad` sobre ADR-017 (delta sin commitear de `codex/simulacion-operativa`)
+
+Todos los hallazgos técnicos fueron verificados y corregidos:
+- [x] Alta: dos aprobaciones simultáneas devolvían el envío dos veces. La lectura de REPEATABLE READ fijaba la foto antes del lock del pedido. Ahora el pedido se bloquea antes de cualquier lectura sin lock. Hay test MySQL con `Promise.all`.
+- [x] Alta: el script de precios podía bajar un 17 % el precio de un producto creado en el ERP y vinculado después por SKU. Ahora se clasifica como del ERP si tiene alta auditada o si existía antes de vincularse.
+- [x] Media:
+  - No se puede cambiar el envío si el pedido tiene cobros en cuenta corriente o devoluciones.
+  - La alícuota queda guardada en cada línea del pedido (migración 054): cambiar la del producto ya no cambia lo que factura un pedido abierto.
+  - La importación de Tiendanube es atómica por producto.
+  - El descuento sobre el envío no se prorratea en una entrega parcial (el envío se cobra completo), igual en el servidor y en la pantalla.
+- [x] Baja:
+  - El IVA de cada alícuota de compra se valida contra su neto.
+  - Los totales del comprobante tienen que ser la suma de sus alícuotas, y el neto debe ser mayor a 0.
+  - La línea "Envío y otros cargos" de facturas viejas no se bonifica como envío.
+  - Se agregó un índice en `client_returns.order_id`.
+  - El retiro en mostrador usa el precio de catálogo con 4 decimales.
+- Pendiente o decisión: el producto se crea fuera de la transacción de su stock inicial (patrón previo); una NC de devolución anulada sigue contando el envío como devuelto.
+
+Evidencia: validate 0 (878 + 84); coverage 96,88/90,17/94,75; integración 81/81 ×3; RBAC OK; E2E 6/6; simulación 153/153.
+
+## AUD-005 — 2026-10-12 — `guardian-integridad` sobre ADR-016 (delta sin commitear de `codex/simulacion-operativa`)
+
+El coordinador verificó y corrigió cada hallazgo técnico:
+- [x] **Alta:** con un cupón repartido en varios productos, las devoluciones podían sumar 1 centavo más que la factura, y la última daba 409.
+  - Ahora el descuento de cada alícuota se reparte por mayor resto (`allocateCents`), así que los productos suman exactamente lo cobrado.
+  - La última unidad devuelve lo que queda de lo cobrado menos lo ya devuelto.
+  - Hay test unitario y uno MySQL (3 productos con cupón, devueltos de a uno, suman la factura).
+- [x] **Media:**
+  - La NC a ARCA toma la alícuota de la línea de factura, no la del producto hoy.
+  - Picking parcial: el descuento conserva su porcentaje sobre lo preparado, con auditoría, y la pantalla calcula igual que el servidor.
+  - Una línea sin preparar ya no se factura completa.
+  - Una devolución no supera lo facturado (409 `return_exceeds_invoiced`).
+  - La devolución a proveedor revierte el crédito fiscal en la cuenta que usó el asiento de esa compra.
+  - El total de una compra se compara con sus partes en centavos exactos.
+  - Una compra con IVA y alícuota 0 % se rechaza.
+  - El asiento exige Debe = Haber al centavo; antes toleraba 1 centavo.
+  - La migración 052 guarda los totales anteriores en `orders_total_backup_052`, con la reversión documentada, y cubre pedidos con factura borrada.
+  - Los pedidos de Tiendanube anteriores a la 051 facturan la diferencia con lo cobrado.
+- [x] **Baja:**
+  - Un débito muy chico queda entero en el gasto (antes daba error).
+  - El reintento de una acreditación se resuelve antes de validar las alícuotas.
+  - Un descuento mayor que los productos pasa a ser descuento sobre el envío.
+  - Un nombre de alícuota duplicado responde 409.
+  - El script de precios excluye las altas del ERP con stock y avisa que hay que republicar.
+  - El IVA del descuento se calcula con una sola fórmula (`grossLineAmounts`).
+- **Descartado:** "producto repetido en el script por variantes": `tiendanube_catalog_variants.product_id` es único.
+- **Observación:** en 1 de 5 corridas, el archivo `purchase-order-lifecycle.integration.js` falló completo al inicio (unos 200 ms), sin ninguna aserción fallida. Las otras 4 corridas dieron 74/74. No toca código de ADR-016; queda a investigar.
+- **Decisiones de negocio pendientes:**
+  - el IVA del envío y del recargo (hoy 21 %);
+  - si el envío se devuelve al devolver todo;
+  - envío y descuento en un picking parcial;
+  - facturas de compra con varias alícuotas.
+
+Evidencia: validate 0 (873 + 83); coverage 98,03/90,48/95,97; integración 74/74 en 4 de 5 corridas (ver la observación); RBAC OK; E2E 6/6; simulación 153/153.
+
+## AUD-004 — 2026-10-12 — `guardian-integridad` y `revisor-ux` sobre ADR-015 (delta sin commitear de `codex/simulacion-operativa`)
+
+El coordinador verificó cada hallazgo en el código antes de corregirlo:
+- [x] Alta: la NC de una devolución mandaba a ARCA ítems sin `total_line`/`vat_amount`. Ahora salen de `lineAmounts`.
+- [x] Alta: el saldo de Caja 2 se leía de una foto vieja de la transacción (REPEATABLE READ), lo que permitía dos gastos concurrentes por encima del saldo. Ahora se toma el lock de la cuenta y la suma se hace `FOR SHARE`. Hay test MySQL concurrente.
+- [x] Media: el saldo del cajón al sacar efectivo tenía el mismo problema; ahora se calcula con lock.
+- [x] Media: el precio vendido promedio de una devolución se redondeaba a 2 decimales; ahora a 4.
+- [x] Media: una venta offline encolada antes del cambio quedaba trabada por centavos. Ahora el último pago absorbe hasta 1 centavo por línea, con auditoría, y la caja y la factura usan el mismo monto.
+- [x] Baja: el precio pedido igual al del catálogo redondeado pierde los 4 decimales. Ahora se usa el del catálogo.
+- [x] Baja: orden de locks (Caja 2 antes que el turno), replay `FOR SHARE`, validación de la clave y clave obligatoria en traspasos.
+- [x] Baja: rótulos de `transfer_in`/`transfer_out` en el reporte Z. No hace falta cambio: el reporte solo muestra entradas y salidas totales, que ya los incluyen.
+- [x] UX (13 puntos):
+  - montos con `formatMoney`, "Total a pagar" con neto + IVA, y botones del carrito de 44 px con nombre;
+  - estados de carga y error, y confirmación, en Caja 2 y Tarjetas;
+  - saldo de Caja 2 en el pago a proveedor;
+  - las etiquetas de código de barras nunca imprimen el costo;
+  - Ley 27.743: "IVA contenido" en la factura B y el ticket, la A discriminada y la C sin IVA;
+  - factura manual validada.
+
 ## AUD-003 — 2026-10-12 — `guardian-integridad` sobre ADR-012 (delta sin commitear de `codex/sql-out-of-controllers`)
 
 El guardián (opus) informó 5 hallazgos. El coordinador verificó cada uno en el código antes de corregir:

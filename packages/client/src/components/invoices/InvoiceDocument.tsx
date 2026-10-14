@@ -1,6 +1,15 @@
 import { useState } from "react"
 import { Mail, Printer, AlertTriangle, ShieldCheck, Loader2, ReceiptText } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { formatMoney } from "@/lib/formatters"
+import { grossLineTotal, grossPrice, vatRateOf } from "@/lib/pricing"
+import {
+    ARCA_VERIFYING_HELP,
+    ARCA_VERIFYING_LABEL,
+    arcaAuthorizeButtonLabel,
+    isArcaAuthorizing,
+} from "@/lib/arca"
+import { ArcaLastError } from "./ArcaLastError"
 import { formatInvoiceNumber } from "./invoiceUtils"
 import { buildAfipQrUrlFromInvoice } from "./afipQr"
 import { AfipQrImage } from "./AfipQrImage"
@@ -39,7 +48,10 @@ export function InvoiceDocument({
     onPrintThermal,
 }: InvoiceDocumentProps) {
     const isTicket = invoice.invoice_type === "TK"
+    const isInvoiceA = invoice.invoice_type === "A"
+    const isInvoiceC = invoice.invoice_type === "C"
     const [authorizing, setAuthorizing] = useState(false)
+    const verifying = isArcaAuthorizing(invoice.status)
 
     const afipQrUrl = buildAfipQrUrlFromInvoice(invoice, companyTaxId)
 
@@ -55,13 +67,18 @@ export function InvoiceDocument({
             id={printMode ? undefined : "printable-invoice-content"}
             className={printMode ? "w-full space-y-8 bg-white p-10" : "space-y-8 p-8"}
         >
-            {invoice.status === "issued" && !isTicket && (
+            {(invoice.status === "issued" || verifying) && !isTicket && (
                 <div className="no-print flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-md border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-slate-800 print:hidden shadow-sm">
                     <div className="flex items-start gap-2">
                         <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
                         <div>
-                            <span className="font-bold block text-amber-800">Comprobante Pendiente de Autorización Fiscal</span>
-                            Este comprobante comercial aún no ha sido autorizado con el CAE de ARCA (ex-AFIP). Los totales no son válidos para balances oficiales hasta su aprobación.
+                            <span className="font-bold block text-amber-800">
+                                {verifying ? ARCA_VERIFYING_LABEL : "Comprobante Pendiente de Autorización Fiscal"}
+                            </span>
+                            {verifying
+                                ? `${ARCA_VERIFYING_HELP}.`
+                                : "Este comprobante comercial aún no ha sido autorizado con el CAE de ARCA (ex-AFIP). Los totales no son válidos para balances oficiales hasta su aprobación."}
+                            <ArcaLastError doc={invoice} className="mt-1" />
                         </div>
                     </div>
                     {onAuthorize && (
@@ -81,7 +98,7 @@ export function InvoiceDocument({
                                 }
                             }}
                         >
-                            {authorizing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin animate" /> Autorizando...</> : "Autorizar con ARCA"}
+                            {authorizing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin animate" /> {verifying ? "Verificando..." : "Autorizando..."}</> : arcaAuthorizeButtonLabel(invoice.status)}
                         </Button>
                     )}
                 </div>
@@ -143,16 +160,21 @@ export function InvoiceDocument({
                         <tr>
                             <th className="border-r border-slate-300 p-2 text-left">Descripción</th>
                             <th className="w-20 border-r border-slate-300 p-2 text-center">Cant.</th>
-                            <th className="w-32 border-r border-slate-300 p-2 text-right">Unitario</th>
-                            <th className="w-32 p-2 text-right">Total</th>
+                            <th className="w-32 border-r border-slate-300 p-2 text-right">{isInvoiceA ? "Unitario (neto)" : "Unitario (IVA incl.)"}</th>
+                            <th className="w-32 p-2 text-right">{isInvoiceA ? "Subtotal (neto)" : "Total"}</th>
                         </tr>
                     </thead>
                     <tbody>
                         {invoice.items && invoice.items.length > 0 ? (
                             invoice.items.map((item: InvoiceItem, index: number) => {
                                 const qty = Number(item.quantity || 1);
-                                const unitPrice = Number(item.unit_price || 0);
-                                const lineTotal = Number(item.total_line != null ? item.total_line : qty * unitPrice);
+                                // Stored unit prices are net (ADR-015). Factura A is fiscal: net detail, VAT in the summary.
+                                // B / C / ticket are for the consumer: final unit price and VAT-included line total.
+                                const grossLine = Number(item.total_line != null ? item.total_line : grossLineTotal(qty, item.unit_price, item.vat_rate));
+                                const unitPrice = isInvoiceA ? Number(item.unit_price || 0) : grossPrice(item.unit_price, item.vat_rate);
+                                const lineTotal = isInvoiceA
+                                    ? Math.round((grossLine / (1 + vatRateOf(item.vat_rate) / 100)) * 100) / 100
+                                    : grossLine;
                                 return (
                                     <tr key={index} className="border-b border-slate-200">
                                         <td className="border-r border-slate-200 p-2 text-left">
@@ -161,10 +183,10 @@ export function InvoiceDocument({
                                         </td>
                                         <td className="border-r border-slate-200 p-2 text-center font-mono">{qty}</td>
                                         <td className="border-r border-slate-200 p-2 text-right font-mono">
-                                            ${unitPrice.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            {formatMoney(unitPrice)}
                                         </td>
                                         <td className="p-2 text-right font-semibold font-mono">
-                                            ${lineTotal.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            {formatMoney(lineTotal)}
                                         </td>
                                     </tr>
                                 );
@@ -174,10 +196,10 @@ export function InvoiceDocument({
                                 <td className="border-r border-slate-200 p-2 text-left">Comprobante sin ítems asociados</td>
                                 <td className="border-r border-slate-200 p-2 text-center">-</td>
                                 <td className="border-r border-slate-200 p-2 text-right">
-                                    ${Number(invoice.net_amount || invoice.subtotal || 0).toLocaleString("es-AR")}
+                                    {formatMoney(invoice.net_amount || invoice.subtotal || 0)}
                                 </td>
                                 <td className="p-2 text-right font-semibold">
-                                    ${Number(invoice.total_amount || 0).toLocaleString("es-AR")}
+                                    {formatMoney(invoice.total_amount || 0)}
                                 </td>
                             </tr>
                         )}
@@ -260,17 +282,27 @@ export function InvoiceDocument({
                     )}
                 </div>
                 <div className="w-72 space-y-2 rounded-sm bg-slate-100 p-4 text-sm">
-                    <div className="flex justify-between">
-                        <span>Subtotal:</span>
-                        <span>${Number(invoice.net_amount || 0).toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span>{taxRateLabel}:</span>
-                        <span>${Number(invoice.vat_amount || 0).toFixed(2)}</span>
-                    </div>
+                    {isInvoiceA ? (
+                        <>
+                            <div className="flex justify-between">
+                                <span>Subtotal neto:</span>
+                                <span>{formatMoney(invoice.net_amount || 0)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>{taxRateLabel}:</span>
+                                <span>{formatMoney(invoice.vat_amount || 0)}</span>
+                            </div>
+                        </>
+                    ) : !isInvoiceC ? (
+                        // Ley 27.743 (Transparencia Fiscal al Consumidor): B and tickets show the VAT contained in the final price.
+                        <div className="flex justify-between text-xs text-slate-700">
+                            <span>IVA contenido:</span>
+                            <span>{formatMoney(invoice.vat_amount || 0)}</span>
+                        </div>
+                    ) : null}
                     <div className="mt-2 flex justify-between border-t-2 border-slate-900 pt-2 text-2xl font-black">
                         <span>TOTAL:</span>
-                        <span>${Number(invoice.total_amount || 0).toFixed(2)}</span>
+                        <span>{formatMoney(invoice.total_amount || 0)}</span>
                     </div>
                 </div>
             </div>

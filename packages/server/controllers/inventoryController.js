@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import inventoryService from '../services/inventory.service.js';
+import tiendanubeService from '../services/tiendanube.service.js';
 import catalogOptionsService from '../services/catalogOptions.service.js';
 import inventoryLocationsService from '../services/inventoryLocations.service.js';
 import catchAsync from '../utils/catchAsync.js';
@@ -150,6 +151,12 @@ export const deleteProduct = catchAsync(async (req, res) => {
             old_values: previous,
             ip_address: getRequestIp(req)
         });
+        // AUD-007: a deleted product stops being sold online (published with 0 units).
+        if (previous.tiendanube_variant_id) {
+            setImmediate(() => {
+                tiendanubeService.publishZeroStock(id).catch((err) => console.error('[TiendaNube Stock] Error al publicar 0:', err));
+            });
+        }
     }
     res.json(result);
 });

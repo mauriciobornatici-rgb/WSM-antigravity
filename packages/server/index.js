@@ -31,6 +31,8 @@ import { validateZod, zodSchemas } from './middleware/validationMiddleware.js';
 import * as userController from './controllers/userController.js';
 import tiendaNubeService from './services/tiendanube.service.js';
 import salesService from './services/sales.service.js';
+import arcaAuthorization from './domains/fiscal/ArcaAuthorizationService.js';
+import { invoiceArcaAdapter, creditNoteArcaAdapter } from './domains/fiscal/arcaAdapters.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REQUEST_ID_PATTERN = /^[\w.-]{1,64}$/;
@@ -42,6 +44,10 @@ const port = env.port;
 let httpServer = null;
 let syncInterval = null;
 let webhookInterval = null;
+let stockReconcileInterval = null;
+let stockFullReconcileInterval = null;
+let stockDailyPushInterval = null;
+let arcaRecoveryInterval = null;
 
 if (env.trustProxy !== undefined) {
     app.set('trust proxy', env.trustProxy);
@@ -250,6 +256,39 @@ Health Check: http://localhost:${port}/api/health
             // unref() to allow Node.js to exit cleanly if needed (e.g. during test sweeps or shutdown)
             syncInterval.unref();
 
+            // ADR-019 — one stock: publish the available stock of every product whose stock or
+            // reservations changed (every 20 s, a cheap query; Tiendanube is called only for
+            // values that changed) and compare everything once an hour to heal any drift.
+            stockReconcileInterval = setInterval(() => {
+                tiendaNubeService.reconcileStock().catch(err => {
+                    console.error('[TiendaNube Stock] Error:', err);
+                });
+            }, 20 * 1000);
+            stockReconcileInterval.unref();
+            stockFullReconcileInterval = setInterval(() => {
+                tiendaNubeService.reconcileStock({ full: true }).catch(err => {
+                    console.error('[TiendaNube Stock] Error en la conciliación completa:', err);
+                });
+            }, 60 * 60 * 1000);
+            stockFullReconcileInterval.unref();
+            // Once a day every product is published again, even if unchanged here: it corrects
+            // stock edited by hand in the Tiendanube panel (one call per product per day).
+            stockDailyPushInterval = setInterval(() => {
+                tiendaNubeService.reconcileStock({ full: true, force: true }).catch(err => {
+                    console.error('[TiendaNube Stock] Error en la publicación diaria:', err);
+                });
+            }, 24 * 60 * 60 * 1000);
+            stockDailyPushInterval.unref();
+
+            // ADR-020: invoices and credit notes left waiting for ARCA (a crash, a lost answer)
+            // are settled every 2 minutes by asking ARCA about the number they requested.
+            arcaRecoveryInterval = setInterval(() => {
+                arcaAuthorization.recoverPending([invoiceArcaAdapter, creditNoteArcaAdapter]).catch(err => {
+                    console.error('[ARCA] Error en la recuperación:', err);
+                });
+            }, 2 * 60 * 1000);
+            arcaRecoveryInterval.unref();
+
             // Recover durable webhook events left pending by crashes or transient failures.
             webhookInterval = setInterval(() => {
                 tiendaNubeService.processPendingWebhookEvents(salesService).catch(err => {
@@ -269,6 +308,10 @@ const shutdown = async (signal) => {
     console.log(JSON.stringify({ timestamp: new Date().toISOString(), event: 'shutdown_started', signal }));
     if (syncInterval) clearInterval(syncInterval);
     if (webhookInterval) clearInterval(webhookInterval);
+    if (stockReconcileInterval) clearInterval(stockReconcileInterval);
+    if (stockFullReconcileInterval) clearInterval(stockFullReconcileInterval);
+    if (stockDailyPushInterval) clearInterval(stockDailyPushInterval);
+    if (arcaRecoveryInterval) clearInterval(arcaRecoveryInterval);
     if (httpServer) {
         await new Promise((resolve) => httpServer.close(resolve));
     }

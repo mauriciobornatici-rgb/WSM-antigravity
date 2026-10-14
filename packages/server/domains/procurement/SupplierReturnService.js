@@ -3,6 +3,8 @@ import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
 import { nextDocumentSequence } from '../../utils/documentSequence.js';
+import { ACCOUNTS } from '../../utils/paymentAccounts.js';
+import { allocateCents } from '../../utils/vatMath.js';
 
 export class SupplierReturnService {
     /**
@@ -18,7 +20,9 @@ export class SupplierReturnService {
             `SELECT id, location, quantity, reserved_quantity
              FROM inventory
              WHERE product_id = ? AND quantity - reserved_quantity > 0
-             ORDER BY FIELD(location, 'Devoluciones a Proveedores', 'Cuarentena', 'Mermas') DESC,
+             -- FIELD() ranks by position and unknown locations get 0: listed in reverse so that
+             -- DESC tries 'Devoluciones a Proveedores' first, then Cuarentena, then Mermas.
+             ORDER BY FIELD(location, 'Mermas', 'Cuarentena', 'Devoluciones a Proveedores') DESC,
                       quantity - reserved_quantity DESC, id
              FOR UPDATE`,
             [item.product_id]
@@ -58,9 +62,11 @@ export class SupplierReturnService {
 
     async _resolveReturnAccounting(connection, supplierId, netTotal) {
         const [invoices] = await connection.query(
-            `SELECT si.net_amount, si.vat_amount
+            `SELECT si.id, si.net_amount, si.vat_amount, si.invoice_type
              FROM supplier_invoices si
              WHERE si.supplier_id = ?
+               -- ADR-017: a freight or expense invoice never brought goods.
+               AND COALESCE(si.purchase_kind, 'goods') = 'goods'
                AND EXISTS (
                    SELECT 1 FROM journal_entries je
                    WHERE je.reference_type = 'supplier_invoice' AND je.reference_id = si.id
@@ -74,7 +80,27 @@ export class SupplierReturnService {
         const vatRatio = invoiceNet > 0 ? Number(invoices[0].vat_amount || 0) / invoiceNet : 0;
         const netCents = Math.round(netTotal * 100);
         const vatCents = Math.round(netCents * vatRatio);
-        return { netAmount: netCents / 100, vatAmount: vatCents / 100, grossAmount: (netCents + vatCents) / 100 };
+        // ADR-016: the reversal follows how that purchase was actually posted. If its entry
+        // booked fiscal credit, the credit is reversed in that same account. If not (a B or C
+        // invoice since ADR-016), the VAT went into the goods' cost and leaves inventory with them.
+        const [creditLines] = await connection.query(
+            `SELECT jl.account_code, SUM(jl.debit) AS amount
+             FROM journal_entry_lines jl JOIN journal_entries je ON je.id = jl.journal_entry_id
+             WHERE je.reference_type = 'supplier_invoice' AND je.reference_id = ?
+               AND jl.account_code LIKE '1.1.05.%' AND jl.account_code <> ?
+             GROUP BY jl.account_code ORDER BY amount DESC`,
+            [invoices[0].id, ACCOUNTS.WITHHOLDINGS]
+        );
+        if (vatCents > 0 && creditLines.length === 0) {
+            return { netAmount: (netCents + vatCents) / 100, vatAmount: 0, grossAmount: (netCents + vatCents) / 100, vatLines: [] };
+        }
+        // ADR-017: an invoice with several rates booked several credit accounts: the reversal
+        // is split over them in the same proportion, to the cent.
+        const parts = allocateCents(vatCents, creditLines.map((line) => Math.round(Number(line.amount) * 100)));
+        const vatLines = creditLines
+            .map((line, index) => ({ account_code: line.account_code, amount: parts[index] / 100 }))
+            .filter((line) => line.amount > 0);
+        return { netAmount: netCents / 100, vatAmount: vatCents / 100, grossAmount: (netCents + vatCents) / 100, vatLines };
     }
 
     async nextSupplierReturnNumber(connection) {
@@ -116,7 +142,7 @@ export class SupplierReturnService {
 
             const ids = rows.map((r) => r.id);
             const [items] = await pool.query(`
-                SELECT sri.*, p.name AS product_name, p.sku
+                SELECT sri.*, p.name AS product_name, p.sku, p.vat_rate
                 FROM supplier_return_items sri
                 LEFT JOIN products p ON sri.product_id = p.id
                 WHERE sri.return_id IN (?)
@@ -229,7 +255,7 @@ export class SupplierReturnService {
                 ? await this._resolveReturnAccounting(connection, supplierReturn.supplier_id, totalAmount)
                 : null;
             if (accounting) {
-                const { netAmount, vatAmount, grossAmount } = accounting;
+                const { netAmount, grossAmount, vatLines = [] } = accounting;
                 await accountingService.createJournalEntry(connection, {
                     description: `Devolución a proveedor ${supplierReturn.return_number}`,
                     reference_type: 'supplier_return',
@@ -237,9 +263,9 @@ export class SupplierReturnService {
                     lines: [
                         { account_code: '2.1.01.01', debit: grossAmount, credit: 0, notes: 'Proveedores - devolución' },
                         { account_code: '1.1.04.01', debit: 0, credit: netAmount, notes: 'Salida de mercadería devuelta' },
-                        ...(vatAmount > 0
-                            ? [{ account_code: '1.1.05.02', debit: 0, credit: vatAmount, notes: 'Reversión de IVA Crédito Fiscal' }]
-                            : [])
+                        ...vatLines.map((line) => ({
+                            account_code: line.account_code, debit: 0, credit: line.amount, notes: 'Reversión de IVA Crédito Fiscal'
+                        }))
                     ]
                 });
 

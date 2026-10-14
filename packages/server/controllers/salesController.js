@@ -3,7 +3,9 @@ import financeService from '../services/finance.service.js';
 import pickupOrderCheckoutUseCase from '../domains/sales/PickupOrderCheckoutUseCase.js';
 import posCheckoutUseCase from '../domains/sales/PosCheckoutUseCase.js';
 import posExceptionsService from '../domains/sales/PosExceptionsService.js';
+import arcaAuthorizationService from '../domains/fiscal/ArcaAuthorizationService.js';
 import catchAsync from '../utils/catchAsync.js';
+import { hasPermission, PERMISSIONS } from '@wsm/common';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
 import { applyPaginationHeaders, getPagination } from '../utils/pagination.js';
@@ -59,6 +61,10 @@ export const listPosExceptions = catchAsync(async (req, res) => {
 
 export const reviewPosException = catchAsync(async (req, res) => {
     res.json(await posExceptionsService.review(req.params.id, req.body, req.user?.id));
+});
+
+export const updateOrderShipping = catchAsync(async (req, res) => {
+    res.json(await salesService.updateOrderShipping(req.params.id, req.body, req.user?.id || null));
 });
 
 export const updateOrderStatus = catchAsync(async (req, res) => {
@@ -175,6 +181,16 @@ export const getInvoiceItems = catchAsync(async (req, res) => {
     }
     const rows = await salesService.getInvoiceItems(invoice_id);
     res.json(rows);
+});
+
+export const reissueInvoice = catchAsync(async (req, res) => {
+    // Past the usual window only an administrator (ADR-022).
+    const allowLate = hasPermission(req.user?.role, PERMISSIONS.SETTINGS_MANAGE);
+    res.json(await salesService.reissueInvoice(req.params.id, req.body, req.user?.id, { allowLate }));
+});
+
+export const getArcaAlerts = catchAsync(async (req, res) => {
+    res.json(await arcaAuthorizationService.listAlerts());
 });
 
 export const getTaxConditions = catchAsync(async (req, res) => {

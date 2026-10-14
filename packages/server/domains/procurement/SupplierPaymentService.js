@@ -1,6 +1,11 @@
 import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
+import accountingService from '../../services/accounting.service.js';
+import { ACCOUNTS, disbursementAccountFor } from '../../utils/paymentAccounts.js';
+import { recordDrawerOutflow } from '../../services/cashShift.service.js';
+import { claimIdempotentRequest, saveIdempotentResponse } from '../../utils/idempotency.js';
+import { ensureTreasuryFunds, lockTreasury } from '../../services/treasury.service.js';
 
 export class SupplierPaymentService {
     async getSupplierPayments(supplierId = null) {
@@ -39,6 +44,18 @@ export class SupplierPaymentService {
         try {
             await connection.beginTransaction();
 
+            // ADR-015: a double click or a lost response must not pay (nor take cash out) twice.
+            const { replay } = await claimIdempotentRequest(connection, 'supplier_payment', data.idempotency_key, data);
+            if (replay) {
+                await connection.commit();
+                return replay;
+            }
+
+            // Lock order (ADR-015): Caja 2 before any drawer shift, as in treasury transfers.
+            if (payments.some((p) => disbursementAccountFor(p.payment_method || 'Efectivo') === ACCOUNTS.TREASURY_CASH)) {
+                await lockTreasury(connection);
+            }
+
             let total = 0;
             const createdIds = [];
             for (const payment of payments) {
@@ -46,6 +63,7 @@ export class SupplierPaymentService {
                 if (amount <= 0) continue;
 
                 const id = crypto.randomUUID();
+                const method = payment.payment_method || 'Efectivo';
                 createdIds.push(id);
                 total += amount;
 
@@ -57,10 +75,31 @@ export class SupplierPaymentService {
                     supplier_id,
                     amount,
                     payment_date || new Date().toISOString().slice(0, 10),
-                    payment.payment_method || 'Efectivo',
+                    method,
                     payment.reference_number || null,
                     notes || null
                 ]);
+
+                // Same posting as the invoice-by-invoice payment: the supplier debt goes down
+                // and so does the bank or cash account it was paid from.
+                const sourceAccount = disbursementAccountFor(method);
+                if (sourceAccount === ACCOUNTS.CASH) {
+                    // Cash leaves the drawer: recorded once, in the open shift (ADR-014).
+                    await recordDrawerOutflow(connection, { registerId: data.cash_register_id || null, amount, referenceId: id });
+                } else if (sourceAccount === ACCOUNTS.TREASURY_CASH) {
+                    // "Caja 2" (ADR-015): never spend more than it holds.
+                    await ensureTreasuryFunds(connection, amount);
+                }
+                await accountingService.createJournalEntry(connection, {
+                    date: new Date(),
+                    description: `Pago a proveedor (${method})`,
+                    reference_type: 'supplier_payment',
+                    reference_id: id,
+                    lines: [
+                        { account_code: ACCOUNTS.SUPPLIERS, debit: amount, credit: 0, notes: 'Cancelación deuda proveedor' },
+                        { account_code: sourceAccount, debit: 0, credit: amount, notes: payment.reference_number || 'Pago a proveedor' }
+                    ]
+                });
             }
 
             if (total <= 0) {
@@ -71,7 +110,7 @@ export class SupplierPaymentService {
 
             await connection.query(`
                 UPDATE suppliers
-                SET account_balance = GREATEST(COALESCE(account_balance, 0) - ?, 0)
+                SET account_balance = COALESCE(account_balance, 0) - ?
                 WHERE id = ?
             `, [total, supplier_id]);
 
@@ -86,8 +125,8 @@ export class SupplierPaymentService {
                 supplier_id
             ]);
 
-            await connection.commit();
-
+            // Audited inside the transaction: a failing audit no longer leaves a committed
+            // payment behind for a retry to post twice.
             await auditService.log({
                 user_id: userId || null,
                 action: 'CREATE_SUPPLIER_PAYMENT',
@@ -101,9 +140,12 @@ export class SupplierPaymentService {
                     total
                 },
                 ip_address: ipAddress
-            });
+            }, connection);
+            const response = { success: true, ids: createdIds, total };
+            await saveIdempotentResponse(connection, 'supplier_payment', data.idempotency_key, response);
+            await connection.commit();
 
-            return { success: true, ids: createdIds, total };
+            return response;
         } catch (err) {
             await connection.rollback();
             throw err;

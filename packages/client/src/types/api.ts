@@ -34,7 +34,7 @@ export interface PaginatedResponse<T> {
     pagination?: PaginationMeta;
 }
 
-export type ClientUpsertInput = Pick<Client, "name" | "email" | "phone" | "tax_id" | "address" | "credit_limit">;
+export type ClientUpsertInput = Pick<Client, "name" | "email" | "phone" | "tax_id" | "address" | "credit_limit"> & { tax_condition_id?: string | null };
 export type SupplierUpsertInput = Pick<Supplier, "name" | "tax_id" | "contact_name" | "email" | "phone" | "address">;
 
 export type UserRole = User["role"];
@@ -153,7 +153,11 @@ export interface SupplierPaymentLineInput {
 }
 
 export interface SupplierPaymentCreateInput {
+    /** One key per payment attempt: a retry does not pay twice (ADR-015). */
+    idempotency_key?: string;
     supplier_id: string;
+    /** Drawer the cash comes from when more than one register is open (ADR-014). */
+    cash_register_id?: string;
     payment_date: string;
     notes?: string;
     payments: SupplierPaymentLineInput[];
@@ -219,6 +223,10 @@ export type Invoice = {
     customer_name?: string;
     cae?: string;
     cae_expiration_date?: string;
+    // ARCA tracking (ADR-020): last rejection / failure text, attempts and when the request was sent.
+    arca_last_error?: string | null;
+    arca_attempts?: number;
+    arca_requested_at?: string | null;
     items?: InvoiceItem[];
     [key: string]: unknown;
 };
@@ -477,15 +485,24 @@ export type FiscalSaleStatus = {
     fiscal_status: "authorized" | "pending_cae" | "not_invoiced";
 };
 
+/** Supplier payments also accept "treasury" (cash from Caja 2, ADR-015). */
+export type SupplierSettlementLineInput = Omit<InvoicePaymentLineInput, "method"> & {
+    method: InvoicePaymentLineInput["method"] | "treasury";
+};
+
 export type BulkSupplierPaymentAllocation = {
     invoiceId: string;
-    payments: InvoicePaymentLineInput[];
+    payments: SupplierSettlementLineInput[];
 };
 
 export type BulkSupplierPaymentInput = {
     supplierId: string;
     allocations: BulkSupplierPaymentAllocation[];
     notes?: string;
+    /** Drawer the cash comes from when more than one register is open (ADR-014). */
+    cash_register_id?: string;
+    /** One key per payment attempt: a retry does not pay twice (ADR-015). */
+    idempotency_key?: string;
 };
 
 export type BulkSupplierPaymentResponse = {

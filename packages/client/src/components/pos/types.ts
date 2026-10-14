@@ -14,6 +14,7 @@ export type NewClientForm = {
     phone: string;
     address: string;
     credit_limit: number;
+    tax_condition_id: string;
 };
 
 export type PaymentMethodOption = { value: PaymentMethod; label: string };

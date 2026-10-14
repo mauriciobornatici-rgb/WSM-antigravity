@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 
 import { closePool, pool, seedProduct } from './helpers/qaDb.js';
 import { CreateOrderUseCase } from '../domains/sales/CreateOrderUseCase.js';
-import { returnsService } from '../services/warranties.service.js';
+import { returnsService, creditNotesService } from '../services/warranties.service.js';
 
 const createOrder = new CreateOrderUseCase({ onStockChanged: async () => {} });
 
@@ -62,6 +62,60 @@ test('createReturn rejects a second return once the sold quantity for the order 
         }),
         (err) => err.errorCode === 'RETURN_EXCEEDS_SOLD' && err.statusCode === 409
     );
+});
+
+test('a return of a registered client is approved with the credit note letter of the original invoice', async () => {
+    // Regression: approval read clients.tax_condition_id, a column that does not exist,
+    // so every return with a client failed with a 500.
+    const productId = await seedProduct({ salePrice: 100, stock: [{ location: 'QA-A', quantity: 10 }] });
+    const clientId = crypto.randomUUID();
+    await pool.query('INSERT INTO clients (id, name) VALUES (?, ?)', [clientId, `Cliente QA ${clientId.slice(0, 8)}`]);
+    const order = await posCounterSale(productId, 2);
+    await pool.query(
+        `INSERT INTO invoices (id, order_id, client_id, client_name, invoice_type, point_of_sale, invoice_number, net_amount, vat_amount, total_amount, status)
+         VALUES (?, ?, ?, 'Cliente QA', 'A', 99, FLOOR(RAND() * 1000000000), 200, 42, 242, 'issued')`,
+        [crypto.randomUUID(), order.id, clientId]
+    );
+
+    const created = await returnsService.createReturn({
+        order_id: order.id,
+        client_id: clientId,
+        reason: 'Falla',
+        items: [{ product_id: productId, quantity: 1 }],
+    });
+    const approved = await returnsService.approveReturn(created.id, null);
+
+    assert.equal(approved.success, true);
+    const [[creditNote]] = await pool.query(
+        'SELECT amount, credit_note_type, client_id FROM credit_notes WHERE reference_id = ?',
+        [created.id]
+    );
+    assert.equal(creditNote.credit_note_type, 'A');
+    assert.equal(creditNote.client_id, clientId);
+    assert.equal(Number(creditNote.amount), 121);
+});
+
+test('ADR-014: a return cannot credit more than what is left of its invoice after other notes', async () => {
+    const productId = await seedProduct({ salePrice: 100, stock: [{ location: 'QA-A', quantity: 10 }] });
+    const clientId = crypto.randomUUID();
+    await pool.query('INSERT INTO clients (id, name) VALUES (?, ?)', [clientId, `Cliente QA ${clientId.slice(0, 8)}`]);
+    const order = await posCounterSale(productId, 2);
+    const invoiceId = crypto.randomUUID();
+    await pool.query(
+        `INSERT INTO invoices (id, order_id, client_id, client_name, invoice_type, point_of_sale, invoice_number, net_amount, vat_amount, total_amount, status)
+         VALUES (?, ?, ?, 'Cliente QA', 'A', 99, FLOOR(RAND() * 1000000000), 200, 42, 242, 'issued')`,
+        [invoiceId, order.id, clientId]
+    );
+    // 200 of the 242 already credited by a manual note: only 42 left.
+    await creditNotesService.createManualCreditNote({ client_id: clientId, invoice_id: invoiceId, amount: 200 }, null, null);
+    const created = await returnsService.createReturn({ order_id: order.id, client_id: clientId, items: [{ product_id: productId, quantity: 1 }] });
+
+    await assert.rejects(
+        () => returnsService.approveReturn(created.id, null),
+        (err) => err.statusCode === 409 && err.responseBody.error === 'exceeds_invoice_balance'
+    );
+    const [[ret]] = await pool.query('SELECT status FROM client_returns WHERE id = ?', [created.id]);
+    assert.equal(ret.status, 'pending', 'nothing changes: no stock back, no note');
 });
 
 test('approving a return refunds gross (net + VAT) and creates a credit note for the full amount', async () => {

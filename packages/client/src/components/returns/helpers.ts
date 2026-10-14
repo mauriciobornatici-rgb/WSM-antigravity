@@ -63,11 +63,20 @@ export function creditNoteStatusLabel(status: string): string {
         draft: "Borrador",
         pending: "Pendiente",
         issued: "Emitida",
+        authorizing: "En verificación con ARCA",
+        authorized: "Autorizada",
+        arca_conflict: "Conflicto con ARCA: revisar",
+        internal: "Interna (no fiscal)",
         approved: "Aprobada",
         cancelled: "Anulada",
         closed: "Cerrada",
     }
     return labels[status] ?? status
+}
+
+/** ADR-024: an internal note annuls an invoice ARCA did not authorize. It is never fiscal. */
+export function isInternalCreditNote(row: { status?: string | null; credit_note_type?: string | null | undefined }): boolean {
+    return row.status === "internal" || String(row.credit_note_type || "").toUpperCase() === "INT"
 }
 
 export function mapWarrantyRows(rows: GenericRow[]): WarrantyRow[] {
@@ -107,13 +116,18 @@ export function mapCreditNoteRows(rows: GenericRow[]): CreditNoteRow[] {
         id: readText(row.id, createClientUuid()),
         number: readText(row.number, "-"),
         created_at: readIsoDate(row.created_at),
-        client_name: readText(row.client_name),
+        // An anonymous note shows the buyer name it was issued with.
+        client_name: readText(row.client_name, readText(row.customer_name, "Consumidor Final")),
         amount: readNumber(row.amount),
         status: readText(row.status, "issued"),
         point_of_sale: row.point_of_sale ? Number(row.point_of_sale) : undefined,
         credit_note_type: typeof row.credit_note_type === "string" ? row.credit_note_type : undefined,
         cae: typeof row.cae === "string" ? row.cae : undefined,
         cae_expiration_date: typeof row.cae_expiration_date === "string" ? row.cae_expiration_date : undefined,
+        arca_voucher_number: row.arca_voucher_number ? Number(row.arca_voucher_number) : undefined,
+        arca_last_error: typeof row.arca_last_error === "string" ? row.arca_last_error : null,
+        arca_attempts: typeof row.arca_attempts === "number" ? row.arca_attempts : undefined,
+        arca_requested_at: typeof row.arca_requested_at === "string" ? row.arca_requested_at : null,
         reference_type: typeof row.reference_type === "string" ? row.reference_type : undefined,
         reference_id: typeof row.reference_id === "string" ? row.reference_id : undefined,
         customer_name: typeof row.customer_name === "string" ? row.customer_name : undefined,

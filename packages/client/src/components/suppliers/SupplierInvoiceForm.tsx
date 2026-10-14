@@ -4,21 +4,31 @@ import { Input } from '@/components/ui/input';
 import { ArgentinaDateInput } from '@/components/common/ArgentinaDateInput';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FileText, DollarSign } from 'lucide-react';
+import { FileText, DollarSign, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { api } from '@/services/api';
+import { api, type SupplierInvoiceCreateResult } from '@/services/api';
+import { formatMoney } from '@/lib/formatters';
+import { receptionNet, receptionsNetTotal, sharedPurchaseOrderId } from './receptionTotals';
+import { createClientUuid } from '@/lib/clientUuid';
+import { VAT_RATE_OPTIONS, formatVatRate } from '@/lib/pricing';
+import { Switch } from '@/components/ui/switch';
 import type { Supplier } from '@/types';
 
 export type SupplierInvoicePayload = {
     invoice_number: string;
     invoice_type: 'A' | 'B' | 'C' | 'M';
     supplier_id: string;
-    reception_id?: string;
+    reception_ids?: string[];
     purchase_order_id?: string;
     issue_date: string;
     due_date?: string;
     net_amount: number;
     vat_amount: number;
+    // ADR-016: the fiscal credit goes to the account of this rate (single rate; omitted with vat_lines).
+    vat_rate?: number;
+    // One line per rate when the voucher carries several; net/VAT above are their sums.
+    vat_lines?: Array<{ vat_rate: number; net_amount: number; vat_amount: number }>;
+    purchase_kind?: 'goods' | 'shipping' | 'expense';
     other_taxes: number;
     total_amount: number;
     notes?: string;
@@ -31,6 +41,7 @@ type SupplierReceptionOption = {
     created_at?: string;
     status: string;
     purchase_order_id?: string;
+    supplier_invoice_id?: string | null;
     items?: Array<{
         quantity_received?: number;
         unit_cost?: number;
@@ -46,13 +57,35 @@ type SupplierPurchaseOrderOption = {
 };
 
 type SupplierInvoiceType = SupplierInvoicePayload['invoice_type'];
+type PurchaseKind = NonNullable<SupplierInvoicePayload['purchase_kind']>;
+
+const PURCHASE_KINDS: Array<{ value: PurchaseKind; label: string }> = [
+    { value: 'goods', label: 'Mercadería' },
+    { value: 'shipping', label: 'Fletes y envíos' },
+    { value: 'expense', label: 'Otros gastos' },
+];
+
+type VatLineState = { id: string; rate: string; net: string; vat: string };
+
+const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+
+function computeLineVat(net: string, rate: string): string {
+    const netNumber = parseFloat(net);
+    const rateNumber = parseFloat(rate);
+    if (isNaN(netNumber) || isNaN(rateNumber)) return '';
+    return String(round2(netNumber * rateNumber / 100));
+}
+
+function newVatLine(rate = '21', net = ''): VatLineState {
+    return { id: createClientUuid(), rate, net, vat: computeLineVat(net, rate) };
+}
 
 interface SupplierInvoiceFormProps {
     suppliers: Supplier[];
     initialSupplierId?: string;
     initialOrderId?: string;
     initialReceptionId?: string;
-    onSubmit: (data: SupplierInvoicePayload) => Promise<void>;
+    onSubmit: (data: SupplierInvoicePayload) => Promise<SupplierInvoiceCreateResult | void>;
     onCancel: () => void;
 }
 
@@ -67,7 +100,7 @@ export function SupplierInvoiceForm({
     const [supplierId, setSupplierId] = useState(initialSupplierId);
     const [invoiceNumber, setInvoiceNumber] = useState('');
     const [invoiceType, setInvoiceType] = useState<'A' | 'B' | 'C' | 'M'>('A');
-    const [receptionId, setReceptionId] = useState(initialReceptionId);
+    const [receptionIds, setReceptionIds] = useState<string[]>(initialReceptionId ? [initialReceptionId] : []);
     const [purchaseOrderId, setPurchaseOrderId] = useState(initialOrderId);
     const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10));
     const [dueDate, setDueDate] = useState('');
@@ -77,6 +110,9 @@ export function SupplierInvoiceForm({
     const [vatAmount, setVatAmount] = useState('');
     const [otherTaxes, setOtherTaxes] = useState('');
     const [notes, setNotes] = useState('');
+    const [purchaseKind, setPurchaseKind] = useState<PurchaseKind>('goods');
+    const [multiRate, setMultiRate] = useState(false);
+    const [vatLines, setVatLines] = useState<VatLineState[]>([]);
     const [submitting, setSubmitting] = useState(false);
 
     // Dynamic dropdown states
@@ -99,8 +135,13 @@ export function SupplierInvoiceForm({
                     api.getReceptions({ supplier_id: supplierId }) as Promise<SupplierReceptionOption[]>,
                     api.getPurchaseOrders({ supplier_id: supplierId }) as Promise<SupplierPurchaseOrderOption[]>
                 ]);
-                setReceptions(recs.filter(r => r.status === 'approved'));
+                const available = recs.filter(r => r.status === 'approved' && !r.supplier_invoice_id);
+                setReceptions(available);
                 setPurchaseOrders(pos);
+                // A reception handed in by the caller starts marked (and prefills the amounts).
+                if (initialReceptionId && available.some(r => r.id === initialReceptionId)) {
+                    applyReceptionSelection([initialReceptionId], available);
+                }
             } catch (err) {
                 console.error("Error al cargar comprobantes del proveedor:", err);
             } finally {
@@ -109,42 +150,43 @@ export function SupplierInvoiceForm({
         };
 
         void fetchSupplierDocs();
+        // Only a supplier change reloads; the initial remito prefill must not re-run on every render.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [supplierId]);
 
-    // Handle auto-prefilling from selected reception (Remito)
-    const handleReceptionChange = (recId: string) => {
-        setReceptionId(recId);
-        if (!recId) return;
+    // Marking remitos prefills the net (and VAT) with the sum of the marked ones.
+    const applyReceptionSelection = (ids: string[], source: SupplierReceptionOption[]) => {
+        setReceptionIds(ids);
+        if (ids.length === 0) return;
 
-        const selectedRec = receptions.find(r => r.id === recId);
-        if (selectedRec) {
-            // If the reception is linked to a PO, set it as well
-            if (selectedRec.purchase_order_id) {
-                setPurchaseOrderId(selectedRec.purchase_order_id);
-            }
+        const selected = source.filter(r => ids.includes(r.id));
+        if (selected.length === 0) return;
 
-            // Prefill amounts from reception items
-            if (Array.isArray(selectedRec.items) && selectedRec.items.length > 0) {
-                let subtotal = 0;
-                for (const item of selectedRec.items) {
-                    const qty = Number(item.quantity_received || 0);
-                    const cost = Number(item.unit_cost || 0);
-                    subtotal += qty * cost;
-                }
-                const netPrefill = Math.round(subtotal * 100) / 100;
-                setNetAmount(String(netPrefill));
-                
-                const rate = parseFloat(vatRate);
-                const vatPrefill = Math.round((netPrefill * rate) * 100) / 100;
-                setVatAmount(String(vatPrefill));
-            }
+        // When every marked remito comes from the same PO, link it as well
+        const sharedPo = sharedPurchaseOrderId(selected);
+        if (sharedPo) setPurchaseOrderId(sharedPo);
+
+        if (selected.some(r => Array.isArray(r.items) && r.items.length > 0)) {
+            const netPrefill = receptionsNetTotal(selected);
+            setNetAmount(String(netPrefill));
+
+            const rate = parseFloat(vatRate);
+            const vatPrefill = Math.round((netPrefill * rate) * 100) / 100;
+            setVatAmount(String(vatPrefill));
+            if (multiRate) setVatLines([newVatLine(String(Math.round(rate * 1000) / 10), String(netPrefill))]);
         }
     };
 
+    const toggleReception = (id: string, checked: boolean) => {
+        const next = checked ? [...receptionIds.filter(item => item !== id), id] : receptionIds.filter(item => item !== id);
+        applyReceptionSelection(next, receptions);
+    };
+
     // Auto-prefill from purchase order
-    const handlePOChange = (poId: string) => {
+    const handlePOChange = (value: string) => {
+        const poId = value === 'none' ? '' : value;
         setPurchaseOrderId(poId);
-        if (!poId || receptionId) return; // If reception is selected, it takes priority
+        if (!poId || receptionIds.length > 0) return; // If remitos are marked, they take priority
 
         const selectedPo = purchaseOrders.find(p => p.id === poId);
         if (selectedPo) {
@@ -152,7 +194,30 @@ export function SupplierInvoiceForm({
             setNetAmount(String(netPrefill));
             const vatPrefill = Math.round(Number(selectedPo.tax_amount || (netPrefill * 0.21)) * 100) / 100;
             setVatAmount(String(vatPrefill));
+            if (multiRate) setVatLines([newVatLine('21', String(netPrefill))]);
         }
+    };
+
+    // A voucher tied to a reception or purchase order is always goods.
+    const linkedToDocument = receptionIds.length > 0 || Boolean(purchaseOrderId);
+    const effectivePurchaseKind: PurchaseKind = linkedToDocument ? 'goods' : purchaseKind;
+
+    const handleMultiRateChange = (enabled: boolean) => {
+        setMultiRate(enabled);
+        if (enabled && vatLines.length === 0) {
+            const singleRate = String(Math.round((parseFloat(vatRate) || 0) * 1000) / 10);
+            setVatLines([newVatLine(singleRate, netAmount)]);
+        }
+    };
+
+    const updateVatLine = (id: string, patch: Partial<Pick<VatLineState, 'rate' | 'net'>> & { vat?: string }) => {
+        setVatLines(current => current.map(line => {
+            if (line.id !== id) return line;
+            const next = { ...line, ...patch };
+            // Net or rate changes recalculate the VAT; typing the VAT directly keeps it.
+            if (patch.vat === undefined) next.vat = computeLineVat(next.net, next.rate);
+            return next;
+        }));
     };
 
     // Auto-calculate VAT when net or rate changes
@@ -167,10 +232,19 @@ export function SupplierInvoiceForm({
         }
     }, [netAmount, vatRate]);
 
-    const netVal = parseFloat(netAmount) || 0;
-    const vatVal = parseFloat(vatAmount) || 0;
+    // With several rates the voucher's net and VAT are the sums of the lines.
+    const netVal = multiRate
+        ? round2(vatLines.reduce((sum, line) => sum + (parseFloat(line.net) || 0), 0))
+        : parseFloat(netAmount) || 0;
+    const vatVal = multiRate
+        ? round2(vatLines.reduce((sum, line) => sum + (parseFloat(line.vat) || 0), 0))
+        : parseFloat(vatAmount) || 0;
     const taxVal = parseFloat(otherTaxes) || 0;
     const totalAmount = Math.round((netVal + vatVal + taxVal) * 100) / 100;
+
+    const selectedReceptions = receptions.filter(r => receptionIds.includes(r.id));
+    const receivedNet = receptionsNetTotal(selectedReceptions);
+    const receivedDifference = round2(netVal - receivedNet);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -188,6 +262,11 @@ export function SupplierInvoiceForm({
             return;
         }
 
+        if (multiRate && vatLines.some(line => !(parseFloat(line.net) > 0))) {
+            toast.error("Cada alícuota debe tener un neto mayor a 0");
+            return;
+        }
+
         setSubmitting(true);
         try {
             const payload: SupplierInvoicePayload = {
@@ -197,14 +276,30 @@ export function SupplierInvoiceForm({
                 issue_date: issueDate,
                 net_amount: netVal,
                 vat_amount: vatVal,
+                purchase_kind: effectivePurchaseKind,
                 other_taxes: taxVal,
                 total_amount: totalAmount,
             };
-            if (receptionId) payload.reception_id = receptionId;
+            if (multiRate) {
+                payload.vat_lines = vatLines.map(line => ({
+                    vat_rate: parseFloat(line.rate) || 0,
+                    net_amount: round2(parseFloat(line.net) || 0),
+                    vat_amount: round2(parseFloat(line.vat) || 0),
+                }));
+            } else {
+                payload.vat_rate = Math.round((parseFloat(vatRate) || 0) * 1000) / 10;
+            }
+            if (receptionIds.length > 0) payload.reception_ids = receptionIds;
             if (purchaseOrderId) payload.purchase_order_id = purchaseOrderId;
             if (dueDate) payload.due_date = dueDate;
             if (notes.trim()) payload.notes = notes.trim();
-            await onSubmit(payload);
+            const result = await onSubmit(payload);
+            const difference = Number(result?.receptions_difference || 0);
+            if (difference !== 0) {
+                toast.info(`La factura difiere de lo recibido en ${formatMoney(Math.abs(difference))}`, {
+                    description: difference > 0 ? 'El neto facturado es mayor al recibido en los remitos.' : 'El neto facturado es menor al recibido en los remitos.',
+                });
+            }
         } catch {
             // Handled by parent or API caller
         } finally {
@@ -230,27 +325,51 @@ export function SupplierInvoiceForm({
                     </Select>
                 </div>
 
-                {/* Optional Reception Link */}
-                <div className="space-y-2">
-                    <Label htmlFor="reception">Vincular a Remito / Recepción (Opcional)</Label>
-                    <Select 
-                        value={receptionId} 
-                        onValueChange={handleReceptionChange}
-                        disabled={loadingDropdowns || !supplierId || !!initialReceptionId}
-                    >
-                        <SelectTrigger id="reception">
-                            <SelectValue placeholder={loadingDropdowns ? "Cargando..." : "Ninguno / Standalone"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="none">Ninguno / Standalone</SelectItem>
-                            {receptions.map(r => (
-                                <SelectItem key={r.id} value={r.id}>
-                                    {r.reception_number} {r.remito_number ? `(Remito: ${r.remito_number})` : ''} - {r.created_at ? new Date(r.created_at).toLocaleDateString() : "Sin fecha"}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
+                {/* Optional Reception Links (one or several remitos) */}
+                <fieldset className="space-y-2" aria-describedby="receptions-help">
+                    <legend className="text-sm font-medium leading-none">Remitos a facturar (opcional)</legend>
+                    {!supplierId ? (
+                        <p id="receptions-help" className="text-xs text-muted-foreground">Elegí un proveedor para ver sus remitos pendientes de factura.</p>
+                    ) : loadingDropdowns ? (
+                        <p id="receptions-help" className="text-xs text-muted-foreground">Cargando remitos...</p>
+                    ) : receptions.length === 0 ? (
+                        <p id="receptions-help" className="text-xs text-muted-foreground">Este proveedor no tiene remitos aprobados sin facturar.</p>
+                    ) : (
+                        <>
+                            <p id="receptions-help" className="text-xs text-muted-foreground">Podés marcar uno o varios remitos del mismo proveedor.</p>
+                            <div className="max-h-44 space-y-1 overflow-y-auto rounded-md border p-2">
+                                {receptions.map(r => (
+                                    <div key={r.id} className="flex min-h-11 items-center gap-3 rounded px-2 hover:bg-muted/50">
+                                        <input
+                                            id={`reception-${r.id}`}
+                                            type="checkbox"
+                                            checked={receptionIds.includes(r.id)}
+                                            onChange={e => toggleReception(r.id, e.target.checked)}
+                                            className="h-4 w-4 shrink-0 cursor-pointer rounded accent-primary"
+                                        />
+                                        <Label htmlFor={`reception-${r.id}`} className="flex flex-1 cursor-pointer flex-wrap items-center justify-between gap-x-3 gap-y-0.5 font-normal">
+                                            <span>
+                                                Remito {r.remito_number || r.reception_number}
+                                                {r.created_at ? <span className="text-muted-foreground"> · {new Date(r.created_at).toLocaleDateString('es-AR')}</span> : null}
+                                            </span>
+                                            <span className="font-mono text-xs">{formatMoney(receptionNet(r))}</span>
+                                        </Label>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                    {receptionIds.length > 0 ? (
+                        <div className="space-y-1" aria-live="polite">
+                            <p className="text-sm font-medium">Recibido en los remitos: {formatMoney(receivedNet)}</p>
+                            {Math.abs(receivedDifference) > 0.01 ? (
+                                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">
+                                    La factura difiere de lo recibido en {formatMoney(Math.abs(receivedDifference))}
+                                </p>
+                            ) : null}
+                        </div>
+                    ) : null}
+                </fieldset>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -307,6 +426,30 @@ export function SupplierInvoiceForm({
                 </div>
             </div>
 
+            {/* Purchase kind */}
+            <div className="space-y-2">
+                <Label htmlFor="purchaseKind">Tipo de compra</Label>
+                <Select
+                    value={effectivePurchaseKind}
+                    onValueChange={(val) => setPurchaseKind(val as PurchaseKind)}
+                    disabled={linkedToDocument}
+                >
+                    <SelectTrigger id="purchaseKind">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {PURCHASE_KINDS.map(kind => (
+                            <SelectItem key={kind.value} value={kind.value}>{kind.label}</SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+                {linkedToDocument ? (
+                    <p className="text-xs text-muted-foreground">
+                        Un comprobante vinculado a una recepción u orden de compra es siempre mercadería.
+                    </p>
+                ) : null}
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Issue Date */}
                 <div className="space-y-2">
@@ -335,7 +478,83 @@ export function SupplierInvoiceForm({
             {/* Financial Breakdown */}
             <div className="bg-slate-50 dark:bg-slate-900 p-5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-4">
                 <h4 className="text-sm font-semibold border-b pb-2">Desglose Impositivo y Financiero</h4>
-                
+
+                <div className="flex items-center gap-3">
+                    <Switch
+                        checked={multiRate}
+                        onChange={e => handleMultiRateChange(e.target.checked)}
+                        aria-label="Varias alícuotas"
+                    />
+                    <span className="text-sm">Varias alícuotas</span>
+                </div>
+
+                {multiRate ? (
+                    <div className="space-y-3">
+                        {vatLines.map((line, index) => (
+                            <div key={line.id} className="grid grid-cols-1 gap-3 rounded-md border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+                                <div className="space-y-2">
+                                    <Label htmlFor={`vat-line-rate-${line.id}`}>Alícuota {index + 1}</Label>
+                                    <Select value={line.rate} onValueChange={rate => updateVatLine(line.id, { rate })}>
+                                        <SelectTrigger id={`vat-line-rate-${line.id}`}>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {VAT_RATE_OPTIONS.map(rate => (
+                                                <SelectItem key={rate} value={String(rate)}>{formatVatRate(rate)}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor={`vat-line-net-${line.id}`}>Neto {index + 1}</Label>
+                                    <Input
+                                        id={`vat-line-net-${line.id}`}
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={line.net}
+                                        onChange={e => updateVatLine(line.id, { net: e.target.value })}
+                                        placeholder="0.00"
+                                        className="font-mono"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor={`vat-line-vat-${line.id}`}>IVA {index + 1}</Label>
+                                    <Input
+                                        id={`vat-line-vat-${line.id}`}
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={line.vat}
+                                        onChange={e => updateVatLine(line.id, { vat: e.target.value })}
+                                        placeholder="0.00"
+                                        className="font-mono"
+                                    />
+                                </div>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-11 w-11"
+                                    aria-label={`Quitar alícuota ${index + 1}`}
+                                    disabled={vatLines.length === 1}
+                                    onClick={() => setVatLines(current => current.filter(item => item.id !== line.id))}
+                                >
+                                    <Trash2 className="h-4 w-4 text-red-500" />
+                                </Button>
+                            </div>
+                        ))}
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setVatLines(current => [...current, newVatLine('10.5')])}
+                        >
+                            <Plus className="mr-1 h-3.5 w-3.5" /> Agregar alícuota
+                        </Button>
+                    </div>
+                ) : null}
+
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     {/* Net Amount */}
                     <div className="space-y-2">
@@ -347,11 +566,12 @@ export function SupplierInvoiceForm({
                                 type="number"
                                 step="0.01"
                                 min="0"
-                                value={netAmount}
+                                value={multiRate ? String(netVal) : netAmount}
                                 onChange={e => setNetAmount(e.target.value)}
                                 placeholder="0.00"
                                 className="pl-9 font-mono"
-                                required
+                                readOnly={multiRate}
+                                required={!multiRate}
                             />
                         </div>
                     </div>
@@ -359,7 +579,7 @@ export function SupplierInvoiceForm({
                     {/* VAT Rate */}
                     <div className="space-y-2">
                         <Label htmlFor="vatRate">Alícuota IVA</Label>
-                        <Select value={vatRate} onValueChange={setVatRate}>
+                        <Select value={vatRate} onValueChange={setVatRate} disabled={multiRate}>
                             <SelectTrigger id="vatRate">
                                 <SelectValue />
                             </SelectTrigger>
@@ -382,10 +602,11 @@ export function SupplierInvoiceForm({
                                 type="number"
                                 step="0.01"
                                 min="0"
-                                value={vatAmount}
+                                value={multiRate ? String(vatVal) : vatAmount}
                                 onChange={e => setVatAmount(e.target.value)}
                                 placeholder="0.00"
                                 className="pl-9 font-mono"
+                                readOnly={multiRate}
                             />
                         </div>
                     </div>

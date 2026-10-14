@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatMoney } from "@/lib/formatters";
 import { createClientUuid } from "@/lib/clientUuid";
+import { ClientTaxConditionNotice } from "@/components/clients/ClientTaxConditionNotice";
 
 type PaymentDialogProps = {
     open: boolean;
@@ -28,6 +29,7 @@ type PaymentDialogProps = {
     grandTotal: number;
     processing: boolean;
     onConfirm: () => void;
+    onClientUpdated?: (client: Client) => void;
 };
 
 function roundMoney(value: number): number {
@@ -54,6 +56,7 @@ export function PaymentDialog({
     grandTotal,
     processing,
     onConfirm,
+    onClientUpdated,
 }: PaymentDialogProps) {
     const [cashTendered, setCashTendered] = useState<number | "">("");
 
@@ -64,6 +67,8 @@ export function PaymentDialog({
         (line) => line.method === "credit_account" && Number(line.amount || 0) > 0,
     );
     const hasClientError = hasCreditAccountPayment && !selectedClientId;
+    // A Factura A needs a customer with CUIT: the server refuses it otherwise (AUD-009).
+    const hasInvoiceCuitError = emitInvoice && invoiceType === "A" && String(selectedClient?.tax_id || "").replace(/\D/g, "").length !== 11;
 
     const hasCashSplit = paymentSplits.some((line) => line.method === "cash");
     const cashRequired = roundMoney(paymentSplits.reduce(
@@ -329,6 +334,16 @@ export function PaymentDialog({
                         )}
                     </div>
 
+                    {emitInvoice && onClientUpdated ? (
+                        <ClientTaxConditionNotice client={selectedClient} onUpdated={onClientUpdated} />
+                    ) : null}
+
+                    {hasInvoiceCuitError ? (
+                        <p className="text-xs font-medium text-destructive bg-destructive/10 p-2 rounded border border-destructive/20">
+                            La factura A necesita un cliente con CUIT (11 dígitos). Elegí el cliente o emití una factura B.
+                        </p>
+                    ) : null}
+
                     <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
                         <div className="flex items-center justify-between text-muted-foreground">
                             <span>Total Venta</span>
@@ -359,7 +374,7 @@ export function PaymentDialog({
                         type="button"
                         className="font-bold h-10 px-6 shadow-md"
                         onClick={handleConfirm}
-                        disabled={processing || hasBalanceError || hasClientError}
+                        disabled={processing || hasBalanceError || hasClientError || hasInvoiceCuitError}
                     >
                         {processing ? "Procesando..." : "Confirmar Cobro"}
                     </Button>

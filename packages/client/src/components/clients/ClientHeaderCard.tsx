@@ -18,6 +18,7 @@ interface ClientHeaderCardProps {
 }
 
 import { formatMoney } from "@/lib/formatters";
+import { taxConditionName } from "@/lib/taxConditions";
 
 export function ClientHeaderCard({
     client,
@@ -35,7 +36,9 @@ export function ClientHeaderCard({
                 </Button>
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">{client.name}</h2>
-                    <p className="text-muted-foreground">{client.tax_id}</p>
+                    <p className="text-muted-foreground">
+                        {client.tax_id} · {taxConditionName(client.tax_condition_id) ?? "Condición IVA sin especificar"}
+                    </p>
                 </div>
             </div>
 
@@ -108,7 +111,7 @@ export function ClientHeaderCard({
                             </p>
                         </div>
                         <div>
-                            <p className="text-sm text-muted-foreground">Limite</p>
+                            <p className="text-sm text-muted-foreground">Límite</p>
                             <p className="font-semibold">{formatMoney(client.credit_limit)}</p>
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-slate-200">

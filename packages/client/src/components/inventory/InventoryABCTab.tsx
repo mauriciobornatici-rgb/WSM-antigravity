@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney } from "@/lib/formatters";
+import { grossLineTotal, grossPrice } from "@/lib/pricing";
 import { analyzeInventoryABC, type ABCClass } from "@/lib/inventoryAnalytics";
 import type { ProductWithStock } from "@/lib/inventorySnapshot";
 
@@ -27,6 +28,9 @@ export function InventoryABCTab({ products }: InventoryABCTabProps) {
         }));
         return analyzeInventoryABC(input);
     }, [products]);
+
+    // Analytics run on net values (margins must not include VAT); unit prices and valuation are shown final.
+    const vatById = useMemo(() => new Map(products.map((p) => [p.id, p.vat_rate])), [products]);
 
     const filteredItems = useMemo(() => {
         return analysis.items.filter((item) => {
@@ -56,7 +60,7 @@ export function InventoryABCTab({ products }: InventoryABCTabProps) {
                             <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-0.5 font-mono">
                                 {summary.averageMarginPercent}%
                             </p>
-                            <p className="text-[11px] text-muted-foreground mt-0.5">Sobre precio de venta</p>
+                            <p className="text-[11px] text-muted-foreground mt-0.5">Sobre el precio de venta</p>
                         </div>
                         <div className="h-10 w-10 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
                             <TrendingUp className="h-5 w-5" />
@@ -67,7 +71,7 @@ export function InventoryABCTab({ products }: InventoryABCTabProps) {
                 <Card className="border-border">
                     <CardContent className="p-4 flex items-center justify-between">
                         <div>
-                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Ganancia Potencial</p>
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Ganancia Potencial (neta)</p>
                             <p className="text-xl font-black text-foreground mt-0.5 font-mono">
                                 {formatMoney(summary.potentialProfit)}
                             </p>
@@ -190,12 +194,12 @@ export function InventoryABCTab({ products }: InventoryABCTabProps) {
                                     <th scope="col" className="p-3">Clase</th>
                                     <th scope="col" className="p-3">Producto / SKU</th>
                                     <th scope="col" className="p-3">Categoría</th>
-                                    <th scope="col" className="p-3 text-right">Costo Compra</th>
-                                    <th scope="col" className="p-3 text-right">Precio Venta</th>
-                                    <th scope="col" className="p-3 text-right">Margen Bruto</th>
+                                    <th scope="col" className="p-3 text-right">Costo Compra (IVA incl.)</th>
+                                    <th scope="col" className="p-3 text-right">Precio Venta (IVA incl.)</th>
+                                    <th scope="col" className="p-3 text-right">Margen Bruto $ (neto) y %</th>
                                     <th scope="col" className="p-3 text-right">Markup %</th>
                                     <th scope="col" className="p-3 text-right">Stock</th>
-                                    <th scope="col" className="p-3 text-right">Valorización</th>
+                                    <th scope="col" className="p-3 text-right">Valorización (costo c/IVA)</th>
                                     <th scope="col" className="p-3 text-right">% Acum.</th>
                                 </tr>
                             </thead>
@@ -233,8 +237,8 @@ export function InventoryABCTab({ products }: InventoryABCTabProps) {
                                                 </div>
                                             </td>
                                             <td className="p-3 text-muted-foreground text-xs">{item.category || "General"}</td>
-                                            <td className="p-3 text-right font-mono text-xs">{formatMoney(item.numericCost)}</td>
-                                            <td className="p-3 text-right font-mono text-xs font-semibold">{formatMoney(item.numericPrice)}</td>
+                                            <td className="p-3 text-right font-mono text-xs">{formatMoney(grossPrice(item.numericCost, vatById.get(item.id)))}</td>
+                                            <td className="p-3 text-right font-mono text-xs font-semibold">{formatMoney(grossPrice(item.numericPrice, vatById.get(item.id)))}</td>
                                             <td className="p-3 text-right font-mono text-xs">
                                                 <span className="text-emerald-600 dark:text-emerald-400 font-bold">
                                                     {formatMoney(item.grossMarginAmount)}
@@ -246,7 +250,7 @@ export function InventoryABCTab({ products }: InventoryABCTabProps) {
                                             </td>
                                             <td className="p-3 text-right font-mono text-xs">{item.numericStock} u.</td>
                                             <td className="p-3 text-right font-mono text-xs font-bold text-foreground">
-                                                {formatMoney(item.stockValue)}
+                                                {formatMoney(grossLineTotal(item.numericStock, item.numericCost, vatById.get(item.id)))}
                                             </td>
                                             <td className="p-3 text-right font-mono text-[11px] text-muted-foreground">
                                                 {item.cumulativeSharePercent}%
@@ -257,6 +261,7 @@ export function InventoryABCTab({ products }: InventoryABCTabProps) {
                             </tbody>
                         </table>
                     </div>
+                    <p className="text-xs text-muted-foreground">Los importes de margen se calculan sin IVA.</p>
                 </CardContent>
             </Card>
         </div>

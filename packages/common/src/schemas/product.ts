@@ -24,6 +24,14 @@ export const createProductSchema = z.object({
   purchase_price: z.coerce.number().min(0).optional(),
   cost_price: z.coerce.number().min(0).optional(),
   sale_price: z.coerce.number().min(0).optional(),
+  // ADR-017: the product's VAT rate (21 % unless the goods have a reduced rate). It decides the
+  // final price shown and the VAT account of every sale.
+  vat_rate: z.coerce.number().refine((rate) => [0, 2.5, 5, 10.5, 21, 27].includes(rate), {
+    message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
+  }).optional(),
+  // ADR-019: units of this product kept out of the online store (when the policy is on);
+  // empty uses the store-wide quantity.
+  tiendanube_safety_stock: z.coerce.number().int().min(0).max(100000).nullable().optional(),
   stock_initial: z.coerce.number().int().min(0).optional(),
   status: productStatusSchema.optional(),
 });

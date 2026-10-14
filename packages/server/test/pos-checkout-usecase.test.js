@@ -42,6 +42,9 @@ function createMockConnection(state) {
             if (statement.includes("FROM orders WHERE external_source = 'pos' AND external_id = ?")) {
                 return [state.orders.filter((o) => o.external_id === params[0])];
             }
+            if (statement.includes('FROM order_payments WHERE order_id = ?')) {
+                return [state.orderPayments?.filter((p) => p.order_id === params[0]) ?? []];
+            }
             if (statement === 'SELECT * FROM invoices WHERE id = ?') {
                 return [state.invoices.filter((i) => i.id === params[0])];
             }

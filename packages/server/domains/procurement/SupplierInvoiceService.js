@@ -4,6 +4,16 @@ import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
 import purchaseOrderService from './PurchaseOrderService.js';
 import { businessError } from '../../utils/businessError.js';
+import { ACCOUNTS } from '../../utils/paymentAccounts.js';
+import { vatCreditAccount } from '../../utils/vatAccounts.js';
+
+// What a supplier invoice buys (ADR-017): goods go to inventory, freight and other expenses
+// to their expense accounts.
+const PURCHASE_ACCOUNTS = Object.freeze({
+    goods: { code: '1.1.04.01', notes: 'Inventario / Bienes de Cambio' },
+    shipping: { code: '5.1.02.06', notes: 'Fletes y envíos' },
+    expense: { code: '5.1.02.01', notes: 'Gastos generales' },
+});
 
 export class SupplierInvoiceService {
     async getSupplierInvoices(filters = {}) {
@@ -50,15 +60,85 @@ export class SupplierInvoiceService {
         } = data;
 
         const id = crypto.randomUUID();
-        const net = Math.round(Number(net_amount || 0) * 100) / 100;
-        const vat = Math.round(Number(vat_amount || 0) * 100) / 100;
+        // ADR-019: one invoice may cover one or several delivery notes (receptions).
+        const receptionIds = [...new Set([...(Array.isArray(data.reception_ids) ? data.reception_ids : []), reception_id].filter(Boolean))];
+        // ADR-017: an invoice with several VAT rates comes as one line per rate.
+        const vatLines = Array.isArray(data.vat_lines) && data.vat_lines.length > 0
+            ? data.vat_lines.map((line) => ({
+                vat_rate: Number(line.vat_rate),
+                net: Math.round(Number(line.net_amount || 0) * 100) / 100,
+                vat: Math.round(Number(line.vat_amount || 0) * 100) / 100,
+            }))
+            : null;
+        const net = vatLines
+            ? vatLines.reduce((sum, line) => sum + Math.round(line.net * 100), 0) / 100
+            : Math.round(Number(net_amount || 0) * 100) / 100;
+        const vat = vatLines
+            ? vatLines.reduce((sum, line) => sum + Math.round(line.vat * 100), 0) / 100
+            : Math.round(Number(vat_amount || 0) * 100) / 100;
+        if (vatLines && vatLines.some((line) => line.vat > 0 && line.vat_rate === 0)) {
+            throw businessError(400, { error: 'invalid_vat_rate', message: 'Una línea con IVA no puede tener alícuota 0 %.' });
+        }
+        // AUD-006: each line's VAT must match its rate (a few cents of rounding per item are
+        // allowed), and the header amounts, when sent, must be the sums of the lines.
+        for (const line of vatLines || []) {
+            const expected = line.net * line.vat_rate / 100;
+            if (line.vat_rate > 0 && Math.abs(line.vat - expected) > Math.max(0.05, line.net * 0.001)) {
+                throw businessError(400, {
+                    error: 'invalid_vat_line',
+                    message: `El IVA de la línea al ${line.vat_rate}% (${line.vat.toFixed(2)}) no corresponde a su neto (${expected.toFixed(2)}).`
+                });
+            }
+        }
+        if (vatLines && ((net_amount != null && Math.round(Number(net_amount) * 100) !== Math.round(net * 100))
+            || (vat_amount != null && Math.round(Number(vat_amount) * 100) !== Math.round(vat * 100)))) {
+            throw businessError(400, {
+                error: 'invalid_invoice_total',
+                message: 'El neto y el IVA del comprobante deben ser la suma de sus alícuotas.'
+            });
+        }
+        if (!(net > 0)) {
+            throw businessError(400, { error: 'invalid_net_amount', message: 'El neto del comprobante debe ser mayor a cero.' });
+        }
+        const purchaseKind = data.purchase_kind || 'goods';
+        if (purchaseKind !== 'goods' && (receptionIds.length > 0 || purchase_order_id)) {
+            throw businessError(400, {
+                error: 'invalid_purchase_kind',
+                message: 'Una factura vinculada a una recepción u orden de compra es de mercadería.'
+            });
+        }
         const taxes = Math.round(Number(other_taxes || 0) * 100) / 100;
         const total = Math.round(Number(total_amount || (net + vat + taxes)) * 100) / 100;
         const creatorId = userId || null;
+        // The total is what we owe: it must be the sum of its parts or the entry would not
+        // balance (a typed total that disagrees used to post an unbalanced purchase).
+        const partsCents = Math.round(net * 100) + Math.round(vat * 100) + Math.round(taxes * 100);
+        if (Math.round(total * 100) !== partsCents) {
+            throw businessError(400, {
+                error: 'invalid_invoice_total',
+                message: `El total (${total.toFixed(2)}) no coincide con neto + IVA + percepciones (${(partsCents / 100).toFixed(2)}).`
+            });
+        }
+        if (vat > 0 && data.vat_rate != null && Number(data.vat_rate) === 0) {
+            throw businessError(400, {
+                error: 'invalid_vat_rate',
+                message: 'La factura tiene IVA: elegí su alícuota (0 % es solo para comprobantes sin IVA).'
+            });
+        }
 
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
+
+            // 0. The supplier exists and is not being deleted at this moment (its row is locked:
+            // a concurrent deletion waits and then sees the new balance).
+            const [supplierRows] = await connection.query(
+                'SELECT id FROM suppliers WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+                [supplier_id]
+            );
+            if (supplierRows.length === 0) {
+                throw businessError(404, { error: 'supplier_not_found', message: 'Proveedor no encontrado o eliminado.' });
+            }
 
             // 1. Check for duplicates (invoice number + type per supplier)
             const [existing] = await connection.query(
@@ -71,18 +151,60 @@ export class SupplierInvoiceService {
                 throw businessError(409, { error: 'duplicate_invoice', message });
             }
 
+            // ADR-019: the delivery notes must be this supplier's and not invoiced yet. Locked so
+            // two invoices loaded at the same time cannot both take the same delivery note (the
+            // unique key on the link table is the last guard).
+            let receptionsNet = null;
+            if (receptionIds.length > 0) {
+                const [receptions] = await connection.query(
+                    'SELECT id, supplier_id, status, remito_number, reception_number FROM receptions WHERE id IN (?) ORDER BY id FOR UPDATE',
+                    [receptionIds]
+                );
+                if (receptions.length !== receptionIds.length || receptions.some((row) => row.supplier_id !== supplier_id)) {
+                    throw businessError(400, { error: 'invalid_reception', message: 'Algún remito no existe o es de otro proveedor.' });
+                }
+                // ADR-019 (usuario): only goods that passed quality control are invoiced.
+                const notApproved = receptions.filter((row) => String(row.status || '').toLowerCase() !== 'approved');
+                if (notApproved.length > 0) {
+                    throw businessError(409, {
+                        error: 'reception_not_approved',
+                        message: `Estos remitos no tienen el control de calidad aprobado: ${notApproved.map((row) => row.remito_number || row.reception_number).join(', ')}.`
+                    });
+                }
+                const [invoiced] = await connection.query(
+                    // Locking read: sees an invoice committed while this one waited for the lock (AUD-007).
+                    'SELECT reception_id FROM supplier_invoice_receptions WHERE reception_id IN (?) FOR SHARE',
+                    [receptionIds]
+                );
+                if (invoiced.length > 0) {
+                    const labels = receptions
+                        .filter((row) => invoiced.some((link) => link.reception_id === row.id))
+                        .map((row) => row.remito_number || row.reception_number);
+                    throw businessError(409, {
+                        error: 'reception_already_invoiced',
+                        message: `Estos remitos ya están facturados: ${labels.join(', ')}.`
+                    });
+                }
+                const [[value]] = await connection.query(
+                    'SELECT COALESCE(SUM(quantity_received * unit_cost), 0) AS net FROM reception_items WHERE reception_id IN (?)',
+                    [receptionIds]
+                );
+                receptionsNet = Math.round(Number(value?.net || 0) * 100) / 100;
+            }
+
             // 2. Insert Supplier Invoice
             await connection.query(`
                 INSERT INTO supplier_invoices (
                     id, invoice_number, invoice_type, supplier_id, reception_id, purchase_order_id,
-                    issue_date, due_date, net_amount, vat_amount, other_taxes, total_amount, status, notes, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?)
+                    issue_date, due_date, net_amount, vat_amount, other_taxes, total_amount, status, notes, created_by,
+                    purchase_kind
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?)
             `, [
                 id,
                 invoice_number,
                 invoice_type,
                 supplier_id,
-                reception_id || null,
+                receptionIds[0] || null,
                 purchase_order_id || null,
                 issue_date,
                 due_date || null,
@@ -91,8 +213,30 @@ export class SupplierInvoiceService {
                 taxes,
                 total,
                 notes || null,
-                creatorId
+                creatorId,
+                purchaseKind
             ]);
+            for (const receptionId of receptionIds) {
+                try {
+                    await connection.query(
+                        'INSERT INTO supplier_invoice_receptions (supplier_invoice_id, reception_id) VALUES (?, ?)',
+                        [id, receptionId]
+                    );
+                } catch (err) {
+                    // The unique key is the last guard: another invoice took it at the same time.
+                    if (err?.code === 'ER_DUP_ENTRY') {
+                        throw businessError(409, { error: 'reception_already_invoiced', message: 'Algún remito ya fue facturado por otra factura cargada al mismo tiempo.' });
+                    }
+                    throw err;
+                }
+            }
+            for (const line of vatLines || []) {
+                await connection.query(
+                    `INSERT INTO supplier_invoice_vat_lines (id, supplier_invoice_id, vat_rate, net_amount, vat_amount)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [crypto.randomUUID(), id, line.vat_rate, line.net, line.vat]
+                );
+            }
 
             // 3. Increment Supplier Account Balance
             await connection.query(`
@@ -115,15 +259,39 @@ export class SupplierInvoiceService {
             ]);
 
             // 5. Create Accounting Journal Entry (Double-Entry Bookkeeping)
-            const debitInventory = Math.round((net + taxes) * 100) / 100;
+            // ADR-016: only a Factura A (or M) gives fiscal credit, in the account of its rate.
+            // On a B or C invoice the VAT is part of the cost. Perceptions ("Percepciones /
+            // Otros") are tax paid in advance: Retenciones y percepciones sufridas, not cost.
+            // ADR-017: several rates post one fiscal credit line each, and a freight or expense
+            // invoice goes to its expense account instead of inventory.
+            const givesCredit = invoice_type === 'A' || invoice_type === 'M';
+            const rateLines = vatLines || [{ vat_rate: data.vat_rate == null ? 21 : Number(data.vat_rate), net, vat }];
+            const debitAccount = PURCHASE_ACCOUNTS[purchaseKind] || PURCHASE_ACCOUNTS.goods;
+            const debitBase = Math.round((net + (givesCredit ? 0 : vat)) * 100) / 100;
+            const creditByAccount = new Map();
+            if (givesCredit) {
+                for (const line of rateLines) {
+                    if (!(line.vat > 0)) continue;
+                    const account = vatCreditAccount(line.vat_rate);
+                    const current = creditByAccount.get(account) || { amount: 0, rates: new Set() };
+                    current.amount = Math.round((current.amount + line.vat) * 100) / 100;
+                    current.rates.add(line.vat_rate);
+                    creditByAccount.set(account, current);
+                }
+            }
             await accountingService.createJournalEntry(connection, {
                 date: issue_date || new Date(),
                 description: `Factura de Compra ${invoice_type} ${invoice_number}`,
                 reference_type: 'supplier_invoice',
                 reference_id: id,
                 lines: [
-                    { account_code: '1.1.04.01', debit: debitInventory, credit: 0, notes: 'Inventario / Bienes de Cambio' },
-                    { account_code: '1.1.05.02', debit: vat, credit: 0, notes: `IVA Crédito Fiscal (${invoice_type === 'A' ? '21%' : 'Factura ' + invoice_type})` },
+                    { account_code: debitAccount.code, debit: debitBase, credit: 0, notes: debitAccount.notes },
+                    ...[...creditByAccount.entries()].map(([account_code, credit]) => ({
+                        account_code, debit: credit.amount, credit: 0, notes: `IVA Crédito Fiscal ${[...credit.rates].join(' / ')}%`
+                    })),
+                    ...(taxes > 0
+                        ? [{ account_code: ACCOUNTS.WITHHOLDINGS, debit: taxes, credit: 0, notes: 'Percepciones sufridas' }]
+                        : []),
                     { account_code: '2.1.01.01', debit: 0, credit: total, notes: `Proveedores - Cuenta Corriente` }
                 ]
             });
@@ -139,6 +307,7 @@ export class SupplierInvoiceService {
                     invoice_type,
                     supplier_id,
                     reception_id,
+                    reception_ids: receptionIds,
                     purchase_order_id,
                     issue_date,
                     net_amount: net,
@@ -150,7 +319,17 @@ export class SupplierInvoiceService {
             }, connection);
             await connection.commit();
 
-            return { id, success: true, total_amount: total };
+            // ADR-019: what the delivery notes received (at their cost) against the invoice's net:
+            // a difference is shown to the user (it is not blocked: prices or extras can differ).
+            return {
+                id,
+                success: true,
+                total_amount: total,
+                reception_ids: receptionIds,
+                ...(receptionsNet != null
+                    ? { receptions_net: receptionsNet, receptions_difference: Math.round((net - receptionsNet) * 100) / 100 }
+                    : {})
+            };
         } catch (err) {
             await connection.rollback();
             throw err;

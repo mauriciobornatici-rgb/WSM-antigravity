@@ -1,6 +1,8 @@
 import type { Invoice } from "@/types/api"
 
 export type InvoiceView = Invoice & {
+    /** ADR-022: label of the invoice this one replaced (annulled without authorization). */
+    replaces_label?: string | null
     client_name?: string
     client_tax_condition?: string
     client_tax_id?: string
@@ -42,6 +44,10 @@ export type CreditNoteRow = {
     credit_note_type?: string | undefined
     cae?: string | undefined
     cae_expiration_date?: string | undefined
+    arca_voucher_number?: number | undefined
+    arca_last_error?: string | null | undefined
+    arca_attempts?: number | undefined
+    arca_requested_at?: string | null | undefined
     reference_type?: string | undefined
     reference_id?: string | undefined
     customer_name?: string | undefined

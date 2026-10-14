@@ -24,6 +24,23 @@ router.post('/cash-registers/:id/open', cashRoles, validate(schemas.cashShiftOpe
 router.post('/cash-shifts/:id/close', cashRoles, validate(schemas.cashShiftClose), financeController.closeShift);
 router.post('/cash-shifts/:id/payments', cashRoles, validate(schemas.shiftPayment), financeController.addShiftPayment);
 
+// "Caja 2" / treasury cash (ADR-015). Managers see it (ADR-016); moving money is accounting.
+router.get('/treasury', authorizePermission(PERMISSIONS.TREASURY_READ), financeController.getTreasury);
+router.post('/treasury/transfers', accountingRoles, validate(schemas.treasuryTransfer), financeController.createTreasuryTransfer);
+
+// Bank account and its debits (ADR-016)
+router.get('/bank', accountingRoles, financeController.getBank);
+router.post('/bank/charges', accountingRoles, validate(schemas.bankCharges), financeController.createBankCharges);
+
+// VAT rates for fees and bank debits (ADR-016)
+router.get('/vat-rates', accountingRoles, financeController.getVatRates);
+router.post('/vat-rates', authorizePermission(PERMISSIONS.SETTINGS_MANAGE), validate(schemas.vatRateCreate), financeController.createVatRate);
+router.put('/vat-rates/:id', authorizePermission(PERMISSIONS.SETTINGS_MANAGE), validate(schemas.vatRateUpdate), financeController.updateVatRate);
+
+// Card/QR settlements (Tarjetas y QR a cobrar -> Banco)
+router.get('/card-settlements', accountingRoles, financeController.getCardSettlements);
+router.post('/card-settlements', accountingRoles, validate(schemas.cardSettlement), financeController.createCardSettlement);
+
 // Collections
 router.get('/collections/pending-invoices', collectionsRoles, financeController.getPendingInvoices);
 router.get('/collections/fiscal-status', collectionsRoles, financeController.getFiscalSalesStatus);

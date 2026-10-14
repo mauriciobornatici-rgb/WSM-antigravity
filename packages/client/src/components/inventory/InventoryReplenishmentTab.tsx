@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatMoney } from "@/lib/formatters";
+import { grossLineTotal } from "@/lib/pricing";
 import type { ProductWithStock } from "@/lib/inventorySnapshot";
 import type { Supplier } from "@/types";
 
@@ -71,7 +72,7 @@ export function InventoryReplenishmentTab({
                                     <TableHead className="text-center">Stock Mínimo</TableHead>
                                     <TableHead className="w-40 text-center">Cantidad a Pedir</TableHead>
                                     <TableHead className="w-60">Proveedor Reposición</TableHead>
-                                    <TableHead className="text-right">Costo Estimado</TableHead>
+                                    <TableHead className="text-right">Costo Estimado (IVA incl.)</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -82,7 +83,7 @@ export function InventoryReplenishmentTab({
                                         quantity: suggested,
                                         supplierId: p.supplier_id || "",
                                     };
-                                    const itemCost = Number(p.purchase_price || 0) * itemValue.quantity;
+                                    const itemCost = grossLineTotal(itemValue.quantity, p.purchase_price, p.vat_rate);
 
                                     return (
                                         <TableRow key={p.id} className={checked ? "bg-muted/30" : ""}>

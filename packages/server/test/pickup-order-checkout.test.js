@@ -69,6 +69,11 @@ function createMockConnection(options = {}) {
                     .map((row) => ({ ...row }))];
             }
 
+            // ADR-015: the counter channel asks which locations are sales floor (none in these fixtures).
+            if (normalizedSql === 'SELECT code FROM warehouse_locations WHERE is_sales_floor = 1 AND active = 1') {
+                return [(options.salesFloorCodes || []).map((code) => ({ code }))];
+            }
+
             if (normalizedSql.startsWith('SELECT i.*, c.tax_id AS client_tax_id')) {
                 return [state.invoices.filter((invoice) => invoice.id === params[0])];
             }
@@ -164,6 +169,14 @@ function createMockConnection(options = {}) {
                 const shift = state.shifts.find((candidate) => candidate.id === params[1]);
                 if (shift) shift.expected_balance = params[0];
                 return [{ affectedRows: 1 }];
+            }
+
+            // Unit cost recorded on the sale movement (C6).
+            if (normalizedSql.startsWith('SELECT id, purchase_price, cost_price FROM products')) {
+                const ids = new Set(params[0]);
+                return [state.products.filter((product) => ids.has(product.id)).map((product) => ({
+                    id: product.id, purchase_price: product.purchase_price ?? null, cost_price: product.cost_price ?? null,
+                }))];
             }
 
             throw new Error(`Unexpected SQL in mock: ${normalizedSql}`);

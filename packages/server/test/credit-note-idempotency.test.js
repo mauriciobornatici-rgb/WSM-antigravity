@@ -11,6 +11,10 @@ const issued = {
     reference_type: 'other', reference_id: null, amount: '100.00', notes: null, status: 'issued',
 };
 
+const invoice = {
+    id: 'inv-1', client_id: 'c-1', invoice_type: 'B', point_of_sale: 1, total_amount: '1000.00', vat_amount: '173.55',
+};
+
 function notesPool(t, { existing = [], insert } = {}) {
     const calls = [];
     const lifecycle = [];
@@ -18,6 +22,8 @@ function notesPool(t, { existing = [], insert } = {}) {
         const statement = String(sql).replace(/\s+/g, ' ').trim();
         calls.push({ statement, params });
         if (statement.startsWith('SELECT * FROM credit_notes WHERE idempotency_key')) return [existing];
+        if (statement.startsWith('SELECT * FROM invoices WHERE id')) return [[invoice]];
+        if (statement.includes('AS credited FROM credit_notes')) return [[{ credited: 0 }]];
         if (statement.startsWith('INSERT INTO credit_notes') && insert) return insert();
         if (statement.includes('max_seq')) return [[{ max_seq: 0 }]];
         if (statement.includes('document_sequences')) return [[{ last_value: 1 }]];
@@ -52,6 +58,7 @@ test('the same key with a different client, amount or reference is refused with 
         { client_id: 'c-1', amount: 100.01 },
         { client_id: 'c-1', amount: 100, reference_type: 'discount' },
         { client_id: 'c-1', amount: 100, reference_id: 'ret-1' },
+        { client_id: 'c-1', amount: 100, invoice_id: 'inv-2' },
     ];
     for (const variant of variants) {
         const { calls, lifecycle } = notesPool(t, { existing: [issued] });
@@ -77,7 +84,7 @@ test('collisions are retried a bounded number of times, then surface', async (t)
     });
 
     await assert.rejects(
-        () => creditNotesService.createManualCreditNote({ idempotency_key: KEY, client_id: 'c-1', amount: 5 }, null, null),
+        () => creditNotesService.createManualCreditNote({ idempotency_key: KEY, client_id: 'c-1', invoice_id: 'inv-1', amount: 5 }, null, null),
         (err) => err.code === 'ER_LOCK_DEADLOCK'
     );
     assert.equal(inserts, 3);
@@ -93,7 +100,7 @@ test('without a key a collision is not retried', async (t) => {
     });
 
     await assert.rejects(
-        () => creditNotesService.createManualCreditNote({ client_id: 'c-1', amount: 5 }, null, null),
+        () => creditNotesService.createManualCreditNote({ client_id: 'c-1', invoice_id: 'inv-1', amount: 5 }, null, null),
         (err) => err.code === 'ER_DUP_ENTRY'
     );
     assert.equal(inserts, 1);
