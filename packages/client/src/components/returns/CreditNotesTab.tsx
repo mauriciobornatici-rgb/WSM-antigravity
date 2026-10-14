@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { QueryErrorBanner, QueryLoadingState } from "./QueryStates"
-import { mapCreditNoteRows, creditNoteStatusLabel } from "./helpers"
+import { mapCreditNoteRows, creditNoteStatusLabel, isInternalCreditNote } from "./helpers"
 import { CreditNotePreviewDialog } from "@/components/invoices/CreditNotePreviewDialog"
 import { ArcaLastError } from "@/components/invoices/ArcaLastError"
 import {
@@ -72,7 +72,7 @@ export function CreditNotesTab({
 
     const creditNotesQuery = useQuery({
         queryKey: queryKeys.creditNotes.all,
-        queryFn: async () => mapCreditNoteRows(await api.getCreditNotes()),
+        queryFn: async () => mapCreditNoteRows(await api.getCreditNotes({ include_internal: "true" })),
     })
 
     const clientsQuery = useQuery({
@@ -225,7 +225,11 @@ export function CreditNotesTab({
                                                 {isArcaAuthorizing(row.status) ? (
                                                     <p className="mt-1 max-w-[220px] text-xs text-muted-foreground">{ARCA_VERIFYING_HELP}</p>
                                                 ) : null}
-                                                <ArcaLastError doc={row} className="mt-1 max-w-[220px]" />
+                                                {isInternalCreditNote(row) ? (
+                                                    <p className="mt-1 max-w-[280px] text-xs text-muted-foreground">{row.notes}</p>
+                                                ) : (
+                                                    <ArcaLastError doc={row} className="mt-1 max-w-[220px]" />
+                                                )}
                                             </TableCell>
                                             <TableCell>
                                                 {row.cae ? (
@@ -240,6 +244,9 @@ export function CreditNotesTab({
                                                 {formatMoney(row.amount)}
                                             </TableCell>
                                             <TableCell className="flex justify-end gap-1 text-right">
+                                                {isInternalCreditNote(row) ? (
+                                                    <span className="text-xs text-muted-foreground">Comprobante interno, no fiscal</span>
+                                                ) : (<>
                                                 {(row.status === "issued" || isArcaAuthorizing(row.status)) && (
                                                     <Button
                                                         variant="outline"
@@ -279,6 +286,7 @@ export function CreditNotesTab({
                                                 >
                                                     <ReceiptText className="h-4 w-4 text-slate-400" />
                                                 </Button>
+                                                </>)}
                                             </TableCell>
                                         </TableRow>
                                     ))

@@ -57,6 +57,16 @@ let pos;
 let previousPos;
 let createdSettings = false;
 test.before(async () => {
+    // Earlier runs leave documents in alert on their test points of sale (>= 9000): out of the
+    // way, so the alert list (capped at 100) shows what this run creates.
+    await pool.query(
+        `UPDATE invoices SET deleted_at = NOW()
+         WHERE point_of_sale >= 9000 AND deleted_at IS NULL AND cae IS NULL AND status IN ('arca_conflict', 'authorizing', 'issued')`
+    );
+    await pool.query(
+        `UPDATE invoices SET deleted_at = NOW()
+         WHERE point_of_sale >= 9000 AND deleted_at IS NULL AND status = 'arca_conflict'`
+    );
     const [rows] = await pool.query('SELECT billing_pos FROM company_settings LIMIT 1');
     previousPos = rows[0]?.billing_pos ?? null;
     if (rows.length === 0) {

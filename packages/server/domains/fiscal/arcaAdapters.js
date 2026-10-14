@@ -106,6 +106,13 @@ export const creditNoteArcaAdapter = {
     pendingStatus: 'issued',
 
     async prepare(doc) {
+        // ADR-024: second guard (the service refuses it first): an internal note never goes to ARCA.
+        if (doc.status === 'internal' || String(doc.credit_note_type || '').toUpperCase() === 'INT') {
+            throw businessError(409, {
+                error: 'internal_credit_note',
+                message: 'Es una nota de crédito interna por un error de ARCA en la factura: no se informa a ARCA ni lleva CAE.',
+            });
+        }
         const { creditNotesService } = await import('../../services/warranties.service.js');
         // ADR-014: a credit note is authorized against the invoice it corrects.
         const originalInvoice = await creditNotesService._invoiceCorrectedBy(doc);

@@ -727,7 +727,8 @@ export const api = {
         httpClient.put<GenericRecord>(`/api/warranties/${id}/status`, data),
 
     // ==================== CREDIT NOTES ====================
-    getCreditNotes: (filters?: { client_id?: string }) =>
+    // ADR-024: internal notes (annulment of an invoice ARCA did not authorize) only on request.
+    getCreditNotes: (filters?: { client_id?: string; include_internal?: "true" }) =>
         httpClient.get<GenericRecord[]>(withQuery("/api/credit-notes", filters)),
 
     getTreasury: () =>

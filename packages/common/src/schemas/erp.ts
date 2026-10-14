@@ -603,6 +603,8 @@ export const clientReturnCreateSchema = z.object({
 
 export const creditNotesFiltersSchema = z.object({
   client_id: optionalUuidSchema,
+  // ADR-024: internal notes (annulment of an invoice ARCA did not authorize) only on request.
+  include_internal: z.enum(['true', 'false']).optional(),
 });
 
 export const creditNoteCreateSchema = z.object({

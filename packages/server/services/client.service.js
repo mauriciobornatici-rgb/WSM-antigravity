@@ -13,7 +13,8 @@ const CLIENT_BALANCE_JOINS = `
     LEFT JOIN (
         SELECT client_id, COALESCE(SUM(amount), 0) AS total_credit_notes
         FROM credit_notes
-        WHERE deleted_at IS NULL AND (status IS NULL OR status != 'cancelled')
+        WHERE deleted_at IS NULL AND (status IS NULL OR status NOT IN ('cancelled', 'internal'))
+          AND COALESCE(credit_note_type, '') <> 'INT'
         GROUP BY client_id
     ) cn ON cn.client_id = c.id
     LEFT JOIN (

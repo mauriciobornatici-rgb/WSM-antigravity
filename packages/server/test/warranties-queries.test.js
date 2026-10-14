@@ -416,6 +416,10 @@ test('credit note listing filters clients', async (t) => {
     const listed = await creditNotesService.getCreditNotes({ client_id: 'c-1' });
     assert.equal(listed[0].id, 'cn-list');
     assert.ok(calls[0].params.includes('c-1'));
+    // ADR-024: internal notes stay out of the customer's account unless asked for.
+    assert.match(calls[0].sql, /cn.status <> 'internal'/);
+    await creditNotesService.getCreditNotes({ include_internal: 'true' });
+    assert.doesNotMatch(calls.at(-1).sql, /'internal'/);
 });
 
 test('authorizeCreditNote delegates to the shared ARCA flow with the credit note adapter (ADR-020)', async (t) => {

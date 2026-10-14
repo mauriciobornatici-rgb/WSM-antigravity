@@ -80,12 +80,28 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-024 — Nota de crédito interna al anular por error de ARCA (usuario, 2026-10-14: opción b)
+- Al anular y volver a emitir una factura sin CAE queda una **nota de crédito interna**: número `NCI-AAAA-NNNN`, tipo `INT`, estado `internal`, `reference_type = 'arca_error_annulment'`, vinculada a la factura anulada, por el total y con el mismo cliente.
+- **El texto dice por qué, sin culpar a ARCA cuando no intervino (AUD-011):**
+  - con un error registrado de ARCA: "anula la factura X, que ARCA no autorizó (error de ARCA en la factura). Motivo registrado: …" (`arca_error_annulment`);
+  - un ticket: "anula el ticket X (comprobante no fiscal, no se informa a ARCA)" (`ticket_annulment`);
+  - nunca enviada: "anula la factura X, que no llegó a autorizarse en ARCA (se anuló antes de enviarla)" (`unauthorized_annulment`).
+  - Todas terminan con "Reemplazada por Y. No se informa a ARCA ni tiene CAE." Los contra-asientos llevan el número de la nota.
+- **Plazo de 5 días:** se cuenta desde la venta original, siguiendo la cadena de reemisiones (volver a emitir no lo reinicia).
+- **Migración 062** (el CHECK de inventario pasa a 063).
+- **Nunca CAE (tres capas):**
+  - el servicio de autorización la rechaza (409 `internal_credit_note`) antes de consultar a ARCA;
+  - el adaptador de ARCA también la rechaza;
+  - un CHECK de la base (`chk_credit_notes_internal_never_fiscal`, migración 062) exige que el tipo INT y el estado internal vayan siempre juntos, en las dos direcciones y sin huecos por valores vacíos, y prohíbe CAE o número de ARCA en una nota interna.
+- **No cuenta dos veces:** la factura anulada ya salió de la cuenta corriente, así que la nota interna no entra en el saldo ni en las listas de notas por cliente. Solo aparece en la pantalla de notas de crédito, sin botones de autorizar ni de impresión fiscal ("Comprobante interno, no fiscal").
+- Una factura con CAE se sigue corrigiendo solo con nota de crédito fiscal.
+
 ### ADR-023 — Decisiones del usuario sobre AUD-010 (2026-10-14)
 - **Quién reemite:** cualquiera con permiso de facturación (cajero incluido). Sin control de límite de crédito del cliente nuevo.
 - **A/B a ticket: permitido.** A, B y ticket son intercambiables (los tres asientan IVA débito). La C sigue solo a C.
 - **Antigüedad ("lo que se estile"):** 5 días corridos desde la emisión, el plazo que ARCA admite para fechar comprobantes de venta de bienes. Pasado ese plazo solo el administrador puede reemitir; queda auditado (`age_days`, `late_by_administrator`).
 - **Alerta de 24 h:** solo cuenta comprobantes emitidos después de configurar ARCA. `company_settings.arca_configured_at` (en la migración 061, que todavía no salió de local y QA) se fija la primera vez que las credenciales quedan completas. Si ya estaban configuradas, la migración la fija en el momento de aplicarse.
-- **Fecha y "reversión" (punto 4):** a confirmar con el usuario (ver AUD-010). La factura reemplazada nunca fue autorizada por ARCA, así que no admite nota de crédito fiscal.
+- **Fecha y "reversión" (punto 4):** resuelto en ADR-024 (nota de crédito interna, no fiscal). La factura nueva lleva la fecha del día.
 
 ### ADR-022 — Decisiones del usuario sobre AUD-009 (2026-10-13)
 - **Monotributista recibe B, nunca A** (legislación argentina, según el usuario; o C si el emisor es monotributista). Solo el Responsable Inscripto recibe A y es el único al que se le exige CUIT de 11 dígitos. Esto reemplaza lo dicho en ADR-021 sobre el Monotributista.
@@ -107,7 +123,7 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **Clientes sin condición:** no se cargan uno por uno. Donde se factura (cobro del POS, facturación de pedidos, factura manual) aparece el aviso "sin condición frente al IVA" con "Cargar ahora" (`PUT /api/clients/:id/tax-condition`, con lock y auditoría), que aplica la letra al instante. En Clientes, un filtro "Sin condición IVA (N)".
 - **Sin permiso especial** para cargar la condición.
 - **Impresión:** sin condición cargada se imprime "Consumidor Final".
-- **Migración 061.** El CHECK de inventario pasa a 062.
+- **Migración 061.** (El CHECK de inventario es ahora la 063: ver ADR-024.)
 
 ### ADR-021 — Condición de IVA del cliente y alertas de ARCA (usuario, 2026-10-13: pasos 2 y 3)
 - **Condición de IVA del cliente:** `clients.tax_condition_id` (migración 060, sin FK: los nombres salen de la lista compartida `CLIENT_TAX_CONDITIONS`), con las 4 condiciones existentes. Inscripto y Monotributista exigen CUIT de 11 dígitos. Vacía significa "sin especificar". Se carga en el alta y la edición de clientes, y en el alta rápida del POS y de pedidos.
@@ -276,7 +292,7 @@ El usuario aprobó corregir lo que encontró la simulación operativa. Desde aho
 
 ### ADR-012 — Reglas de negocio de la revisión del refactor (usuario, 2026-10-12)
 - **Estados de orden de compra (cambio manual):** solo hacia adelante: borrador → enviada → parcial → recibida; cancelar solo antes de recibir algo (borrador o enviada). `recibida` y `cancelada` son finales. Otra transición → 409.
-- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 062 (046-061 agregan cuentas, NC fiscal, tesorería e idempotencia, precios a 4 decimales, débitos bancarios, alícuotas y ajustes de pedido, corrigen totales previos agregan la condición de IVA del cliente y la reemisión de facturas; ADR-013/014/015/016/021/022).
+- **NC manual idempotente:** el formulario envía una clave única por intento; un reintento con la misma clave devuelve la NC ya emitida. Requiere la migración 045 (`credit_notes.idempotency_key` único); la migración del CHECK de inventario pasa a ser la 063 (046-062 agregan cuentas, NC fiscal, tesorería e idempotencia, precios a 4 decimales, débitos bancarios, alícuotas y ajustes de pedido, corrigen totales previos agregan la condición de IVA del cliente y la reemisión de facturas y la nota de crédito interna; ADR-013/014/015/016/021/022/024).
 - **Aplicación (coordinador, tras la revisión del guardián):**
   - "Recibir algo" incluye la mercadería en control de calidad: una OC con recepciones `pending_qc` o cantidades recibidas no se puede anular (409 `purchase_order_has_receptions`). La UI oculta "Anular orden" en ese caso.
   - Aprobar una recepción bloquea la OC antes que sus ítems. Contra una OC anulada responde 409 (`purchase_order_cancelled`), y nunca hace retroceder una OC `received`.

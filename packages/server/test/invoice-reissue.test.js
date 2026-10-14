@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import salesService from '../services/sales.service.js';
+import salesService, { annulmentCause } from '../services/sales.service.js';
 import clientService from '../services/client.service.js';
 import accountingService from '../services/accounting.service.js';
 import auditService from '../services/audit.service.js';
@@ -31,6 +31,7 @@ function setup(t, { old = OLD, creditNotes = [], paid = 500, pendingReturns = []
         if (statement.includes('SUM(amount), 0) AS paid')) return [[{ paid }]];
         if (statement.includes('FROM client_returns')) return [pendingReturns];
         if (statement.includes('DATEDIFF')) return [[{ days: ageDays }]];
+        if (statement.includes('FROM credit_notes WHERE number LIKE')) return [[{ max_seq: null }]];
         if (statement.startsWith('SELECT id FROM clients WHERE id = ? AND deleted_at IS NULL')) {
             return [CLIENTS[params[0]] && !deletedClients.includes(params[0]) ? [{ id: params[0] }] : []];
         }
@@ -80,7 +81,7 @@ test('reissueInvoice moves sale, collections, balance and order to the new invoi
     );
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('INSERT INTO invoice_items') && params[0] === newId && params[1] === 'inv-old'));
     assert.deepEqual(ledger[0][1].accountCodes, ['4.1.01.01', '5.1.01.01']);
-    assert.match(ledger[0][1].description, /B-0003-00000041 \(reemplazada por A-0003-00000042\)/);
+    assert.match(ledger[0][1].description, /factura B-0003-00000041 no autorizada por ARCA \(reemplazada por A-0003-00000042\)/);
     assert.deepEqual(ledger[1], ['post', newId, { includeCost: true }], 'no cost entry to copy: posted as usual');
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE transactions SET reference_id') && params[0] === newId && params[1] === 'cli-ri'));
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE customer_check_allocations') && params[0] === newId));
@@ -92,8 +93,33 @@ test('reissueInvoice moves sale, collections, balance and order to the new invoi
     const annul = calls.find(({ sql }) => sql.startsWith("UPDATE invoices SET status = 'cancelled', deleted_at = NOW(), order_id = NULL, annulled_label = ?"));
     assert.deepEqual(annul.params, ['B-0003-00000041', 'inv-old']);
     assert.ok(calls.indexOf(annul) < calls.indexOf(insert), 'annulled before the new one takes the order');
+    // ADR-024: the internal credit note, never fiscal, named in the counter-entries.
+    const note = calls.find(({ sql }) => sql.startsWith('INSERT INTO credit_notes'));
+    assert.match(note.sql, /'INT', \?, \?, \?, \?, \?, 'internal'/);
+    assert.match(note.params[1], /^NCI-\d{4}-0001$/);
+    assert.deepEqual(
+        [note.params[2], note.params[3], note.params[5], note.params[6], note.params[7], note.params[8]],
+        ['cli-cf', 3, 'arca_error_annulment', 'inv-old', 'inv-old', 1210]
+    );
+    assert.match(note.params[9], /anula la factura B-0003-00000041, que ARCA no autorizó \(error de ARCA en la factura\)\. Motivo registrado: \(10243\) receptor\./);
+    assert.match(note.params[9], /Reemplazada por A-0003-00000042\. No se informa a ARCA ni tiene CAE\./);
+    assert.match(ledger[0][1].description, new RegExp(`Nota de crédito interna ${note.params[1]}`));
+    assert.equal(audits[0].new_values.internal_credit_note, note.params[1]);
     assert.equal(audits[0].action, 'REISSUE_INVOICE');
     assert.equal(audits[0].old_values.arca_last_error, '(10243) receptor');
+});
+
+test('AUD-011: the internal note says truthfully why the invoice is annulled', () => {
+    const rejected = annulmentCause({ invoice_type: 'B', arca_last_error: '(10243) receptor' }, 'B-0001-00000009');
+    assert.equal(rejected.referenceType, 'arca_error_annulment');
+    assert.match(rejected.text, /que ARCA no autorizó \(error de ARCA en la factura\)\. Motivo registrado: \(10243\) receptor\./);
+    const ticket = annulmentCause({ invoice_type: 'tk' }, 'TK-0001-00000003');
+    assert.deepEqual([ticket.referenceType, ticket.ledger], ['ticket_annulment', 'el ticket TK-0001-00000003']);
+    assert.match(ticket.text, /comprobante no fiscal, no se informa a ARCA/);
+    const neverSent = annulmentCause({ invoice_type: 'A' }, 'A-0001-00000004');
+    assert.equal(neverSent.referenceType, 'unauthorized_annulment');
+    assert.match(neverSent.text, /no llegó a autorizarse en ARCA \(se anuló antes de enviarla\)/);
+    assert.doesNotMatch(neverSent.text, /error de ARCA/, 'ARCA did not intervene: it is not blamed');
 });
 
 test('reissueInvoice with the same customer only changes the letter: no balance moves', async (t) => {
@@ -158,6 +184,8 @@ test('reissueInvoice refuses what cannot be annulled and rolls back', async (t) 
     await reject(null, { invoice_type: 'A' }, (error) => error.statusCode === 404);
     await reject({ ...OLD, cae: '123', status: 'authorized' }, { invoice_type: 'A' }, /nota de crédito/);
     await reject({ ...OLD, status: 'authorizing' }, { invoice_type: 'A' }, /verificación/);
+    // AUD-011: a pending ARCA number means it is not settled yet, whatever the status says.
+    await reject({ ...OLD, arca_expected_number: 42 }, { invoice_type: 'A' }, (error) => error.errorCode === 'invoice_not_reissuable');
     await reject(OLD, { invoice_type: 'TK' }, (error) => error.errorCode === 'invoice_has_credit_notes', { creditNotes: [{ id: 'cn-1' }] });
     await reject(OLD, { client_id: 'cli-missing' }, (error) => error.errorCode === 'client_not_found');
     await reject(OLD, {}, (error) => error.errorCode === 'nothing_to_change');

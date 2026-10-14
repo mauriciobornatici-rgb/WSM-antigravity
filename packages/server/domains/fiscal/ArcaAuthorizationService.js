@@ -37,6 +37,14 @@ export class ArcaAuthorizationService {
         const snapshot = docRows[0];
         if (!snapshot) throw businessError(404, { error: 'not_found', message: `${adapter.label} no encontrada` });
         if (snapshot.status === 'authorized') return adapter.load(id);
+        // ADR-024: an internal credit note (annulment of an invoice ARCA did not authorize) is
+        // never fiscal. Refused before anything is asked (the database also refuses a CAE on it).
+        if (snapshot.status === 'internal' || String(snapshot.credit_note_type || '').toUpperCase() === 'INT') {
+            throw businessError(409, {
+                error: 'internal_credit_note',
+                message: 'Es una nota de crédito interna por un error de ARCA en la factura: no se informa a ARCA ni lleva CAE.',
+            });
+        }
         if (String(snapshot.status || '').toLowerCase() === 'cancelled') {
             throw businessError(409, { error: 'cancelled', message: `${adapter.label} está anulada.` });
         }

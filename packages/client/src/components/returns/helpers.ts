@@ -66,11 +66,17 @@ export function creditNoteStatusLabel(status: string): string {
         authorizing: "En verificación con ARCA",
         authorized: "Autorizada",
         arca_conflict: "Conflicto con ARCA: revisar",
+        internal: "Interna (no fiscal)",
         approved: "Aprobada",
         cancelled: "Anulada",
         closed: "Cerrada",
     }
     return labels[status] ?? status
+}
+
+/** ADR-024: an internal note annuls an invoice ARCA did not authorize. It is never fiscal. */
+export function isInternalCreditNote(row: { status?: string | null; credit_note_type?: string | null | undefined }): boolean {
+    return row.status === "internal" || String(row.credit_note_type || "").toUpperCase() === "INT"
 }
 
 export function mapWarrantyRows(rows: GenericRow[]): WarrantyRow[] {
@@ -110,7 +116,8 @@ export function mapCreditNoteRows(rows: GenericRow[]): CreditNoteRow[] {
         id: readText(row.id, createClientUuid()),
         number: readText(row.number, "-"),
         created_at: readIsoDate(row.created_at),
-        client_name: readText(row.client_name),
+        // An anonymous note shows the buyer name it was issued with.
+        client_name: readText(row.client_name, readText(row.customer_name, "Consumidor Final")),
         amount: readNumber(row.amount),
         status: readText(row.status, "issued"),
         point_of_sale: row.point_of_sale ? Number(row.point_of_sale) : undefined,

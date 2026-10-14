@@ -309,6 +309,7 @@ function isRecoverableAlreadyAppliedDdl(error, statement) {
         (error?.code === 'ER_DUP_FIELDNAME' && normalized.includes('ADD COLUMN'))
         || (error?.code === 'ER_DUP_KEYNAME' && normalized.includes('ADD UNIQUE KEY'))
         || (error?.code === 'ER_FK_DUP_NAME' && normalized.includes('ADD CONSTRAINT'))
+        || (error?.code === 'ER_CHECK_CONSTRAINT_DUP_NAME' && normalized.includes('ADD CONSTRAINT'))
         || (error?.code === 'ER_CANT_CREATE_TABLE' && /errno:\s*121\b/i.test(String(error?.sqlMessage || '')) && normalized.includes('ADD CONSTRAINT'))
         || (error?.code === 'ER_TRG_ALREADY_EXISTS' && normalized.startsWith('CREATE TRIGGER'))
     );

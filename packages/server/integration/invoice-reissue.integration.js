@@ -81,6 +81,37 @@ test('ADR-022: an invoice ARCA rejected is annulled and issued again to the righ
     assert.equal(Number(balanceBefore.b) - Number(balanceAfter.b), 710);
     assert.equal(Number(companyBalance.b), 710);
 
+    // ADR-024: an internal credit note documents the annulment, says why, and is never fiscal.
+    const [[note]] = await pool.query(
+        "SELECT * FROM credit_notes WHERE reference_type = 'arca_error_annulment' AND reference_id = ?",
+        [invoice.id]
+    );
+    assert.deepEqual([note.credit_note_type, note.status, Number(note.amount), note.client_id], ['INT', 'internal', Number(invoice.total_amount), anonymousBuyer]);
+    assert.match(note.number, /^NCI-\d{4}-\d{4}$/);
+    assert.match(note.notes, /no fiscal: anula la factura B-0097-\d{8}, que ARCA no autorizó \(error de ARCA en la factura\)\. Motivo registrado: \(10243\)/);
+    assert.match(note.notes, /No se informa a ARCA ni tiene CAE/);
+    const [[reversal]] = await pool.query(
+        "SELECT description FROM journal_entries WHERE reference_type = 'reversal' AND description LIKE ? LIMIT 1",
+        [`%${note.number}%`]
+    );
+    assert.ok(reversal, 'the counter-entries name the internal note');
+    // Never a CAE: the authorization refuses it, and the database refuses one written by hand.
+    const { ArcaAuthorizationService } = await import('../domains/fiscal/ArcaAuthorizationService.js');
+    const { creditNoteArcaAdapter } = await import('../domains/fiscal/arcaAdapters.js');
+    const arca = new ArcaAuthorizationService({ afipService: { buildRequest: () => { throw new Error('ARCA must not be asked'); } } });
+    await assert.rejects(() => arca.authorize(creditNoteArcaAdapter, note.id, null), (error) => error.statusCode === 409 && error.errorCode === 'internal_credit_note');
+    await assert.rejects(() => pool.query("UPDATE credit_notes SET cae = '12345678901234' WHERE id = ?", [note.id]), (error) => error.code === 'ER_CHECK_CONSTRAINT_VIOLATED');
+    await assert.rejects(() => pool.query("UPDATE credit_notes SET status = 'issued' WHERE id = ?", [note.id]), (error) => error.code === 'ER_CHECK_CONSTRAINT_VIOLATED');
+    // AUD-011: no hole either way (status NULL, or turning it into a fiscal type).
+    await assert.rejects(() => pool.query('UPDATE credit_notes SET status = NULL WHERE id = ?', [note.id]), (error) => error.code === 'ER_CHECK_CONSTRAINT_VIOLATED');
+    await assert.rejects(() => pool.query("UPDATE credit_notes SET credit_note_type = 'B', cae = '12345678901234' WHERE id = ?", [note.id]), (error) => error.code === 'ER_CHECK_CONSTRAINT_VIOLATED');
+    // It does not move the customer's account again (the annulled invoice is already out of it).
+    const { creditNotesService } = await import('../services/warranties.service.js');
+    assert.equal((await creditNotesService.getCreditNotes({ client_id: anonymousBuyer })).some((row) => row.id === note.id), false);
+    assert.equal((await creditNotesService.getCreditNotes({ client_id: anonymousBuyer, include_internal: 'true' })).some((row) => row.id === note.id), true);
+    const buyerAccount = await clientService.getClientById(anonymousBuyer);
+    assert.equal(buyerAccount.current_account_balance, 0, 'nothing owed and no extra credit after the annulment');
+
     // Once annulled it cannot be annulled again.
     await assert.rejects(() => salesService.reissueInvoice(invoice.id, { invoice_type: 'B' }, null), (error) => error.statusCode === 404);
 });
@@ -111,6 +142,28 @@ test('ADR-022: an invoice of an order is reissued and the order points to the ne
     const [[audit]] = await pool.query("SELECT old_values FROM audit_logs WHERE entity_id = ? AND action = 'REISSUE_INVOICE'", [ticket.id]);
     const oldValues = typeof audit.old_values === 'string' ? JSON.parse(audit.old_values) : audit.old_values;
     assert.equal(oldValues.order_id, orderId, 'the order of the annulled invoice stays in the audit');
+});
+
+test('AUD-011: the 5-day window counts from the original sale, also after reissuing again', async () => {
+    const buyer = await seedClient({ condition: 'tc_ConsFinal' });
+    const first = await salesService.createManualInvoice({
+        client_id: buyer, invoice_type: 'B', point_of_sale: 97,
+        items: [{ description: 'Botella QA', quantity: 1, unit_price: 50, vat_rate: 21 }],
+        payments: [{ method: 'cash', amount: 60.5 }],
+    }, null);
+    await pool.query('UPDATE invoices SET issue_date = NOW() - INTERVAL 4 DAY WHERE id = ?', [first.id]);
+    const second = await salesService.reissueInvoice(first.id, { invoice_type: 'TK' }, null);
+    // The ticket is dated today, but the sale is 4 days old: one more day and it is 6.
+    await pool.query('UPDATE invoices SET issue_date = NOW() - INTERVAL 6 DAY WHERE id = ?', [first.id]);
+    await assert.rejects(() => salesService.reissueInvoice(second.id, { invoice_type: 'B' }, null), (error) => error.errorCode === 'reissue_too_old' && error.message.includes('6 días'));
+    const third = await salesService.reissueInvoice(second.id, { invoice_type: 'B' }, null, { allowLate: true });
+    assert.equal(third.replaces_invoice_id, second.id);
+    // The ticket's note says it was a ticket, not an ARCA error.
+    const [[ticketNote]] = await pool.query('SELECT reference_type, notes FROM credit_notes WHERE reference_id = ?', [second.id]);
+    assert.equal(ticketNote.reference_type, 'ticket_annulment');
+    assert.match(ticketNote.notes, /anula el ticket TK-/);
+    const [[firstNote]] = await pool.query('SELECT reference_type, notes FROM credit_notes WHERE reference_id = ?', [first.id]);
+    assert.equal(firstNote.reference_type, 'unauthorized_annulment', 'never sent to ARCA: not blamed on ARCA');
 });
 
 test('ADR-022: an invoice with a CAE, in ARCA, unchanged or for the wrong customer is not reissued', async () => {

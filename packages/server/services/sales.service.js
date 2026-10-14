@@ -14,6 +14,32 @@ import { CLIENT_TAX_CONDITIONS } from '@wsm/common';
 
 // ADR-022: days an invoice ARCA never authorized can still be reissued (ARCA's window for goods).
 export const REISSUE_MAX_DAYS = 5;
+/**
+ * ADR-024 / AUD-011: why an invoice without a CAE is annulled, said truthfully in the internal
+ * credit note: ARCA did not authorize it (with the reason recorded), it is a ticket (never
+ * informed to ARCA), or it was annulled before it was ever sent to ARCA.
+ */
+export function annulmentCause(invoice, label) {
+    if (invoice.arca_last_error) {
+        return {
+            referenceType: 'arca_error_annulment',
+            text: `anula la factura ${label}, que ARCA no autorizó (error de ARCA en la factura). Motivo registrado: ${String(invoice.arca_last_error).slice(0, 300)}.`,
+            ledger: `la factura ${label} no autorizada por ARCA`,
+        };
+    }
+    if (String(invoice.invoice_type || '').toUpperCase() === 'TK') {
+        return {
+            referenceType: 'ticket_annulment',
+            text: `anula el ticket ${label} (comprobante no fiscal, no se informa a ARCA).`,
+            ledger: `el ticket ${label}`,
+        };
+    }
+    return {
+        referenceType: 'unauthorized_annulment',
+        text: `anula la factura ${label}, que no llegó a autorizarse en ARCA (se anuló antes de enviarla).`,
+        ledger: `la factura ${label} sin autorizar en ARCA`,
+    };
+}
 import dispatchOrderUseCase from '../domains/sales/DispatchOrderUseCase.js';
 import deliverOrderUseCase from '../domains/sales/DeliverOrderUseCase.js';
 
@@ -1646,7 +1672,8 @@ class SalesService extends BaseService {
             const [rows] = await connection.query('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [invoiceId]);
             const old = rows[0];
             if (!old) throw businessError(404, { error: 'not_found', message: 'Factura no encontrada.' });
-            if (old.cae || old.status !== 'issued') {
+            // 'issued' without a CAE and without a pending number: ARCA holds nothing for it (ADR-020).
+            if (old.cae || old.status !== 'issued' || old.arca_expected_number) {
                 throw businessError(409, {
                     error: 'invoice_not_reissuable',
                     message: old.cae
@@ -1656,9 +1683,17 @@ class SalesService extends BaseService {
             }
             // ADR-022 (user: "lo que se estile"): ARCA admits a sale of goods dated up to 5 days
             // back, so that is the usual window to correct an invoice. Later only an administrator,
-            // and it is audited.
+            // and it is audited. Counted from the original sale: reissuing again does not restart it
+            // (AUD-011, it follows replaces_invoice_id back to the first invoice).
             const [[age]] = await connection.query(
-                'SELECT DATEDIFF(CURDATE(), DATE(COALESCE(issue_date, created_at))) AS days FROM invoices WHERE id = ?',
+                `WITH RECURSIVE chain (id, replaces_invoice_id, issued, depth) AS (
+                     SELECT id, replaces_invoice_id, COALESCE(issue_date, created_at), 0 FROM invoices WHERE id = ?
+                     UNION ALL
+                     SELECT i.id, i.replaces_invoice_id, COALESCE(i.issue_date, i.created_at), c.depth + 1
+                     FROM invoices i JOIN chain c ON i.id = c.replaces_invoice_id
+                     WHERE c.depth < 20
+                 )
+                 SELECT DATEDIFF(CURDATE(), DATE(MIN(issued))) AS days FROM chain`,
                 [invoiceId]
             );
             const ageDays = Number(age?.days || 0);
@@ -1726,6 +1761,15 @@ class SalesService extends BaseService {
             // link stays in the audit and in the new invoice's replaces_invoice_id.
             const oldLabel = `${old.invoice_type}-${String(old.point_of_sale).padStart(4, '0')}-${String(old.invoice_number).padStart(8, '0')}`;
             const newLabel = `${invoiceType}-${String(pointOfSale).padStart(4, '0')}-${String(invoiceNumber).padStart(8, '0')}`;
+            // ADR-024: the internal credit note that documents the annulment (own numbering).
+            const year = new Date().getFullYear();
+            const [[noteMax]] = await connection.query(
+                "SELECT MAX(CAST(SUBSTRING_INDEX(number, '-', -1) AS UNSIGNED)) AS max_seq FROM credit_notes WHERE number LIKE ?",
+                [`NCI-${year}-%`]
+            );
+            const noteSequence = await nextDocumentSequence(connection, `credit_note_internal:${year}`, Number(noteMax?.max_seq || 0));
+            const cause = annulmentCause(old, oldLabel);
+            const noteNumber = `NCI-${year}-${String(noteSequence).padStart(4, '0')}`;
             await connection.query(
                 "UPDATE invoices SET status = 'cancelled', deleted_at = NOW(), order_id = NULL, annulled_label = ? WHERE id = ?",
                 [oldLabel, invoiceId]
@@ -1770,7 +1814,7 @@ class SalesService extends BaseService {
                 referenceType: 'invoice',
                 referenceId: invoiceId,
                 accountCodes: ['4.1.01.01', '5.1.01.01'],
-                description: `Anulación de factura sin autorizar ${oldLabel} (reemplazada por ${newLabel})`,
+                description: `Nota de crédito interna ${noteNumber}: anulación de ${cause.ledger} (reemplazada por ${newLabel})`,
             });
             await accountingService.postInvoiceAccountingEntries(connection, newId, { includeCost: costLines.length === 0 });
             if (costLines.length > 0) {
@@ -1812,6 +1856,23 @@ class SalesService extends BaseService {
                     sameClient ? [newId, old.order_id, invoiceId] : [newId, client.client_id, old.order_id, invoiceId]
                 );
             }
+            // ADR-024 (user): an internal credit note documents the annulment. It says why, it is
+            // never fiscal (type INT, status internal: no CAE is ever asked for it, and the
+            // database refuses one), and it does not count again in the customer's account (the
+            // annulled invoice is already out of it).
+            const noteId = crypto.randomUUID();
+            await connection.query(
+                `INSERT INTO credit_notes (
+                    id, number, client_id, point_of_sale, credit_note_type, customer_name,
+                    reference_type, reference_id, invoice_id, amount, status, notes
+                ) VALUES (?, ?, ?, ?, 'INT', ?, ?, ?, ?, ?, 'internal', ?)`,
+                [
+                    noteId, noteNumber, old.client_id || null, pointOfSale, old.customer_name || old.client_name || null,
+                    cause.referenceType, invoiceId, invoiceId, old.total_amount,
+                    `Nota de crédito interna, no fiscal: ${cause.text} Reemplazada por ${newLabel}. No se informa a ARCA ni tiene CAE.`,
+                ]
+            );
+
             await auditService.log({
                 user_id: userId,
                 action: 'REISSUE_INVOICE',
@@ -1823,7 +1884,7 @@ class SalesService extends BaseService {
                     age_days: ageDays, ...(ageDays > REISSUE_MAX_DAYS ? { late_by_administrator: true } : {}),
                 },
                 new_values: {
-                    invoice_id: newId, label: newLabel, client_id: client.client_id,
+                    invoice_id: newId, label: newLabel, client_id: client.client_id, internal_credit_note: noteNumber,
                     client_tax_id: client.client_tax_id, client_tax_condition: client.client_tax_condition,
                 },
             }, connection);

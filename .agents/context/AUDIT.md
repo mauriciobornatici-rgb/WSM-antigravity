@@ -1,5 +1,31 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-011 — 2026-10-14 — `guardian-integridad` sobre ADR-024 (nota de crédito interna)
+
+- **Verificado sano:** ningún camino lleva una nota interna a ARCA. Se revisaron:
+  - el endpoint de autorización, el servicio y el adaptador;
+  - el worker de recuperación y las escrituras internas de ARCA;
+  - los otros dos lugares que crean notas (devolución y manual).
+  La nota no se cuenta dos veces en cuenta corriente, caja, asientos ni topes de NC.
+- [x] **Media:**
+  - **La 061 se había editado después de aplicarse.** Volvió a la versión del commit, y el CHECK pasó a una migración 062 nueva. El reset de local y QA quedó documentado.
+  - **La nota decía "error de ARCA" aunque ARCA no hubiera intervenido** (ticket, o factura nunca enviada). Ahora el texto y el `reference_type` dependen del caso real.
+- [x] **Baja:**
+  - **CHECK:** quedó estricto en las dos direcciones y no deja pasar valores vacíos.
+  - **Notas internas:** se reconocen por estado o por tipo, en todos lados.
+  - **Migraciones:** el runner tolera un CHECK ya creado.
+  - **Numeración NCI:** concilia contra el máximo existente.
+  - **Reemisión:** se rechaza si hay un número de ARCA pendiente.
+  - **Plazo de 5 días:** se cuenta desde la venta original.
+  - **Notas anónimas:** se muestra el nombre del comprador.
+- **Queda anotado (bajo):** el año de la NCI sale de la hora del servidor, igual que en las NC. El CHECK requiere MySQL 8.0.16 o posterior, igual que la 044.
+- **Decisiones que confirmar con el usuario:**
+  - `arca_configured_at` se fija una sola vez y no se reinicia al pasar de homologación a producción;
+  - una nota interna no se puede anular, por diseño.
+- **Pruebas:** también falló la integración por datos acumulados en QA (más de 100 alertas de corridas anteriores). Ahora el archivo de pruebas ARCA limpia al empezar sus propios puntos de venta de prueba (≥ 9000).
+
+Evidencia: validate 0 (969 + 101); coverage 96,68/90,61/93,97; integración 115/115 ×2 (5 escenarios de reemisión y nota interna con base real, incluido el CHECK); RBAC OK; E2E 6/6; simulación 153/153. Prueba manual en la app local: la nota NCI-2026-0001 se creó con su texto, la autorización respondió 409 y la nota no aparece en la cuenta del cliente.
+
 ## AUD-010 — 2026-10-14 — `guardian-integridad` sobre ADR-022 (reemisión, alerta de 24 h, condición en el momento)
 
 - [x] **Alta: la deuda desaparecía si se reemitía a Consumidor Final.** El mayor dejaba de conciliar con la cuenta corriente. Ahora responde 409 `outstanding_requires_client`.

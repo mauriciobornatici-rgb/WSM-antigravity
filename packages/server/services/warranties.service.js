@@ -1007,6 +1007,11 @@ class CreditNotesService extends BaseService {
             query += ' AND cn.client_id = ?';
             params.push(filters.client_id);
         }
+        // ADR-024: an internal note does not move the customer's account (the invoice it annuls
+        // is already out of it): it is listed only where it is asked for (credit notes screen).
+        if (String(filters.include_internal) !== 'true') {
+            query += " AND (cn.status IS NULL OR cn.status <> 'internal') AND COALESCE(cn.credit_note_type, '') <> 'INT'";
+        }
 
         query += ' ORDER BY cn.created_at DESC';
         const [rows] = await pool.query(query, params);

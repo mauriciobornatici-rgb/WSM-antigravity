@@ -711,6 +711,19 @@ test('the recovery worker does not overlap with itself and frees the flag even o
 // listAlerts (ADR-021)
 // ---------------------------------------------------------------------------
 
+test('ADR-024: an internal credit note is never sent to ARCA (service and adapter)', async () => {
+    for (const snapshot of [{ id: 'd-1', status: 'internal' }, { id: 'd-1', status: 'issued', credit_note_type: 'int' }]) {
+        const { service, adapter, afipCalls } = setup({ state: { snapshot } });
+        await assert.rejects(() => service.authorize(adapter, 'd-1', 'u-1'), (error) => error.statusCode === 409 && error.errorCode === 'internal_credit_note');
+        assert.equal(afipCalls.buildRequest, 0);
+        assert.equal(afipCalls.requestCae.length, 0);
+    }
+    await assert.rejects(
+        () => creditNoteArcaAdapter.prepare({ id: 'cn-1', status: 'internal', credit_note_type: 'INT' }),
+        (error) => error.errorCode === 'internal_credit_note'
+    );
+});
+
 test('ADR-022: a document annulled meanwhile is never sent to ARCA', async () => {
     // Annulled before the lock was taken.
     const annulled = setup({ state: { snapshot: { id: 'd-1', status: 'issued' }, fresh: { id: 'd-1', status: 'cancelled', deleted_at: new Date() } } });
