@@ -536,3 +536,13 @@ test('runMigrations rolls back failed transactional statements and tolerates loc
     await runMigrations();
     assert.equal(released, 2);
 });
+
+test('a migration recorded with other line endings is the same migration; a real change is not', () => {
+    const { checksum, matchesIgnoringLineEndings } = migrationInternals;
+    const lf = 'ALTER TABLE t ADD COLUMN a INT NULL;\nALTER TABLE t ADD COLUMN b INT NULL;\n';
+    const crlf = lf.replace(/\n/g, '\r\n');
+    assert.equal(matchesIgnoringLineEndings(checksum(crlf), lf), true, 'recorded on Windows (CRLF), read as LF');
+    assert.equal(matchesIgnoringLineEndings(checksum(lf), crlf), true, 'recorded as LF, read as CRLF');
+    assert.equal(matchesIgnoringLineEndings(checksum(lf), lf), true);
+    assert.equal(matchesIgnoringLineEndings(checksum(lf), lf.replace('b INT', 'b BIGINT')), false, 'a real change still fails');
+});

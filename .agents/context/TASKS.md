@@ -112,9 +112,16 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - [x] ADR-018: stock inicial con costo obligatorio y cuenta de ajuste 3.1.03.01 (migración 055); envío bonificado o editado solo con gerente o administrador; NC anulada libera el envío. Evidencia: validate 0 (881 + 84); coverage 96,88/90,32/94,66; integración 82/82 ×3; RBAC OK; E2E 6/6; simulación 153/153.
 - [x] ADR-019 (AUD-007 corregido): varios remitos por factura de compra; stock único con Tiendanube (disponible menos lo que deben los pedidos online, conciliación cada 20 s, completa cada hora, forzada diaria, stock de seguridad opcional por check); pedidos online sin stock registrados y reservados al entrar mercadería. Migraciones 056 y 057; el CHECK de inventario pasa a 060. Evidencia: validate 0 (890 + 87); coverage 96,81/90,29/94,24; integración 88/88 ×3; RBAC OK; E2E 6/6; simulación 153/153.
 
+## Merge a main (2026-10-14, autorización única del usuario)
+
+- [x] PR #3 (`codex/simulacion-operativa` → `main`) mergeado: `fb2a6be`. Los PR #1 y #2 ya estaban en `main`. El CI no despliega (solo pruebas).
+- [x] Entorno local listo para probar sobre `main`: API en 3001 con `.env.local` y migraciones 046-062 aplicadas en la base local; Vite en 5173; QA al día.
+- [x] Al cambiar a `main`, la API no arrancaba: la 054 tenía registrado el hash de un archivo de trabajo con otros finales de línea y comentarios. Se verificó que las 4 sentencias aplicadas eran idénticas y se actualizó el hash solo en local y QA.
+- [ ] PR #4 (`fix/migraciones-fin-de-linea`): el control de migraciones ignora diferencias de fin de línea (CRLF/LF). Pendiente de merge por el usuario (la autorización era única).
+
 ## Próximos pasos
 
-1. Usuario: revisar y mergear PR #1; después re-apuntar PR #2 a `main`.
+1. Usuario: probar sobre `main` en local y hacer la homologación de ARCA; mergear el PR #4.
 2. Usuario: correr en producción los runbooks (`docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`) y aplicar la migración 045 con el despliegue.
 3. I8: migración 063 (CHECK de inventario) — solo después de la reparación en producción (AP2).
 - [x] ADR-021 (AUD-009 corregido): condición IVA del cliente (migración 060, sin FK; Inscripto/Monotributista con CUIT), letra controlada antes de numerar (A siempre con CUIT; offline se corrige y audita), sugerencia de letra en POS y pedidos; alertas ARCA (conflicto, verificación > 10 min, rechazados) en el panel y contador en "Facturación". Evidencia: validate 0 (955 + 99); coverage 96,62/90,87/94,10; integración 108/108 ×2; RBAC OK; E2E 6/6; simulación 153/153. Decisiones pendientes del usuario en AUD-009 (anular factura no autorizable, alerta de facturas sin CAE por horas, carga de condiciones existentes, permiso, impresión "Sin especificar").
