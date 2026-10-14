@@ -50,7 +50,7 @@ export default function AppLayout() {
         refetchInterval: 60_000,
         meta: { silentError: true },
     });
-    // ADR-021: ARCA documents in conflict or stuck in verification, on "Facturación".
+    // ADR-021: ARCA documents in conflict, stuck in verification, rejected or unauthorized, on "Facturación".
     const arcaAlerts = useArcaAlerts();
     const badgeByHref: Record<string, number> = {
         "/pos-exceptions": pendingPosExceptions.data?.length ?? 0,
@@ -183,7 +183,11 @@ export default function AppLayout() {
                                                     )}
                                                 >
                                                     {!collapsed && <span aria-hidden="true">{badgeLabel}</span>}
-                                                    <span className="sr-only">{badgeLabel} pendientes de revisión</span>
+                                                    <span className="sr-only">
+                                                        {item.href === "/invoices"
+                                                            ? `${badgeLabel} ${badge === 1 ? "alerta" : "alertas"} de ARCA`
+                                                            : `${badgeLabel} ${badge === 1 ? "pendiente" : "pendientes"} de revisión`}
+                                                    </span>
                                                 </span>
                                             )}
                                         </Link>

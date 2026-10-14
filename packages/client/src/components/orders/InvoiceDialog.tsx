@@ -92,6 +92,11 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
     const invoiceType: InvoiceType = choice && choice.orderId === order?.id ? choice.type : suggestedType
     const setInvoiceType = (type: InvoiceType) => { if (order) setChoice({ orderId: order.id, type }) }
     const clientTaxCondition = taxConditionName(clientTaxConditionId)
+    const letterIsSuggested = !(choice && choice.orderId === order?.id)
+        && suggestedInvoiceLetter(clientTaxConditionId, companySettings.data?.billing?.iva_condition) !== null
+    // A Factura A needs a customer with CUIT: the server refuses it otherwise (AUD-009).
+    const clientTaxId = loadedHere?.taxId ?? order?.client_tax_id ?? ""
+    const invoiceCuitError = invoiceType === "A" && String(clientTaxId).replace(/\D/g, "").length !== 11
 
     const createInvoiceMutation = useMutation({
         mutationFn: ({ orderId, payload }: { orderId: string; payload: Parameters<typeof api.createInvoiceFromOrder>[1] }) =>
@@ -172,8 +177,17 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                                     ))}
                                 </SelectContent>
                             </Select>
+                            {letterIsSuggested ? (
+                                <p className="text-xs text-muted-foreground">Sugerida por la condición IVA del cliente.</p>
+                            ) : null}
                         </div>
                     </div>
+
+                    {invoiceCuitError ? (
+                        <p id="order-invoice-cuit-error" role="alert" className="text-xs font-medium text-destructive bg-destructive/10 p-2 rounded border border-destructive/20">
+                            La factura A necesita un cliente con CUIT (11 dígitos).
+                        </p>
+                    ) : null}
 
                     {/* Detalle de la venta */}
                     <div className="space-y-2 rounded-md border p-3">
@@ -259,7 +273,12 @@ export function InvoiceDialog({ open, onOpenChange, order, onInvoiceCreated }: I
                     <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                         Cancelar
                     </Button>
-                    <Button type="button" onClick={() => void submitInvoice()} disabled={createInvoiceMutation.isPending}>
+                    <Button
+                        type="button"
+                        onClick={() => void submitInvoice()}
+                        aria-describedby={invoiceCuitError ? "order-invoice-cuit-error" : undefined}
+                        disabled={createInvoiceMutation.isPending || invoiceCuitError}
+                    >
                         {createInvoiceMutation.isPending ? "Facturando..." : "Emitir factura"}
                     </Button>
                 </div>

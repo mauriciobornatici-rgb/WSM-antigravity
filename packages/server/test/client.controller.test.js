@@ -223,6 +223,24 @@ test('the customer VAT condition is stored, kept when not sent and cleared with 
     assert.equal(updates()[2].params[6], null);
 });
 
+test('updateClient keeps the CUIT rule of the stored condition when the form does not send it', async (t) => {
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        calls.push({ sql, params });
+        if (sql.includes('SELECT * FROM clients WHERE id') && sql.includes('deleted_at')) {
+            return [[{ id: 'c', name: 'Club', tax_id: '30712345674', tax_condition_id: 'tc_RespInscripto' }]];
+        }
+        return [[]];
+    });
+    const original = auditService.log;
+    auditService.log = async () => {};
+    t.after(() => { auditService.log = original; });
+    const result = await runHandler(updateClient, { params: { id: 'c' }, body: { name: 'Club', tax_id: '' } });
+    assert.equal(result.status, 422);
+    assert.equal(result.body.error, 'cuit_required');
+    assert.equal(calls.some(({ sql }) => sql.startsWith('UPDATE clients')), false);
+});
+
 test('deleteClient returns 404 for an unknown client', async (t) => {
     mockPool(t, async () => [[]]);
     const result = await runHandler(deleteClient, { params: { id: 'missing' } });

@@ -37,7 +37,7 @@ export function ClientHeaderCard({
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">{client.name}</h2>
                     <p className="text-muted-foreground">
-                        {client.tax_id} · {taxConditionName(client.tax_condition_id) ?? "Condición IVA sin especificar"}
+                        {client.tax_id ? `${client.tax_id} · ` : ""}{taxConditionName(client.tax_condition_id) ?? "Condición IVA sin especificar"}
                     </p>
                 </div>
             </div>

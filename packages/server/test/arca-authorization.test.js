@@ -367,8 +367,9 @@ test('if the last number cannot be read it answers 503 arca_unreachable and the 
     });
     await assert.rejects(
         () => service.authorize(adapter, 'd-1', 'u-1'),
+        // The SDK/network detail stays in the server log, never in the answer (security review).
         (error) => error.statusCode === 503 && error.responseBody.error === 'arca_unreachable'
-            && /ECONNREFUSED/.test(error.responseBody.message)
+            && !/ECONNREFUSED/.test(error.responseBody.message) && /No se pudo consultar a ARCA/.test(error.responseBody.message)
     );
     assert.equal(writes(calls).length, 0);
     assert.equal(afipCalls.requestCae.length, 0);

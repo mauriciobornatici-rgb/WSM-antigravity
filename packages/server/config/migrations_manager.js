@@ -26,6 +26,19 @@ function matchesIgnoringLineEndings(recordedChecksum, content) {
     return [content, lf, lf.replace(/\n/g, '\r\n')].some((variant) => checksum(variant) === recordedChecksum);
 }
 
+// MySQL enforces CHECK constraints only from 8.0.16: an older server accepts and silently
+// ignores them, so a migration that relies on one must not be recorded as applied there.
+const CHECK_CONSTRAINT = /ADD\s+CONSTRAINT\s+\S+\s+CHECK\s*\(/i;
+async function assertCheckConstraintsEnforced(connection, file, statement) {
+    if (!CHECK_CONSTRAINT.test(statement)) return;
+    const [[row]] = await connection.query('SELECT VERSION() AS version');
+    const [major = 0, minor = 0, patch = 0] = String(row?.version || '').split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
+    const enforced = major > 8 || (major === 8 && (minor > 0 || patch >= 16));
+    if (!enforced) {
+        throw new Error(`Migration ${file} needs MySQL 8.0.16 or later to enforce CHECK constraints (server: ${row?.version})`);
+    }
+}
+
 function isAcceptedHistoricalChecksum(file, recordedChecksum) {
     return ACCEPTED_HISTORICAL_CHECKSUMS.get(file)?.has(recordedChecksum) === true;
 }
@@ -317,7 +330,6 @@ function isRecoverableAlreadyAppliedDdl(error, statement) {
         (error?.code === 'ER_DUP_FIELDNAME' && normalized.includes('ADD COLUMN'))
         || (error?.code === 'ER_DUP_KEYNAME' && normalized.includes('ADD UNIQUE KEY'))
         || (error?.code === 'ER_FK_DUP_NAME' && normalized.includes('ADD CONSTRAINT'))
-        || (error?.code === 'ER_CHECK_CONSTRAINT_DUP_NAME' && normalized.includes('ADD CONSTRAINT'))
         || (error?.code === 'ER_CANT_CREATE_TABLE' && /errno:\s*121\b/i.test(String(error?.sqlMessage || '')) && normalized.includes('ADD CONSTRAINT'))
         || (error?.code === 'ER_TRG_ALREADY_EXISTS' && normalized.startsWith('CREATE TRIGGER'))
     );
@@ -326,6 +338,7 @@ function isRecoverableAlreadyAppliedDdl(error, statement) {
 export const migrationInternals = Object.freeze({
     checksum,
     matchesIgnoringLineEndings,
+    assertCheckConstraintsEnforced,
     splitStatements,
     prepareMigrationStatement,
     splitAlterTableActions: splitTopLevelComma,
@@ -418,6 +431,7 @@ export const runMigrations = async () => {
                     continue;
                 }
 
+                await assertCheckConstraintsEnforced(connection, file, statement);
                 const transactional = !isDdlStatement(statement);
                 if (transactional) await connection.beginTransaction();
                 try {

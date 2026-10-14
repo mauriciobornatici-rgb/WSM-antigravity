@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Plus, Eye, Printer, ReceiptText } from "lucide-react"
 import { toast } from "sonner"
@@ -57,6 +58,8 @@ export function CreditNotesTab({
     taxRateLabel,
 }: CreditNotesTabProps) {
     const queryClient = useQueryClient()
+    const [searchParams] = useSearchParams()
+    const highlightedId = searchParams.get("credit_note_id")
 
     const [createOpen, setCreateOpen] = useState(false)
     const [clientId, setClientId] = useState("")
@@ -164,6 +167,16 @@ export function CreditNotesTab({
         }
     }
 
+    // An ARCA alert links to one note (?credit_note_id=): highlight it and bring it into view once, after loading.
+    const scrolledRef = useRef(false)
+    useEffect(() => {
+        if (!highlightedId || loading || scrolledRef.current) return
+        const element = document.getElementById(`credit-note-${highlightedId}`)
+        if (!element) return
+        scrolledRef.current = true
+        element.scrollIntoView({ block: "center" })
+    }, [highlightedId, loading, creditNotes])
+
     function retry() {
         void Promise.all([creditNotesQuery.refetch(), clientsQuery.refetch()])
     }
@@ -204,7 +217,12 @@ export function CreditNotesTab({
                                     </TableRow>
                                 ) : (
                                     creditNotes.map((row) => (
-                                        <TableRow key={row.id}>
+                                        <TableRow
+                                            key={row.id}
+                                            id={`credit-note-${row.id}`}
+                                            className={row.id === highlightedId ? "bg-amber-500/10" : undefined}
+                                            aria-current={row.id === highlightedId ? "true" : undefined}
+                                        >
                                             <TableCell>{new Date(row.created_at).toLocaleDateString("es-AR")}</TableCell>
                                             <TableCell className="font-mono font-bold">
                                                 {creditNoteFiscalNumber(row) ?? row.number}
@@ -226,7 +244,9 @@ export function CreditNotesTab({
                                                     <p className="mt-1 max-w-[220px] text-xs text-muted-foreground">{ARCA_VERIFYING_HELP}</p>
                                                 ) : null}
                                                 {isInternalCreditNote(row) ? (
-                                                    <p className="mt-1 max-w-[280px] text-xs text-muted-foreground">{row.notes}</p>
+                                                    <p className="mt-1 max-w-[280px] text-xs text-muted-foreground">
+                                                        Motivo: {row.notes?.trim() ? row.notes : "no registrado"}
+                                                    </p>
                                                 ) : (
                                                     <ArcaLastError doc={row} className="mt-1 max-w-[220px]" />
                                                 )}

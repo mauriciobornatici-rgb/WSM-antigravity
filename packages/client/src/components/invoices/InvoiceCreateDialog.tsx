@@ -45,6 +45,9 @@ export function InvoiceCreateDialog({
 }: InvoiceCreateDialogProps) {
     const quantityInvalid = !(manualItem.quantity > 0)
     const selectedClient = clients.find((client) => client.id === draftInvoice.client_id) ?? null
+    const letterIsSuggested = draftInvoice.invoice_type === suggestedInvoiceLetter(selectedClient?.tax_condition_id, companyIvaCondition)
+    // A Factura A needs a customer with CUIT: the server refuses it otherwise (AUD-009).
+    const invoiceCuitError = draftInvoice.invoice_type === "A" && String(selectedClient?.tax_id || "").replace(/\D/g, "").length !== 11
     // ADR-021/022: the letter follows the customer's VAT condition (it can still be changed).
     function selectClient(clientId: string, list: Client[] = clients) {
         const client = list.find((candidate) => candidate.id === clientId)
@@ -98,6 +101,9 @@ export function InvoiceCreateDialog({
                                         <SelectItem value="B">Factura B</SelectItem>
                                     </SelectContent>
                                 </Select>
+                                {letterIsSuggested ? (
+                                    <p className="text-xs text-muted-foreground">Sugerida por la condición IVA del cliente.</p>
+                                ) : null}
                             </div>
                             <div className="space-y-2">
                                 <Label>Pto. venta</Label>
@@ -105,6 +111,12 @@ export function InvoiceCreateDialog({
                             </div>
                         </div>
                     </div>
+
+                    {invoiceCuitError ? (
+                        <p id="manual-invoice-cuit-error" role="alert" className="text-xs font-medium text-destructive bg-destructive/10 p-2 rounded border border-destructive/20">
+                            La factura A necesita un cliente con CUIT (11 dígitos).
+                        </p>
+                    ) : null}
 
                     {onClientUpdated ? (
                         <ClientTaxConditionNotice
@@ -201,7 +213,11 @@ export function InvoiceCreateDialog({
                     <div className="flex justify-end text-xl font-bold">Total (IVA incl.): {formatMoney(total)}</div>
                 </div>
                 <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                    <Button onClick={onCreateInvoice} disabled={isSubmitting}>
+                    <Button
+                        onClick={onCreateInvoice}
+                        aria-describedby={invoiceCuitError ? "manual-invoice-cuit-error" : undefined}
+                        disabled={isSubmitting || invoiceCuitError}
+                    >
                         {isSubmitting ? "Emitiendo..." : "Emitir factura"}
                     </Button>
                 </DialogFooter>

@@ -1,5 +1,34 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-012 — 2026-10-14 — `revisor-seguridad` y `revisor-ux` sobre lo mergeado en el ciclo ADR-020 a ADR-024
+
+**Seguridad.** No hay hallazgos explotables altos ni medios. Revisado sin problemas: RBAC, CSRF, validación, SQL dinámico y bloqueo de CAE de las notas internas.
+- [x] **Baja:** la ventana de 5 días se podía eludir encadenando más de 20 reemisiones. Ahora el tope es 50 y, si la cadena no llega a la factura original, se trata como vencida (solo administrador).
+- [x] **Endurecimientos:**
+  - `PUT /clients/:id` valida el CUIT del Responsable Inscripto contra la condición efectiva.
+  - El 503 `arca_unreachable` ya no devuelve el texto del SDK (va al log).
+  - El runner vuelve a fallar si un CHECK ya existe, en lugar de darlo por aplicado.
+  - Antes de crear un CHECK se exige MySQL 8.0.16 o posterior.
+  - La reemisión bloquea el pedido antes de mirar si tiene devoluciones en curso.
+- **Queda anotado (bajo):** carrera de CUIT duplicado entre dos altas simultáneas, porque no hay índice único (el mismo patrón ya existente).
+- **Decisión ya tomada (ADR-023):** cualquiera con facturación reemite, también cambiando el cliente con saldo o pasando A/B a ticket. Se informó al usuario.
+
+**UX y accesibilidad.** 3 altos, 10 medios y varios bajos, todos corregidos por un implementador y revisados por el coordinador.
+- **Altos:**
+  - cliente Responsable Inscripto sin CUIT en el cobro: el aviso permite cargarlo y hay un botón "Emitir factura B";
+  - foco y resumen del paso de confirmación en la reemisión.
+- **Medios:**
+  - aviso de condición: sin condición preseleccionada, con Enter y Escape, foco, error del CUIT bajo el campo y `role="group"`;
+  - facturación de pedidos y manual: factura A sin CUIT bloqueada en pantalla;
+  - tarjeta de alertas: motivo completo y enlace a Facturación;
+  - enlace de las alertas a la nota de crédito, que queda resaltada;
+  - pestaña de la URL validada y sincronizada;
+  - motivo de las notas internas visible;
+  - contraste de las insignias.
+- **Bajos:** etiquetas accesibles, alta rápida dentro de un formulario, textos unificados y lector de pantalla del contador del menú.
+
+Evidencia: validate 0 (972 + 101); coverage 96,67/90,60/94,00; integración 115/115 ×2; RBAC OK; E2E 6/6; simulación 153/153 sobre la base de simulación recién creada.
+
 ## AUD-011 — 2026-10-14 — `guardian-integridad` sobre ADR-024 (nota de crédito interna)
 
 - **Verificado sano:** ningún camino lleva una nota interna a ARCA. Se revisaron:
@@ -262,7 +291,7 @@ coordinador antes de actuar. Resolución (commits posteriores a `d925dfa`):
 - [x] TASKS/plan desactualizados; ediciones en `C:\Dev\Base claude` sin registro — actualizados (ADR-007 las registra: pedidas por el usuario).
 - [x] **Decisión del usuario:** excepción de precio offline — aceptada con revisión obligatoria (ADR-010/011).
 - [x] 409 `PRICE_OVERRIDE_NOT_ALLOWED` en vez del 403 del plan — aceptado (ADR-010): el caso típico es catálogo desactualizado en pantalla (conflicto de estado), el mensaje guía al cajero.
-- [ ] NC en `authorizing` si el proceso cae tras aprobar ARCA — queda para la fase H2 (recuperación consultando el último comprobante).
+- [x] NC en `authorizing` si el proceso cae tras aprobar ARCA — resuelto en ADR-020: el worker `recoverPending` (cada 2 min) recupera facturas y notas de crédito consultando el número pedido.
 - [x] Cobertura ≥ 90 % — gate global en verde desde `1ff2122` (Ola C); 2026-10-12: 99,13 / 91,78 / 98,88 %, y corre en CI (`test:coverage:isolated`).
 
 ## Actualización: correcciones autorizadas y QA local

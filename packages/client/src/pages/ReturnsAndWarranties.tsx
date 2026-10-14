@@ -27,10 +27,21 @@ import { AnalyticsTab } from "@/components/returns/AnalyticsTab"
 import { mapClientReturnRows } from "@/components/returns/helpers"
 import type { CreditNoteRow } from "@/types/returns"
 
+const TAB_VALUES = ["warranties", "returns", "supplier-returns", "credits", "analytics"] as const
+
 export default function ReturnsAndWarrantiesPage() {
     // A link (e.g. the ARCA alert on the dashboard) can open a tab: ?tab=credits
-    const [searchParams] = useSearchParams()
-    const initialTab = searchParams.get("tab") || "warranties"
+    const [searchParams, setSearchParams] = useSearchParams()
+    const requestedTab = searchParams.get("tab")
+    const activeTab = TAB_VALUES.find((value) => value === requestedTab) ?? "warranties"
+
+    function changeTab(value: string) {
+        setSearchParams((previous) => {
+            const next = new URLSearchParams(previous)
+            next.set("tab", value)
+            return next
+        }, { replace: true })
+    }
     const [companySettings, setCompanySettings] = useState<CompanySettings>(DEFAULT_COMPANY_SETTINGS)
     const [selectedCreditNote, setSelectedCreditNote] = useState<CreditNoteRow | null>(null)
     const [activePrintLayout, setActivePrintLayout] = useState<"a4" | "thermal" | null>(null)
@@ -61,7 +72,7 @@ export default function ReturnsAndWarrantiesPage() {
                 <p className="text-muted-foreground">Gestión de reclamos, devoluciones y notas de crédito.</p>
             </div>
 
-            <Tabs defaultValue={initialTab} className="space-y-4">
+            <Tabs value={activeTab} onValueChange={changeTab} className="space-y-4">
                 <TabsList className="h-auto w-full justify-start gap-2 overflow-x-auto p-1">
                     <TabsTrigger value="warranties" className="shrink-0 gap-2">
                         <ShieldCheck className="h-4 w-4" />

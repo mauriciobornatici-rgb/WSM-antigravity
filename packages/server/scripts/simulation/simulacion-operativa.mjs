@@ -3,12 +3,19 @@
 // endpoints de autorización). Cada paso compara lo esperado con lo que quedó en la base.
 //
 // Uso:  node packages/server/scripts/simulation/simulacion-operativa.mjs
+// Contra la base de simulación (scripts/simulacion.ps1):
+//   $env:SIM_DB_NAME='wsm_simulacion'; $env:SIM_ADMIN_PASSWORD='Simulacion2026!'; node …/simulacion-operativa.mjs
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import mysql from 'mysql2/promise';
 
 const API = process.env.SIM_API || 'http://localhost:3001';
-const DB = { host: '127.0.0.1', port: 3319, user: 'wsm_user', password: 'wsm_pass_2026', database: 'wsm_sports_erp' };
+// Only the two local databases (development and simulation), never another one.
+const DB_NAME = process.env.SIM_DB_NAME || 'wsm_sports_erp';
+if (!['wsm_sports_erp', 'wsm_simulacion'].includes(DB_NAME)) {
+    throw new Error(`SIM_DB_NAME debe ser wsm_sports_erp o wsm_simulacion (recibido: ${DB_NAME})`);
+}
+const DB = { host: '127.0.0.1', port: 3319, user: 'wsm_user', password: 'wsm_pass_2026', database: DB_NAME };
 const ADMIN = { email: 'admin@sports.store', password: process.env.SIM_ADMIN_PASSWORD || 'Admin1234!' };
 const RUN = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
 const uuid = () => crypto.randomUUID();

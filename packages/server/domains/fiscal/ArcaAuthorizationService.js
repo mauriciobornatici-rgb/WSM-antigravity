@@ -127,7 +127,10 @@ export class ArcaAuthorizationService {
         try {
             number = (await this.afipService.lastVoucherNumber(request, settings)) + 1;
         } catch (error) {
-            return { error: businessError(503, { error: 'arca_unreachable', message: `No se pudo consultar a ARCA (${error.message}). Reintentá.` }) };
+            // The detail (SDK, network or certificate text) stays in the server log, not in the
+            // answer (security review).
+            console.error(`[ARCA] No se pudo consultar el último comprobante (${adapter.table} ${id}):`, error?.message || error);
+            return { error: businessError(503, { error: 'arca_unreachable', message: 'No se pudo consultar a ARCA. Revisá la conexión o las credenciales y reintentá en unos minutos.' }) };
         }
         const requestDate = arcaToday();
         // The claim is conditional: a document annulled meanwhile (ADR-022 reissue, which locks

@@ -14,6 +14,8 @@ import { CLIENT_TAX_CONDITIONS } from '@wsm/common';
 
 // ADR-022: days an invoice ARCA never authorized can still be reissued (ARCA's window for goods).
 export const REISSUE_MAX_DAYS = 5;
+// Reissues followed back to the original sale; a longer chain counts as expired (fails closed).
+export const REISSUE_CHAIN_LIMIT = 50;
 /**
  * ADR-024 / AUD-011: why an invoice without a CAE is annulled, said truthfully in the internal
  * credit note: ARCA did not authorize it (with the reason recorded), it is a ticket (never
@@ -1691,16 +1693,23 @@ class SalesService extends BaseService {
                      UNION ALL
                      SELECT i.id, i.replaces_invoice_id, COALESCE(i.issue_date, i.created_at), c.depth + 1
                      FROM invoices i JOIN chain c ON i.id = c.replaces_invoice_id
-                     WHERE c.depth < 20
+                     WHERE c.depth < ?
                  )
-                 SELECT DATEDIFF(CURDATE(), DATE(MIN(issued))) AS days FROM chain`,
-                [invoiceId]
+                 SELECT DATEDIFF(CURDATE(), DATE(MIN(issued))) AS days,
+                        SUM(depth = ? AND replaces_invoice_id IS NOT NULL) AS truncated
+                 FROM chain`,
+                [invoiceId, REISSUE_CHAIN_LIMIT, REISSUE_CHAIN_LIMIT]
             );
+            // Fails closed (security review): a chain longer than the limit never restarts the
+            // window, it counts as expired and needs an administrator.
+            const chainTruncated = Number(age?.truncated || 0) > 0;
             const ageDays = Number(age?.days || 0);
-            if (ageDays > REISSUE_MAX_DAYS && !allowLate) {
+            if ((chainTruncated || ageDays > REISSUE_MAX_DAYS) && !allowLate) {
                 throw businessError(409, {
                     error: 'reissue_too_old',
-                    message: `La factura tiene ${ageDays} días: pasó el plazo de ${REISSUE_MAX_DAYS} días para volver a emitirla. Solo un administrador puede hacerlo.`,
+                    message: chainTruncated
+                        ? 'La factura ya se volvió a emitir demasiadas veces: solo un administrador puede hacerlo de nuevo.'
+                        : `La factura tiene ${ageDays} días: pasó el plazo de ${REISSUE_MAX_DAYS} días para volver a emitirla. Solo un administrador puede hacerlo.`,
                 });
             }
             const [notes] = await connection.query(
@@ -1711,7 +1720,9 @@ class SalesService extends BaseService {
                 throw businessError(409, { error: 'invoice_has_credit_notes', message: 'La factura tiene notas de crédito: no se puede anular.' });
             }
             // A return in progress was opened against the current customer and invoice (AUD-010).
+            // The order is locked first, as creating a return does, so one cannot slip in meanwhile.
             if (old.order_id) {
+                await connection.query('SELECT id FROM orders WHERE id = ? FOR UPDATE', [old.order_id]);
                 const [returns] = await connection.query(
                     "SELECT id FROM client_returns WHERE order_id = ? AND status IN ('draft', 'initiated', 'pending') LIMIT 1",
                     [old.order_id]
