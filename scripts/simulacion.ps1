@@ -5,10 +5,11 @@
 #   powershell -File scripts\simulacion.ps1             levanta la simulación (la crea si no existe)
 #   powershell -File scripts\simulacion.ps1 -Reiniciar  la borra y la vuelve a crear desde cero
 #   ... -Reiniciar -SinMovimientos                       solo datos maestros (caja cerrada, sin ventas ni pedidos)
+#   ... -Red                                             la abre también a otras computadoras de la misma red wifi
 #
 # Para volver al entorno de desarrollo habitual:  powershell -File scripts\dev-local.ps1
 # Guía de procesos y usuarios: docs\execution\GUIA_SIMULACION.md
-param([switch]$Reiniciar, [switch]$SinMovimientos)
+param([switch]$Reiniciar, [switch]$SinMovimientos, [switch]$Red)
 
 # 'Continue': en Windows PowerShell 5.1 las advertencias que los comandos nativos (docker, mysql)
 # escriben en stderr cortarían el script con 'Stop'. Los errores se controlan explícitamente.
@@ -46,6 +47,21 @@ if ($nueva) {
     if ($LASTEXITCODE -ne 0) { throw "No se pudo crear la base $base." }
 }
 
+# Con -Red: la dirección de esta computadora en la red local (wifi o cable). La app y la API se
+# publican en esa dirección y la API acepta pedidos que vengan de ella.
+$ip = $null
+if ($Red) {
+    $ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -match '^(192\.168|10\.|172\.(1[6-9]|2\d|3[01]))\.' -and $_.InterfaceAlias -notmatch 'vEthernet|WSL|Docker|VirtualBox|VMware' } |
+        Select-Object -First 1 -ExpandProperty IPAddress
+    if (-not $ip) { throw 'No se encontró la dirección de esta computadora en la red local.' }
+    $env:CORS_ORIGINS = "http://localhost:5173,http://${ip}:5173"
+    $env:VITE_API_URL = "http://${ip}:3001"
+} else {
+    $env:CORS_ORIGINS = $null
+    $env:VITE_API_URL = $null
+}
+
 # 3) API sobre la base de simulación (aplica las migraciones; crea el admin si la base es nueva).
 Stop-Port 3001
 $env:ENV_FILE = '.env.local'
@@ -75,9 +91,15 @@ if ($nueva) {
 Stop-Port 5173
 $npm = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
 if (-not $npm) { $npm = (Get-Command npm).Source }
-Start-Process -FilePath $npm -ArgumentList 'run','dev' -WorkingDirectory $root -WindowStyle Hidden `
+$webArgs = if ($Red) { @('exec', '-w', '@wsm/client', '--', 'vite', '--host', '0.0.0.0') } else { @('run', 'dev') }
+Start-Process -FilePath $npm -ArgumentList $webArgs -WorkingDirectory $root -WindowStyle Hidden `
     -RedirectStandardOutput "$env:TEMP\wsm_web.out.log" -RedirectStandardError "$env:TEMP\wsm_web.err.log"
 
 Write-Host ''
-Write-Host 'Simulación lista: http://localhost:5173'
+if ($Red) {
+    Write-Host "Simulación lista en la red: http://${ip}:5173  (desde esta computadora también usá esa dirección)"
+    Write-Host 'Si Windows pregunta si Node.js puede usar la red, permití el acceso en redes privadas.'
+} else {
+    Write-Host 'Simulación lista: http://localhost:5173'
+}
 Write-Host 'Usuarios y procesos a probar: docs\execution\GUIA_SIMULACION.md'
