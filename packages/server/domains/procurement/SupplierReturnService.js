@@ -3,6 +3,7 @@ import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
 import { nextDocumentSequence } from '../../utils/documentSequence.js';
+import { businessYear } from '../../utils/businessDate.js';
 import { ACCOUNTS } from '../../utils/paymentAccounts.js';
 import { allocateCents } from '../../utils/vatMath.js';
 
@@ -104,7 +105,7 @@ export class SupplierReturnService {
     }
 
     async nextSupplierReturnNumber(connection) {
-        const year = new Date().getFullYear();
+        const year = businessYear();
         const prefix = `SR-${year}-`;
         const [rows] = await connection.query(
             `SELECT MAX(CAST(SUBSTRING_INDEX(return_number, '-', -1) AS UNSIGNED)) AS max_seq

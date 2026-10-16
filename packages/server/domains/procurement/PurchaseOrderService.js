@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import { nextDocumentSequence } from '../../utils/documentSequence.js';
+import { businessYear } from '../../utils/businessDate.js';
 import { businessError } from '../../utils/businessError.js';
 
 export const PURCHASE_ORDER_STATUSES = Object.freeze(['draft', 'sent', 'partial', 'received', 'cancelled']);
@@ -31,7 +32,7 @@ export class PurchaseOrderService {
     }
 
     async nextPONumber(connection) {
-        const year = new Date().getFullYear();
+        const year = businessYear();
         const prefix = `PO-${year}-`;
         const [rows] = await connection.query(
             `SELECT MAX(CAST(SUBSTRING_INDEX(po_number, '-', -1) AS UNSIGNED)) AS max_seq
@@ -218,16 +219,12 @@ export class PurchaseOrderService {
                 await connection.commit();
                 return unchanged[0];
             }
-            if (!canTransitionPurchaseOrder(currentStatus, status)) {
-                throw businessError(409, {
-                    error: 'invalid_transition',
-                    message: `Una orden de compra en estado "${currentStatus}" no puede pasar a "${status}".`
-                });
-            }
             if (status === 'cancelled') {
                 // Goods that already arrived (approved or still in quality control) belong to
                 // the order: it cannot be cancelled. The order row lock above serialises this
-                // check with createReception and processReceptionApproval.
+                // check with createReception and processReceptionApproval. Checked before the
+                // transition, so a partial or received order gets this reason too (and a cancel
+                // racing an approval gets the same answer whichever commits first).
                 const [blockers] = await connection.query(`
                     SELECT
                         (SELECT COUNT(*) FROM receptions WHERE purchase_order_id = ? AND status = 'pending_qc') AS pending_receptions,
@@ -241,6 +238,12 @@ export class PurchaseOrderService {
                         message: 'La orden ya tiene mercadería recibida o recepciones pendientes de control de calidad; no se puede anular.'
                     });
                 }
+            }
+            if (!canTransitionPurchaseOrder(currentStatus, status)) {
+                throw businessError(409, {
+                    error: 'invalid_transition',
+                    message: `Una orden de compra en estado "${currentStatus}" no puede pasar a "${status}".`
+                });
             }
 
             await connection.query('UPDATE purchase_orders SET status = ? WHERE id = ?', [status, id]);

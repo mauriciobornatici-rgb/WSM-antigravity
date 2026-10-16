@@ -1,5 +1,44 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-013 — 2026-10-16 — riesgos bajos anotados (rama `fix/riesgos-bajos`), `guardian-integridad` y `revisor-seguridad`
+
+**Lo que se resolvió** (los riesgos bajos anotados en AUD-009 a AUD-012):
+- **CUIT repetido de clientes (AUD-012):** alta, edición y condición IVA con lock por CUIT (`utils/namedLock.js`), igual que proveedores. El CUIT se compara sin guiones, puntos, espacios ni barras, y se limpia lo que trae un pegado (guiones largos, dígitos de ancho completo, caracteres invisibles). Un CUIT vacío se guarda NULL; antes daba un falso "ya existe". Solo se controla si el CUIT cambia, así que un duplicado viejo sigue siendo editable. Proveedores usan el mismo criterio.
+- **Ediciones simultáneas de un cliente (AUD-009):** la ficha manda lo que cargó (`expected`). Si otro guardó otro valor mientras tanto, responde 409 `client_changed` en vez de pisarlo. Un saldo o puntos movidos por una venta no cuentan. La baja bloquea la fila: una edición y una baja simultáneas terminan en 404.
+- **Cheque en la reemisión (AUD-010):** el cheque pasa al cliente nuevo. Queda a nombre del anterior si también pagó otras facturas o si la factura pasa a Consumidor Final (alguien a quien reclamarle). Su historial registra la reemisión y la auditoría lista los cheques.
+- **Año de numeración (AUD-011):** NCI, NC, OC, recepciones y devoluciones a proveedor usan el año argentino (`utils/businessDate.js`), cualquiera sea la zona del servidor.
+- **Reemisión que choca con otra operación (AUD-010):** se reintenta (hasta 3 veces) ante un interbloqueo o una reversión del mismo asiento. Una espera de lock agotada, o un choque que persiste, responde 409 `busy` en vez de 500. La lectura final queda fuera del reintento.
+- **Cola offline vieja (AUD-009):** al facturar por `POST /api/invoices` un pedido de mostrador hecho sin conexión, la letra se corrige en vez de dar 422 en cada reintento. Queda auditado (`invoice_type_requested`, `offline_replay`, `offline_captured_at`).
+- **Test intermitente (AUD-005):** la anulación de una OC que compite con la aprobación de una recepción daba un 409 distinto según cuál llegara primero. Ahora el control de mercadería va antes que el de transición: siempre "ya tiene mercadería recibida", que también es mejor mensaje para una OC parcial o recibida. 15 corridas aisladas y 4 completas, sin fallas.
+- **Pantalla:** el diálogo de baja de cliente tenía textos sin acentos y decía "permanentemente". Ahora explica que se conserva el historial y no deja eliminar un cliente con saldo (el servidor ya lo impedía).
+
+**Guardián (AUD-013):** sin violaciones de invariantes. Lo técnico quedó corregido:
+- [x] **Media:** el conteo de imputaciones del cheque leía la foto vieja de la transacción. Ahora es una lectura con lock (`FOR SHARE`).
+- [x] **Media:** orden de locks. Los cheques se bloquean por la factura vieja antes de tocar imputaciones y cobros, en el mismo orden que una cobranza.
+- [x] **Media:** una reversión manual simultánea del asiento se resolvía por clave duplicada. `reverseDocumentEntries` ahora bloquea los asientos y lee "no revertido" con lock. Hay prueba con base real de la carrera: se revierte una sola vez y la reemisión termina.
+- [x] **Baja:** la lectura posterior al commit quedó fuera del reintento; la conexión que no pudo soltar un lock se descarta; se audita la letra pedida aunque no venga (B por defecto); tope de `expected.address` según la columna.
+- **Queda anotado (bajo, preexistente):**
+  - una baja de cliente simultánea con una venta que le carga deuda puede confirmar con saldo 0. Bloquear el cliente en la factura invertiría el orden de locks con la numeración;
+  - los reintentos y rollbacks dejan huecos en `entry_number` (AUTO_INCREMENT);
+  - el plazo de 5 días usa `CURDATE()` de MySQL;
+  - los nombres de `GET_LOCK` valen para toda la instancia (solo serializan de más);
+  - ante `client_changed` el diálogo se cierra y se pierde lo tipeado.
+
+**Seguridad:** sin hallazgos explotables. Endurecido:
+- [x] liberación del lock fallida → conexión descartada;
+- [x] normalización Unicode del CUIT;
+- [x] `tax_id` con tope de 50 caracteres (clientes y proveedores);
+- [x] espera de lock de 3 s;
+- [x] `offline_captured_at` solo vale para pedidos de mostrador y queda auditado.
+- **Anotado:** el control de duplicados recorre la tabla (sin índice para el CUIT normalizado). Hoy es chica; si crece, conviene una columna generada con índice.
+
+**Decisiones pendientes del usuario:**
+1. Migración nueva con índices en `customer_check_allocations(invoice_id)` y `transactions(reference_id, type)`. Hoy la reemisión, y cualquier consulta de cobros por factura, recorre y bloquea esas tablas completas.
+2. Los cheques ya depositados, rechazados o endosados también cambian de cliente al reemitir. ¿Se mantiene?
+3. Un cheque que pagó varias facturas queda en el cliente anterior, mientras el cobro de la factura reemitida pasa al nuevo. ¿Se acepta?
+
+Evidencia: validate 0 (986 + 103); coverage 96,73/90,78/94,12; integración 122/122 ×2 (nuevas: carrera de CUIT, edición vieja, cheque movido y compartido, reversión manual concurrente); RBAC OK; E2E 6/6; simulación 153/153.
+
 ## AUD-012 — 2026-10-14 — `revisor-seguridad` y `revisor-ux` sobre lo mergeado en el ciclo ADR-020 a ADR-024
 
 **Seguridad.** No hay hallazgos explotables altos ni medios. Revisado sin problemas: RBAC, CSRF, validación, SQL dinámico y bloqueo de CAE de las notas internas.
@@ -78,7 +117,7 @@ Evidencia: validate 0 (969 + 101); coverage 96,68/90,61/93,97; integración 115/
   1. [x] Cualquiera con permiso de facturación puede reemitir.
   2. [x] Se permite A/B → ticket.
   3. [x] 5 días corridos ("lo que se estile": plazo de ARCA para bienes); después solo el administrador, auditado.
-  4. [ ] El usuario entendió "reversión" como si correspondiera una nota de crédito. Hay que aclarar que la factura sin CAE no existe para ARCA, así que no admite NC fiscal. Pendiente de confirmar.
+  4. [x] El usuario entendió "reversión" como si correspondiera una nota de crédito. Se le explicó que la factura sin CAE no existe para ARCA y no admite NC fiscal. Eligió la nota de crédito interna (ADR-024).
   5. [x] La alerta de 24 h solo cuenta lo emitido después de configurar ARCA (`arca_configured_at`).
   Evidencia: validate 0 (967 + 101); coverage 96,67/90,60/93,97; integración 114/114 ×2; RBAC OK; E2E 6/6; simulación 153/153.
 

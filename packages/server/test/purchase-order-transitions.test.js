@@ -97,6 +97,23 @@ test('an order with arrived goods cannot be cancelled', async (t) => {
     }
 });
 
+test('a partial or received order says why it cannot be cancelled (the goods), not just "invalid transition"', async (t) => {
+    for (const current of ['partial', 'received']) {
+        const { calls } = trackedPool(t, current, { pending_receptions: 0, received_qty: '4' });
+        await assert.rejects(
+            () => new PurchaseOrderService().updatePurchaseOrderStatus('po-1', 'cancelled', 'u-1'),
+            (err) => err.statusCode === 409 && err.responseBody.error === 'purchase_order_has_receptions'
+        );
+        assert.equal(calls.some(({ statement }) => statement.startsWith('UPDATE')), false);
+    }
+    // Closed by hand with nothing received: still a forbidden transition.
+    trackedPool(t, 'received');
+    await assert.rejects(
+        () => new PurchaseOrderService().updatePurchaseOrderStatus('po-1', 'cancelled', 'u-1'),
+        (err) => err.responseBody.error === 'invalid_transition'
+    );
+});
+
 test('an order with nothing received can be cancelled', async (t) => {
     const { calls, lifecycle } = trackedPool(t, 'sent');
     const originalLog = auditService.log;

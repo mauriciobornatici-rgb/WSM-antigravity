@@ -192,6 +192,79 @@ test('ADR-022: an invoice with a CAE, in ARCA, unchanged or for the wrong custom
     assert.equal(row.deleted_at, null);
 });
 
+test('AUD-010: the cheque that paid a reissued invoice follows its new customer and its history says why', async () => {
+    const buyer = await seedClient({ condition: 'tc_ConsFinal' });
+    const company = await seedClient({ condition: 'tc_RespInscripto', taxId: `30${String(Date.now()).slice(-9)}` });
+    const checkNumber = `QA-${crypto.randomUUID().slice(0, 8)}`;
+    const invoice = await salesService.createManualInvoice({
+        client_id: buyer, invoice_type: 'B', point_of_sale: 97,
+        items: [{ description: 'Pelota QA', quantity: 1, unit_price: 100, vat_rate: 21 }],
+        payments: [{ method: 'check', amount: 121, check: { issuer_name: 'Librador QA', bank_name: 'Banco QA', check_number: checkNumber, due_date: '2026-12-31' } }],
+    }, null);
+    const [[before]] = await pool.query('SELECT id, client_id FROM customer_checks WHERE bank_name = ? AND check_number = ?', ['Banco QA', checkNumber]);
+    assert.equal(before.client_id, buyer);
+
+    const reissued = await salesService.reissueInvoice(invoice.id, { invoice_type: 'A', client_id: company }, null);
+
+    const [[check]] = await pool.query('SELECT client_id, issuer_name, status FROM customer_checks WHERE id = ?', [before.id]);
+    assert.deepEqual([check.client_id, check.issuer_name, check.status], [company, 'Librador QA', 'received'], 'the drawer written on it does not change');
+    const [[allocation]] = await pool.query('SELECT invoice_id FROM customer_check_allocations WHERE check_id = ?', [before.id]);
+    assert.equal(allocation.invoice_id, reissued.id);
+    const [events] = await pool.query('SELECT status, notes FROM customer_check_events WHERE check_id = ?', [before.id]);
+    assert.ok(events.some(({ status, notes }) => status === 'received' && /emitida de nuevo como A-0097-\d{8} a nombre de QA Reemisión .*\. El cheque pasa a ese cliente/.test(notes)));
+    const [[audit]] = await pool.query("SELECT new_values FROM audit_logs WHERE entity_id = ? AND action = 'REISSUE_INVOICE'", [reissued.id]);
+    const newValues = typeof audit.new_values === 'string' ? JSON.parse(audit.new_values) : audit.new_values;
+    assert.deepEqual(newValues.checks, [{ check_id: before.id, previous_client_id: buyer, moved: true }]);
+});
+
+test('AUD-013: a cheque that also paid another invoice of the previous customer stays with it', async () => {
+    const buyer = await seedClient({ condition: 'tc_ConsFinal' });
+    const company = await seedClient({ condition: 'tc_RespInscripto', taxId: `30${String(Date.now()).slice(-9)}` });
+    const checkNumber = `QA-${crypto.randomUUID().slice(0, 8)}`;
+    const cheque = { issuer_name: 'Librador QA', bank_name: 'Banco QA', check_number: checkNumber, due_date: '2026-12-31', instrument_amount: 242 };
+    const invoiceFor = (description) => salesService.createManualInvoice({
+        client_id: buyer, invoice_type: 'B', point_of_sale: 97,
+        items: [{ description, quantity: 1, unit_price: 100, vat_rate: 21 }],
+        payments: [{ method: 'check', amount: 121, check: cheque }],
+    }, null);
+    const first = await invoiceFor('Pelota QA');
+    await invoiceFor('Gorra QA');
+    const [[check]] = await pool.query('SELECT id FROM customer_checks WHERE bank_name = ? AND check_number = ?', ['Banco QA', checkNumber]);
+
+    await salesService.reissueInvoice(first.id, { invoice_type: 'A', client_id: company }, null);
+
+    const [[after]] = await pool.query('SELECT client_id FROM customer_checks WHERE id = ?', [check.id]);
+    assert.equal(after.client_id, buyer);
+    const [events] = await pool.query('SELECT notes FROM customer_check_events WHERE check_id = ?', [check.id]);
+    assert.ok(events.some(({ notes }) => /también pagó otras facturas: sigue a nombre del cliente anterior/.test(notes)));
+});
+
+test('AUD-013: a manual reversal of the sale entry racing the reissue: reversed once, the reissue completes', async () => {
+    const accountingService = (await import('../services/accounting.service.js')).default;
+    const buyer = await seedClient({ condition: 'tc_ConsFinal' });
+    const invoice = await salesService.createManualInvoice({
+        client_id: buyer, invoice_type: 'B', point_of_sale: 97,
+        items: [{ description: 'Short QA', quantity: 1, unit_price: 300, vat_rate: 21 }],
+        payments: [{ method: 'cash', amount: 363 }],
+    }, null);
+    const [[sale]] = await pool.query(
+        `SELECT je.id FROM journal_entries je JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+         WHERE je.reference_type = 'invoice' AND je.reference_id = ? AND jel.account_code = '4.1.01.01' LIMIT 1`,
+        [invoice.id]
+    );
+
+    const [reissue, manual] = await Promise.allSettled([
+        salesService.reissueInvoice(invoice.id, { invoice_type: 'TK' }, null),
+        accountingService.reverseJournalEntry(sale.id, null),
+    ]);
+    assert.equal(reissue.status, 'fulfilled', reissue.reason?.message);
+    // The manual one either went first or found it already reversed (409): never twice.
+    if (manual.status === 'rejected') assert.equal(manual.reason.statusCode, 409);
+    const [[{ reversals }]] = await pool.query('SELECT COUNT(*) AS reversals FROM journal_entries WHERE reversal_of_entry_id = ?', [sale.id]);
+    assert.equal(Number(reversals), 1);
+    assert.equal(await netOf(invoice.id, '4.1.01.01'), 0);
+});
+
 test('ADR-022: the VAT condition is loaded at the moment of use, with the CUIT a Responsable Inscripto needs', async () => {
     const id = await seedClient();
     await assert.rejects(

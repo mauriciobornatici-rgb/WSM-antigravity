@@ -82,7 +82,7 @@ test('createSupplier rejects duplicate tax id with 409 and does not insert', asy
     assert.equal(res.status, 409);
     assert.equal(res.body.error, 'duplicate_tax_id');
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].params, ['30-1']);
+    assert.deepEqual(calls[0].params, ['301'], 'compared without dashes');
     assert.equal(logs.length, 0);
 });
 
@@ -126,19 +126,19 @@ test('updateSupplier returns 404 when supplier does not exist', async (t) => {
 
 test('updateSupplier returns 409 when tax id belongs to another supplier', async (t) => {
     const calls = installPool(t, async (statement) => {
-        if (statement.includes('tax_id = ? AND id != ?')) return [[{ id: 'other' }]];
+        if (statement.includes('AND id != ?')) return [[{ id: 'other' }]];
         return [[{ id: 's1' }]];
     });
     const res = await runHandler(updateSupplier, { params: { id: 's1' }, body });
     assert.equal(res.status, 409);
     assert.equal(res.body.error, 'duplicate_tax_id');
-    assert.deepEqual(calls[1].params, ['30-1', 's1']);
+    assert.deepEqual(calls[1].params, ['301', 's1']);
     assert.ok(!calls.some((c) => c.statement.startsWith('UPDATE')));
 });
 
 test('updateSupplier updates, audits old and new values', async (t) => {
     const calls = installPool(t, async (statement) => {
-        if (statement.includes('tax_id = ? AND id != ?')) return [[]];
+        if (statement.includes('AND id != ?')) return [[]];
         if (statement.startsWith('UPDATE')) return [{ affectedRows: 1 }];
         return [[{ id: 's1', name: 'viejo' }]];
     });
@@ -155,7 +155,7 @@ test('updateSupplier updates, audits old and new values', async (t) => {
 test('updateSupplier audits request body when updated row vanished', async (t) => {
     let selects = 0;
     installPool(t, async (statement) => {
-        if (statement.includes('tax_id = ? AND id != ?')) return [[]];
+        if (statement.includes('AND id != ?')) return [[]];
         if (statement.startsWith('UPDATE')) return [{ affectedRows: 0 }];
         selects += 1;
         return selects === 1 ? [[{ id: 's1' }]] : [[]];
@@ -223,6 +223,19 @@ test('deleteSupplier audit falls back to null user', async (t) => {
     const logs = installAudit(t);
     await runHandler(deleteSupplier, { params: { id: 's1' } });
     assert.equal(logs[0].user_id, null);
+});
+
+test('a supplier CUIT is locked and compared without dashes; an unchanged one is not re-checked', async (t) => {
+    const calls = installPool(t, async (statement) => {
+        if (statement.includes('AND id != ?')) return [[{ id: 'other' }]];
+        if (statement.startsWith('UPDATE')) return [{ affectedRows: 1 }];
+        return [[{ id: 's1', tax_id: '30-1' }]];
+    });
+    installAudit(t);
+    const res = await runHandler(updateSupplier, { params: { id: 's1' }, body: { ...body, tax_id: '30 1' } });
+    assert.equal(res.body.id, 's1');
+    assert.deepEqual(calls.locks[0].params, ['supplier_tax_id:301', 3]);
+    assert.equal(calls.some((c) => c.statement.includes('AND id != ?')), false);
 });
 
 test('supplier handlers propagate database errors to next', async (t) => {

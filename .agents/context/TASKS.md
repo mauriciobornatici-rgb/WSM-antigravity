@@ -138,6 +138,28 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - [x] **Símbolos raros en pantalla:** había texto con doble codificación en 4 archivos del cliente (punto de venta, acreditaciones, débitos bancarios, etiquetas) y un comentario del servidor. Venía de ediciones de ADR-015/016. Se reparó, y una prueba nueva (`sourceEncoding.test.ts`) falla si vuelve a aparecer.
 - [x] **Error de permisos:** el rol Depósito no podía empezar ni terminar el picking (`PUT /orders/:id/status` exigía el permiso de venta). Ahora `picking` y `packed` aceptan el permiso de picking o el de venta. Las demás transiciones siguen pidiendo el de venta. Se agregaron 2 casos al smoke RBAC.
 - [x] **Simulación con movimientos iniciales:** caja abierta, 5 ventas de mostrador (A, B, cuenta corriente, sin factura), un pedido pendiente de picking y uno listo para retirar. `-SinMovimientos` arranca solo con los maestros. Los scripts muestran los acentos bien en la consola (UTF-8).
+- [x] PR #6 mergeado con autorización del usuario (`bae5e2e`, 2026-10-16). CI verde.
+
+## Riesgos bajos anotados (2026-10-16, rama `fix/riesgos-bajos`, pedido del usuario: "punto 3")
+
+- [x] AUD-013 (ver `AUDIT.md`). Resuelto:
+  - CUIT repetido con lock y comparación normalizada (clientes y proveedores);
+  - edición simultánea de cliente con `expected` (409 `client_changed`);
+  - cheque que sigue a la reemisión;
+  - año argentino en la numeración;
+  - reintento de la reemisión ante interbloqueo (409 `busy`);
+  - corrección de letra en la cola offline vieja;
+  - test intermitente de OC (causa: carrera anulación/aprobación).
+  Guardián y seguridad: todo lo técnico corregido.
+- Evidencia: validate 0 (986 + 103); coverage 96,73/90,78/94,12; integración 122/122 ×2; RBAC OK; E2E 6/6; simulación 153/153.
+- Pendiente del usuario (AUD-013):
+  1. aprobar una migración de índices para cobros y cheques por factura;
+  2. si un cheque depositado, rechazado o endosado cambia de cliente al reemitir;
+  3. si un cheque compartido queda en el cliente anterior.
+- Pendiente del usuario (AUD-008, el "punto 2"):
+  - procedimiento ante `arca_conflict`;
+  - cambio de punto de venta con comprobantes en verificación;
+  - fecha impresa (emisión o autorización).
 
 ## Próximos pasos
 
@@ -146,10 +168,10 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 3. I8: migración 063 (CHECK de inventario) — solo después de la reparación en producción (AP2).
 - [x] ADR-021 (AUD-009 corregido): condición IVA del cliente (migración 060, sin FK; Inscripto/Monotributista con CUIT), letra controlada antes de numerar (A siempre con CUIT; offline se corrige y audita), sugerencia de letra en POS y pedidos; alertas ARCA (conflicto, verificación > 10 min, rechazados) en el panel y contador en "Facturación". Evidencia: validate 0 (955 + 99); coverage 96,62/90,87/94,10; integración 108/108 ×2; RBAC OK; E2E 6/6; simulación 153/153. Decisiones pendientes del usuario en AUD-009 (anular factura no autorizable, alerta de facturas sin CAE por horas, carga de condiciones existentes, permiso, impresión "Sin especificar").
 - [x] ADR-022 (decisiones del usuario sobre AUD-009; AUD-010 corregido): anular y volver a emitir una factura no autorizada (migración 061), alerta de facturas sin CAE a las 24 h, condición IVA cargada en el momento (POS, pedidos, factura manual) y filtro en Clientes, Monotributista recibe B. Evidencia: validate 0 (965 + 100); coverage 96,67/90,71/93,97; integración 114/114 ×2; RBAC OK; E2E 6/6; simulación 153/153. Decisiones pendientes del usuario en AUD-010 (quién reemite, ticket, antigüedad, fecha al cruzar mes, alerta al configurar ARCA).
-- [x] ADR-023 (decisiones del usuario sobre AUD-010): cualquiera con facturación reemite; A/B → ticket permitido; reemisión hasta 5 días corridos (después solo administrador, auditado); alerta de 24 h solo desde `arca_configured_at` (migración 061 reaplicada en local y QA). Evidencia: validate 0 (967 + 101); coverage 96,67/90,60/93,97; integración 114/114 ×2; RBAC OK; E2E 6/6; simulación 153/153. Pendiente: confirmar con el usuario el punto 4 (la factura sin CAE no admite NC fiscal; hoy se anula con contra-asientos internos).
+- [x] ADR-023 (decisiones del usuario sobre AUD-010): cualquiera con facturación reemite; A/B → ticket permitido; reemisión hasta 5 días corridos (después solo administrador, auditado); alerta de 24 h solo desde `arca_configured_at` (migración 061 reaplicada en local y QA). Evidencia: validate 0 (967 + 101); coverage 96,67/90,60/93,97; integración 114/114 ×2; RBAC OK; E2E 6/6; simulación 153/153. El punto 4 quedó resuelto en ADR-024 (nota de crédito interna).
 - [x] ADR-024 (usuario, opción b; AUD-011 corregido): la anulación deja una nota de crédito interna NCI, no fiscal. Su texto dice el motivo real. Nunca obtiene CAE: la bloquean el servicio, el adaptador y un CHECK de la migración 062. No entra en la cuenta corriente. El plazo de 5 días se cuenta desde la venta original. El CHECK de inventario pasa a 063. Evidencia: validate 0 (969 + 101); coverage 96,68/90,61/93,97; integración 115/115 ×2; RBAC OK; E2E 6/6; simulación 153/153.
 4. [x] Fase H2 (ADR-020, AUD-008): autorización ARCA sin doble CAE ni CAE perdido (número guardado antes de pedir, verificación del número exacto, enfriamiento de 2 min, worker cada 2 min, conflicto terminal), NC con número de ARCA, RG 5616 (condición IVA del receptor). Migraciones 058 y 059; el CHECK de inventario pasa a 060. Evidencia: validate 0 (947 + 91); coverage 96,57/90,67/94,13; integración 104/104 ×3 (14 escenarios ARCA con base real); RBAC OK; E2E 6/6; simulación 153/153. Pendiente del usuario: probar en homologación (NC con CbtesAsoc, Factura/NC C, RG 5616).
-5. Riesgos bajos de arriba.
+5. Riesgos bajos: resueltos en AUD-013. Quedan los preexistentes anotados ahí.
 
 ## Límites
 

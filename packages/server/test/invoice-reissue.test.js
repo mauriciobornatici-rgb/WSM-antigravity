@@ -20,12 +20,20 @@ const CLIENTS = {
     'cli-ri': { id: 'cli-ri', name: 'Club SA', tax_id: '30-71234567-4', address: 'X', tax_condition_id: 'tc_RespInscripto' },
 };
 
-function setup(t, { old = OLD, creditNotes = [], paid = 500, pendingReturns = [], deletedClients = [], costLines = [], ageDays = 1, truncatedChain = false } = {}) {
+function setup(t, { old = OLD, creditNotes = [], paid = 500, pendingReturns = [], deletedClients = [], costLines = [], ageDays = 1, truncatedChain = false, checks = [], otherAllocations = {}, failures = [] } = {}) {
     const calls = [];
+    const pendingFailures = [...failures];
     mockPool(t, async (sql, params = []) => {
         const statement = String(sql).replace(/\s+/g, ' ').trim();
         calls.push({ sql: statement, params });
+        // A write conflict thrown by the first statement of an attempt (AUD-010 retries).
+        if (statement.startsWith('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL FOR UPDATE') && pendingFailures.length > 0) {
+            throw pendingFailures.shift();
+        }
         if (statement.startsWith('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL FOR UPDATE')) return [old ? [{ ...old }] : []];
+        if (statement.startsWith('SELECT DISTINCT check_id FROM customer_check_allocations')) return [checks.map(({ id }) => ({ check_id: id }))];
+        if (statement.startsWith('SELECT id, client_id, status FROM customer_checks')) return [checks];
+        if (statement.startsWith('SELECT COUNT(*) AS count FROM customer_check_allocations')) return [[{ count: otherAllocations[params[0]] || 0 }]];
         if (statement.includes('FROM credit_notes WHERE invoice_id')) return [creditNotes];
         if (statement.includes('tax_condition_id FROM clients')) return [CLIENTS[params[0]] ? [CLIENTS[params[0]]] : []];
         if (statement.includes('SUM(amount), 0) AS paid')) return [[{ paid }]];
@@ -212,8 +220,9 @@ test('setTaxCondition locks the customer, checks the CUIT and the duplicates, an
     mockPool(t, async (sql, params = []) => {
         const statement = String(sql).replace(/\s+/g, ' ').trim();
         calls.push({ sql: statement, params });
+        if (statement.startsWith('SELECT GET_LOCK')) return [[{ acquired: 1 }]];
         if (statement.startsWith('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL FOR UPDATE')) return [existing ? [existing] : []];
-        if (statement.startsWith('SELECT id FROM clients WHERE tax_id = ?')) return [duplicate ? [{ id: 'other' }] : []];
+        if (statement.startsWith('SELECT id FROM clients WHERE REPLACE(')) return [duplicate ? [{ id: 'other' }] : []];
         if (statement.includes('computed_balance')) return [[{ id: 'c-1', tax_condition_id: params.length ? 'x' : null, computed_balance: '15.50' }]];
         return [{ affectedRows: 1 }];
     });
@@ -233,8 +242,95 @@ test('setTaxCondition locks the customer, checks the CUIT and the duplicates, an
         () => clientService.setTaxCondition({ id: 'c-1', body: { tax_condition_id: 'tc_RespInscripto', tax_id: '30712345674' } }),
         (error) => error.statusCode === 409
     );
+    // The CUIT loaded here is serialized by its key and compared without dashes.
+    const lock = calls.find(({ sql }) => sql.startsWith('SELECT GET_LOCK'));
+    assert.equal(lock.params[0], 'client_tax_id:30712345674');
+    assert.deepEqual(calls.find(({ sql }) => sql.startsWith('SELECT id FROM clients WHERE REPLACE(')).params, ['30712345674', 'c-1']);
+    // The same CUIT typed with dashes is not a change: no duplicate check.
+    duplicate = true;
+    existing = { id: 'c-1', tax_id: '30712345674', tax_condition_id: null };
+    calls.length = 0;
+    await clientService.setTaxCondition({ id: 'c-1', body: { tax_condition_id: 'tc_RespInscripto', tax_id: '30-71234567-4' } });
+    assert.equal(calls.some(({ sql }) => sql.startsWith('SELECT id FROM clients WHERE REPLACE(')), false);
     existing = null;
     await assert.rejects(() => clientService.setTaxCondition({ id: 'c-1', body: { tax_condition_id: 'tc_ConsFinal' } }), (error) => error.statusCode === 404);
+});
+
+test('AUD-010: the cheques follow the new customer unless they also paid other invoices, and their history says so', async (t) => {
+    const { calls, audits } = setup(t, {
+        checks: [{ id: 'chk-only', client_id: 'cli-cf', status: 'received' }, { id: 'chk-shared', client_id: 'cli-cf', status: 'deposited' }],
+        otherAllocations: { 'chk-shared': 1 },
+    });
+    await salesService.reissueInvoice('inv-old', { invoice_type: 'A', client_id: 'cli-ri' }, 'u-1');
+    const newId = calls.find(({ sql }) => sql.startsWith('INSERT INTO invoices')).params[0];
+    // AUD-013: the cheques are locked by the old invoice before its allocations and collections
+    // move (a collection locks the cheque first too), and the other allocations are a locking read.
+    const allocated = calls.find(({ sql }) => sql.startsWith('SELECT DISTINCT check_id FROM customer_check_allocations'));
+    assert.deepEqual(allocated.params, ['inv-old']);
+    const lockChecks = calls.find(({ sql }) => sql.startsWith('SELECT id, client_id, status FROM customer_checks'));
+    assert.match(lockChecks.sql, /ORDER BY id FOR UPDATE$/);
+    assert.deepEqual(lockChecks.params, [['chk-only', 'chk-shared']]);
+    assert.ok(calls.indexOf(lockChecks) < calls.findIndex(({ sql }) => sql.startsWith('UPDATE customer_check_allocations')));
+    assert.ok(calls.indexOf(lockChecks) < calls.findIndex(({ sql }) => sql.startsWith('UPDATE transactions SET reference_id')));
+    const counts = calls.filter(({ sql }) => sql.startsWith('SELECT COUNT(*) AS count FROM customer_check_allocations'));
+    assert.ok(counts.every(({ sql, params }) => sql.endsWith('FOR SHARE') && params[1] === newId));
+    const moved = calls.filter(({ sql }) => sql.startsWith('UPDATE customer_checks SET client_id'));
+    assert.deepEqual(moved.map(({ params }) => params), [['cli-ri', 'chk-only']], 'only the cheque that paid nothing else moves');
+    const events = calls.filter(({ sql }) => sql.startsWith('INSERT INTO customer_check_events'));
+    assert.deepEqual(events.map(({ params }) => [params[1], params[2], params[4]]), [['chk-only', 'received', 'u-1'], ['chk-shared', 'deposited', 'u-1']]);
+    assert.match(events[0].params[3], /B-0003-00000041 anulada y emitida de nuevo como A-0003-00000042 a nombre de Club SA\. El cheque pasa a ese cliente/);
+    assert.match(events[1].params[3], /también pagó otras facturas: sigue a nombre del cliente anterior/);
+    assert.deepEqual(audits[0].new_values.checks, [
+        { check_id: 'chk-only', previous_client_id: 'cli-cf', moved: true },
+        { check_id: 'chk-shared', previous_client_id: 'cli-cf', moved: false },
+    ]);
+});
+
+test('AUD-010: with the same customer the cheques are not touched', async (t) => {
+    const { calls } = setup(t, { old: { ...OLD, client_id: 'cli-ri', order_id: null }, checks: [{ id: 'chk', client_id: 'cli-ri', status: 'received' }] });
+    await salesService.reissueInvoice('inv-old', { invoice_type: 'A' }, null);
+    assert.equal(calls.some(({ sql }) => sql.startsWith('UPDATE customer_checks') || sql.startsWith('INSERT INTO customer_check_events')), false);
+});
+
+test('AUD-013: reissued to an anonymous buyer, the cheque keeps who handed it over', async (t) => {
+    const { calls, audits } = setup(t, { paid: 1210, checks: [{ id: 'chk', client_id: 'cli-cf', status: 'received' }] });
+    await salesService.reissueInvoice('inv-old', { invoice_type: 'B', client_id: null }, null);
+    assert.equal(calls.some(({ sql }) => sql.startsWith('UPDATE customer_checks')), false);
+    const event = calls.find(({ sql }) => sql.startsWith('INSERT INTO customer_check_events'));
+    assert.match(event.params[3], /Sin cliente registrado: el cheque sigue a nombre de quien lo entregó/);
+    assert.deepEqual(audits[0].new_values.checks, [{ check_id: 'chk', previous_client_id: 'cli-cf', moved: false }]);
+});
+
+test('AUD-010: a reissue that deadlocks is retried from the start; one that keeps colliding answers 409', async (t) => {
+    const deadlock = () => Object.assign(new Error('Deadlock found'), { code: 'ER_LOCK_DEADLOCK' });
+    const doubleReversal = () => Object.assign(new Error("Duplicate entry 'je-1' for key 'journal_entries.uq_journal_entry_single_reversal'"), { code: 'ER_DUP_ENTRY' });
+    const sub = (fn) => ({ after: fn });
+    const realQuery = pool.query;
+    const realGetConnection = pool.getConnection;
+    t.after(() => { pool.query = realQuery; pool.getConnection = realGetConnection; });
+
+    let scenario = setup(sub(() => {}), { failures: [deadlock(), doubleReversal()], paid: 1210 });
+    await salesService.reissueInvoice('inv-old', { invoice_type: 'A', client_id: 'cli-ri' }, null);
+    assert.equal(scenario.calls.filter(({ sql }) => sql.startsWith('INSERT INTO invoices')).length, 1, 'the third attempt completes once');
+    scenario.restore();
+
+    scenario = setup(sub(() => {}), { failures: [deadlock(), deadlock(), deadlock()] });
+    await assert.rejects(
+        () => salesService.reissueInvoice('inv-old', { invoice_type: 'A', client_id: 'cli-ri' }, null),
+        (error) => error.statusCode === 409 && error.errorCode === 'busy' && /Reintentá/.test(error.message)
+    );
+    scenario.restore();
+
+    // A lock wait timeout already waited 50 s: answered at once, not waited for again.
+    scenario = setup(sub(() => {}), { failures: [Object.assign(new Error('Lock wait timeout'), { code: 'ER_LOCK_WAIT_TIMEOUT' })] });
+    await assert.rejects(() => salesService.reissueInvoice('inv-old', { invoice_type: 'A', client_id: 'cli-ri' }, null), (error) => error.errorCode === 'busy');
+    assert.equal(scenario.calls.filter(({ sql }) => sql.startsWith('SELECT * FROM invoices WHERE id = ?')).length, 1);
+    scenario.restore();
+
+    // Any other duplicate is a real error: never retried nor disguised.
+    scenario = setup(sub(() => {}), { failures: [Object.assign(new Error("Duplicate entry for key 'uq_invoice_number'"), { code: 'ER_DUP_ENTRY' })] });
+    await assert.rejects(() => salesService.reissueInvoice('inv-old', { invoice_type: 'A', client_id: 'cli-ri' }, null), (error) => error.code === 'ER_DUP_ENTRY');
+    scenario.restore();
 });
 
 test('reverseDocumentEntries writes counter-entries for the entries that touch the accounts, once', async (t) => {
@@ -243,7 +339,7 @@ test('reverseDocumentEntries writes counter-entries for the entries that touch t
         query: async (sql, params = []) => {
             const statement = String(sql).replace(/\s+/g, ' ').trim();
             calls.push({ sql: statement, params });
-            if (statement.startsWith('SELECT DISTINCT je.id')) return [[{ id: 'je-1', entry_number: 7, description: 'Asiento de Venta' }]];
+            if (statement.startsWith('SELECT je.id, je.entry_number')) return [[{ id: 'je-1', entry_number: 7, description: 'Asiento de Venta' }]];
             if (statement.startsWith('SELECT * FROM journal_entry_lines')) {
                 return [[{ account_code: '1.1.03.01', debit: 121, credit: 0 }, { account_code: '4.1.01.01', debit: 0, credit: 121 }]];
             }
@@ -259,7 +355,9 @@ test('reverseDocumentEntries writes counter-entries for the entries that touch t
         referenceType: 'invoice', referenceId: 'inv-1', accountCodes: ['4.1.01.01'], description: 'Anulación',
     });
     assert.deepEqual(result, ['rev-1']);
-    assert.match(calls[0].sql, /NOT EXISTS \(SELECT 1 FROM journal_entries r WHERE r.reversal_of_entry_id = je.id\)/);
+    // AUD-013: locking reads, serialized with a manual reversal of the same entry.
+    assert.match(calls[0].sql, /NOT EXISTS \(SELECT 1 FROM journal_entries r WHERE r.reversal_of_entry_id = je.id FOR SHARE\)/);
+    assert.match(calls[0].sql, /FOR UPDATE$/);
     assert.deepEqual(entries[0].lines.map(({ account_code, debit, credit }) => [account_code, debit, credit]), [['1.1.03.01', 0, 121], ['4.1.01.01', 121, 0]]);
     assert.deepEqual([entries[0].reference_type, entries[0].reversal_of_entry_id], ['reversal', 'je-1']);
     assert.equal(entries[0].description, 'Anulación: Asiento de Venta');

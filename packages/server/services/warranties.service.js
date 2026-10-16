@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
+import { businessYear } from '../utils/businessDate.js';
 import { businessError } from '../utils/businessError.js';
 import { ACCOUNTS, LOCATIONS } from '../utils/paymentAccounts.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
@@ -214,7 +215,7 @@ class ReturnsService extends BaseService {
     }
 
     async _nextCreditNoteNumber(connection) {
-        const year = new Date().getFullYear();
+        const year = businessYear();
         const prefix = `NC-${year}-`;
         const [rows] = await connection.query(
             `SELECT MAX(CAST(SUBSTRING_INDEX(number, '-', -1) AS UNSIGNED)) AS max_seq
@@ -1211,7 +1212,7 @@ class CreditNotesService extends BaseService {
             const invoiceLetter = String(invoice.invoice_type || '').toUpperCase();
             const creditNoteType = ['A', 'B', 'C'].includes(invoiceLetter) ? invoiceLetter : 'B';
 
-            const year = new Date().getFullYear();
+            const year = businessYear();
             const prefix = `NC-${year}-`;
             const [rows] = await connection.query(
                 `SELECT MAX(CAST(SUBSTRING_INDEX(number, '-', -1) AS UNSIGNED)) AS max_seq
