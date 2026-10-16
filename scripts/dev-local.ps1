@@ -3,6 +3,8 @@
 # 'Continue': en Windows PowerShell 5.1 las advertencias que los comandos nativos (docker, mysql)
 # escriben en stderr cortarían el script con 'Stop'. Los errores se controlan explícitamente.
 $ErrorActionPreference = 'Continue'
+# La consola en UTF-8: si no, los acentos que escribe Node se ven como símbolos raros.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 

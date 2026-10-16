@@ -6,7 +6,9 @@
 // Uso manual:  node packages/server/scripts/simulation/preparar-simulacion.mjs
 //
 // Credenciales de prueba (solo para esta base local de simulación): ver docs/execution/GUIA_SIMULACION.md
+import crypto from 'node:crypto';
 import mysql from 'mysql2/promise';
+import { lineAmounts } from '../../utils/vatMath.js';
 
 const API = process.env.SIM_API || 'http://localhost:3001';
 const ORIGIN = process.env.SIM_ORIGIN || 'http://localhost:5173';
@@ -146,9 +148,75 @@ async function main() {
     await call('PUT', `/api/purchase-orders/${po.id}/status`, { status: 'sent' });
     console.log('  orden de compra enviada a Distribuidora Deportiva Sim SA (pelotas, medias y paletas de pádel)');
 
+    if (!process.argv.includes('--sin-movimientos')) {
+        await loadMovements({ db, bySku, clients: await call('GET', '/api/clients') });
+    }
+
     const [[{ entries }]] = await db.query('SELECT COUNT(*) AS entries FROM journal_entries');
     await db.end();
-    console.log(`\nListo: ${entries} asientos de stock inicial. Contraseña de todos los usuarios de la simulación: ver docs/execution/GUIA_SIMULACION.md`);
+    console.log(`\nListo: ${entries} asientos contables. Contraseña de todos los usuarios de la simulación: ver docs/execution/GUIA_SIMULACION.md`);
+}
+
+// Movimientos iniciales, para que la simulación arranque "con vida": caja abierta, ventas de
+// mostrador con cada letra, una venta a cuenta corriente y pedidos en distintos estados. Los
+// hace cada rol con su usuario, por la API, con las mismas reglas del uso real.
+async function loadMovements({ db, bySku, clients }) {
+    const client = (prefix) => clients.find((row) => row.name.startsWith(prefix));
+    const total = (lines) => lines.reduce(
+        (sum, { sku, quantity }) => sum + lineAmounts(quantity, net(bySku[sku].final, bySku[sku].vat_rate ?? 21), bySku[sku].vat_rate ?? 21).gross,
+        0
+    );
+    const money = (value) => Math.round(value * 100) / 100;
+    const items = (lines) => lines.map(({ sku, quantity }) => ({ product_id: bySku[sku].id, quantity }));
+
+    // El cajero abre la caja y vende.
+    await call('POST', '/api/login', { email: 'cajero@simulacion.test', password: SIM_PASSWORD });
+    const registers = await call('GET', '/api/cash-registers');
+    const register = (Array.isArray(registers) ? registers : registers?.data || [])[0];
+    const opened = await call('POST', `/api/cash-registers/${register.id}/open`, { opening_balance: 50000 });
+    const shiftId = (opened.shift || opened).id;
+    console.log(`  caja: ${register.name} abierta por el cajero con $ 50.000 de fondo`);
+
+    const sales = [
+        { label: 'Juan Pérez, factura B en efectivo', client: client('Juan Pérez'), lines: [{ sku: 'REM-DRY-M', quantity: 1 }, { sku: 'MED-X3', quantity: 2 }], method: 'cash', invoice: 'B' },
+        { label: 'Club Atlético Simulado, factura A con débito', client: client('Club Atlético'), lines: [{ sku: 'PEL-FUT-5', quantity: 2 }], method: 'debit_card', invoice: 'A' },
+        { label: 'Laura Gómez (monotributista), factura B por transferencia', client: client('Laura Gómez'), lines: [{ sku: 'BOT-TER-750', quantity: 1 }], method: 'transfer', invoice: 'B' },
+        { label: 'Escuela de Fútbol a cuenta corriente, factura A', client: client('Escuela de Fútbol'), lines: [{ sku: 'ZAP-RUN-42', quantity: 1 }], method: 'credit_account', invoice: 'A' },
+        { label: 'mostrador sin cliente ni factura, en efectivo', client: null, lines: [{ sku: 'SHO-RUN-M', quantity: 1 }], method: 'cash', invoice: null },
+    ];
+    for (const sale of sales) {
+        await call('POST', '/api/pos/checkout', {
+            idempotency_key: crypto.randomUUID(),
+            shift_id: shiftId,
+            client_id: sale.client?.id ?? null,
+            customer_name: sale.client?.name ?? 'Consumidor Final',
+            items: items(sale.lines),
+            payments: [{ method: sale.method, amount: money(total(sale.lines)) }],
+            ...(sale.invoice ? { emit_invoice: true, invoice_type: sale.invoice } : {}),
+        });
+    }
+    console.log(`  ventas de mostrador: ${sales.length} (${sales.map((sale) => sale.label).join('; ')})`);
+
+    // Pedidos: uno con envío (queda reservado para practicar el picking) y uno para retirar.
+    const delivery = await call('POST', '/api/orders', {
+        client_id: client('Escuela de Fútbol').id, payment_method: 'credit_account', shipping_method: 'delivery',
+        shipping_address: 'Calle de la Escuela 123', recipient_name: 'Coordinación Escuela', recipient_dni: '30222333',
+        items: items([{ sku: 'REM-DRY-L', quantity: 2 }, { sku: 'MOC-25L', quantity: 1 }]),
+    });
+    const pickup = await call('POST', '/api/orders', {
+        client_id: client('Juan Pérez').id, payment_method: 'cash', shipping_method: 'pickup',
+        recipient_name: 'Juan Pérez', recipient_dni: '30111222',
+        items: items([{ sku: 'BOT-FUT-41', quantity: 1 }]),
+    });
+
+    // Depósito prepara el pedido para retirar: queda listo en "Retiro Mostrador".
+    await call('POST', '/api/login', { email: 'deposito@simulacion.test', password: SIM_PASSWORD });
+    const pickupId = pickup.id || pickup.order?.id;
+    await call('PUT', `/api/orders/${pickupId}/status`, { status: 'picking' });
+    const [pickupItems] = await db.query('SELECT id, quantity FROM order_items WHERE order_id = ?', [pickupId]);
+    for (const item of pickupItems) await call('PUT', `/api/order-items/${item.id}/pick`, { picked_quantity: item.quantity });
+    await call('PUT', `/api/orders/${pickupId}/status`, { status: 'packed' });
+    console.log(`  pedidos: uno con envío a Escuela de Fútbol pendiente de picking (${(delivery.id || delivery.order?.id).slice(0, 8)}) y uno de Juan Pérez listo para retirar en el mostrador`);
 }
 
 main().catch((error) => {

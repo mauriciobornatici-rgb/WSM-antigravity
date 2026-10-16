@@ -11,9 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 export const VAT_RATES_KEY = ["vat-rates"] as const
 
 const CONCEPT_LABELS: Record<BankChargeConcept, string> = {
-    commission: "ComisiÃ³n",
+    commission: "Comisión",
     maintenance: "Mantenimiento de cuenta",
-    debits_credits_tax: "Impuesto a los dÃ©bitos y crÃ©ditos",
+    debits_credits_tax: "Impuesto a los débitos y créditos",
     withholding: "Retenciones y percepciones",
     other: "Otros gastos bancarios",
 }
@@ -84,7 +84,7 @@ export function BankChargesEditor({ value, onChange, idPrefix = "bank-charge", d
                     <div key={index} className="space-y-3 rounded-md border p-3">
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                             <div className="space-y-1.5">
-                                <Label htmlFor={`${idPrefix}-${index}-concept`}>Concepto del dÃ©bito {lineNumber}</Label>
+                                <Label htmlFor={`${idPrefix}-${index}-concept`}>Concepto del débito {lineNumber}</Label>
                                 <Select value={charge.concept} onValueChange={(concept) => changeConcept(index, concept as BankChargeConcept)} disabled={disabled}>
                                     <SelectTrigger id={`${idPrefix}-${index}-concept`}><SelectValue /></SelectTrigger>
                                     <SelectContent>
@@ -108,14 +108,14 @@ export function BankChargesEditor({ value, onChange, idPrefix = "bank-charge", d
                             </div>
                             {hasVat ? (
                                 <div className="space-y-1.5">
-                                    <Label htmlFor={`${idPrefix}-${index}-vat`}>IVA del dÃ©bito</Label>
+                                    <Label htmlFor={`${idPrefix}-${index}-vat`}>IVA del débito</Label>
                                     <Select
                                         value={selectedRate === undefined ? "" : String(selectedRate)}
                                         onValueChange={(rate) => updateLine(index, { vat_rate: Number(rate) })}
                                         disabled={disabled || rates.length === 0}
                                     >
                                         <SelectTrigger id={`${idPrefix}-${index}-vat`}>
-                                            <SelectValue placeholder={ratesQuery.isError ? "No disponible" : "Cargandoâ€¦"} />
+                                            <SelectValue placeholder={ratesQuery.isError ? "No disponible" : "Cargando…"} />
                                         </SelectTrigger>
                                         <SelectContent>
                                             {rates.map((rate) => (
@@ -141,7 +141,7 @@ export function BankChargesEditor({ value, onChange, idPrefix = "bank-charge", d
                                 type="button"
                                 variant="ghost"
                                 className="h-11 w-11 p-0"
-                                aria-label={`Quitar dÃ©bito ${lineNumber}`}
+                                aria-label={`Quitar débito ${lineNumber}`}
                                 disabled={disabled}
                                 onClick={() => onChange(value.filter((_, position) => position !== index))}
                             >
@@ -159,11 +159,11 @@ export function BankChargesEditor({ value, onChange, idPrefix = "bank-charge", d
                     disabled={disabled || value.length >= 20}
                     onClick={() => onChange([...value, { concept: "commission", amount: 0 }])}
                 >
-                    <Plus className="mr-2 h-4 w-4" aria-hidden="true" /> Agregar dÃ©bito
+                    <Plus className="mr-2 h-4 w-4" aria-hidden="true" /> Agregar débito
                 </Button>
                 {value.length > 0 ? (
                     <p className="text-sm text-muted-foreground" aria-live="polite">
-                        Total de dÃ©bitos: <span className="font-semibold text-foreground">{formatMoney(bankChargesTotal(value))}</span>
+                        Total de débitos: <span className="font-semibold text-foreground">{formatMoney(bankChargesTotal(value))}</span>
                     </p>
                 ) : null}
             </div>

@@ -47,7 +47,7 @@ export function CardSettlementsTab() {
             reference: reference.trim() || null,
         }),
         onSuccess: async () => {
-            toast.success("AcreditaciÃ³n registrada")
+            toast.success("Acreditación registrada")
             setAmount("")
             setFee("")
             setReference("")
@@ -56,7 +56,7 @@ export function CardSettlementsTab() {
             setIdempotencyKey(createClientUuid())
             await queryClient.invalidateQueries({ queryKey: CARD_SETTLEMENTS_KEY })
         },
-        onError: (error) => showErrorToast("No se pudo registrar la acreditaciÃ³n", error),
+        onError: (error) => showErrorToast("No se pudo registrar la acreditación", error),
     })
 
     const amountValue = Number(amount)
@@ -76,7 +76,7 @@ export function CardSettlementsTab() {
                     <CardDescription>
                         Pendiente de acreditar:{" "}
                         <span className="font-semibold text-foreground">
-                            {query.isLoading ? "Cargandoâ€¦" : loadFailed ? "No disponible" : formatMoney(pending)}
+                            {query.isLoading ? "Cargando…" : loadFailed ? "No disponible" : formatMoney(pending)}
                         </span>
                     </CardDescription>
                 </CardHeader>
@@ -116,7 +116,7 @@ export function CardSettlementsTab() {
                                 ) : null}
                             </div>
                             <div className="space-y-1.5">
-                                <Label htmlFor="settlement-fee">ComisiÃ³n retenida</Label>
+                                <Label htmlFor="settlement-fee">Comisión retenida</Label>
                                 <Input
                                     id="settlement-fee"
                                     type="number"
@@ -129,19 +129,19 @@ export function CardSettlementsTab() {
                                 />
                                 {feeTooHigh ? (
                                     <p id="settlement-fee-error" role="alert" className="text-sm font-medium text-destructive">
-                                        La comisiÃ³n y los dÃ©bitos deben sumar menos que el monto
+                                        La comisión y los débitos deben sumar menos que el monto
                                     </p>
                                 ) : null}
                             </div>
                             <div className="space-y-1.5">
-                                <Label htmlFor="settlement-fee-vat">IVA de la comisiÃ³n</Label>
+                                <Label htmlFor="settlement-fee-vat">IVA de la comisión</Label>
                                 <Select
                                     value={selectedFeeRate}
                                     onValueChange={setFeeVatRate}
                                     disabled={rates.length === 0}
                                 >
                                     <SelectTrigger id="settlement-fee-vat">
-                                        <SelectValue placeholder={ratesQuery.isError ? "No disponible" : "Cargandoâ€¦"} />
+                                        <SelectValue placeholder={ratesQuery.isError ? "No disponible" : "Cargando…"} />
                                     </SelectTrigger>
                                     <SelectContent>
                                         {rates.map((rate) => (
@@ -151,11 +151,11 @@ export function CardSettlementsTab() {
                                 </Select>
                             </div>
                             <div className="space-y-2">
-                                <h3 className="text-sm font-semibold">Otros dÃ©bitos del procesador (retenciones, impuestos)</h3>
+                                <h3 className="text-sm font-semibold">Otros débitos del procesador (retenciones, impuestos)</h3>
                                 <BankChargesEditor value={charges} onChange={setCharges} idPrefix="settlement-charge" />
                             </div>
                             <div className="space-y-1.5">
-                                <Label htmlFor="settlement-reference">Referencia (lote / liquidaciÃ³n)</Label>
+                                <Label htmlFor="settlement-reference">Referencia (lote / liquidación)</Label>
                                 <Input id="settlement-reference" value={reference} onChange={(e) => setReference(e.target.value)} />
                             </div>
                             {amountValue > 0 && !feeTooHigh && !amountTooHigh ? (
@@ -164,7 +164,7 @@ export function CardSettlementsTab() {
                                 </p>
                             ) : null}
                             <Button type="submit" disabled={invalid || mutation.isPending} className="w-full sm:w-auto">
-                                Registrar acreditaciÃ³n
+                                Registrar acreditación
                             </Button>
                         </fieldset>
                     </form>
@@ -172,11 +172,11 @@ export function CardSettlementsTab() {
             </Card>
             <Card>
                 <CardHeader>
-                    <CardTitle className="text-lg">Ãšltimas acreditaciones</CardTitle>
+                    <CardTitle className="text-lg">Últimas acreditaciones</CardTitle>
                 </CardHeader>
                 <CardContent>
                     {query.isLoading ? (
-                        <p className="text-sm text-muted-foreground">Cargandoâ€¦</p>
+                        <p className="text-sm text-muted-foreground">Cargando…</p>
                     ) : loadFailed ? (
                         <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-destructive">
                             <span>No se pudieron cargar las acreditaciones.</span>
@@ -185,7 +185,7 @@ export function CardSettlementsTab() {
                             </Button>
                         </div>
                     ) : settlements.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">TodavÃ­a no hay acreditaciones.</p>
+                        <p className="text-sm text-muted-foreground">Todavía no hay acreditaciones.</p>
                     ) : (
                         <ul className="divide-y text-sm">
                             {settlements.map((row) => (

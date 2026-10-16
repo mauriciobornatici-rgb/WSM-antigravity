@@ -4,14 +4,17 @@
 #
 #   powershell -File scripts\simulacion.ps1             levanta la simulación (la crea si no existe)
 #   powershell -File scripts\simulacion.ps1 -Reiniciar  la borra y la vuelve a crear desde cero
+#   ... -Reiniciar -SinMovimientos                       solo datos maestros (caja cerrada, sin ventas ni pedidos)
 #
 # Para volver al entorno de desarrollo habitual:  powershell -File scripts\dev-local.ps1
 # Guía de procesos y usuarios: docs\execution\GUIA_SIMULACION.md
-param([switch]$Reiniciar)
+param([switch]$Reiniciar, [switch]$SinMovimientos)
 
 # 'Continue': en Windows PowerShell 5.1 las advertencias que los comandos nativos (docker, mysql)
 # escriben en stderr cortarían el script con 'Stop'. Los errores se controlan explícitamente.
 $ErrorActionPreference = 'Continue'
+# La consola en UTF-8: si no, los acentos que escribe Node se ven como símbolos raros.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $base = 'wsm_simulacion'
@@ -63,7 +66,8 @@ if (-not $lista) { throw "La API no arrancó: revisá $env:TEMP\wsm_simulacion.e
 # 4) Datos maestros (solo en una base nueva).
 if ($nueva) {
     Write-Host '==> cargando datos de la simulación'
-    node packages/server/scripts/simulation/preparar-simulacion.mjs
+    if ($SinMovimientos) { node packages/server/scripts/simulation/preparar-simulacion.mjs --sin-movimientos }
+    else { node packages/server/scripts/simulation/preparar-simulacion.mjs }
     if ($LASTEXITCODE -ne 0) { throw 'No se pudieron cargar los datos de la simulación.' }
 }
 
