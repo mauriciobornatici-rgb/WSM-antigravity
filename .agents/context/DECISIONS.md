@@ -80,6 +80,15 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-025 — Decisiones del usuario sobre AUD-008 y AUD-013 (2026-10-16)
+- **Conflicto de numeración con ARCA (opción a):** el comprobante queda trabado en `arca_conflict`, con aviso en el panel y en el contador de Facturación (ya existía). Lo resuelve el administrador a mano, consultando ARCA. El sistema no ofrece anularlo ni reemitirlo. Procedimiento en `docs/execution/RUNBOOK_CONFLICTO_ARCA.md`.
+- **Cambio de punto de venta con comprobantes en verificación (opción a):** se permite, como hasta ahora. La verificación sigue usando el punto de venta guardado en cada comprobante (`arca_pos` y `arca_voucher_type`, migración 059).
+- **Fecha impresa (opción a):** la de emisión, como hasta ahora.
+- **Índices de cobros y cheques por factura (aprobado):** migración 063, solo índices. El CHECK de inventario pasa a la **064**.
+- **Cheques al reemitir:** se confirma lo implementado en AUD-013.
+  - Cambian de cliente cualquiera sea su estado: en cartera, depositado, rechazado o endosado.
+  - Un cheque que pagó varias facturas queda en el cliente anterior.
+
 ### ADR-024 — Nota de crédito interna al anular por error de ARCA (usuario, 2026-10-14: opción b)
 - Al anular y volver a emitir una factura sin CAE queda una **nota de crédito interna**: número `NCI-AAAA-NNNN`, tipo `INT`, estado `internal`, `reference_type = 'arca_error_annulment'`, vinculada a la factura anulada, por el total y con el mismo cliente.
 - **El texto dice por qué, sin culpar a ARCA cuando no intervino (AUD-011):**
