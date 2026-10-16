@@ -2,10 +2,11 @@ import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import { nextDocumentSequence } from '../../utils/documentSequence.js';
+import { businessYear } from '../../utils/businessDate.js';
 
 export class ReceptionService {
     async nextReceptionNumber(connection) {
-        const year = new Date().getFullYear();
+        const year = businessYear();
         const prefix = `REC-${year}-`;
         const [rows] = await connection.query(
             `SELECT MAX(CAST(SUBSTRING_INDEX(reception_number, '-', -1) AS UNSIGNED)) AS max_seq

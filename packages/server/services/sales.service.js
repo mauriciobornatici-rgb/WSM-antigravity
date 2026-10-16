@@ -3,10 +3,11 @@ import BaseService from './base.service.js';
 import pool from '../config/db.js';
 import auditService from './audit.service.js';
 import { nextDocumentSequence } from '../utils/documentSequence.js';
+import { businessYear } from '../utils/businessDate.js';
 import financeService from './finance.service.js';
 import accountingService from './accounting.service.js';
 import invoiceAuthorizationUseCase from '../domains/sales/InvoiceAuthorizationUseCase.js';
-import createOrderUseCase from '../domains/sales/CreateOrderUseCase.js';
+import createOrderUseCase, { isOfflineReplay } from '../domains/sales/CreateOrderUseCase.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
 import { grossLineAmounts, lineAmounts } from '../utils/vatMath.js';
 import { businessError } from '../utils/businessError.js';
@@ -16,6 +17,17 @@ import { CLIENT_TAX_CONDITIONS } from '@wsm/common';
 export const REISSUE_MAX_DAYS = 5;
 // Reissues followed back to the original sale; a longer chain counts as expired (fails closed).
 export const REISSUE_CHAIN_LIMIT = 50;
+// Attempts of a reissue that collides with another write on the same rows (AUD-010).
+export const REISSUE_ATTEMPTS = 3;
+
+/**
+ * A write that lost a race and was rolled back, safe to run again from the start: a deadlock,
+ * a lock wait timeout, or two reversals of the same journal entry (uq_journal_entry_single_reversal).
+ */
+export function isTransientWriteConflict(error) {
+    if (error?.code === 'ER_LOCK_DEADLOCK' || error?.code === 'ER_LOCK_WAIT_TIMEOUT') return true;
+    return error?.code === 'ER_DUP_ENTRY' && String(error?.message || '').includes('uq_journal_entry_single_reversal');
+}
 /**
  * ADR-024 / AUD-011: why an invoice without a CAE is annulled, said truthfully in the internal
  * credit note: ARCA did not authorize it (with the reason recorded), it is a ticket (never
@@ -1389,7 +1401,17 @@ class SalesService extends BaseService {
                     invoiceNumber,
                     totalAmount,
                     paid_amount: totalPaidAmount,
-                    payment_status: resolvedPaymentStatus
+                    payment_status: resolvedPaymentStatus,
+                    // An offline sale whose letter was corrected (ADR-021): what was asked for,
+                    // and that it was declared offline (security review: the declaration itself
+                    // is on record, not only its effect).
+                    // (No letter sent means the default B, AUD-013.)
+                    ...(String(invoiceData.invoice_type || 'B').toUpperCase() !== invoiceType
+                        ? { invoice_type_requested: String(invoiceData.invoice_type || 'B').toUpperCase() }
+                        : {}),
+                    ...(!checkReceiverCondition
+                        ? { offline_replay: true, ...(invoiceData.offline_captured_at ? { offline_captured_at: invoiceData.offline_captured_at } : {}) }
+                        : {})
                 }
             }, connection);
 
@@ -1433,7 +1455,7 @@ class SalesService extends BaseService {
 
             if (invoiceData.order_id) {
                 const [orders] = await connection.query(
-                    'SELECT id, invoice_id FROM orders WHERE id = ? FOR UPDATE',
+                    'SELECT id, invoice_id, external_source, shipping_method FROM orders WHERE id = ? FOR UPDATE',
                     [invoiceData.order_id]
                 );
                 if (orders.length === 0) throw new Error('Order not found');
@@ -1449,7 +1471,17 @@ class SalesService extends BaseService {
                 }
                 // Invoicing an order bills what was sold, at the order's prices and the
                 // catalog VAT: client-sent items, prices, VAT or discounts are ignored (H4).
-                const invoice = await this.createInvoice(invoiceData.order_id, invoiceData, userId, connection);
+                // AUD-009: the old offline queue (sales saved without a shift) invoices its POS
+                // order here. As in the POS checkout, an offline sale is never stuck over the
+                // letter: it is corrected (its number is still provisional) and audited. Only a
+                // counter sale (what the queue holds): an order with shipping is never offline.
+                const offlineReplay = !orders[0].shipping_method && isOfflineReplay({
+                    external_source: orders[0].external_source,
+                    offline_captured_at: invoiceData.offline_captured_at,
+                });
+                const invoice = await this.createInvoice(invoiceData.order_id, invoiceData, userId, connection, {
+                    checkReceiverCondition: !offlineReplay,
+                });
                 await connection.commit();
                 return invoice;
             }
@@ -1666,8 +1698,90 @@ class SalesService extends BaseService {
      * record (cancelled, soft deleted) and the new one keeps `replaces_invoice_id`.
      * Only without a CAE and outside any ARCA attempt: 'issued' means ARCA holds no voucher
      * for it (ADR-020 releases a number only after ARCA confirms it does not exist).
+     *
+     * AUD-010: a deadlock (with a collection, a cheque or a return touching the same rows) or
+     * a manual reversal of the same entry at the same moment rolls the whole attempt back, and
+     * it is retried: each attempt reads everything again, so it either completes or finds the
+     * invoice already annulled. If the rows stay busy, a 409 asks to retry instead of a 500.
      */
-    async reissueInvoice(invoiceId, { invoice_type: requestedType, client_id: requestedClientId } = {}, userId = null, { allowLate = false } = {}) {
+    async reissueInvoice(invoiceId, request = {}, userId = null, options = {}) {
+        for (let attempt = 1; ; attempt += 1) {
+            let newId;
+            try {
+                newId = await this._reissueInvoiceOnce(invoiceId, request, userId, options);
+            } catch (error) {
+                if (!isTransientWriteConflict(error)) throw error;
+                // A lock held for the whole wait is not waited for again (it would take minutes).
+                if (attempt >= REISSUE_ATTEMPTS || error.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                    throw businessError(409, {
+                        error: 'busy',
+                        message: 'Otro usuario está trabajando con esta factura o sus cobros. Reintentá en unos segundos.',
+                    });
+                }
+                continue;
+            }
+            // Read after the commit and outside the retry: a committed reissue is never repeated.
+            return this.getInvoiceById(newId);
+        }
+    }
+
+    /**
+     * The cheques that paid an invoice, locked (AUD-013) before its collections and allocations
+     * are touched: a collection locks the cheque before adding an allocation, so both take the
+     * locks in the same order.
+     */
+    async _lockInvoiceChecks(connection, invoiceId) {
+        const [allocated] = await connection.query(
+            'SELECT DISTINCT check_id FROM customer_check_allocations WHERE invoice_id = ?',
+            [invoiceId]
+        );
+        if (allocated.length === 0) return [];
+        const [checks] = await connection.query(
+            'SELECT id, client_id, status FROM customer_checks WHERE id IN (?) ORDER BY id FOR UPDATE',
+            [allocated.map((row) => row.check_id)]
+        );
+        return checks;
+    }
+
+    /**
+     * The cheques that paid a reissued invoice follow its new customer, as its collections do
+     * (AUD-010). A cheque that also paid other invoices keeps the previous customer, and so does
+     * one reissued to an anonymous buyer (someone to claim it from if it bounces). Either way
+     * the cheque's history says what happened. Returns what was done, for the audit.
+     */
+    async _moveReissuedChecks(connection, { checks, invoiceId, client, oldLabel, newLabel, userId }) {
+        const customerName = client.client_name || 'Consumidor Final';
+        const result = [];
+        for (const check of checks) {
+            // A locking read: an allocation another collection committed meanwhile is counted
+            // (the transaction's snapshot is older).
+            const [[others]] = await connection.query(
+                'SELECT COUNT(*) AS count FROM customer_check_allocations WHERE check_id = ? AND (invoice_id IS NULL OR invoice_id <> ?) FOR SHARE',
+                [check.id, invoiceId]
+            );
+            const shared = Number(others?.count || 0) > 0;
+            const moved = !shared && Boolean(client.client_id);
+            if (moved && check.client_id !== client.client_id) {
+                await connection.query('UPDATE customer_checks SET client_id = ? WHERE id = ?', [client.client_id, check.id]);
+            }
+            const why = shared
+                ? 'El cheque también pagó otras facturas: sigue a nombre del cliente anterior.'
+                : (moved ? 'El cheque pasa a ese cliente.' : 'Sin cliente registrado: el cheque sigue a nombre de quien lo entregó.');
+            await connection.query(
+                `INSERT INTO customer_check_events (id, check_id, status, notes, performed_by)
+                 VALUES (?, ?, ?, ?, ?)`,
+                [
+                    crypto.randomUUID(), check.id, check.status,
+                    `Factura ${oldLabel} anulada y emitida de nuevo como ${newLabel} a nombre de ${customerName}. ${why}`,
+                    userId || null,
+                ]
+            );
+            result.push({ check_id: check.id, previous_client_id: check.client_id || null, moved });
+        }
+        return result;
+    }
+
+    async _reissueInvoiceOnce(invoiceId, { invoice_type: requestedType, client_id: requestedClientId } = {}, userId = null, { allowLate = false } = {}) {
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
@@ -1731,6 +1845,7 @@ class SalesService extends BaseService {
                     throw businessError(409, { error: 'invoice_has_pending_returns', message: 'El pedido tiene una devolución en curso: resolvela antes de volver a emitir la factura.' });
                 }
             }
+            const paidChecks = await this._lockInvoiceChecks(connection, invoiceId);
 
             const clientId = requestedClientId === undefined ? old.client_id : requestedClientId;
             if (clientId && clientId !== old.client_id) {
@@ -1773,7 +1888,7 @@ class SalesService extends BaseService {
             const oldLabel = `${old.invoice_type}-${String(old.point_of_sale).padStart(4, '0')}-${String(old.invoice_number).padStart(8, '0')}`;
             const newLabel = `${invoiceType}-${String(pointOfSale).padStart(4, '0')}-${String(invoiceNumber).padStart(8, '0')}`;
             // ADR-024: the internal credit note that documents the annulment (own numbering).
-            const year = new Date().getFullYear();
+            const year = businessYear();
             const [[noteMax]] = await connection.query(
                 "SELECT MAX(CAST(SUBSTRING_INDEX(number, '-', -1) AS UNSIGNED)) AS max_seq FROM credit_notes WHERE number LIKE ?",
                 [`NCI-${year}-%`]
@@ -1846,6 +1961,9 @@ class SalesService extends BaseService {
                 [newId, client.client_id, invoiceId]
             );
             await connection.query('UPDATE customer_check_allocations SET invoice_id = ? WHERE invoice_id = ?', [newId, invoiceId]);
+            const checks = sameClient ? [] : await this._moveReissuedChecks(connection, {
+                checks: paidChecks, invoiceId: newId, client, oldLabel, newLabel, userId,
+            });
             if (outstanding > 0 && !sameClient) {
                 if (old.client_id) {
                     await connection.query(
@@ -1897,11 +2015,12 @@ class SalesService extends BaseService {
                 new_values: {
                     invoice_id: newId, label: newLabel, client_id: client.client_id, internal_credit_note: noteNumber,
                     client_tax_id: client.client_tax_id, client_tax_condition: client.client_tax_condition,
+                    ...(checks.length > 0 ? { checks } : {}),
                 },
             }, connection);
 
             await connection.commit();
-            return this.getInvoiceById(newId);
+            return newId;
         } catch (error) {
             await connection.rollback();
             throw error;

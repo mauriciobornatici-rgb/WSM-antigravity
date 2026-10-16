@@ -2,14 +2,12 @@ import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import { businessError } from '../../utils/businessError.js';
+import { withNamedLockTransaction } from '../../utils/namedLock.js';
+import { normalizeTaxId, taxIdKey, taxIdKeySql } from '../../utils/taxId.js';
 
 const NOT_FOUND = { error: 'not_found', message: 'Proveedor no encontrado' };
 const DUPLICATE_TAX_ID = { error: 'duplicate_tax_id', message: 'Ya existe un proveedor con ese RUC/CI/CUIT' };
-
-const normalizeTaxId = (taxId) => {
-    const value = taxId == null ? '' : String(taxId).trim();
-    return value || null;
-};
+const BUSY = { error: 'busy', message: 'Otro usuario está guardando un proveedor con ese CUIT: reintentá en unos segundos.' };
 
 export class SupplierService {
     async getSuppliers() {
@@ -21,28 +19,19 @@ export class SupplierService {
     // renaming suppliers with the same CUIT cannot both pass the duplicate check (a unique key is
     // not possible: deleted suppliers keep their CUIT). Without a CUIT there is nothing to check.
     async _withTaxIdLock(taxId, fn) {
-        const connection = await pool.getConnection();
-        const lockName = taxId ? `supplier_tax_id:${taxId}`.slice(0, 64) : null;
-        try {
-            if (lockName) {
-                const [[lock]] = await connection.query('SELECT GET_LOCK(?, 10) AS acquired', [lockName]);
-                if (Number(lock?.acquired) !== 1) {
-                    throw businessError(409, { error: 'busy', message: 'Otro usuario está guardando un proveedor con ese CUIT: reintentá en unos segundos.' });
-                }
-            }
-            await connection.beginTransaction();
-            try {
-                const result = await fn(connection);
-                await connection.commit();
-                return result;
-            } catch (error) {
-                await connection.rollback();
-                throw error;
-            }
-        } finally {
-            if (lockName) await connection.query('SELECT RELEASE_LOCK(?)', [lockName]).catch(() => {});
-            connection.release();
-        }
+        const key = taxIdKey(taxId);
+        return withNamedLockTransaction(pool, key ? `supplier_tax_id:${key}` : null, BUSY, fn);
+    }
+
+    // The CUIT is compared without dashes, dots or spaces (the same CUIT typed differently).
+    async _assertTaxIdFree(connection, taxId, exceptId = null) {
+        const key = taxIdKey(taxId);
+        if (!key) return;
+        const [existing] = await connection.query(
+            `SELECT id FROM suppliers WHERE ${taxIdKeySql()} = ? AND deleted_at IS NULL${exceptId ? ' AND id != ?' : ''} LIMIT 1`,
+            exceptId ? [key, exceptId] : [key]
+        );
+        if (existing.length > 0) throw businessError(409, DUPLICATE_TAX_ID);
     }
 
     async createSupplier(data, userId, ipAddress = null) {
@@ -51,10 +40,7 @@ export class SupplierService {
         const id = crypto.randomUUID();
 
         const created = await this._withTaxIdLock(taxId, async (connection) => {
-            if (taxId) {
-                const [existing] = await connection.query('SELECT id FROM suppliers WHERE tax_id = ? AND deleted_at IS NULL', [taxId]);
-                if (existing.length > 0) throw businessError(409, DUPLICATE_TAX_ID);
-            }
+            await this._assertTaxIdFree(connection, taxId);
             await connection.query(
                 'INSERT INTO suppliers (id, name, tax_id, contact_name, email, phone, address) VALUES (?, ?, ?, ?, ?, ?, ?)',
                 [id, name, taxId, contact_name, email, phone, address]
@@ -81,12 +67,10 @@ export class SupplierService {
             const [existing] = await connection.query('SELECT * FROM suppliers WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [id]);
             if (existing.length === 0) throw businessError(404, NOT_FOUND);
 
-            if (taxId) {
-                const [existingTaxId] = await connection.query(
-                    'SELECT id FROM suppliers WHERE tax_id = ? AND id != ? AND deleted_at IS NULL',
-                    [taxId, id]
-                );
-                if (existingTaxId.length > 0) throw businessError(409, DUPLICATE_TAX_ID);
+            // Only a CUIT that changes is checked: a supplier duplicated before this check (or
+            // typed with other dashes) can still be edited.
+            if (taxIdKey(taxId) !== taxIdKey(existing[0].tax_id)) {
+                await this._assertTaxIdFree(connection, taxId, id);
             }
 
             await connection.query(

@@ -855,7 +855,7 @@ test('createInvoice rejects orders with no physically picked quantity', async (t
 
 test('createManualInvoice rejects missing orders, missing items and rolls back', async (t) => {
     mockPool(t, async (sql) => {
-        if (String(sql).includes('SELECT id, invoice_id FROM orders')) return [[]];
+        if (String(sql).includes('SELECT id, invoice_id, external_source, shipping_method FROM orders')) return [[]];
         return [[]];
     });
     // order_id present but not found: rejected before ever delegating to createInvoice.
@@ -873,7 +873,7 @@ test('createManualInvoice links its order, applies advances and records the outs
     mockPool(t, async (sql, params) => {
         const statement = String(sql);
         calls.push({ sql: statement, params });
-        if (statement.includes('SELECT id, invoice_id FROM orders')) return [[{ id: 'o-manual', invoice_id: null }]];
+        if (statement.includes('SELECT id, invoice_id, external_source, shipping_method FROM orders')) return [[{ id: 'o-manual', invoice_id: null }]];
         if (statement === 'SELECT * FROM orders WHERE id = ? FOR UPDATE') return [[{
             id: 'o-manual', status: 'packed', client_id: 'client-1', customer_name: 'Ana', payment_method: null
         }]];
@@ -923,6 +923,66 @@ test('createManualInvoice links its order, applies advances and records the outs
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE invoices SET payment_status') && params[0] === 'partial'));
     assert.ok(calls.some(({ sql, params }) => sql.includes('current_account_balance') && params[0] === 101));
     assert.ok(calls.some(({ sql, params }) => sql.includes('UPDATE orders') && params.at(-1) === 'o-manual'));
+});
+
+test('AUD-009: the old offline queue invoicing a POS order gets its letter corrected and audited, not refused forever', async (t) => {
+    let externalSource = 'pos';
+    let shippingMethod = null;
+    mockPool(t, async (sql) => {
+        const statement = String(sql);
+        if (statement.includes('SELECT id, invoice_id, external_source, shipping_method FROM orders')) {
+            return [[{ id: 'o-off', invoice_id: null, external_source: externalSource, shipping_method: shippingMethod }]];
+        }
+        if (statement === 'SELECT * FROM orders WHERE id = ? FOR UPDATE') return [[{ id: 'o-off', status: 'completed', client_id: null, customer_name: 'Consumidor final' }]];
+        if (statement.includes('FROM order_items oi')) return [[{ product_id: 'p-1', quantity: 1, unit_price: 100, vat_rate: 21, product_name: 'Producto' }]];
+        return [[]];
+    });
+    const originals = {
+        next: salesService._nextInvoiceNumber,
+        accounting: accountingService.postInvoiceAccountingEntries,
+        finance: financeService._registerInvoicePayments,
+        transfer: salesService._transferOrderReceivablePayments,
+        audit: auditService.log,
+    };
+    const audits = [];
+    salesService._nextInvoiceNumber = async () => 5;
+    salesService._transferOrderReceivablePayments = async () => 0;
+    accountingService.postInvoiceAccountingEntries = async () => {};
+    financeService._registerInvoicePayments = async () => {};
+    auditService.log = async (payload) => { audits.push(payload); };
+    t.after(() => {
+        salesService._nextInvoiceNumber = originals.next;
+        salesService._transferOrderReceivablePayments = originals.transfer;
+        accountingService.postInvoiceAccountingEntries = originals.accounting;
+        financeService._registerInvoicePayments = originals.finance;
+        auditService.log = originals.audit;
+    });
+    const capturedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+    // A sale made offline asked for an A without a customer: it is issued as B and audited.
+    const corrected = await salesService.createManualInvoice({ order_id: 'o-off', invoice_type: 'A', offline_captured_at: capturedAt, items: [{ product_id: 'p-1' }] }, 'u');
+    assert.equal(corrected.invoice_type, 'B');
+    const generated = audits.find(({ action }) => action === 'GENERATE_INVOICE');
+    assert.deepEqual([generated.new_values.invoiceType, generated.new_values.invoice_type_requested], ['B', 'A']);
+    // The declaration itself is on record, not only its effect (security review).
+    assert.deepEqual([generated.new_values.offline_replay, generated.new_values.offline_captured_at], [true, capturedAt]);
+
+    // Not offline, a POS order with shipping, or not a POS order: the strict control stays.
+    await assert.rejects(
+        () => salesService.createManualInvoice({ order_id: 'o-off', invoice_type: 'A', items: [{ product_id: 'p-1' }] }, 'u'),
+        (error) => error.errorCode === 'invoice_cuit_required'
+    );
+    shippingMethod = 'delivery';
+    await assert.rejects(
+        () => salesService.createManualInvoice({ order_id: 'o-off', invoice_type: 'A', offline_captured_at: capturedAt, items: [{ product_id: 'p-1' }] }, 'u'),
+        (error) => error.errorCode === 'invoice_cuit_required'
+    );
+    shippingMethod = null;
+    externalSource = 'tiendanube';
+    await assert.rejects(
+        () => salesService.createManualInvoice({ order_id: 'o-off', invoice_type: 'A', offline_captured_at: capturedAt, items: [{ product_id: 'p-1' }] }, 'u'),
+        (error) => error.errorCode === 'invoice_cuit_required'
+    );
 });
 
 test('createManualInvoice supports a standalone anonymous document with item defaults', async (t) => {

@@ -662,13 +662,17 @@ class AccountingService {
      * (ADR-022): its sale and cost entries are reversed, its collections are kept.
      */
     async reverseDocumentEntries(connection, { referenceType, referenceId, accountCodes, description }) {
+        // Locking reads (AUD-013): the entries are locked as a manual reversal locks them, and
+        // "not reversed yet" is read from the current data (not the transaction's snapshot), so
+        // a manual reversal at the same moment is either seen or kept waiting, never doubled.
         const [entries] = await connection.query(
-            `SELECT DISTINCT je.id, je.entry_number, je.description
+            `SELECT je.id, je.entry_number, je.description
              FROM journal_entries je
-             JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
-             WHERE je.reference_type = ? AND je.reference_id = ? AND jel.account_code IN (?)
-               AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reversal_of_entry_id = je.id)
-             ORDER BY je.id`,
+             WHERE je.reference_type = ? AND je.reference_id = ?
+               AND EXISTS (SELECT 1 FROM journal_entry_lines jel WHERE jel.journal_entry_id = je.id AND jel.account_code IN (?))
+               AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reversal_of_entry_id = je.id FOR SHARE)
+             ORDER BY je.id
+             FOR UPDATE`,
             [referenceType, referenceId, accountCodes]
         );
         const reversed = [];

@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { showErrorToast } from "@/lib/errorHandling"
+import { isApiError } from "@/services/httpClient"
 import type { ClientUpsertInput } from "@/types/api"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { NO_TAX_CONDITION, TAX_CONDITION_OPTIONS, taxConditionCuitError, taxConditionName } from "@/lib/taxConditions"
@@ -103,13 +104,30 @@ export default function ClientsPage() {
                 tax_id: data.tax_id,
                 address: data.address,
                 credit_limit: data.credit_limit,
-                tax_condition_id: data.tax_condition_id === NO_TAX_CONDITION ? null : data.tax_condition_id
+                tax_condition_id: data.tax_condition_id === NO_TAX_CONDITION ? null : data.tax_condition_id,
+                // What the form loaded: if someone saved this customer meanwhile, the server
+                // refuses instead of overwriting their change (AUD-009).
+                expected: {
+                    name: editingClient.name,
+                    email: editingClient.email ?? null,
+                    phone: editingClient.phone ?? null,
+                    tax_id: editingClient.tax_id ?? null,
+                    address: editingClient.address ?? null,
+                    credit_limit: editingClient.credit_limit,
+                    tax_condition_id: editingClient.tax_condition_id ?? null,
+                },
             }
             await api.updateClient(editingClient.id, payload)
             await loadClients()
             setEditingClient(null)
             toast.success("Cliente Actualizado", { description: `${data.name} ha sido actualizado correctamente.` })
         } catch (error) {
+            if (isApiError(error) && typeof error.body === "object" && error.body !== null
+                && (error.body as { error?: unknown }).error === "client_changed") {
+                // The form shows stale data: close it and reload, so it reopens with the current values.
+                setEditingClient(null)
+                void loadClients()
+            }
             showErrorToast("Error al actualizar cliente", error)
         }
     }
@@ -518,23 +536,25 @@ function EditClientDialog({ client, open, onOpenChange, onSubmit }: { client: Cl
 }
 
 function DeleteClientDialog({ client, open, onOpenChange, onConfirm }: { client: Client, open: boolean, onOpenChange: (open: boolean) => void, onConfirm: () => void }) {
+    // The server refuses to delete a customer whose account is not settled (either way).
+    const hasBalance = Math.abs(client.current_account_balance) >= 0.01
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-[425px]">
                 <DialogHeader>
-                    <DialogTitle className="text-red-400">Eliminar cliente?</DialogTitle>
+                    <DialogTitle className="text-red-400">¿Eliminar cliente?</DialogTitle>
                     <DialogDescription>
-                        Esta accion eliminara permanentemente al cliente <strong>{client.name}</strong>.
-                        {client.current_account_balance > 0 && (
-                            <span className="block mt-2 text-yellow-400">
-                                Aviso: este cliente tiene un saldo pendiente de {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(client.current_account_balance)}
+                        Se da de baja al cliente <strong>{client.name}</strong>. Sus facturas, cobros y movimientos se conservan.
+                        {hasBalance && (
+                            <span className="block mt-2 font-medium text-destructive">
+                                No se puede eliminar: tiene un saldo de {formatMoney(client.current_account_balance)} en cuenta corriente. Saldalo antes de darlo de baja.
                             </span>
                         )}
                     </DialogDescription>
                 </DialogHeader>
                 <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                     <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-                    <Button variant="destructive" onClick={onConfirm} className="bg-red-600 hover:bg-red-500">
+                    <Button variant="destructive" onClick={onConfirm} disabled={hasBalance} className="bg-red-600 hover:bg-red-500">
                         <Trash2 className="h-4 w-4 mr-2" />
                         Eliminar Cliente
                     </Button>

@@ -118,6 +118,11 @@ describe("offlineSalesQueue", () => {
         expect(createOrder).toHaveBeenCalledTimes(1);
         expect(createOrder).toHaveBeenCalledWith(expect.objectContaining({ idempotency_key: expect.any(String) }));
         expect(createInvoice).toHaveBeenCalledTimes(1);
+        // AUD-009: the server corrects a letter the customer cannot receive instead of refusing it on every retry.
+        expect(createInvoice).toHaveBeenCalledWith(expect.objectContaining({
+            order_id: "order-999",
+            offline_captured_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        }));
         expect(addShiftPayment).toHaveBeenCalledTimes(1);
         expect(getOfflineQueue()).toHaveLength(0);
     });

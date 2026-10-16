@@ -234,6 +234,9 @@ async function performOfflineSync(apiClient: POSApiClient): Promise<SyncResult> 
             if (sale.emit_invoice && apiClient.createInvoice) {
                 await apiClient.createInvoice({
                     order_id: order.id,
+                    // The server corrects a letter the customer cannot receive instead of
+                    // refusing it on every retry (AUD-009), as it does for the POS checkout.
+                    offline_captured_at: new Date(sale.timestamp).toISOString(),
                     customer_name: sale.customer_name,
                     invoice_type: sale.invoice_type || "B",
                     point_of_sale: 1,

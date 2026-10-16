@@ -277,6 +277,8 @@ export const manualInvoiceSchema = z.object({
   invoice_type: z.enum(['A', 'B', 'C', 'TK']).optional(),
   point_of_sale: z.coerce.number().int().min(1).optional(),
   order_id: optionalUuidSchema,
+  // A sale made offline (old queue without a shift): its letter is corrected, not refused.
+  offline_captured_at: z.iso.datetime({ offset: true }).optional(),
   notes: z.string().nullable().optional(),
   payment_method: orderPaymentMethodSchema.optional(),
   payments: z.array(z.object({
@@ -366,10 +368,20 @@ export const clientSchema = z.object({
   name: z.string().min(2).max(255),
   email: z.string().email().nullable().or(z.literal('')).optional(),
   phone: z.string().nullable().optional(),
-  tax_id: z.string().nullable().optional(),
+  tax_id: z.string().max(50).nullable().optional(),
   address: z.string().nullable().optional(),
   credit_limit: z.coerce.number().min(0).optional(),
   tax_condition_id: z.enum(clientTaxConditionIds).nullable().optional(),
+  // AUD-009: the values the edit form loaded. A save over someone else's change is refused.
+  expected: z.object({
+    name: z.string().max(255).nullable().optional(),
+    tax_id: z.string().max(50).nullable().optional(),
+    email: z.string().max(255).nullable().optional(),
+    phone: z.string().max(50).nullable().optional(),
+    address: z.string().max(65535).nullable().optional(),
+    credit_limit: z.coerce.number().nullable().optional(),
+    tax_condition_id: z.string().max(36).nullable().optional(),
+  }).optional(),
 }).refine(clientCuitRule, clientCuitIssue);
 
 
@@ -385,7 +397,7 @@ export const supplierSchema = z.object({
   contact_name: z.string().nullable().optional(),
   email: z.string().email().nullable().or(z.literal('')).optional(),
   phone: z.string().nullable().optional(),
-  tax_id: z.string().nullable().optional(),
+  tax_id: z.string().max(50).nullable().optional(),
   address: z.string().nullable().optional(),
   category: z.string().nullable().optional(),
   account_balance: z.coerce.number().optional(),

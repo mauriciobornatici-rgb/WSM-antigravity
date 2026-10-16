@@ -34,7 +34,9 @@ export interface PaginatedResponse<T> {
     pagination?: PaginationMeta;
 }
 
-export type ClientUpsertInput = Pick<Client, "name" | "email" | "phone" | "tax_id" | "address" | "credit_limit"> & { tax_condition_id?: string | null };
+type ClientEditableFields = Pick<Client, "name" | "email" | "phone" | "tax_id" | "address" | "credit_limit"> & { tax_condition_id?: string | null };
+// `expected`: the values the edit form loaded (AUD-009), so a save over someone else's change is refused.
+export type ClientUpsertInput = ClientEditableFields & { expected?: Partial<{ [K in keyof ClientEditableFields]: ClientEditableFields[K] | null }> };
 export type SupplierUpsertInput = Pick<Supplier, "name" | "tax_id" | "contact_name" | "email" | "phone" | "address">;
 
 export type UserRole = User["role"];

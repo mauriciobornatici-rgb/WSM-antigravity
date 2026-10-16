@@ -314,7 +314,7 @@ test('createManualInvoice returns the invoice already linked to an order', async
         release() {},
         async query(sql) {
             const statement = String(sql);
-            if (statement.includes('SELECT id, invoice_id FROM orders')) {
+            if (statement.includes('SELECT id, invoice_id, external_source, shipping_method FROM orders')) {
                 return [[{ id: 'order-1', invoice_id: 'invoice-1' }]];
             }
             if (statement.includes('SELECT * FROM invoices WHERE id')) {
