@@ -9,6 +9,7 @@ Entorno de práctica para recorrer **todos los procesos** con datos de una tiend
 | Levantar la simulación (la crea si no existe) | `powershell -File scripts\simulacion.ps1` |
 | Empezar de cero (borra y vuelve a cargar los datos y los movimientos) | `powershell -File scripts\simulacion.ps1 -Reiniciar` |
 | Empezar de cero solo con datos maestros (caja cerrada, sin ventas ni pedidos) | `powershell -File scripts\simulacion.ps1 -Reiniciar -SinMovimientos` |
+| Abrirla también a otras computadoras de la misma red wifi | `powershell -File scripts\simulacion.ps1 -Red` (muestra la dirección, por ejemplo `http://192.168.1.15:5173`) |
 | Volver al entorno de desarrollo habitual | `powershell -File scripts\dev-local.ps1` |
 
 La aplicación queda en **http://localhost:5173** y la API en el puerto 3001. Los dos entornos usan los mismos puertos: el script de cada uno cierra el otro antes de arrancar.
