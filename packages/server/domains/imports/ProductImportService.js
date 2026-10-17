@@ -405,13 +405,14 @@ export class ProductImportService {
                  ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
                 [crypto.randomUUID(), id, location, stock]
             );
+            const movementId = crypto.randomUUID();
             await connection.query(
                 `INSERT INTO inventory_movements (
                     id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
                 ) VALUES (?, 'initial_stock', ?, ?, ?, ?, 'Stock inicial importado', 'product', ?, ?)`,
-                [crypto.randomUUID(), id, location, stock, product.cost, id, userId || null]
+                [movementId, id, location, stock, product.cost, id, userId || null]
             );
-            context.stock.push({ value: lineAmounts(stock, product.cost, 0).net });
+            context.stock.push({ value: lineAmounts(stock, product.cost, 0).net, movementId });
         }
 
         await auditService.log({
@@ -509,7 +510,7 @@ export class ProductImportService {
         const total = stock.reduce((sum, line) => sum + line.value, 0);
         const amount = Math.round(total * 100) / 100;
         if (!(amount > 0)) return;
-        await accountingService.createJournalEntry(connection, {
+        const entryId = await accountingService.createJournalEntry(connection, {
             date: new Date(),
             description: `Stock inicial importado: ${stock.length} producto${stock.length === 1 ? '' : 's'} (importación ${String(batchId).slice(0, 8)})`,
             reference_type: 'product_import',
@@ -519,6 +520,8 @@ export class ProductImportService {
                 { account_code: '3.1.03.01', debit: 0, credit: amount, notes: 'Ajuste por inventario inicial' },
             ],
         });
+        // The movements keep the entry that valued them (ADR-027).
+        await inventoryValuation.linkMovements(connection, stock.map((line) => line.movementId), entryId);
     }
 
     _response(analysis) {

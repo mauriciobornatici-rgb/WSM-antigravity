@@ -5,8 +5,11 @@ import auditService from './audit.service.js';
 import { businessError } from '../utils/businessError.js';
 import { normalizeProductImageUrl } from '../utils/imagePolicy.js';
 import goodsReceptionService from '../domains/procurement/GoodsReceptionService.js';
+import { NON_SELLABLE_LOCATIONS } from '../domains/inventory/StockLedger.js';
 import accountingService from './accounting.service.js';
-import inventoryValuation, { effectiveCost, repricedSalePrice, roundCost } from '../domains/inventory/InventoryValuation.js';
+import inventoryValuation, {
+    effectiveCost, isValuedLocation, repricedSalePrice, roundCost, valueCents,
+} from '../domains/inventory/InventoryValuation.js';
 import { hasPermission, PERMISSIONS } from '@wsm/common';
 
 class InventoryService extends BaseService {
@@ -278,6 +281,14 @@ class InventoryService extends BaseService {
         }
         normalized.barcode = await this.ensureUniqueBarcode(normalized.barcode);
         normalized.location = this.normalizeLocation(normalized.location);
+        // Opening stock is goods to sell, as in the import: never in quarantine, waste or returns to
+        // suppliers (in Mermas it would be valued in the ledger and not in the stock, ADR-027).
+        if (stockInitial > 0 && NON_SELLABLE_LOCATIONS.includes(normalized.location)) {
+            throw businessError(400, {
+                error: 'initial_stock_location',
+                message: `El stock inicial no se puede cargar en "${normalized.location}": no es una ubicación de venta.`
+            });
+        }
         normalized.image_url = normalizeProductImageUrl(normalized.image_url);
         await this.applyProductCatalogOptions(normalized);
         const familyName = normalized.family_name;
@@ -299,12 +310,13 @@ class InventoryService extends BaseService {
                      ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
                     [crypto.randomUUID(), id, initialLocation, stockInitial]
                 );
+                const movementId = crypto.randomUUID();
                 await connection.query(
                     `INSERT INTO inventory_movements (
                         id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
                     ) VALUES (?, 'initial_stock', ?, ?, ?, ?, ?, 'product', ?, ?)`,
                     [
-                        crypto.randomUUID(),
+                        movementId,
                         id,
                         initialLocation,
                         stockInitial,
@@ -315,12 +327,13 @@ class InventoryService extends BaseService {
                     ]
                 );
                 // Every stock movement leaves its entry (ADR-013): the opening stock is valued at cost.
-                await accountingService.postInitialStock(connection, {
+                const entryId = await accountingService.postInitialStock(connection, {
                     productId: id,
                     quantity: stockInitial,
                     unitCost: Number(normalized.purchase_price || 0),
                     description: `Stock inicial de ${normalized.name || normalized.sku || 'producto'}`,
                 });
+                await inventoryValuation.linkMovements(connection, [movementId], entryId);
                 await connection.commit();
             } catch (error) {
                 await connection.rollback();
@@ -677,10 +690,10 @@ class InventoryService extends BaseService {
 
         try {
             await connection.beginTransaction();
-            const [sourceRows] = await connection.query(
-                'SELECT id, quantity, reserved_quantity FROM inventory WHERE product_id = ? AND location = ? FOR UPDATE',
-                [productId, normalizedFrom]
-            );
+            // Every row of the product in one ordered statement (L3, ADR-027): origin and destination
+            // together, the same order as a sale or a revaluation.
+            const productRows = (await inventoryValuation.lockStock(connection, [productId])).get(productId) || [];
+            const sourceRows = productRows.filter((row) => row.location === normalizedFrom);
 
             if (sourceRows.length === 0) {
                 throw businessError(409, { error: 'insufficient_stock', message: `Stock insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: 0 (Físico: 0, Reservado: 0)` });
@@ -702,10 +715,7 @@ class InventoryService extends BaseService {
             // deleting a depleted row would break the FK for any prior allocation.
             await connection.query('UPDATE inventory SET quantity = ? WHERE id = ?', [remainingQty, sourceId]);
 
-            const [targetRows] = await connection.query(
-                'SELECT id FROM inventory WHERE product_id = ? AND location = ? FOR UPDATE',
-                [productId, normalizedTo]
-            );
+            const targetRows = productRows.filter((row) => row.location === normalizedTo);
 
             if (targetRows.length > 0) {
                 await connection.query(
@@ -719,20 +729,51 @@ class InventoryService extends BaseService {
                 );
             }
 
+            // D3 (ADR-027): goods moved to Mermas are a loss now; brought back, the loss is
+            // recovered at today's cost. Between valued locations nothing changes in value.
+            const fromValued = isValuedLocation(normalizedFrom);
+            const toValued = isValuedLocation(normalizedTo);
+            const unitCost = fromValued !== toValued
+                ? (await inventoryValuation.lockCosts(connection, [productId])).get(productId)?.cost || 0
+                : 0;
+
             const movementId = crypto.randomUUID();
             await connection.query(`
                 INSERT INTO inventory_movements (
                     id, type, product_id, from_location, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
-                ) VALUES (?, 'transfer', ?, ?, ?, ?, 0, 'Internal location transfer', 'transfer', ?, ?)
+                ) VALUES (?, 'transfer', ?, ?, ?, ?, ?, 'Internal location transfer', 'transfer', ?, ?)
             `, [
                 movementId,
                 productId,
                 normalizedFrom,
                 normalizedTo,
                 qty,
+                unitCost,
                 movementId,
                 userId || null
             ]);
+            if (fromValued !== toValued) {
+                const value = valueCents(qty, unitCost) / 100;
+                const toWaste = !toValued;
+                const entryId = await accountingService.createJournalEntryIfAny(connection, {
+                    date: new Date(),
+                    description: toWaste
+                        ? `Pase a ${normalizedTo}: ${qty} u. dadas por perdidas`
+                        : `Recupero desde ${normalizedFrom}: ${qty} u. vuelven al stock valuado`,
+                    reference_type: 'transfer',
+                    reference_id: movementId,
+                    lines: toWaste
+                        ? [
+                            { account_code: '5.1.02.02', debit: value, credit: 0, notes: 'Mercadería dada de baja (Mermas)' },
+                            { account_code: '1.1.04.01', debit: 0, credit: value, notes: 'Salida del stock valuado' },
+                        ]
+                        : [
+                            { account_code: '1.1.04.01', debit: value, credit: 0, notes: 'Mercadería recuperada' },
+                            { account_code: '5.1.02.02', debit: 0, credit: value, notes: 'Recupero de mermas' },
+                        ],
+                });
+                await inventoryValuation.linkMovements(connection, [movementId], entryId);
+            }
 
             await auditService.log({
                 user_id: userId || null,
@@ -752,6 +793,9 @@ class InventoryService extends BaseService {
             return { success: true, movementId };
         } catch (error) {
             await connection.rollback();
+            if (error?.code === 'ER_LOCK_DEADLOCK' || error?.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw businessError(409, { error: 'busy', message: 'Otra operación estaba usando este producto. Reintentá en unos segundos.' });
+            }
             throw error;
         } finally {
             connection.release();

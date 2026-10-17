@@ -296,3 +296,44 @@ test('a return after a cost change comes back at today\'s cost and reverses the 
     assert.equal(Number(back.unit_cost), 120);
     assert.ok(back.journal_entry_id);
 });
+
+test('a count posts its variance at today\'s cost and runs next to sales of the same product without deadlocks', async () => {
+    const { default: stockAuditService } = await import('../services/stockAudit.service.js');
+    const location = `QA-CNT-${crypto.randomUUID().slice(0, 8)}`;
+    await pool.query('INSERT INTO warehouse_locations (id, code, name, active) VALUES (?, ?, ?, 1)', [crypto.randomUUID(), location, location]);
+    const productId = await seedProduct({ cost: 40, stock: [{ location, quantity: 5 }, { location: 'QA-A', quantity: 30 }] });
+    const [[{ sku }]] = await pool.query('SELECT sku FROM products WHERE id = ?', [productId]);
+
+    const session = await stockAuditService.createSession({ location_code: location, abc_class: 'ALL' }, null);
+    await stockAuditService.countItem(session.id, { code: sku, quantity: 3 }, null);
+    await stockAuditService.completeSession(session.id, null);
+
+    const results = await Promise.allSettled([
+        stockAuditService.applyAdjustments(session.id, null),
+        ...Array.from({ length: 4 }, () => counterSale([{ product_id: productId, quantity: 1 }])),
+    ]);
+    const failures = results.filter((result) => result.status === 'rejected').map((result) => result.reason.code || result.reason.errorCode || result.reason.message);
+    // A sale may take a unit from the counted location first: then the count is stale (409), never a deadlock.
+    assert.ok(failures.every((failure) => failure === 'STOCK_AUDIT_STALE_SNAPSHOT'), failures.join(', '));
+    if (failures.length === 0) {
+        assert.deepEqual((await ledgerOf('stock_audit', session.id)).lines, [['1.1.04.01', 0, 80], ['5.1.02.02', 80, 0]]);
+    }
+});
+
+test('moving goods to Mermas is a loss, bringing them back a recovery; opening stock never goes to Mermas (D3)', async () => {
+    const productId = await seedProduct({ cost: 15, stock: [{ location: 'QA-A', quantity: 6 }] });
+
+    const out = await inventoryService.transferStock(productId, 'QA-A', 'Mermas', 4, null);
+    const back = await inventoryService.transferStock(productId, 'Mermas', 'QA-A', 1, null);
+
+    assert.deepEqual((await ledgerOf('transfer', out.movementId)).lines, [['1.1.04.01', 0, 60], ['5.1.02.02', 60, 0]]);
+    assert.deepEqual((await ledgerOf('transfer', back.movementId)).lines, [['1.1.04.01', 15, 0], ['5.1.02.02', 0, 15]]);
+    // A new cost revalues only what carries value: 3 units, not the 3 in Mermas.
+    await inventoryService.updateProduct(productId, { purchase_price: 20 }, null, null, 'admin');
+    assert.deepEqual((await ledgerOf('stock_revaluation', productId)).lines, [['1.1.04.01', 15, 0], ['4.2.02.01', 0, 15]]);
+
+    await assert.rejects(
+        () => inventoryService.createProduct({ sku: `QA-${crypto.randomUUID().slice(0, 8)}`, name: 'Merma QA', sale_price: 10, purchase_price: 5, stock_initial: 2, location: 'Mermas' }, null),
+        (error) => error.statusCode === 400 && error.errorCode === 'initial_stock_location'
+    );
+});
