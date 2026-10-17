@@ -130,8 +130,10 @@ class InventoryService extends BaseService {
                 image_url = COALESCE(product_families.image_url, VALUES(image_url))
         `, [familyId, familyKey, familyName, brand, category, imageUrl]);
 
+        // A locking read: inside a transaction it sees the family another request committed
+        // meanwhile (a plain read could miss it and return an id that was never inserted).
         const [resolvedRows] = await connection.query(
-            'SELECT id FROM product_families WHERE family_key = ? AND deleted_at IS NULL LIMIT 1',
+            'SELECT id FROM product_families WHERE family_key = ? AND deleted_at IS NULL LIMIT 1 FOR SHARE',
             [familyKey]
         );
         return resolvedRows[0]?.id || familyId;
@@ -264,6 +266,11 @@ class InventoryService extends BaseService {
             normalized.purchase_price = normalized.cost_price;
         }
         delete normalized.cost_price;
+        // Cents, as the column stores it: the opening-stock entry is posted from the same value
+        // the product and the movement keep (a 3-decimal cost left the ledger a cent off).
+        if (normalized.purchase_price != null) {
+            normalized.purchase_price = Math.round((Number(normalized.purchase_price) + Number.EPSILON) * 100) / 100;
+        }
         normalized.barcode = await this.ensureUniqueBarcode(normalized.barcode);
         normalized.location = this.normalizeLocation(normalized.location);
         normalized.image_url = normalizeProductImageUrl(normalized.image_url);

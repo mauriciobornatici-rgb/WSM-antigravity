@@ -16,6 +16,7 @@ import { showErrorToast } from "@/lib/errorHandling"
 import { convertToCSV, downloadCSV } from "@/lib/exportUtils"
 import { formatMoney } from "@/lib/formatters"
 import type { SupplierPaymentCreateInput, SupplierUpsertInput } from "@/types/api"
+import { ImportDialog } from "@/components/imports/ImportDialog"
 
 export default function SuppliersPage() {
     const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -64,7 +65,8 @@ export default function SuppliersPage() {
                 contact_name: newSupplier.contact_name,
                 email: newSupplier.email,
                 phone: newSupplier.phone,
-                address: newSupplier.address
+                address: newSupplier.address,
+                category: newSupplier.category
             }
             await api.createSupplier(payload)
             toast.success("Proveedor agregado exitosamente")
@@ -100,10 +102,11 @@ export default function SuppliersPage() {
         }
     }
 
+    // A supplier without CUIT or category (both optional) must not break the search.
     const filteredSuppliers = suppliers.filter(s =>
-        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.tax_id.includes(searchQuery) ||
-        s.category.toLowerCase().includes(searchQuery.toLowerCase())
+        (s.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (s.tax_id || "").includes(searchQuery) ||
+        (s.category || "").toLowerCase().includes(searchQuery.toLowerCase())
     )
 
     const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null)
@@ -193,6 +196,7 @@ export default function SuppliersPage() {
                     >
                         <Download className="h-4 w-4" /> Exportar CSV
                     </Button>
+                    <ImportDialog entity="suppliers" onImported={loadSuppliers} />
                     <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
                         <DialogTrigger asChild>
                             <Button className="w-full bg-blue-600 hover:bg-blue-700 sm:w-auto">
@@ -209,32 +213,32 @@ export default function SuppliersPage() {
                         <div className="grid gap-4 py-4">
                             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                 <div className="space-y-2">
-                                    <Label>Nombre / Razón Social *</Label>
-                                    <Input value={newSupplier.name} onChange={e => setNewSupplier({ ...newSupplier, name: e.target.value })} placeholder="Ej: Nike Dist" />
+                                    <Label htmlFor="supplier-new-name">Nombre / Razón Social *</Label>
+                                    <Input id="supplier-new-name" value={newSupplier.name} onChange={e => setNewSupplier({ ...newSupplier, name: e.target.value })} placeholder="Ej: Nike Dist" />
                                 </div>
                                 <div className="space-y-2">
-                                    <Label>CUIT / DNI *</Label>
-                                    <Input value={newSupplier.tax_id} onChange={e => setNewSupplier({ ...newSupplier, tax_id: e.target.value })} placeholder="30-12345678-9" />
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                                <div className="space-y-2">
-                                    <Label>Contacto</Label>
-                                    <Input value={newSupplier.contact_name} onChange={e => setNewSupplier({ ...newSupplier, contact_name: e.target.value })} placeholder="Nombre de contacto" />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label>Categoría</Label>
-                                    <Input value={newSupplier.category} onChange={e => setNewSupplier({ ...newSupplier, category: e.target.value })} placeholder="Ej: Calzado, Logística" />
+                                    <Label htmlFor="supplier-new-tax-id">CUIT / DNI *</Label>
+                                    <Input id="supplier-new-tax-id" value={newSupplier.tax_id} onChange={e => setNewSupplier({ ...newSupplier, tax_id: e.target.value })} placeholder="30-12345678-9" />
                                 </div>
                             </div>
                             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                 <div className="space-y-2">
-                                    <Label>Correo electrónico</Label>
-                                    <Input value={newSupplier.email} onChange={e => setNewSupplier({ ...newSupplier, email: e.target.value })} />
+                                    <Label htmlFor="supplier-new-contact">Contacto</Label>
+                                    <Input id="supplier-new-contact" value={newSupplier.contact_name} onChange={e => setNewSupplier({ ...newSupplier, contact_name: e.target.value })} placeholder="Nombre de contacto" />
                                 </div>
                                 <div className="space-y-2">
-                                    <Label>Teléfono</Label>
-                                    <Input value={newSupplier.phone} onChange={e => setNewSupplier({ ...newSupplier, phone: e.target.value })} />
+                                    <Label htmlFor="supplier-new-category">Categoría</Label>
+                                    <Input id="supplier-new-category" value={newSupplier.category} onChange={e => setNewSupplier({ ...newSupplier, category: e.target.value })} placeholder="Ej: Calzado, Logística" />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                <div className="space-y-2">
+                                    <Label htmlFor="supplier-new-email">Correo electrónico</Label>
+                                    <Input id="supplier-new-email" type="email" value={newSupplier.email} onChange={e => setNewSupplier({ ...newSupplier, email: e.target.value })} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="supplier-new-phone">Teléfono</Label>
+                                    <Input id="supplier-new-phone" value={newSupplier.phone} onChange={e => setNewSupplier({ ...newSupplier, phone: e.target.value })} />
                                 </div>
                             </div>
                             <div className="space-y-2">
@@ -551,7 +555,8 @@ function EditSupplierDialog({ supplier, open, onOpenChange, onSubmit }: { suppli
         contact_name: supplier.contact_name || "",
         email: supplier.email || "",
         phone: supplier.phone || "",
-        address: supplier.address || ""
+        address: supplier.address || "",
+        category: supplier.category || ""
     })
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -571,33 +576,37 @@ function EditSupplierDialog({ supplier, open, onOpenChange, onSubmit }: { suppli
                 <form onSubmit={handleSubmit} className="grid gap-4 py-4">
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div className="space-y-2">
-                            <Label>Nombre / Razón Social *</Label>
-                            <Input value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} required />
+                            <Label htmlFor="supplier-edit-name">Nombre / Razón Social *</Label>
+                            <Input id="supplier-edit-name" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} required />
                         </div>
                         <div className="space-y-2">
-                            <Label>CUIT / DNI *</Label>
-                            <Input value={formData.tax_id} onChange={e => setFormData({ ...formData, tax_id: e.target.value })} required />
+                            <Label htmlFor="supplier-edit-tax-id">CUIT / DNI</Label>
+                            <Input id="supplier-edit-tax-id" value={formData.tax_id ?? ""} onChange={e => setFormData({ ...formData, tax_id: e.target.value })} />
                         </div>
                     </div>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div className="space-y-2">
-                            <Label>Contacto</Label>
-                            <Input value={formData.contact_name} onChange={e => setFormData({ ...formData, contact_name: e.target.value })} />
+                            <Label htmlFor="supplier-edit-contact">Contacto</Label>
+                            <Input id="supplier-edit-contact" value={formData.contact_name} onChange={e => setFormData({ ...formData, contact_name: e.target.value })} />
                         </div>
                         <div className="space-y-2">
-                            <Label>Correo electrónico</Label>
-                            <Input value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+                            <Label htmlFor="supplier-edit-email">Correo electrónico</Label>
+                            <Input id="supplier-edit-email" type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
                         </div>
                     </div>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div className="space-y-2">
-                            <Label>Teléfono</Label>
-                            <Input value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} />
+                            <Label htmlFor="supplier-edit-phone">Teléfono</Label>
+                            <Input id="supplier-edit-phone" value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} />
                         </div>
                         <div className="space-y-2">
-                            <Label>Dirección</Label>
-                            <Input value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
+                            <Label htmlFor="supplier-edit-address">Dirección</Label>
+                            <Input id="supplier-edit-address" value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
                         </div>
+                    </div>
+                    <div className="space-y-2 sm:max-w-[50%]">
+                        <Label htmlFor="supplier-edit-category">Categoría</Label>
+                        <Input id="supplier-edit-category" value={formData.category} onChange={e => setFormData({ ...formData, category: e.target.value })} placeholder="Ej: Calzado, Logística" />
                     </div>
                     <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>

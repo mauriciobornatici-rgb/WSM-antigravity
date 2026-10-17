@@ -2,20 +2,31 @@
  * Utility functions for exporting data tables to CSV format compatible with Excel.
  */
 
+// A text cell that starts like a formula (=, +, -, @, tab or return) would run as one when the
+// file is opened in Excel: names, SKUs and notes come from people, so it is shown as text.
+// Numbers are left alone (a negative balance stays a number).
+function neutralizeFormula(value: string): string {
+    return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
 export function convertToCSV<T extends Record<string, unknown>>(
     data: T[],
-    headers: { key: keyof T; label: string }[]
+    headers: { key: keyof T; label: string }[],
+    // ";" opens in columns in Excel set to Spanish; "," is the default of the existing exports.
+    { separator = "," }: { separator?: "," | ";" } = {}
 ): string {
     if (!data || data.length === 0) return "";
 
-    const headerRow = headers.map(h => `"${String(h.label).replace(/"/g, '""')}"`).join(",");
+    const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
+    const headerRow = headers.map(h => quote(String(h.label))).join(separator);
     const bodyRows = data.map(row => {
         return headers.map(h => {
             const rawVal = row[h.key];
             if (rawVal === null || rawVal === undefined) return '""';
-            if (typeof rawVal === "object") return `"${String(JSON.stringify(rawVal)).replace(/"/g, '""')}"`;
-            return `"${String(rawVal).replace(/"/g, '""')}"`;
-        }).join(",");
+            if (typeof rawVal === "object") return quote(neutralizeFormula(JSON.stringify(rawVal)));
+            if (typeof rawVal === "number" || typeof rawVal === "boolean") return quote(String(rawVal));
+            return quote(neutralizeFormula(String(rawVal)));
+        }).join(separator);
     });
 
     return [headerRow, ...bodyRows].join("\r\n");

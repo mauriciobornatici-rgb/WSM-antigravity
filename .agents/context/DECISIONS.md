@@ -80,6 +80,34 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-026 — Importador de productos, clientes y proveedores desde planillas (usuario, 2026-10-17)
+- **Pedido del usuario:** agilizar la carga inicial y las actualizaciones masivas.
+- **Formato:**
+  - Excel (.xlsx) o CSV con `;` o `,`, leídos en el navegador;
+  - plantillas descargables con instrucciones;
+  - encabezados reconocidos con o sin acentos y con sinónimos;
+  - la fila de ejemplo de la plantilla nunca se importa.
+- **Flujo:**
+  - una vista previa que no guarda nada muestra, por fila, si se crea, se actualiza, ya existe o tiene errores (y por qué);
+  - la importación va en tandas de 50 filas, cada una en su transacción, revalidada en el servidor. Pensado para servidores con límite de tiempo (Vercel) y para que un corte solo afecte su tanda.
+- **Mismas reglas que la carga a mano:**
+  - permisos;
+  - precio de venta con IVA guardado neto y costo sin IVA (redondeado a centavos, como lo guarda la columna);
+  - stock inicial solo para productos nuevos, con costo, fuera de ubicaciones que no venden, con movimiento y un asiento por tanda (`product_import`);
+  - el stock de un producto existente nunca cambia;
+  - los valores de catálogo faltantes se crean (auditados);
+  - familias de talles y colores;
+  - CUIT con lock y comparado sin guiones;
+  - Responsable Inscripto con CUIT.
+- **Idempotencia:** volver a importar el mismo archivo no duplica nada.
+  - Productos: se reconocen por SKU, sin importar mayúsculas ni acentos.
+  - Clientes y proveedores: por CUIT o, sin CUIT, por nombre exacto. Dos filas con el mismo nombre y sin CUIT son un error.
+- **Existentes:** se saltean, o se actualizan con las celdas no vacías si se marca "Actualizar los que ya existen". Una celda vacía nunca borra.
+- De paso:
+  - proveedores ahora guarda la categoría que el formulario mandaba y se perdía;
+  - la búsqueda de proveedores no se rompe con datos vacíos;
+  - el costo del alta manual se redondea a centavos antes del asiento.
+
 ### ADR-025 — Decisiones del usuario sobre AUD-008 y AUD-013 (2026-10-16)
 - **Conflicto de numeración con ARCA (opción a):** el comprobante queda trabado en `arca_conflict`, con aviso en el panel y en el contador de Facturación (ya existía). Lo resuelve el administrador a mano, consultando ARCA. El sistema no ofrece anularlo ni reemitirlo. Procedimiento en `docs/execution/RUNBOOK_CONFLICTO_ARCA.md`.
 - **Cambio de punto de venta con comprobantes en verificación (opción a):** se permite, como hasta ahora. La verificación sigue usando el punto de venta guardado en cada comprobante (`arca_pos` y `arca_voucher_type`, migración 059).

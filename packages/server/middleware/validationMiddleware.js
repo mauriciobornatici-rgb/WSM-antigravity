@@ -244,6 +244,14 @@ export const zodSchemas = {
     supplier: z.object({
         body: commonSchemas.supplierSchema
     }),
+    importPreview: z.object({
+        params: commonSchemas.importEntityParamSchema,
+        body: commonSchemas.importPreviewSchema
+    }),
+    importCommit: z.object({
+        params: commonSchemas.importEntityParamSchema,
+        body: commonSchemas.importCommitSchema
+    }),
     supplierUpdate: z.object({
         params: z.object({
             id: commonSchemas.uuidSchema

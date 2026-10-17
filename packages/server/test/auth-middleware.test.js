@@ -245,6 +245,14 @@ test('authenticateToken calls next once for a valid token', async (t) => {
     assert.equal(request.user.id, 'valid-user');
     assert.equal(request.user.role, 'admin');
     assert.equal(db.calls(), 1);
+
+    // The routers mounted after the first one check the same request again: no new query.
+    const again = await invoke(authenticateToken, request);
+    assert.equal(again.nextCalls, 1);
+    assert.equal(db.calls(), 1);
+    // A request that only carries a user object (never authenticated here) is still checked.
+    const forged = await invoke(authenticateToken, createRequest({ user: { id: 'x', role: 'admin' } }));
+    assert.equal(forged.statusCode, 401);
 });
 
 test('authenticateToken propagates a database error to next', async (t) => {
