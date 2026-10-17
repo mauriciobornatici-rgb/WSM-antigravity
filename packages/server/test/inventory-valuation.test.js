@@ -203,3 +203,22 @@ test('the valuation check compares the inventory ledger with the stock at cost, 
     assert.equal(empty.ok, true);
     assert.equal(empty.valuation_since, null);
 });
+
+test('postReentry: goods back at today\'s cost, the cost of goods sold reversed at the exit cost, the rest is holding result', async () => {
+    const accounting = fakeAccounting();
+    const valuation = new InventoryValuation({ accounting, audit: { log: async () => {} } });
+    const connection = recordingConnection(() => [{ affectedRows: 1 }]);
+
+    const cheaper = await valuation.postReentry(connection, {
+        referenceType: 'client_return', referenceId: 'r-1', description: 'Reingreso',
+        lines: [{ quantity: 2, exitCost: 50, unitCost: 40, movementIds: ['m1'] }, { quantity: 1, exitCost: 10, unitCost: 10 }],
+    });
+    assert.deepEqual(cheaper, { entryId: 'je-1', amount: 90 });
+    assert.deepEqual(lines(accounting.entries[0]), [['1.1.04.01', 90, 0], ['5.1.01.01', 0, 110], ['4.2.02.01', 20, 0]]);
+    assert.deepEqual(connection.calls[0].params, ['je-1', ['m1']]);
+
+    await valuation.postReentry(connection, { referenceType: 'order', referenceId: 'o', description: 'x', lines: [{ quantity: 1, exitCost: 10, unitCost: 10 }] });
+    assert.deepEqual(lines(accounting.entries[1]), [['1.1.04.01', 10, 0], ['5.1.01.01', 0, 10]], 'no holding line when the cost did not change');
+    assert.equal(await valuation.postReentry(connection, { referenceType: 'order', referenceId: 'o', description: 'x', lines: [] }), null);
+    assert.equal(await valuation.postReentry(connection, { referenceType: 'order', referenceId: 'o', description: 'x' }), null);
+});

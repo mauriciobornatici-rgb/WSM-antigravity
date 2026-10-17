@@ -6,6 +6,7 @@ import { closePool, pool, seedProduct } from './helpers/qaDb.js';
 import { CreateOrderUseCase } from '../domains/sales/CreateOrderUseCase.js';
 import accountingService from '../services/accounting.service.js';
 import inventoryService from '../services/inventory.service.js';
+import salesService from '../services/sales.service.js';
 
 // ADR-027 (opción a): goods valued at the last purchase cost. The cost of goods sold is posted
 // when the goods leave, at the cost read under lock, and a new cost revalues the stock.
@@ -20,7 +21,7 @@ async function ledgerOf(referenceType, referenceId) {
         `SELECT je.id, jel.account_code, jel.debit, jel.credit
          FROM journal_entries je JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
          WHERE je.reference_type = ? AND je.reference_id = ?
-         ORDER BY jel.account_code`,
+         ORDER BY jel.account_code, jel.debit, jel.credit`,
         [referenceType, referenceId]
     );
     return {
@@ -199,4 +200,67 @@ test('sales and cost changes of the same products at the same time do not deadlo
         const valued = Math.round((40 * openingCost + Number(revalued) - Number(left)) * 100);
         assert.equal(valued, Math.round(Number(quantity) * Number(cost) * 100), `product ${productId.slice(0, 8)}`);
     }
+});
+
+async function deliveryOrder(productId, quantity) {
+    // A back-office delivery order reserves stock until it is packed.
+    const order = await useCase.execute({ shipping_method: 'delivery', customer_name: 'Cliente QA', items: [{ product_id: productId, quantity }] }, null);
+    await pool.query('UPDATE order_items SET picked_quantity = quantity WHERE order_id = ?', [order.id]);
+    await pool.query('UPDATE order_item_allocations SET picked_quantity = reserved_quantity WHERE order_id = ?', [order.id]);
+    await salesService.transitionOrderStatus(order.id, 'picking', null);
+    return order.id;
+}
+
+test('an order invoiced before picking posts its cost when packed, at the cost of that moment (D8)', async () => {
+    const productId = await seedProduct({ cost: 100, salePrice: 300, stock: [{ location: 'QA-A', quantity: 6 }] });
+    const orderId = await deliveryOrder(productId, 2);
+    const invoiceId = await seedInvoiceFor(orderId);
+    await postInvoice(invoiceId);
+    assert.ok(!(await ledgerOf('invoice', invoiceId)).lines.some(([account]) => account === '5.1.01.01'), 'nothing left yet');
+
+    // The reserved units are still in stock: a new cost revalues them too.
+    await inventoryService.updateProduct(productId, { purchase_price: 110 }, null, null, 'admin');
+    assert.deepEqual((await ledgerOf('stock_revaluation', productId)).lines, [['1.1.04.01', 60, 0], ['4.2.02.01', 0, 60]]);
+
+    await salesService.transitionOrderStatus(orderId, 'packed', null);
+    const ledger = await ledgerOf('order', orderId);
+    assert.deepEqual(ledger.lines, [['1.1.04.01', 0, 220], ['5.1.01.01', 220, 0]]);
+    assert.ok((await saleMovements(orderId)).every((movement) => movement.journal_entry_id === ledger.entries[0] && movement.unit_cost === 110));
+});
+
+test('cancelling a packed order brings the goods back at today\'s cost and reverses the cost they left at', async () => {
+    const productId = await seedProduct({ cost: 100, salePrice: 300, stock: [{ location: 'QA-A', quantity: 5 }] });
+    const orderId = await deliveryOrder(productId, 3);
+    await salesService.transitionOrderStatus(orderId, 'packed', null);
+    await inventoryService.updateProduct(productId, { purchase_price: 90 }, null, null, 'manager');
+
+    await salesService.transitionOrderStatus(orderId, 'cancelled', null);
+
+    // Exit: 3 × 100. Back: 3 × 90 into stock, 300 of cost reversed, 30 of holding loss.
+    assert.deepEqual((await ledgerOf('order', orderId)).lines, [
+        ['1.1.04.01', 0, 300], ['1.1.04.01', 270, 0],
+        ['4.2.02.01', 30, 0],
+        ['5.1.01.01', 0, 300], ['5.1.01.01', 300, 0],
+    ]);
+    const [[restock]] = await pool.query(
+        "SELECT unit_cost, journal_entry_id FROM inventory_movements WHERE reference_id = ? AND type = 'restock'",
+        [orderId]
+    );
+    assert.equal(Number(restock.unit_cost), 90);
+    assert.ok(restock.journal_entry_id);
+});
+
+test('an order whose invoice already posted its cost (before ADR-027) is packed without posting it twice', async () => {
+    const productId = await seedProduct({ cost: 100, stock: [{ location: 'QA-A', quantity: 4 }] });
+    const orderId = await deliveryOrder(productId, 1);
+    const invoiceId = await seedInvoiceFor(orderId);
+    const legacyEntry = await accountingService.createJournalEntry(pool, {
+        date: new Date(), description: 'CMV con la regla anterior', reference_type: 'invoice', reference_id: invoiceId,
+        lines: [{ account_code: '5.1.01.01', debit: 100, credit: 0 }, { account_code: '1.1.04.01', debit: 0, credit: 100 }],
+    });
+
+    await salesService.transitionOrderStatus(orderId, 'packed', null);
+
+    assert.deepEqual((await ledgerOf('order', orderId)).lines, []);
+    assert.ok((await saleMovements(orderId)).every((movement) => movement.journal_entry_id === legacyEntry));
 });

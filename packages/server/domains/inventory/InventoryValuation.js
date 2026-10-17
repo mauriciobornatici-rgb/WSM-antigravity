@@ -157,6 +157,44 @@ export class InventoryValuation {
     }
 
     /**
+     * Goods that come back to stock after their cost of goods sold was posted (a packed order that
+     * is cancelled, a customer return): they enter at today's cost and the cost of goods sold is
+     * reversed at the cost they left at. The difference is the holding result of those units while
+     * they were out. One entry for the document; the movements that brought them back keep the link.
+     * @param {Array<{quantity:number, exitCost:number, unitCost:number, movementIds?:string[]}>} lines
+     */
+    async postReentry(connection, { referenceType, referenceId, description, lines, date = new Date() }) {
+        let inventoryCents = 0;
+        let cogsCents = 0;
+        const movementIds = [];
+        for (const line of lines || []) {
+            inventoryCents += valueCents(line.quantity, line.unitCost);
+            cogsCents += valueCents(line.quantity, line.exitCost);
+            movementIds.push(...(line.movementIds || []));
+        }
+        const holdingCents = inventoryCents - cogsCents;
+        const entryId = await this.accounting.createJournalEntryIfAny(connection, {
+            date,
+            description,
+            reference_type: referenceType,
+            reference_id: referenceId,
+            lines: [
+                { account_code: ACCOUNTS.INVENTORY, debit: inventoryCents / 100, credit: 0, notes: 'Reingreso de mercadería al costo actual' },
+                { account_code: ACCOUNTS.COGS, debit: 0, credit: cogsCents / 100, notes: 'Reversión del costo de lo vendido' },
+                {
+                    account_code: ACCOUNTS.HOLDING_RESULT,
+                    debit: holdingCents < 0 ? -holdingCents / 100 : 0,
+                    credit: holdingCents > 0 ? holdingCents / 100 : 0,
+                    notes: 'Resultado por tenencia',
+                },
+            ],
+        });
+        if (!entryId) return null;
+        await this.linkMovements(connection, movementIds, entryId);
+        return { entryId, amount: inventoryCents / 100 };
+    }
+
+    /**
      * A new cost on goods already in stock: the units in valued locations are revalued against the
      * holding result, or against the opening adjustment when the cost was 0 (D6: those goods had
      * never been valued, it is not a gain). The caller holds the product's stock rows (L3, `rows`)
