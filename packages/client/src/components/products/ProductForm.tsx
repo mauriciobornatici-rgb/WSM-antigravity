@@ -208,7 +208,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
 
     async function startCameraAndDetection(sessionId: number) {
         if (!navigator.mediaDevices?.getUserMedia) {
-            setScanStatus("Camara no disponible en este navegador.");
+            setScanStatus("Cámara no disponible en este navegador.");
             return;
         }
 
@@ -239,7 +239,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             detectorRef.current = new detectorConstructor({
                 formats: ["ean_13", "ean_8", "code_128", "qr_code"],
             });
-            setScanStatus("Camara activa. Enfoque el codigo.");
+            setScanStatus("Cámara activa. Enfocá el código.");
 
             const detectLoop = async () => {
                 if (sessionId !== scannerSessionRef.current) return;
@@ -265,7 +265,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
 
             void detectLoop();
         } catch {
-            setScanStatus("No se pudo abrir la camara. Revise permisos.");
+            setScanStatus("No se pudo abrir la cámara. Revisá los permisos del navegador.");
         }
     }
 
@@ -385,7 +385,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                         <div className="rounded-xl border p-4 sm:p-5">
                         <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                             <p className="text-sm font-semibold">Datos comerciales</p>
-                            <p className="text-[11px] text-muted-foreground">Nombre, categoria y codigos</p>
+                            <p className="text-[11px] text-muted-foreground">Nombre, categoría y códigos</p>
                         </div>
                         <div className="mt-3 grid gap-3 md:grid-cols-2">
                             <FormField<ProductFormSchema>
@@ -439,7 +439,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                                 value={typeof field.value === "string" ? field.value : null}
                                                 parentId={selectedGroupId}
                                                 options={catalogOptions}
-                                                placeholder={selectedGroupId ? "Seleccionar subgrupo" : "Primero seleccione un grupo"}
+                                                placeholder={selectedGroupId ? "Seleccionar subgrupo" : "Primero elegí un grupo"}
                                                 onCreated={addCatalogOption}
                                                 onValueChange={(value) => form.setValue("subcategory_option_id", value, { shouldDirty: true, shouldValidate: true })}
                                             />
@@ -522,12 +522,12 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 name="barcode"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Codigo de barras</FormLabel>
+                                        <FormLabel>Código de barras</FormLabel>
                                         <FormControl>
                                             <div className="space-y-2">
                                                 <Input
                                                     id="product-barcode-input"
-                                                    placeholder="Escanee o ingrese codigo"
+                                                    placeholder="Escaneá o escribí el código"
                                                     {...field}
                                                     value={field.value ?? ""}
                                                     onKeyDown={(event) => handleReaderKeyDown("barcode", event)}
@@ -535,7 +535,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                                 <div className="grid gap-2 md:grid-cols-2">
                                                     <Button className="h-10 w-full px-3" type="button" variant="outline" onClick={() => openScanner("barcode")}>
                                                         <Camera className="mr-2 h-4 w-4" />
-                                                        Camara
+                                                        Cámara
                                                     </Button>
                                                     <Button
                                                         className="h-10 w-full px-3"
@@ -630,8 +630,8 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
 
                     <div className="rounded-xl border p-4 sm:p-5">
                         <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                            <p className="text-sm font-semibold">Ubicacion y precios</p>
-                            <p className="text-[11px] text-muted-foreground">Almacen y costos</p>
+                            <p className="text-sm font-semibold">Ubicación y precios</p>
+                            <p className="text-[11px] text-muted-foreground">Almacén y costos</p>
                         </div>
                         <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
                             <FormField<ProductFormSchema>
@@ -639,7 +639,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 name="location"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Ubicacion de referencia</FormLabel>
+                                        <FormLabel>Ubicación de referencia</FormLabel>
                                         <FormControl>
                                             <div className="space-y-2">
                                                 <Input
@@ -652,7 +652,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                                 <div className="grid gap-2 md:grid-cols-2">
                                                     <Button className="h-10 w-full px-3" type="button" variant="outline" onClick={() => openScanner("location")}>
                                                         <Camera className="mr-2 h-4 w-4" />
-                                                        Camara
+                                                        Cámara
                                                     </Button>
                                                     <Button
                                                         className="h-10 w-full px-3"
@@ -668,10 +668,10 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                         </FormControl>
                                         <p className="text-xs text-muted-foreground">
                                             {locationReaderMode
-                                                ? "Modo lector de ubicacion activo."
+                                                ? "Modo lector de ubicación activo."
                                                 : isEditMode
-                                                  ? "Este dato identifica la ubicacion preferida; usa Reubicar para mover existencias fisicas."
-                                                  : "Tambien puede cargarla manualmente."}
+                                                  ? "Este dato identifica la ubicación preferida; usá Reubicar para mover existencias físicas."
+                                                  : "También se puede cargar a mano."}
                                         </p>
                                         <FormMessage />
                                     </FormItem>
@@ -806,8 +806,8 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             >
                 <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
                     <DialogHeader>
-                        <DialogTitle>{scanTarget === "barcode" ? "Escanear codigo de barras" : "Escanear ubicacion"}</DialogTitle>
-                        <DialogDescription>Enfoque el codigo con la camara o ingrese manualmente.</DialogDescription>
+                        <DialogTitle>{scanTarget === "barcode" ? "Escanear código de barras" : "Escanear ubicación"}</DialogTitle>
+                        <DialogDescription>Enfocá el código con la cámara o escribilo a mano.</DialogDescription>
                     </DialogHeader>
 
                     <div className="space-y-3">

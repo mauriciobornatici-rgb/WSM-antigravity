@@ -377,7 +377,7 @@ test('createProduct converts legacy cost and safely ignores malformed initial st
     await inventoryService.createProduct({
         name: 'Producto legado', cost_price: '125.50', stock_initial: 'invalido', location: '',
     }, null);
-    assert.equal(created.purchase_price, '125.50');
+    assert.equal(created.purchase_price, 125.5, 'the legacy cost, in cents as the column keeps it');
     assert.equal(created.cost_price, undefined);
     assert.equal(created.location, null);
     assert.equal(inventoryWrites, 0);

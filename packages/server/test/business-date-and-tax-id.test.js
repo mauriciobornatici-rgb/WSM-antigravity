@@ -61,7 +61,7 @@ test('withNamedLockTransaction commits under the lock, rolls back on error and a
         () => withNamedLockTransaction(db, 'k', busy, async () => 'never'),
         (error) => error.statusCode === 409 && error.responseBody === busy
     );
-    assert.deepEqual(events.map(([kind]) => kind), ['SELECT GET_LOCK', 'SELECT RELEASE_LOCK', 'release']);
+    assert.deepEqual(events.map(([kind]) => kind), ['SELECT GET_LOCK', 'release'], 'a lock never taken is not released');
 
     events.length = 0;
     await withNamedLockTransaction(db, null, busy, async () => 'plain');

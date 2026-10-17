@@ -24,6 +24,7 @@ import dashboardRouter from './routes/dashboardRoutes.js';
 import accountingRouter from './routes/accountingRoutes.js';
 import integrationRouter from './routes/integrationRoutes.js';
 import traceabilityRouter from './routes/traceabilityRoutes.js';
+import importRouter from './routes/importRoutes.js';
 import globalErrorHandler from './middleware/errorMiddleware.js';
 import { authenticateToken, authorizePermission } from './middleware/authMiddleware.js';
 import { PERMISSIONS } from '@wsm/common';
@@ -107,11 +108,15 @@ const captureRawBody = (req, res, buffer) => {
 
 const defaultJsonParser = express.json({ limit: '10kb', verify: captureRawBody });
 const uploadsJsonParser = express.json({ limit: '2mb', verify: captureRawBody });
+// A spreadsheet import carries a bigger body: its router reads it after the session and the
+// permission are checked (routes/importRoutes.js), never for an anonymous request.
+const isImportPath = (path) => path.startsWith('/api/imports/');
 
 // Product image uploads require larger payload than default API json limit.
 app.use('/api/products/image-upload', uploadsJsonParser);
 app.use((req, res, next) => {
     if (req.path === '/api/products/image-upload') return next();
+    if (isImportPath(req.path)) return next();
     return defaultJsonParser(req, res, next);
 });
 
@@ -216,6 +221,7 @@ app.use('/api', authenticateToken, procurementRouter);
 app.use('/api', authenticateToken, warrantiesRouter);
 app.use('/api', authenticateToken, dashboardRouter);
 app.use('/api', authenticateToken, traceabilityRouter);
+app.use('/api', authenticateToken, importRouter);
 app.use('/api/accounting', authenticateToken, accountingRouter);
 
 // Serve static client bundle if built (staging/production container)

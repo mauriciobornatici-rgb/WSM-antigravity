@@ -23,6 +23,21 @@ describe("exportUtils", () => {
         expect(lines[2]).toBe('"2","Remera ""Pro"" Ultra","8500","Indumentaria"');
     });
 
+    it("muestra como texto lo que Excel ejecutaría como fórmula, sin tocar los números, y acepta ;", () => {
+        const csv = convertToCSV(
+            [{ name: "=HYPERLINK(\"x\")", note: "@sum", sku: "-REM", balance: -150, plain: "Remera" }],
+            [
+                { key: "name", label: "Nombre" },
+                { key: "note", label: "Nota" },
+                { key: "sku", label: "SKU" },
+                { key: "balance", label: "Saldo" },
+                { key: "plain", label: "Texto" },
+            ],
+            { separator: ";" }
+        );
+        expect(csv.split("\r\n")[1]).toBe('"\'=HYPERLINK(""x"")";"\'@sum";"\'-REM";"-150";"Remera"');
+    });
+
     it("should handle empty data gracefully", () => {
         const csv = convertToCSV([], [{ key: "name", label: "Nombre" }]);
         expect(csv).toBe("");

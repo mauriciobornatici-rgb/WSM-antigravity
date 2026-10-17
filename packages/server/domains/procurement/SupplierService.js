@@ -9,6 +9,11 @@ const NOT_FOUND = { error: 'not_found', message: 'Proveedor no encontrado' };
 const DUPLICATE_TAX_ID = { error: 'duplicate_tax_id', message: 'Ya existe un proveedor con ese RUC/CI/CUIT' };
 const BUSY = { error: 'busy', message: 'Otro usuario está guardando un proveedor con ese CUIT: reintentá en unos segundos.' };
 
+const normalizeCategory = (value) => {
+    const text = value == null ? '' : String(value).trim();
+    return text ? text.slice(0, 100) : null;
+};
+
 export class SupplierService {
     async getSuppliers() {
         const [rows] = await pool.query('SELECT * FROM suppliers WHERE deleted_at IS NULL ORDER BY created_at DESC');
@@ -37,13 +42,15 @@ export class SupplierService {
     async createSupplier(data, userId, ipAddress = null) {
         const { name, contact_name, email, phone, address } = data;
         const taxId = normalizeTaxId(data.tax_id);
+        // The form always offered a category (rubro); it used to be dropped here.
+        const category = normalizeCategory(data.category);
         const id = crypto.randomUUID();
 
         const created = await this._withTaxIdLock(taxId, async (connection) => {
             await this._assertTaxIdFree(connection, taxId);
             await connection.query(
-                'INSERT INTO suppliers (id, name, tax_id, contact_name, email, phone, address) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [id, name, taxId, contact_name, email, phone, address]
+                'INSERT INTO suppliers (id, name, tax_id, contact_name, email, phone, address, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                [id, name, taxId, contact_name, email, phone, address, category]
             );
             const [newItem] = await connection.query('SELECT * FROM suppliers WHERE id = ?', [id]);
             await auditService.log({
@@ -73,9 +80,13 @@ export class SupplierService {
                 await this._assertTaxIdFree(connection, taxId, id);
             }
 
+            // A form that does not send the category keeps the stored one.
+            const category = Object.prototype.hasOwnProperty.call(data, 'category')
+                ? normalizeCategory(data.category)
+                : (existing[0].category ?? null);
             await connection.query(
-                'UPDATE suppliers SET name = ?, tax_id = ?, contact_name = ?, email = ?, phone = ?, address = ? WHERE id = ? AND deleted_at IS NULL',
-                [name, taxId, contact_name, email, phone, address, id]
+                'UPDATE suppliers SET name = ?, tax_id = ?, contact_name = ?, email = ?, phone = ?, address = ?, category = ? WHERE id = ? AND deleted_at IS NULL',
+                [name, taxId, contact_name, email, phone, address, category, id]
             );
 
             const [updated] = await connection.query('SELECT * FROM suppliers WHERE id = ? AND deleted_at IS NULL', [id]);

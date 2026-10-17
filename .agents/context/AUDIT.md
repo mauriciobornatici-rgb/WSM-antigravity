@@ -1,5 +1,59 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-014 — 2026-10-17 — importador (ADR-026): `guardian-integridad`, `revisor-seguridad` y `revisor-ux`
+
+**Guardián.** El stock, los movimientos y los asientos quedaron consistentes y el reintento de productos es idempotente. Corregido:
+- [x] **Alta: clientes y proveedores sin CUIT se duplicaban al reimportar.** Ahora se reconocen por nombre exacto, con lock por nombre durante la importación. Dos iguales en un archivo son error y varios iguales en la base piden el CUIT.
+- [x] **Media:**
+  - un costo con más de 2 decimales dejaba el asiento un centavo distinto del movimiento: el costo se redondea a centavos, también en el alta manual;
+  - con importaciones concurrentes, las lecturas del catálogo y de familias veían una foto vieja (TypeError o FK): ahora son lecturas con lock, también en `resolveProductFamily`;
+  - `"0.125"` se leía como 125: un grupo de miles nunca sigue a un 0. La vista previa muestra precio, costo y stock leídos de los primeros productos.
+- [x] **Baja:**
+  - interbloqueo o espera de lock → 409 `busy` y la pantalla reintenta la tanda;
+  - `FOR UPDATE` solo si se actualiza;
+  - SKU comparado sin acentos, como la colación;
+  - valores de catálogo creados con auditoría y aviso si están inactivos (`ON DUPLICATE KEY` en vez de `IGNORE`);
+  - topes de importes y cantidades;
+  - sin stock inicial en Cuarentena, Mermas ni Devoluciones a Proveedores.
+- **Queda anotado (preexistente):** código de barras único sin lock (igual que el alta manual).
+
+**Seguridad.** Sin hallazgos explotables: permiso antes de leer el cuerpo, SQL con columnas fijas, sin prototype pollution ni escalada. Corregido:
+- [x] CSV injection en las descargas: `convertToCSV` muestra como texto lo que empieza con `=`, `+`, `-`, `@`. Vale para todas las exportaciones de la app.
+- [x] El lock por CUIT se calcula con el valor ya normalizado.
+- [x] El `.xlsx` se lee sin Web Workers (`read-excel-file/web-worker`): la CSP de helmet bloquearía los `blob:` en producción.
+- [x] `authenticateToken` consultaba la sesión hasta 9 veces por petición (una por router montado en `/api`): ahora una sola vez.
+- **Verificado:** las dependencias nuevas (`read-excel-file`, `write-excel-file`, `unzipper-esm`, `worker-f`) son del mismo autor, sin scripts de instalación, con `npm audit signatures` OK y 0 vulnerabilidades.
+- **Queda para el despliegue:** el límite de 500 peticiones cada 15 minutos por IP puede cortar un archivo grande (unas 100 tandas). Subir `API_RATE_LIMIT_MAX` o importar en archivos más chicos.
+
+**UX.** Corregido:
+- [x] **Foco:** sigue a cada paso y vuelve al botón al cerrar (`DialogTrigger`).
+- [x] **Vista previa:** marcar "Actualizar los que ya existen" ya no la reinicia.
+- [x] **Archivo:** se puede volver a elegir el mismo archivo después de corregirlo.
+- [x] **Cierre a mitad de la importación:** sin X, con aviso y con `beforeunload`. Las respuestas viejas se descartan.
+- [x] **Accesibilidad:**
+  - barra de progreso con su valor accesible (componente compartido);
+  - una sola región en vivo, que anuncia cada 25 %;
+  - contraste AA de las etiquetas en modo claro y oscuro;
+  - errores y avisos con ícono y texto, no solo color.
+- [x] **Celulares:** filas en tarjetas, un único scroll y pie fijo.
+- [x] **Mensajes:**
+  - del corte, con cuántas filas faltan y "Importar otro archivo";
+  - de archivo dañado o `.xls` viejo, en castellano.
+- [x] **Plantilla:** la fila de ejemplo se descarta; leyenda de columnas obligatorias.
+- [x] **Formularios y textos:**
+  - formularios de proveedor con etiquetas asociadas; en la edición el CUIT no es obligatorio;
+  - "Categoría" unificada;
+  - voseo en el formulario de producto;
+  - descarga del listado con `;` y nombre en castellano;
+  - "Importar N productos";
+  - pasos numerados.
+
+**Decisiones pendientes del usuario:**
+1. Si cambiar el costo de un producto que ya tiene stock debe generar un asiento de revaluación. Hoy la importación lo avisa y la edición manual no lo hace.
+2. El cajero puede importar clientes, porque ya puede darlos de alta a mano. ¿Se mantiene?
+
+Evidencia: validate 0 (998 + 110); coverage 96,79/90,78/94,42; integración 127/127 (5 de importación con base real, incluida una carrera de CUIT); RBAC OK (5 casos nuevos); E2E 6/6; simulación 153/153. Prueba en la app: plantilla generada y releída en el navegador, vista previa y una importación real en la base de simulación (productos, stock y asiento verificados).
+
 ## AUD-013 — 2026-10-16 — riesgos bajos anotados (rama `fix/riesgos-bajos`), `guardian-integridad` y `revisor-seguridad`
 
 **Lo que se resolvió** (los riesgos bajos anotados en AUD-009 a AUD-012):
