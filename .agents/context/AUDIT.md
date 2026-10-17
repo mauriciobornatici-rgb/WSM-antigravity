@@ -1,5 +1,33 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-015 — 2026-10-17 — `guardian-integridad` sobre la revaluación del stock (ADR-027, rama local `feat/revaluacion-stock`)
+
+**No se mergea: falta definir el método de valuación.** El código está bien armado: es atómico, balanceado, no duplica en los reintentos y respeta el orden de locks. El problema es la premisa.
+- **A2, alta, verificado:** el mayor de 1.1.04.01 **no es** stock × `purchase_price`.
+  - Las compras entran al costo de la factura.
+  - La recepción entra stock sin asiento hasta que llega la factura.
+  - La devolución a proveedor y las garantías salen a costos históricos; las devoluciones de clientes reingresan al costo vendido.
+  - En cambio, las ventas y el armado de pedidos descuentan a `purchase_price`.
+  - Es una inconsistencia **anterior** al importador. Revaluar todo el stock duplica valor cuando se compra más caro y después se sube el costo, o cuando el costo era 0.
+- **A1, alta:** varias salidas (venta de mostrador, retiro, armado del pedido, garantías) leen el costo de una foto tomada antes de bloquear el stock. Si el costo cambia en el medio, el CMV sale al costo viejo.
+- **Media:**
+  - **M1:** ciclos de interbloqueo nuevos con pedidos no de mostrador, recepciones y conteos, que bloquean el producto antes que el stock.
+  - **M2:** hay dos reglas de costo (`purchase_price || cost_price` en el CMV contra `purchase_price` en la revaluación).
+  - **M3:** un pedido facturado antes del picking asienta el CMV y sus unidades reservadas se revaluarían.
+- **Baja:**
+  - la importación bloquea el stock de todos los productos actualizables;
+  - el aviso de la vista previa sale de la foto;
+  - un centavo en el stock inicial de Tiendanube;
+  - las pruebas no cubren concurrencia;
+  - `INSERT IGNORE` de la cuenta.
+- **Pendiente del usuario:** elegir el método de valuación.
+  - **(a) Costo de última compra (reposición):** el costo se actualiza solo con cada factura de compra y revalúa el stock anterior. Coincide con RT 17/41 y con el criterio impositivo.
+  - **(b) Promedio ponderado.**
+  - **(c) Costo estándar** con cuenta de diferencia de precio.
+  - Cualquiera de las tres exige ordenar compras, recepciones, devoluciones y salidas.
+
+Lo que sigue en `main`: la importación avisa que el valor contable del stock no se ajusta solo (es correcto para el estado actual).
+
 ## AUD-014 — 2026-10-17 — importador (ADR-026): `guardian-integridad`, `revisor-seguridad` y `revisor-ux`
 
 **Guardián.** El stock, los movimientos y los asientos quedaron consistentes y el reintento de productos es idempotente. Corregido:

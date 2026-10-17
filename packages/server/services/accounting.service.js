@@ -78,6 +78,34 @@ class AccountingService {
         });
     }
 
+    /**
+     * ADR-027: a new cost on goods already in stock. The stock is valued at the product's cost
+     * (sales post their cost of goods sold with it), so the difference on the units in stock goes
+     * to the holding result: a gain when the cost goes up, a loss when it goes down.
+     */
+    async postInventoryRevaluation(connection, { productId, quantity, oldCost, newCost, description }) {
+        const amount = this._round(this._round(Number(quantity) * Number(newCost)) - this._round(Number(quantity) * Number(oldCost)));
+        if (amount === 0) return null;
+        const value = Math.abs(amount);
+        const lines = amount > 0
+            ? [
+                { account_code: '1.1.04.01', debit: value, credit: 0, notes: 'Mayor valor del stock' },
+                { account_code: '4.2.02.01', debit: 0, credit: value, notes: 'Resultado por tenencia' },
+            ]
+            : [
+                { account_code: '4.2.02.01', debit: value, credit: 0, notes: 'Resultado por tenencia' },
+                { account_code: '1.1.04.01', debit: 0, credit: value, notes: 'Menor valor del stock' },
+            ];
+        const entryId = await this.createJournalEntry(connection, {
+            date: new Date(),
+            description,
+            reference_type: 'stock_revaluation',
+            reference_id: productId,
+            lines,
+        });
+        return { entryId, amount };
+    }
+
     async createJournalEntry(connection, entryData) {
         const { date, description, reference_type, reference_id, reversal_of_entry_id, lines } = entryData;
 

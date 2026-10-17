@@ -96,13 +96,15 @@ const EXISTING = {
     brand: null, size: null, color: null, location: null, supplier_id: null, stock_min: 0, description: null, deleted_at: null,
 };
 
-function productDb({ existing = [EXISTING], barcodes = [], locations = ['DEP-A1'], suppliers = [] } = {}) {
+function productDb({ existing = [EXISTING], barcodes = [], locations = ['DEP-A1'], suppliers = [], stockOf = {} } = {}) {
     return fakeDb(async (statement, params) => {
         if (statement.startsWith('SELECT * FROM products WHERE sku IN')) return [existing.filter((row) => params[0].map((sku) => sku.toLowerCase()).includes(row.sku.toLowerCase()))];
         if (statement.startsWith('SELECT id, sku, barcode FROM products')) return [barcodes];
         if (statement.startsWith('SELECT code FROM warehouse_locations')) return [locations.filter((code) => params[0].map((value) => value.toLowerCase()).includes(code.toLowerCase())).map((code) => ({ code }))];
         if (statement.startsWith('SELECT id, name, tax_id FROM suppliers')) return [suppliers];
         if (statement.includes('FROM inventory WHERE product_id IN')) return [[]];
+        if (statement.startsWith('SELECT * FROM products WHERE id IN')) return [existing.filter((row) => params[0].includes(row.id))];
+        if (statement.startsWith('SELECT quantity FROM inventory WHERE product_id = ?')) return [stockOf[params[0]] ? [{ quantity: stockOf[params[0]] }] : []];
         if (statement.startsWith('SELECT id, name, active FROM product_catalog_options WHERE option_key')) return [[{ id: `opt-${params[0].slice(0, 6)}`, name: 'Valor', active: 1 }]];
         if (statement.includes('FROM product_families')) return [[{ id: 'family-1' }]];
         return undefined;
@@ -208,7 +210,7 @@ test('product preview: what was read is shown, no opening stock where nothing is
     assert.match(result.get(2).errors[0], /no se puede cargar en "Cuarentena"/);
     assert.deepEqual(result.get(3).values, { sale_price: 9900.5, cost: 4000, stock: 1 });
     assert.deepEqual(result.get(2).values, { sale_price: 12100, cost: 4132.23, stock: 2 });
-    assert.match(result.get(4).warnings.join(' '), /El costo cambia y hay 7 unidades en stock/);
+    assert.match(result.get(4).warnings.join(' '), /El costo cambia y hay 7 unidades en stock: se registra un asiento de revaluación \(ganancia por tenencia de \$700,00\)/);
     assert.match(result.get(5).errors[0], /Stock inicial: 2000000000 es demasiado grande/);
 });
 
@@ -223,6 +225,23 @@ test('product commit: a catalog value that is turned off is used, with a warning
     const response = await new ProductImportService({ db }).commit([{ row: 2, sku: 'N-1', name: 'Gorra', sale_price: 100, brand: 'vieja' }], { batchId: 'b' });
     assert.match(response.rows[0].warnings.join(' '), /Marca "Vieja" está desactivada en el catálogo: se usa igual/);
     assert.equal(audits.some(({ action }) => action === 'CREATE_PRODUCT_CATALOG_OPTION'), false, 'it already existed');
+});
+
+test('product commit: a new cost on goods in stock is revalued with its entry; stock locked before the products', async (t) => {
+    const audits = silenceAudit(t);
+    const entries = [];
+    const originalEntry = accountingService.createJournalEntry;
+    accountingService.createJournalEntry = async (connection, entry) => { entries.push(entry); return 'je-r'; };
+    t.after(() => { accountingService.createJournalEntry = originalEntry; });
+    const { db, calls } = productDb({ stockOf: { 'p-old': 7 } });
+    await new ProductImportService({ db }).commit([{ row: 2, sku: 'OLD-1', cost: 600 }], { updateExisting: true, batchId: 'b-9' }, 'u-1');
+    const order = calls.map(({ statement }) => statement);
+    const stockLock = order.findIndex((statement) => statement.startsWith('SELECT id FROM inventory WHERE product_id IN'));
+    const productLock = order.findIndex((statement) => statement.startsWith('SELECT * FROM products WHERE id IN'));
+    assert.ok(stockLock >= 0 && stockLock < productLock, 'the order of a sale: stock, then the product');
+    assert.deepEqual(entries[0].lines.map(({ account_code, debit, credit }) => [account_code, debit, credit]), [['1.1.04.01', 700, 0], ['4.2.02.01', 0, 700]]);
+    const revalued = audits.find(({ action }) => action === 'REVALUE_STOCK');
+    assert.deepEqual([revalued.new_values.source, revalued.new_values.batch_id, revalued.new_values.amount], ['import', 'b-9', 700]);
 });
 
 test('product commit: a deadlock with another import answers 409 busy (the batch can be sent again)', async (t) => {

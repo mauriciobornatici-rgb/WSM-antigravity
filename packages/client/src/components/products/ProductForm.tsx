@@ -706,6 +706,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                             </FormControl>
                                             <FormDescription className="text-xs" aria-live="polite">
                                                 Final c/IVA: {formatMoney(grossPrice(purchaseWatch, vatRate))}
+                                                {isEditMode ? " · Si cambiás el costo y hay stock, se revalúa ese stock con un asiento." : ""}
                                             </FormDescription>
                                             <FormMessage />
                                         </FormItem>

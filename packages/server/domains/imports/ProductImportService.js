@@ -146,11 +146,17 @@ export class ProductImportService {
         const skus = parsed.map(({ product }) => product.sku).filter(Boolean);
         const barcodes = parsed.map(({ product }) => product.barcode).filter(Boolean);
         const locations = parsed.map(({ product }) => product.location).filter(Boolean);
-        // Locked only when they may be updated (skipped rows block nobody).
-        const forUpdate = lock && updateExisting ? ' FOR UPDATE' : '';
-        const [existingRows] = skus.length > 0
-            ? await db.query(`SELECT * FROM products WHERE sku IN (?)${forUpdate}`, [skus])
+        let [existingRows] = skus.length > 0
+            ? await db.query('SELECT * FROM products WHERE sku IN (?)', [skus])
             : [[]];
+        // Locked only when they may be updated (skipped rows block nobody): their stock first and
+        // then the products, the order of a sale, since a new cost revalues that stock (ADR-027).
+        // Read again from the locked (current) data, not the transaction's snapshot.
+        if (lock && updateExisting && existingRows.length > 0) {
+            const ids = existingRows.map((row) => row.id);
+            await db.query('SELECT id FROM inventory WHERE product_id IN (?) ORDER BY id FOR UPDATE', [ids]);
+            [existingRows] = await db.query('SELECT * FROM products WHERE id IN (?) ORDER BY id FOR UPDATE', [ids]);
+        }
         const existingBySku = new Map(existingRows.map((row) => [lower(row.sku), row]));
         const [barcodeRows] = barcodes.length > 0
             ? await db.query('SELECT id, sku, barcode FROM products WHERE barcode IN (?) AND deleted_at IS NULL', [barcodes])
@@ -214,8 +220,12 @@ export class ProductImportService {
                     issues.warn(`El stock de un producto existente no cambia con la importación: se ajusta con un conteo.`);
                 }
                 const inStock = stockById.get(existing.id) || 0;
-                if (product.cost != null && Number(existing.purchase_price || 0) !== product.cost && inStock > 0) {
-                    issues.warn(`El costo cambia y hay ${inStock} unidades en stock: el valor contable de ese stock no se ajusta solo.`);
+                const oldCost = Number(existing.purchase_price || 0);
+                if (product.cost != null && oldCost !== product.cost && inStock > 0) {
+                    // ADR-027: the stock is revalued with an entry (the same as postInventoryRevaluation).
+                    const amount = Math.round(inStock * product.cost * 100) / 100 - Math.round(inStock * oldCost * 100) / 100;
+                    const money = `$${Math.abs(amount).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                    issues.warn(`El costo cambia y hay ${inStock} unidades en stock: se registra un asiento de revaluación (${amount >= 0 ? 'ganancia' : 'pérdida'} por tenencia de ${money}).`);
                 }
             }
 
@@ -434,6 +444,12 @@ export class ProductImportService {
             old_values: Object.fromEntries(columns.map((column) => [column, existing[column] ?? null])),
             new_values: { ...changes, source: 'import', batch_id: batchId },
         }, connection);
+        // ADR-027: a new cost on goods in stock revalues them, with its entry.
+        if (changes.purchase_price !== undefined) {
+            await inventoryService.revalueStockForCostChange(connection, {
+                product: existing, newCost: changes.purchase_price, userId, source: 'import', batchId,
+            });
+        }
     }
 
     // The opening stock of the batch in one entry: goods the business already had enter

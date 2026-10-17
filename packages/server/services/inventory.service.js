@@ -336,6 +336,107 @@ class InventoryService extends BaseService {
         return result;
     }
 
+    /**
+     * ADR-027 (usuario, 2026-10-17): the stock is valued at the product's cost, and sales post
+     * their cost of goods sold with it. A new cost on units already in stock revalues them with
+     * an entry against the holding result, so the ledger keeps matching stock × cost. The
+     * inventory rows are locked (as a sale or a transfer locks them): the quantity revalued is the
+     * one that stays. Returns what was posted, or null when nothing changes.
+     */
+    async revalueStockForCostChange(connection, { product, newCost, userId = null, source, batchId = null }) {
+        if (newCost == null) return null;
+        const oldCost = Number(product.purchase_price || 0);
+        const cost = Math.round((Number(newCost) + Number.EPSILON) * 100) / 100;
+        if (cost === oldCost) return null;
+        const [rows] = await connection.query('SELECT quantity FROM inventory WHERE product_id = ? FOR UPDATE', [product.id]);
+        const quantity = rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+        if (quantity <= 0) return null;
+        const posted = await accountingService.postInventoryRevaluation(connection, {
+            productId: product.id,
+            quantity,
+            oldCost,
+            newCost: cost,
+            description: `Revaluación de stock de ${product.name || product.sku}: ${quantity} u. de costo $${oldCost} a $${cost}`,
+        });
+        if (!posted) return null;
+        await auditService.log({
+            user_id: userId,
+            action: 'REVALUE_STOCK',
+            entity_type: 'product',
+            entity_id: product.id,
+            old_values: { cost: oldCost },
+            new_values: { cost, quantity, amount: posted.amount, journal_entry_id: posted.entryId, source, ...(batchId ? { batch_id: batchId } : {}) },
+        }, connection);
+        return { quantity, amount: posted.amount };
+    }
+
+    /**
+     * The manual product edit, in one transaction with the product locked, so a new cost and its
+     * revaluation (ADR-027) are saved together. When the cost is sent, the stock rows are locked
+     * before the product, in the same order as a sale (stock, then the product it references).
+     */
+    async updateProduct(id, body, userId = null, ipAddress = null) {
+        const data = { ...body };
+        const hasFamilyName = Object.prototype.hasOwnProperty.call(data, 'family_name');
+        const familyName = data.family_name;
+        delete data.family_name;
+        if (data.cost_price != null && data.purchase_price == null) data.purchase_price = data.cost_price;
+        delete data.cost_price;
+        delete data.stock_initial;
+        // Checked before touching the database (a data: URL is refused).
+        if (Object.prototype.hasOwnProperty.call(data, 'image_url')) data.image_url = normalizeProductImageUrl(data.image_url);
+        if (data.purchase_price != null) data.purchase_price = Math.round((Number(data.purchase_price) + Number.EPSILON) * 100) / 100;
+
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            if (data.purchase_price != null) {
+                await connection.query('SELECT id FROM inventory WHERE product_id = ? FOR UPDATE', [id]);
+            }
+            const [rows] = await connection.query('SELECT * FROM products WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [id]);
+            const previous = rows[0];
+            if (!previous) {
+                await connection.rollback();
+                return null;
+            }
+            await this.applyProductCatalogOptions(data, previous, connection);
+            if (Object.prototype.hasOwnProperty.call(data, 'barcode')) {
+                data.barcode = await this.ensureUniqueBarcode(data.barcode, id, connection);
+            }
+            if (Object.prototype.hasOwnProperty.call(data, 'location')) data.location = this.normalizeLocation(data.location);
+            if (hasFamilyName) data.family_id = await this.resolveProductFamily(familyName, { ...previous, ...data }, connection);
+
+            const columns = Object.keys(data);
+            if (columns.length > 0) {
+                await connection.query(
+                    `UPDATE products SET ${columns.map((column) => `${this._validateColumn(column)} = ?`).join(', ')} WHERE id = ? AND deleted_at IS NULL`,
+                    [...columns.map((column) => data[column]), id]
+                );
+            }
+            await this.revalueStockForCostChange(connection, { product: previous, newCost: data.purchase_price, userId, source: 'product_edit' });
+            const [[updated]] = await connection.query('SELECT * FROM products WHERE id = ?', [id]);
+            await auditService.log({
+                user_id: userId,
+                action: 'UPDATE_PRODUCT',
+                entity_type: 'product',
+                entity_id: id,
+                old_values: previous,
+                new_values: updated,
+                ip_address: ipAddress,
+            }, connection);
+            await connection.commit();
+            return updated;
+        } catch (error) {
+            await connection.rollback();
+            if (error?.code === 'ER_LOCK_DEADLOCK' || error?.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw businessError(409, { error: 'busy', message: 'Otra operación estaba usando este producto. Reintentá en unos segundos.' });
+            }
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
     async getMovements(filters = {}, options = {}) {
         let query = `
             SELECT im.*, p.name AS product_name, p.sku

@@ -80,6 +80,24 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-027 — Revaluación del stock al cambiar el costo, y respuestas sobre el importador (usuario, 2026-10-17)
+- **EN ESPERA (AUD-015).** El guardián mostró que la premisa de abajo es falsa, y quedó verificado en el código:
+  - las compras debitan 1.1.04.01 al costo real de la factura (`SupplierInvoiceService`);
+  - la recepción entra stock sin asiento hasta la factura;
+  - las devoluciones y garantías salen o reingresan a costos históricos;
+  - en cambio, las ventas acreditan al `purchase_price`.
+  Por eso el mayor no es stock × costo, y revaluar todo el stock duplica valor en el caso común (comprar más caro y después subir el costo). Falta que el usuario elija el método de valuación. La implementación quedó en la rama local `feat/revaluacion-stock`, sin PR.
+- **Revaluación (sí, pendiente del método):**
+  - El stock se valúa al costo del producto (`purchase_price`), y las ventas asientan el CMV con ese costo.
+  - Cuando el costo de un producto con stock cambia, por importación o por edición a mano, las unidades en stock se revalúan con un asiento contra **4.2.02.01 Resultado por tenencia de mercaderías**: ganancia si sube, pérdida si baja. Queda auditado (`REVALUE_STOCK`).
+  - Así el mayor de Mercaderías sigue igual a stock × costo.
+  - Las compras no cambian el costo, así que no hay otros caminos.
+- **Bloqueos:** el stock del producto se bloquea antes que el producto (el orden de una venta), así la cantidad revaluada es la que queda.
+- **La edición manual del producto** pasó a una transacción en el servicio. Antes eran escrituras sueltas desde el controlador.
+- **Migración 064** (solo la cuenta). El CHECK de inventario pasa a la **065**.
+- **El cajero puede importar clientes** (sí), igual que darlos de alta a mano.
+- **PR #9** (importador) y **PR #10** (opción `-Red` de la simulación) mergeados con autorización del usuario.
+
 ### ADR-026 — Importador de productos, clientes y proveedores desde planillas (usuario, 2026-10-17)
 - **Pedido del usuario:** agilizar la carga inicial y las actualizaciones masivas.
 - **Formato:**
