@@ -4,9 +4,10 @@ import { Camera, ImagePlus, ScanLine, Trash2, Upload } from "lucide-react";
 import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
 import * as z from "zod";
-import { createProductSchema } from "@wsm/common";
+import { createProductSchema, hasPermission, PERMISSIONS } from "@wsm/common";
 import type { Product, ProductCatalogOption } from "@/types";
 import { api } from "@/services/api";
+import { useAuth } from "@/context/AuthContext";
 import { formatMoney } from "@/lib/formatters";
 import { VAT_RATE_OPTIONS, formatVatRate, grossPrice, netForTypedFinalPrice, netFromGross, vatRateOf } from "@/lib/pricing";
 import { Button } from "@/components/ui/button";
@@ -30,7 +31,8 @@ const IMAGE_URL_PATTERN = /^https?:\/\/.+/i;
 const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const IMAGE_DATA_URL_PATTERN = /^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/i;
 
-const productSchema = createProductSchema.extend({
+// The two cost-policy checkboxes (ADR-027) live in their own state, not in the text fields.
+const productSchema = createProductSchema.omit({ auto_update_cost: true, auto_update_price: true }).extend({
     purchase_price: z.union([z.string(), z.number()]).transform(v => String(v)),
     sale_price: z.union([z.string(), z.number()]).transform(v => String(v)),
     stock_initial: z.union([z.string(), z.number()]).transform(v => String(v)),
@@ -65,7 +67,23 @@ export type ProductFormSubmitData = {
     stock_initial?: number;
     image_url?: string;
     tiendanube_safety_stock?: number | null;
+    auto_update_cost: boolean;
+    auto_update_price: boolean;
 };
+
+// The cost the product is valued at (ADR-027): purchase_price, or cost_price while it is empty.
+function productCost(product?: Product): number {
+    const purchase = Number(product?.purchase_price || 0);
+    return purchase > 0 ? purchase : Number(product?.cost_price || 0);
+}
+
+const flagOn = (value: boolean | number | undefined) => value === undefined || value === null || Boolean(Number(value));
+
+/** Same rule as the server: the final price moves with the cost, rounded to the cent. */
+function repricedFinal(currentFinal: number, oldCost: number, newCost: number): number | null {
+    if (!(oldCost > 0) || !(currentFinal > 0) || !(newCost > 0)) return null;
+    return Math.round((currentFinal * newCost / oldCost + Number.EPSILON) * 100) / 100;
+}
 
 interface ProductFormProps {
     initialData?: Product;
@@ -100,6 +118,33 @@ async function readFileAsDataUrl(file: File): Promise<string> {
     });
 }
 
+function PolicyOption({ id, checked, disabled, onChange, label, hint }: {
+    id: string;
+    checked: boolean;
+    disabled?: boolean;
+    onChange: (next: boolean) => void;
+    label: string;
+    hint: string;
+}) {
+    return (
+        <div className="flex min-h-11 items-start gap-3 rounded-lg border p-3">
+            <input
+                id={id}
+                type="checkbox"
+                className="mt-0.5 h-5 w-5 shrink-0 cursor-pointer accent-primary disabled:cursor-not-allowed"
+                checked={checked}
+                disabled={disabled}
+                onChange={(event) => onChange(event.target.checked)}
+                aria-describedby={`${id}-hint`}
+            />
+            <div>
+                <label htmlFor={id} className="block cursor-pointer text-sm font-medium">{label}</label>
+                <p id={`${id}-hint`} className="text-xs text-muted-foreground" aria-live="polite">{hint}</p>
+            </div>
+        </div>
+    );
+}
+
 export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProps) {
     const form = useForm<ProductFormSchema>({
         resolver: productFormResolver,
@@ -119,7 +164,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             size: initialData?.size ?? "",
             color: initialData?.color ?? "",
             location: initialData?.location ?? "",
-            purchase_price: String(initialData?.purchase_price ?? 0),
+            purchase_price: String(productCost(initialData)),
             // The sale price is typed as the final (VAT-included) one and stored net (ADR-015).
             sale_price: String(grossPrice(initialData?.sale_price ?? 0, initialData?.vat_rate)),
             stock_initial: "0",
@@ -129,6 +174,11 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     });
 
     const isEditMode = Boolean(initialData);
+    const { user } = useAuth();
+    // D5 (ADR-027): a new cost on an existing product revalues its stock: manager or admin only.
+    const canEditCost = !isEditMode || hasPermission(user?.role, PERMISSIONS.PRODUCTS_COST_EDIT);
+    const [autoUpdateCost, setAutoUpdateCost] = useState(flagOn(initialData?.auto_update_cost));
+    const [autoUpdatePrice, setAutoUpdatePrice] = useState(flagOn(initialData?.auto_update_price));
     // The chosen rate drives every net/final calculation; the typed final price is kept when it changes.
     const [vatRateValue, setVatRateValue] = useState(String(vatRateOf(initialData?.vat_rate)));
     const vatRate = vatRateOf(vatRateValue);
@@ -136,6 +186,14 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
     const saleFinalWatch = useWatch({ control: form.control, name: "sale_price" });
     const saleNet = netFromGross(saleFinalWatch, vatRate);
     const saleVat = Math.round((Number(saleFinalWatch || 0) - saleNet) * 100) / 100;
+    // A new cost with the price untouched: the price follows it when the product says so (D1).
+    const initialCost = productCost(initialData);
+    const initialFinal = grossPrice(initialData?.sale_price ?? 0, vatRate);
+    const costChanged = isEditMode && Math.round(Number(purchaseWatch || 0) * 100) !== Math.round(initialCost * 100);
+    const priceUntouched = Number(saleFinalWatch) === initialFinal;
+    const followingFinal = costChanged && autoUpdatePrice && priceUntouched
+        ? repricedFinal(initialFinal, initialCost, Number(purchaseWatch || 0))
+        : null;
     const imageValue = useWatch({ control: form.control, name: "image_url" }) ?? "";
 
     const [scanDialogOpen, setScanDialogOpen] = useState(false);
@@ -368,6 +426,8 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
             vat_rate: vatRate,
             image_url: values.image_url?.trim() || "",
             tiendanube_safety_stock: values.tiendanube_safety_stock ?? null,
+            auto_update_cost: autoUpdateCost,
+            auto_update_price: autoUpdatePrice,
         };
 
         const location = values.location?.trim() || "";
@@ -702,11 +762,13 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                         <FormItem>
                                             <FormLabel>Precio compra neto (s/IVA)</FormLabel>
                                             <FormControl>
-                                                <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} value={field.value ?? ""} />
+                                                <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} value={field.value ?? ""} disabled={!canEditCost} />
                                             </FormControl>
                                             <FormDescription className="text-xs" aria-live="polite">
                                                 Final c/IVA: {formatMoney(grossPrice(purchaseWatch, vatRate))}
-                                                {isEditMode ? " · Si cambiás el costo y hay stock, se revalúa ese stock con un asiento." : ""}
+                                                {!canEditCost
+                                                    ? " · Solo un gerente o un administrador puede cambiar el costo."
+                                                    : isEditMode ? " · Si cambiás el costo y hay stock, se revalúa ese stock con un asiento." : ""}
                                             </FormDescription>
                                             <FormMessage />
                                         </FormItem>
@@ -722,7 +784,9 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                                 <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} value={field.value ?? ""} />
                                             </FormControl>
                                             <FormDescription className="text-xs" aria-live="polite">
-                                                Precio final con IVA; se guarda el neto. Neto: {formatMoney(saleNet)} · IVA {vatRate}%: {formatMoney(saleVat)}
+                                                {followingFinal != null
+                                                    ? `Con el costo nuevo, el precio final pasa a ${formatMoney(followingFinal)} (mantiene el margen). Si querés otro, escribilo.`
+                                                    : `Precio final con IVA; se guarda el neto. Neto: ${formatMoney(saleNet)} · IVA ${vatRate}%: ${formatMoney(saleVat)}`}
                                             </FormDescription>
                                             <FormMessage />
                                         </FormItem>
@@ -730,6 +794,29 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                 />
                             </div>
                         </div>
+
+                        <fieldset className="mt-4 grid gap-2 md:grid-cols-2">
+                            <legend className="mb-1 text-sm font-medium">Cuando cambia el costo de compra</legend>
+                            <PolicyOption
+                                id="product-auto-update-cost"
+                                checked={autoUpdateCost}
+                                disabled={!canEditCost}
+                                onChange={setAutoUpdateCost}
+                                label="Actualizar el costo con cada compra"
+                                hint={autoUpdateCost
+                                    ? "El costo pasa a ser el de la última compra y el stock se revalúa."
+                                    : "El costo queda fijo; la diferencia con lo que se paga va a resultados."}
+                            />
+                            <PolicyOption
+                                id="product-auto-update-price"
+                                checked={autoUpdatePrice}
+                                onChange={setAutoUpdatePrice}
+                                label="Ajustar el precio de venta al costo"
+                                hint={autoUpdatePrice
+                                    ? "Si el costo cambia, el precio final se recalcula manteniendo el margen."
+                                    : "El precio de venta queda como lo cargaste aunque cambie el costo."}
+                            />
+                        </fieldset>
 
                         <div className="mt-3 grid gap-3 md:max-w-xs">
                             <FormField<ProductFormSchema>

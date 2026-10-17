@@ -104,6 +104,7 @@ export class StockLedger {
         const shortage = Math.max(requestedQty - availableQty, 0);
 
         let remaining = requestedQty - shortage;
+        const movementIds = [];
         for (const row of lockedRows) {
             if (remaining <= 0) break;
             const consume = Math.min(Math.max(available(row), 0), remaining);
@@ -121,15 +122,18 @@ export class StockLedger {
             }
             row.quantity = Number(row.quantity) - consume;
 
+            const movementId = crypto.randomUUID();
             await connection.query(
                 `INSERT INTO inventory_movements (
                     id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [crypto.randomUUID(), movementType, productId, row.location || 'General', consume, unitCost, reason, referenceType, orderId, userId || null]
+                [movementId, movementType, productId, row.location || 'General', consume, unitCost, reason, referenceType, orderId, userId || null]
             );
+            movementIds.push(movementId);
             remaining -= consume;
         }
-        return { consumed: requestedQty - shortage, shortage };
+        // movementIds: the caller links them to the entry that values them (ADR-027).
+        return { consumed: requestedQty - shortage, shortage, movementIds };
     }
 }
 

@@ -829,12 +829,17 @@ class ReturnsService extends BaseService {
             // return to Inventory; units lost are reclassified as inventory losses. Only when
             // the original sale posted its CMV, otherwise there is nothing to reverse.
             if (returnRow.order_id && (reenteredCost > 0 || lostCost > 0)) {
+                // The cost was posted when the goods left (ADR-027: the movements keep the entry),
+                // or by the invoice for sales recorded before that rule.
                 const [cmvPosted] = await conn.query(
-                    `SELECT je.id FROM journal_entries je
+                    `SELECT m.id FROM inventory_movements m
+                     WHERE m.reference_id = ? AND m.type = 'sale' AND m.journal_entry_id IS NOT NULL
+                     UNION ALL
+                     SELECT je.id FROM journal_entries je
                      JOIN invoices i ON i.id = je.reference_id AND je.reference_type = 'invoice' AND i.deleted_at IS NULL
                      JOIN journal_entry_lines jl ON jl.journal_entry_id = je.id AND jl.account_code = ?
                      WHERE i.order_id = ? LIMIT 1`,
-                    [ACCOUNTS.COGS, returnRow.order_id]
+                    [returnRow.order_id, ACCOUNTS.COGS, returnRow.order_id]
                 );
                 if (cmvPosted.length > 0) {
                     await accountingService.createJournalEntryIfAny(conn, {

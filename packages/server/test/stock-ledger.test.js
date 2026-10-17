@@ -106,10 +106,12 @@ test('consumeAvailable with allowShortage takes what exists and reports the rest
         productId: 'p', quantity: 4, orderId: 'o', allowShortage: true,
     });
 
-    assert.deepEqual(result, { consumed: 1, shortage: 3 });
+    const movementId = connection.calls.find((call) => call.sql.includes('INSERT INTO inventory_movements')).params[0];
+    // The movements come back so the caller links them to the entry that values them (ADR-027).
+    assert.deepEqual(result, { consumed: 1, shortage: 3, movementIds: [movementId] });
     assert.deepEqual(connection.calls.filter((call) => call.sql.includes('UPDATE inventory')).map((call) => call.params), [[1, 'r', 1]]);
     assert.deepEqual(rows.map((row) => row.quantity), [2], 'reserved units are never consumed');
 
     const empty = await ledger.consumeAvailable(recordingConnection(), [], { productId: 'p', quantity: 2, allowShortage: true });
-    assert.deepEqual(empty, { consumed: 0, shortage: 2 });
+    assert.deepEqual(empty, { consumed: 0, shortage: 2, movementIds: [] });
 });

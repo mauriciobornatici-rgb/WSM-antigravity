@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import defaultStockLedger from '../inventory/StockLedger.js';
-import accountingService from '../../services/accounting.service.js';
+import defaultValuation from '../inventory/InventoryValuation.js';
 import { lineAmounts } from '../../utils/vatMath.js';
 import { hasPermission, PERMISSIONS } from '@wsm/common';
 
@@ -75,8 +75,9 @@ async function syncOnlineStock(productIds) {
 }
 
 export class CreateOrderUseCase {
-    constructor({ stockLedger = defaultStockLedger, onStockChanged = syncOnlineStock } = {}) {
+    constructor({ stockLedger = defaultStockLedger, valuation = defaultValuation, onStockChanged = syncOnlineStock } = {}) {
         this.stockLedger = stockLedger;
+        this.valuation = valuation;
         this.onStockChanged = onStockChanged;
     }
 
@@ -371,6 +372,15 @@ export class CreateOrderUseCase {
                     .filter((payment) => payment.method === 'credit_account')
                     .reduce((sum, payment) => sum + payment.amount, 0)
                 : (resolvedPaymentMethod === 'credit_account' ? resolvedTotal : 0);
+            // The customer is locked before the stock (lock order of ADR-027, L2): the sale updates
+            // the row below (points). Locked after the stock, it deadlocked against a credit sale
+            // for the same customer that already held it.
+            const [clients] = orderData.client_id
+                ? await connection.query(
+                    'SELECT id, name FROM clients WHERE id = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE',
+                    [orderData.client_id]
+                )
+                : [[]];
             if (creditAccountAmount > 0) {
                 if (!orderData.client_id) {
                     const err = new Error('La venta a cuenta corriente requiere seleccionar un cliente registrado. Consumidor final no puede tener cuenta corriente.');
@@ -379,10 +389,6 @@ export class CreateOrderUseCase {
                     err.errorCode = 'CREDIT_ACCOUNT_REQUIRES_CLIENT';
                     throw err;
                 }
-                const [clients] = await connection.query(
-                    'SELECT id, name FROM clients WHERE id = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE',
-                    [orderData.client_id]
-                );
                 if (clients.length === 0 || String(clients[0].name || '').trim().toLowerCase() === 'consumidor final') {
                     const err = new Error('La cuenta corriente solo puede asignarse a un cliente registrado distinto de Consumidor final.');
                     err.statusCode = 400;
@@ -456,9 +462,12 @@ export class CreateOrderUseCase {
             const lockedRows = counterSale
                 ? await this.stockLedger.lockSellableRows(connection, productIds, { channel: 'counter' })
                 : null;
-            const unitCosts = counterSale
-                ? await accountingService.productUnitCosts(connection, productIds)
+            // The cost is read under lock after the stock (L4 after L3, ADR-027): it is the last one
+            // committed, and a cost change waits for this sale or this sale for it.
+            const costs = counterSale
+                ? await this.valuation.lockCosts(connection, productIds)
                 : new Map();
+            const exitLines = [];
             const itemsInLockOrder = [...orderData.items].sort((a, b) => String(a.product_id).localeCompare(String(b.product_id)));
 
             for (const item of itemsInLockOrder) {
@@ -470,7 +479,8 @@ export class CreateOrderUseCase {
                         'INSERT INTO order_items (id, order_id, product_id, quantity, picked_quantity, unit_price, vat_rate) VALUES (?, ?, ?, ?, ?, ?, ?)',
                         [itemId, orderId, item.product_id, item.quantity, item.quantity, unitPrice, vatByProduct.get(item.product_id)]
                     );
-                    const { shortage } = await this.stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
+                    const unitCost = costs.get(item.product_id)?.cost || 0;
+                    const { consumed, shortage, movementIds } = await this.stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
                         productId: item.product_id,
                         productName: nameByProduct.get(item.product_id),
                         quantity: item.quantity,
@@ -478,10 +488,11 @@ export class CreateOrderUseCase {
                         userId,
                         reason: 'Venta mostrador POS',
                         // Cost at the moment of sale: a later return reverses CMV at this cost.
-                        unitCost: unitCosts.get(item.product_id) || 0,
+                        unitCost,
                         // An offline sale already happened: record it even without stock (ADR-010).
                         allowShortage: offlineReplay
                     });
+                    exitLines.push({ quantity: consumed, shortage, unitCost, movementIds });
                     if (shortage > 0) {
                         stockShortages.push({ product_id: item.product_id, requested: Number(item.quantity), shortage });
                     }
@@ -507,6 +518,16 @@ export class CreateOrderUseCase {
                 if (shortage > 0) {
                     channelShortages.push({ product_id: item.product_id, product_name: nameByProduct.get(item.product_id), requested: Number(item.quantity), shortage });
                 }
+            }
+
+            if (counterSale) {
+                // ADR-027 (D8): the goods left now, so their cost is posted now, invoiced or not.
+                await this.valuation.postExit(connection, {
+                    referenceType: 'order',
+                    referenceId: orderId,
+                    description: `Costo de mercadería vendida - venta de mostrador ${orderId.slice(0, 8)}`,
+                    lines: exitLines,
+                });
             }
 
             for (const payment of normalizedPayments) {

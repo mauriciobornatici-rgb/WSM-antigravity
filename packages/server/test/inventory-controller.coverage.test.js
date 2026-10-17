@@ -420,12 +420,20 @@ test('transferStock propagates service errors (e.g. insufficient stock) to next(
 });
 
 // The product edit runs in the service, in one transaction (ADR-027): a fake connection answers it.
+// stock: quantities in "General", or { location, quantity } rows.
+const STOCK_LOCK = 'SELECT id, product_id, location, quantity, reserved_quantity FROM inventory WHERE product_id IN (?) ORDER BY product_id, id FOR UPDATE';
+const PRODUCT_LOCK = 'SELECT * FROM products WHERE id = ? AND deleted_at IS NULL FOR UPDATE';
+
 function productEditConnection(t, { previous, stock = [], updated = previous, failOn = null } = {}) {
     const tracked = createTrackedConnection(async (statement) => {
         if (failOn && statement.startsWith(failOn.statement)) throw failOn.error;
-        if (statement.startsWith('SELECT id FROM inventory WHERE product_id = ? FOR UPDATE')) return [stock.map((_, index) => ({ id: `inv-${index}` }))];
-        if (statement.startsWith('SELECT * FROM products WHERE id = ? AND deleted_at IS NULL FOR UPDATE')) return [previous ? [previous] : []];
-        if (statement.startsWith('SELECT quantity FROM inventory WHERE product_id = ? FOR UPDATE')) return [stock.map((quantity) => ({ quantity }))];
+        if (statement === STOCK_LOCK) {
+            return [stock.map((row, index) => ({
+                id: `inv-${index}`, product_id: previous?.id, reserved_quantity: 0,
+                ...(typeof row === 'number' ? { location: 'General', quantity: row } : row),
+            }))];
+        }
+        if (statement.startsWith(PRODUCT_LOCK)) return [previous ? [previous] : []];
         if (statement === 'SELECT * FROM products WHERE id = ?') return [[updated]];
         return [{ affectedRows: 1 }];
     });
@@ -433,12 +441,23 @@ function productEditConnection(t, { previous, stock = [], updated = previous, fa
     return tracked;
 }
 
-function updateColumns(calls) {
-    const update = calls.find(({ statement }) => statement.startsWith('UPDATE products SET'));
+function updateColumns(calls, index = 0) {
+    const update = calls.filter(({ statement }) => statement.startsWith('UPDATE products SET'))[index];
     if (!update) return null;
     const columns = update.statement.match(/SET (.+) WHERE/)[1].split(', ').map((part) => part.split(' = ')[0].replace(/`/g, ''));
     return Object.fromEntries(columns.map((column, index) => [column, update.params[index]]));
 }
+
+function captureEntries(t) {
+    const entries = [];
+    const originalEntry = accountingService.createJournalEntry;
+    accountingService.createJournalEntry = async (connection, entry) => { entries.push(entry); return `je-${entries.length}`; };
+    t.after(() => { accountingService.createJournalEntry = originalEntry; });
+    return entries;
+}
+
+const entryLines = (entry) => entry.lines.map(({ account_code, debit, credit }) => [account_code, debit, credit]);
+const manager = { id: 'u1', role: 'manager' };
 
 test('updateProduct normalizes the payload, strips protected fields and audits old/new values in one transaction', async (t) => {
     const previous = { id: 'p1', name: 'Old', category: 'x', purchase_price: '12.00' };
@@ -467,14 +486,15 @@ test('updateProduct normalizes the payload, strips protected fields and audits o
     });
 
     assert.deepEqual(result.body, updated);
+    // The same cost (sent as cost_price) changes nothing and needs no permission.
     assert.deepEqual(updateColumns(tracked.calls), {
         name: 'New',
         barcode: '779-u',
         location: 'A-1',
         image_url: 'https://cdn.example.com/a.png',
-        purchase_price: 12,
         family_id: 'fam1'
     });
+    assert.equal(updateColumns(tracked.calls, 1), null);
     assert.deepEqual(calls.resolveProductFamily[0][0], 'Familia');
     assert.equal(calls.resolveProductFamily[0][1].name, 'New');
     assert.equal(calls.ensureUniqueBarcode[0][2], tracked.connection, 'checked inside the transaction');
@@ -488,46 +508,108 @@ test('updateProduct normalizes the payload, strips protected fields and audits o
 test('updateProduct with a new cost on goods in stock revalues them with an entry, stock locked before the product', async (t) => {
     const audit = installAudit(t);
     stubInventory(t, { applyProductCatalogOptions: () => {} });
-    const entries = [];
-    const originalEntry = accountingService.createJournalEntry;
-    accountingService.createJournalEntry = async (connection, entry) => { entries.push(entry); return 'je-1'; };
-    t.after(() => { accountingService.createJournalEntry = originalEntry; });
-    const tracked = productEditConnection(t, { previous: { id: 'p1', name: 'Pelota', purchase_price: '500.00' }, stock: [4, 3] });
+    const entries = captureEntries(t);
+    // Mermas carries no value (D3): its units are not revalued.
+    const tracked = productEditConnection(t, {
+        previous: { id: 'p1', name: 'Pelota', purchase_price: '500.00' },
+        stock: [4, { location: 'Cuarentena', quantity: 3 }, { location: 'Mermas', quantity: 9 }],
+    });
 
-    await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: '600,004'.replace(',', '.') }, user: { id: 'u1' } });
+    await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: '600,004'.replace(',', '.') }, user: manager });
 
     const order = tracked.calls.map(({ statement }) => statement);
-    assert.ok(order.indexOf('SELECT id FROM inventory WHERE product_id = ? FOR UPDATE') < order.indexOf('SELECT * FROM products WHERE id = ? AND deleted_at IS NULL FOR UPDATE'));
-    assert.equal(updateColumns(tracked.calls).purchase_price, 600, 'cents, as the column keeps it');
+    assert.ok(order.indexOf(STOCK_LOCK) >= 0 && order.indexOf(STOCK_LOCK) < order.indexOf(PRODUCT_LOCK), 'stock (L3) before the product (L4)');
+    assert.deepEqual(updateColumns(tracked.calls), { purchase_price: 600 }, 'cents, as the column keeps it; no price to follow');
     assert.equal(entries.length, 1);
     assert.equal(entries[0].reference_type, 'stock_revaluation');
-    assert.deepEqual(entries[0].lines.map(({ account_code, debit, credit }) => [account_code, debit, credit]), [
+    assert.deepEqual(entryLines(entries[0]), [
         ['1.1.04.01', 700, 0],
         ['4.2.02.01', 0, 700],
     ]);
     assert.match(entries[0].description, /Revaluación de stock de Pelota: 7 u\. de costo \$500 a \$600/);
     const revalued = audit.find(({ action }) => action === 'REVALUE_STOCK');
-    assert.deepEqual(revalued.new_values, { cost: 600, quantity: 7, amount: 700, journal_entry_id: 'je-1', source: 'product_edit' });
+    assert.deepEqual(revalued.new_values, {
+        cost: 600, quantity: 7, amount: 700, journal_entry_id: 'je-1', source: 'product_edit', counter_account: '4.2.02.01',
+    });
 });
 
 test('updateProduct: a lower cost is a holding loss; no stock, no entry', async (t) => {
     installAudit(t);
     stubInventory(t, { applyProductCatalogOptions: () => {} });
-    const entries = [];
-    const originalEntry = accountingService.createJournalEntry;
-    accountingService.createJournalEntry = async (connection, entry) => { entries.push(entry); return 'je-2'; };
-    t.after(() => { accountingService.createJournalEntry = originalEntry; });
+    const entries = captureEntries(t);
     productEditConnection(t, { previous: { id: 'p1', name: 'Pelota', purchase_price: '500.00' }, stock: [2] });
-    await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 450 } });
-    assert.deepEqual(entries[0].lines.map(({ account_code, debit, credit }) => [account_code, debit, credit]), [
+    await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 450 }, user: manager });
+    assert.deepEqual(entryLines(entries[0]), [
         ['4.2.02.01', 100, 0],
         ['1.1.04.01', 0, 100],
     ]);
 
     entries.length = 0;
     productEditConnection(t, { previous: { id: 'p1', name: 'Pelota', purchase_price: '500.00' }, stock: [] });
-    await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 450 } });
+    await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 450 }, user: manager });
     assert.equal(entries.length, 0);
+});
+
+test('updateProduct: a cost loaded on stock that had none is an opening adjustment, not a gain (D6)', async (t) => {
+    installAudit(t);
+    stubInventory(t, { applyProductCatalogOptions: () => {} });
+    const entries = captureEntries(t);
+    productEditConnection(t, { previous: { id: 'p1', name: 'Pelota', purchase_price: '0.00', cost_price: '0.00' }, stock: [5] });
+
+    await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 80 }, user: { id: 'a', role: 'admin' } });
+
+    assert.deepEqual(entryLines(entries[0]), [
+        ['1.1.04.01', 400, 0],
+        ['3.1.03.01', 0, 400],
+    ]);
+});
+
+test('updateProduct: only a manager or an admin changes the cost or its policy (D5); the stored cost resent is no change', async (t) => {
+    const audit = installAudit(t);
+    stubInventory(t, { applyProductCatalogOptions: () => {} });
+    const entries = captureEntries(t);
+    const previous = { id: 'p1', name: 'Pelota', purchase_price: '500.00', auto_update_cost: 1 };
+
+    const tracked = productEditConnection(t, { previous, stock: [2] });
+    const refused = await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 520 }, user: { id: 'w', role: 'warehouse' } });
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.error, 'cost_edit_not_allowed');
+    assert.deepEqual(tracked.counts, { begin: 1, commit: 0, rollback: 1, release: 1 });
+    assert.equal(updateColumns(tracked.calls), null);
+
+    productEditConnection(t, { previous, stock: [2] });
+    const policy = await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { auto_update_cost: false }, user: { id: 'w', role: 'warehouse' } });
+    assert.equal(policy.status, 403);
+
+    // A product whose cost still lives in cost_price shows it in the form: sending it back is no change.
+    const legacy = productEditConnection(t, { previous: { id: 'p1', name: 'Pelota', purchase_price: '0.00', cost_price: '450.00' }, stock: [2] });
+    await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 450, name: 'Pelota', auto_update_price: true }, user: { id: 'w', role: 'warehouse' } });
+    assert.deepEqual(updateColumns(legacy.calls), { name: 'Pelota', auto_update_price: 1 });
+    assert.equal(updateColumns(legacy.calls, 1), null);
+    assert.equal(entries.length, 0);
+    assert.equal(audit.some(({ action }) => action === 'REVALUE_STOCK'), false);
+});
+
+test('updateProduct: the sale price follows a new cost keeping the markup, unless typed or turned off (D1)', async (t) => {
+    installAudit(t);
+    stubInventory(t, { applyProductCatalogOptions: () => {} });
+    captureEntries(t);
+    // Net 1000 at 21 % is 1210 final; cost 500 → 600 moves the final price to 1452 (net 1200).
+    const previous = { id: 'p1', name: 'Pelota', purchase_price: '500.00', sale_price: '1000.0000', vat_rate: 21, auto_update_price: 1 };
+
+    const follows = productEditConnection(t, { previous, stock: [1] });
+    await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 600, sale_price: 1000 }, user: manager });
+    assert.deepEqual(updateColumns(follows.calls, 1), { purchase_price: 600, sale_price: 1200 });
+
+    const typed = productEditConnection(t, { previous, stock: [1] });
+    await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 600, sale_price: 1100 }, user: manager });
+    assert.deepEqual(updateColumns(typed.calls), { sale_price: 1100 });
+    assert.deepEqual(updateColumns(typed.calls, 1), { purchase_price: 600 }, 'a price typed with the cost wins');
+
+    const off = productEditConnection(t, { previous, stock: [1] });
+    await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 600, auto_update_price: false }, user: manager });
+    assert.deepEqual(updateColumns(off.calls), { auto_update_price: 0 });
+    assert.deepEqual(updateColumns(off.calls, 1), { purchase_price: 600 }, 'turned off in the same save: the price stays');
 });
 
 test('updateProduct: unknown product answers null and rolls back; a deadlock answers 409 busy', async (t) => {

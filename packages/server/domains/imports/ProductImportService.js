@@ -9,7 +9,10 @@ import { lineAmounts, netFromGross } from '../../utils/vatMath.js';
 import { taxIdKey } from '../../utils/taxId.js';
 import { IMPORT_COLUMNS } from '@wsm/common';
 import { NON_SELLABLE_LOCATIONS } from '../inventory/StockLedger.js';
+import inventoryValuation, { effectiveCost, repricedSalePrice, valueCents } from '../inventory/InventoryValuation.js';
 import { codeKey, plainText, RowIssues, summarize } from './importCells.js';
+
+const pesos = (value) => `$${Number(value).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const VAT_RATES = [0, 2.5, 5, 10.5, 21, 27];
 const DEFAULT_VAT_RATE = 21;
@@ -40,18 +43,18 @@ export class ProductImportService {
         this.db = db;
     }
 
-    async preview(rows, { updateExisting = false } = {}) {
-        const analysis = await this._analyze(this.db, rows, { updateExisting });
+    async preview(rows, { updateExisting = false, canEditCost = false } = {}) {
+        const analysis = await this._analyze(this.db, rows, { updateExisting, canEditCost });
         return this._response(analysis);
     }
 
     // One batch of rows in one transaction: validated again (the preview is never trusted), saved,
     // and the opening stock of the batch posted in one entry.
-    async commit(rows, { updateExisting = false, batchId }, userId = null) {
+    async commit(rows, { updateExisting = false, canEditCost = false, batchId }, userId = null) {
         const connection = await this.db.getConnection();
         try {
             await connection.beginTransaction();
-            const analysis = await this._analyze(connection, rows, { updateExisting, lock: true });
+            const analysis = await this._analyze(connection, rows, { updateExisting, canEditCost, lock: true });
             const context = { options: new Map(), stock: [] };
             for (const item of analysis) {
                 if (item.action === 'create') await this._create(connection, item, context, userId, batchId);
@@ -127,7 +130,7 @@ export class ProductImportService {
         return percent;
     }
 
-    async _analyze(db, rows, { updateExisting, lock = false }) {
+    async _analyze(db, rows, { updateExisting, canEditCost = false, lock = false }) {
         const parsed = rows.map((raw) => this._parse(raw));
         const firstSku = new Map();
         const firstBarcode = new Map();
@@ -150,11 +153,12 @@ export class ProductImportService {
             ? await db.query('SELECT * FROM products WHERE sku IN (?)', [skus])
             : [[]];
         // Locked only when they may be updated (skipped rows block nobody): their stock first and
-        // then the products, the order of a sale, since a new cost revalues that stock (ADR-027).
-        // Read again from the locked (current) data, not the transaction's snapshot.
+        // then the products, the order of a sale (L3 then L4), since a new cost revalues that stock
+        // (ADR-027). Read again from the locked (current) data, not the transaction's snapshot.
+        let lockedStock = new Map();
         if (lock && updateExisting && existingRows.length > 0) {
             const ids = existingRows.map((row) => row.id);
-            await db.query('SELECT id FROM inventory WHERE product_id IN (?) ORDER BY id FOR UPDATE', [ids]);
+            lockedStock = await inventoryValuation.lockStock(db, ids);
             [existingRows] = await db.query('SELECT * FROM products WHERE id IN (?) ORDER BY id FOR UPDATE', [ids]);
         }
         const existingBySku = new Map(existingRows.map((row) => [lower(row.sku), row]));
@@ -168,12 +172,22 @@ export class ProductImportService {
         const locationByName = new Map(locationRows.map((row) => [lower(row.code), row.code]));
         locationByName.set(lower(DEFAULT_LOCATION), DEFAULT_LOCATION);
         const suppliers = parsed.some(({ product }) => product.supplier) ? await this._suppliers(db) : null;
-        // Stock of the products that may be updated: a new cost on goods in stock is warned about.
+        // Valued stock of the products that may be updated: a new cost on goods in stock is warned
+        // about. Saving uses the rows locked above.
         const updatable = updateExisting ? existingRows.filter((row) => !row.deleted_at).map((row) => row.id) : [];
-        const [stockRows] = updatable.length > 0
-            ? await db.query('SELECT product_id, SUM(quantity) AS quantity FROM inventory WHERE product_id IN (?) GROUP BY product_id', [updatable])
+        const [stockRows] = updatable.length > 0 && !lock
+            ? await db.query(
+                'SELECT product_id, location, quantity FROM inventory WHERE product_id IN (?)',
+                [updatable]
+            )
             : [[]];
-        const stockById = new Map(stockRows.map((row) => [row.product_id, Number(row.quantity || 0)]));
+        const stockByProduct = lock ? lockedStock : new Map();
+        if (!lock) {
+            for (const row of stockRows) {
+                if (!stockByProduct.has(row.product_id)) stockByProduct.set(row.product_id, []);
+                stockByProduct.get(row.product_id).push(row);
+            }
+        }
         const nonSellable = new Set(NON_SELLABLE_LOCATIONS.map(lower));
 
         return parsed.map(({ product, issues }) => {
@@ -219,13 +233,14 @@ export class ProductImportService {
                 if (product.stock != null) {
                     issues.warn(`El stock de un producto existente no cambia con la importación: se ajusta con un conteo.`);
                 }
-                const inStock = stockById.get(existing.id) || 0;
-                const oldCost = Number(existing.purchase_price || 0);
-                if (product.cost != null && oldCost !== product.cost && inStock > 0) {
-                    // ADR-027: the stock is revalued with an entry (the same as postInventoryRevaluation).
-                    const amount = Math.round(inStock * product.cost * 100) / 100 - Math.round(inStock * oldCost * 100) / 100;
-                    const money = `$${Math.abs(amount).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                    issues.warn(`El costo cambia y hay ${inStock} unidades en stock: se registra un asiento de revaluación (${amount >= 0 ? 'ganancia' : 'pérdida'} por tenencia de ${money}).`);
+                item.stockRows = stockByProduct.get(existing.id) || [];
+                const oldCost = effectiveCost(existing);
+                if (product.cost != null && oldCost !== product.cost) {
+                    if (!canEditCost) {
+                        issues.error(`${HEADER.cost}: cambiar el costo de un producto existente lo puede hacer un gerente o un administrador (revalúa el stock). Dejá la celda vacía para no cambiarlo.`);
+                    } else {
+                        this._warnCostChange(issues, existing, item.stockRows, oldCost, product);
+                    }
                 }
             }
 
@@ -234,6 +249,36 @@ export class ProductImportService {
             if (issues.errors.length > 0) return this._finish(item, 'error');
             return this._finish(item, existing ? 'update' : 'create');
         });
+    }
+
+    // ADR-027: what a new cost does, before saving it: the revaluation of the stock (from cost 0,
+    // an opening adjustment, D6) and the sale price that follows the cost (D1).
+    _warnCostChange(issues, existing, stockRows, oldCost, product) {
+        const quantity = inventoryValuation.valuedQuantity(stockRows);
+        if (quantity > 0) {
+            const amount = (valueCents(quantity, product.cost) - valueCents(quantity, oldCost)) / 100;
+            issues.warn(oldCost > 0
+                ? `El costo cambia y hay ${quantity} unidades en stock: se registra un asiento de revaluación (${amount >= 0 ? 'ganancia' : 'pérdida'} por tenencia de ${pesos(Math.abs(amount))}).`
+                : `El producto no tenía costo y hay ${quantity} unidades en stock: se registran por ${pesos(amount)} como ajuste de inventario inicial.`);
+        }
+        if (Number(existing.auto_update_price ?? 1) === 1 && this._typedSalePrice(existing, product) === undefined) {
+            const repriced = repricedSalePrice({ salePrice: existing.sale_price, vatRate: existing.vat_rate, oldCost, newCost: product.cost });
+            if (repriced != null) {
+                issues.warn(`El precio de venta acompaña al costo: pasa a ${pesos(lineAmounts(1, repriced, existing.vat_rate).gross)} final (mantiene el margen).`);
+            }
+        }
+    }
+
+    // The net sale price a row sets, as the form does (ADR-015): the final price is what the person
+    // sees. A final price equal to the current one keeps the stored net (no rounding drift), and a
+    // new VAT rate without a price keeps the final price. Undefined when the row changes nothing.
+    _typedSalePrice(existing, product) {
+        const oldRate = Number(existing.vat_rate ?? DEFAULT_VAT_RATE);
+        const newRate = product.vat_rate ?? oldRate;
+        const currentFinal = lineAmounts(1, existing.sale_price, oldRate).gross;
+        const typedFinal = product.sale_price ?? currentFinal;
+        if (typedFinal === lineAmounts(1, existing.sale_price, newRate).gross) return undefined;
+        return netFromGross(typedFinal, newRate);
     }
 
     _finish(item, action, extraWarnings = []) {
@@ -395,7 +440,8 @@ export class ProductImportService {
         set('stock_min', product.stock_min);
         set('location', product.location);
         set('supplier_id', item.supplierId);
-        if (product.cost != null) set('purchase_price', product.cost);
+        // ADR-027: a new cost is saved with the revaluation of the stock, after the other changes.
+        const newCost = product.cost != null && product.cost !== effectiveCost(existing) ? product.cost : null;
 
         const catalog = await this._catalogValues(connection, context, product, userId, item);
         for (const [column, value] of Object.entries(catalog)) set(column, value);
@@ -416,40 +462,45 @@ export class ProductImportService {
             set('family_id', familyId);
         }
 
-        // Prices as the form does (ADR-015): the final price is what the person sees. A final
-        // price equal to the current one keeps the stored net (no rounding drift), and a new
-        // VAT rate without a price keeps the final price.
+        set('sale_price', this._typedSalePrice(existing, product));
         const oldRate = Number(existing.vat_rate ?? DEFAULT_VAT_RATE);
         const newRate = product.vat_rate ?? oldRate;
-        const currentFinal = lineAmounts(1, existing.sale_price, oldRate).gross;
-        const typedFinal = product.sale_price ?? currentFinal;
-        const sameFinal = typedFinal === lineAmounts(1, existing.sale_price, newRate).gross;
-        if (!sameFinal) set('sale_price', netFromGross(typedFinal, newRate));
         if (newRate !== oldRate) changes.vat_rate = newRate;
 
-        if (Object.keys(changes).length === 0) {
+        if (Object.keys(changes).length === 0 && newCost == null) {
             item.warnings.push('No había nada distinto para actualizar.');
             return;
         }
         const columns = Object.keys(changes);
-        await connection.query(
-            `UPDATE products SET ${columns.map((column) => `${column} = ?`).join(', ')} WHERE id = ? AND deleted_at IS NULL`,
-            [...columns.map((column) => changes[column]), existing.id]
-        );
+        if (columns.length > 0) {
+            await connection.query(
+                `UPDATE products SET ${columns.map((column) => `${column} = ?`).join(', ')} WHERE id = ? AND deleted_at IS NULL`,
+                [...columns.map((column) => changes[column]), existing.id]
+            );
+        }
+        // A price typed in the row wins; otherwise it follows the cost if the product says so (D1).
+        const costChange = newCost == null ? null : await inventoryService.changeProductCost(connection, {
+            product: { ...existing, ...changes, sale_price: existing.sale_price },
+            stockRows: item.stockRows || [],
+            newCost,
+            salePrice: changes.sale_price,
+            userId,
+            source: 'import',
+            details: { batch_id: batchId },
+        });
+        const changed = { ...changes };
+        if (costChange) {
+            changed.purchase_price = costChange.cost;
+            if (costChange.salePrice != null) changed.sale_price = costChange.salePrice;
+        }
         await auditService.log({
             user_id: userId,
             action: 'UPDATE_PRODUCT',
             entity_type: 'product',
             entity_id: existing.id,
-            old_values: Object.fromEntries(columns.map((column) => [column, existing[column] ?? null])),
-            new_values: { ...changes, source: 'import', batch_id: batchId },
+            old_values: Object.fromEntries(Object.keys(changed).map((column) => [column, existing[column] ?? null])),
+            new_values: { ...changed, source: 'import', batch_id: batchId },
         }, connection);
-        // ADR-027: a new cost on goods in stock revalues them, with its entry.
-        if (changes.purchase_price !== undefined) {
-            await inventoryService.revalueStockForCostChange(connection, {
-                product: existing, newCost: changes.purchase_price, userId, source: 'import', batchId,
-            });
-        }
     }
 
     // The opening stock of the batch in one entry: goods the business already had enter

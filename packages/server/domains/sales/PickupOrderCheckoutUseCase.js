@@ -5,7 +5,7 @@ import salesService from '../../services/sales.service.js';
 import { calculateShiftExpectedBalance } from '../../services/cashShift.service.js';
 import { resolvePriceOverrides, resolveUnitPrice } from './CreateOrderUseCase.js';
 import defaultStockLedger from '../inventory/StockLedger.js';
-import accountingService from '../../services/accounting.service.js';
+import defaultValuation from '../inventory/InventoryValuation.js';
 import { lineAmounts } from '../../utils/vatMath.js';
 
 export class PickupOrderCheckoutUseCase {
@@ -15,6 +15,7 @@ export class PickupOrderCheckoutUseCase {
         this.salesService = dependencies.salesService || salesService;
         this.calculateShiftExpectedBalance = dependencies.calculateShiftExpectedBalance || calculateShiftExpectedBalance;
         this.stockLedger = dependencies.stockLedger || defaultStockLedger;
+        this.valuation = dependencies.valuation || defaultValuation;
     }
 
     _normalizeOrderStatus(status) {
@@ -97,7 +98,10 @@ export class PickupOrderCheckoutUseCase {
                     .sort((a, b) => String(a.product_id).localeCompare(String(b.product_id)));
                 // Extras added at the counter come from the sales floor first (ADR-015).
                 const lockedRows = await this.stockLedger.lockSellableRows(connection, extraItems.map((item) => item.product_id), { channel: 'counter' });
-                const unitCosts = await accountingService.productUnitCosts(connection, extraItems.map((item) => item.product_id));
+                // Price and cost read with a shared lock after the stock (L4 after L3, ADR-027): an
+                // exclusive lock per product blocked every other sale of it until this one ended.
+                const products = await this.valuation.lockCosts(connection, extraItems.map((item) => item.product_id));
+                const exitLines = [];
                 for (const item of extraItems) {
                     const qty = parseInt(String(item.quantity), 10);
                     if (!Number.isFinite(qty) || qty <= 0) {
@@ -107,19 +111,14 @@ export class PickupOrderCheckoutUseCase {
                         throw err;
                     }
 
-                    const [products] = await connection.query(
-                        'SELECT id, name, sku, sale_price, vat_rate FROM products WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
-                        [item.product_id]
-                    );
-
-                    if (products.length === 0) {
+                    const product = products.get(item.product_id);
+                    if (!product || product.deleted_at) {
                         const err = new Error(`Producto extra no encontrado: ${item.product_id}`);
                         err.statusCode = 404;
                         err.errorCode = 'PRODUCT_NOT_FOUND';
                         throw err;
                     }
 
-                    const product = products[0];
                     // Same price policy as a counter sale (ADR-008): catalog price unless authorized.
                     const { overrides, source: overrideSource } = resolvePriceOverrides(
                         { external_source: 'pos', items: [item] },
@@ -132,15 +131,16 @@ export class PickupOrderCheckoutUseCase {
                     const unitPrice = resolveUnitPrice(item, new Map([[product.id, Number(product.sale_price || 0)]]));
 
                     // The customer takes it now: deduct unreserved stock, never below zero.
-                    await this.stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
+                    const { consumed, movementIds } = await this.stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
                         productId: item.product_id,
                         productName: product.name,
                         quantity: qty,
                         orderId,
                         userId,
                         reason: 'Mostrador POS - agregado a pedido',
-                        unitCost: unitCosts.get(item.product_id) || 0,
+                        unitCost: product.cost,
                     });
+                    exitLines.push({ quantity: consumed, unitCost: product.cost, movementIds });
 
                     // Record order item as already physically picked
                     const orderItemId = crypto.randomUUID();
@@ -158,6 +158,13 @@ export class PickupOrderCheckoutUseCase {
                         [grossLine, orderId]
                     );
                 }
+                // ADR-027 (D8): the extras left the counter now, so their cost is posted now.
+                await this.valuation.postExit(connection, {
+                    referenceType: 'order',
+                    referenceId: orderId,
+                    description: `Costo de mercadería vendida - agregados al retirar el pedido ${String(orderId).slice(0, 8)}`,
+                    lines: exitLines,
+                });
             }
 
             // 2. Mark order as delivered with recipient details

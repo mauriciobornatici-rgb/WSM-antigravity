@@ -4,6 +4,8 @@ export type UserRole = (typeof USER_ROLES)[number];
 export const PERMISSIONS = {
   DASHBOARD_READ: 'dashboard.read',
   PRODUCTS_READ: 'products.read',
+  // Change the cost of an existing product: it revalues the stock (ADR-027, D5).
+  PRODUCTS_COST_EDIT: 'products.cost_edit',
   INVENTORY_MANAGE: 'inventory.manage',
   INVENTORY_COUNT: 'inventory.count',
   INVENTORY_ADJUST: 'inventory.adjust',
@@ -43,6 +45,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<UserRole, readonly Permission[]>>
   manager: [
     PERMISSIONS.DASHBOARD_READ,
     PERMISSIONS.PRODUCTS_READ,
+    PERMISSIONS.PRODUCTS_COST_EDIT,
     PERMISSIONS.INVENTORY_MANAGE,
     PERMISSIONS.INVENTORY_COUNT,
     PERMISSIONS.INVENTORY_ADJUST,

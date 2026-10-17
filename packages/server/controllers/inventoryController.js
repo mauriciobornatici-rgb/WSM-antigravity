@@ -74,7 +74,7 @@ export const createProduct = catchAsync(async (req, res) => {
 
 // One transaction in the service: a new cost and its stock revaluation are saved together (ADR-027).
 export const updateProduct = catchAsync(async (req, res) => {
-    res.json(await inventoryService.updateProduct(req.params.id, req.body, req.user?.id || null, getRequestIp(req)));
+    res.json(await inventoryService.updateProduct(req.params.id, req.body, req.user?.id || null, getRequestIp(req), req.user?.role || null));
 });
 
 export const uploadProductImage = catchAsync(async (req, res) => {

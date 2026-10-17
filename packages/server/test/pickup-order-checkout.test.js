@@ -12,7 +12,10 @@ function createMockConnection(options = {}) {
         shifts: (options.shifts || []).map((shift) => ({ ...shift })),
         shiftPayments: [],
         inventoryMovements: [],
-        orderItems: []
+        orderItems: [],
+        journalEntries: [],
+        journalLines: [],
+        movementLinks: []
     };
     const executedQueries = [];
     let committed = false;
@@ -54,8 +57,26 @@ function createMockConnection(options = {}) {
                 return [state.shifts.filter((shift) => shift.id === params[0])];
             }
 
-            if (normalizedSql.startsWith('SELECT id, name, sku, sale_price, vat_rate FROM products')) {
-                return [state.products.filter((product) => product.id === params[0])];
+            // ADR-027: price and cost of the extras, read with a shared lock after their stock.
+            if (normalizedSql.startsWith('SELECT id, name, sku, purchase_price, cost_price, sale_price, vat_rate')) {
+                assert.match(normalizedSql, /ORDER BY id FOR SHARE$/);
+                const ids = new Set(params[0]);
+                return [state.products.filter((product) => ids.has(product.id))];
+            }
+
+            if (normalizedSql.startsWith('INSERT INTO journal_entries')) {
+                state.journalEntries.push({ id: params[0], description: params[2], reference_type: params[3], reference_id: params[4] });
+                return [{ affectedRows: 1 }];
+            }
+
+            if (normalizedSql.startsWith('INSERT INTO journal_entry_lines')) {
+                state.journalLines.push({ entry_id: params[1], account_code: params[2], debit: params[3], credit: params[4] });
+                return [{ affectedRows: 1 }];
+            }
+
+            if (normalizedSql.startsWith('UPDATE inventory_movements SET journal_entry_id = ?')) {
+                state.movementLinks.push({ entry_id: params[0], movement_ids: params[1] });
+                return [{ affectedRows: params[1].length }];
             }
 
             if (normalizedSql.startsWith('SELECT id, product_id, location, quantity, reserved_quantity FROM inventory')) {
@@ -169,14 +190,6 @@ function createMockConnection(options = {}) {
                 const shift = state.shifts.find((candidate) => candidate.id === params[1]);
                 if (shift) shift.expected_balance = params[0];
                 return [{ affectedRows: 1 }];
-            }
-
-            // Unit cost recorded on the sale movement (C6).
-            if (normalizedSql.startsWith('SELECT id, purchase_price, cost_price FROM products')) {
-                const ids = new Set(params[0]);
-                return [state.products.filter((product) => ids.has(product.id)).map((product) => ({
-                    id: product.id, purchase_price: product.purchase_price ?? null, cost_price: product.cost_price ?? null,
-                }))];
             }
 
             throw new Error(`Unexpected SQL in mock: ${normalizedSql}`);
@@ -530,8 +543,8 @@ test('locks multiple extras in a stable sorted order and grows the order total b
     const mockConn = createMockConnection({
         orders: [{ id: 'order-multi-extra', status: 'packed', shipping_method: 'pickup', total_amount: 5000 }],
         products: [
-            { id: 'aaa-product', name: 'Buff', sale_price: 1000, vat_rate: 21 },
-            { id: 'zzz-product', name: 'Cinta', sale_price: 500, vat_rate: 10.5 }
+            { id: 'aaa-product', name: 'Buff', sale_price: 1000, vat_rate: 21, purchase_price: 400 },
+            { id: 'zzz-product', name: 'Cinta', sale_price: 500, vat_rate: 10.5, purchase_price: 0, cost_price: 200 }
         ],
         inventory: [
             { id: 'inventory-aaa', product_id: 'aaa-product', location: 'Estante A', quantity: 20, reserved_quantity: 0 },
@@ -563,6 +576,19 @@ test('locks multiple extras in a stable sorted order and grows the order total b
     assert.equal(mockConn.state.orders[0].total_amount, 5000 + 1210 + 1105);
     assert.equal(mockConn.state.inventory[0].quantity, 19);
     assert.equal(mockConn.state.inventory[1].quantity, 18);
+
+    // ADR-027 (D8): the extras left now, so their cost is posted now (1 × 400 + 2 × 200, the
+    // second one still valued at its legacy cost), in one entry linked to both movements.
+    assert.equal(mockConn.state.journalEntries.length, 1);
+    const [entry] = mockConn.state.journalEntries;
+    assert.deepEqual([entry.reference_type, entry.reference_id], ['order', 'order-multi-extra']);
+    assert.deepEqual(
+        mockConn.state.journalLines.map((line) => [line.account_code, line.debit, line.credit]),
+        [['5.1.01.01', 800, 0], ['1.1.04.01', 0, 800]]
+    );
+    assert.deepEqual(mockConn.state.movementLinks, [{ entry_id: entry.id, movement_ids: mockConn.state.inventoryMovements.map((movement) => movement.id) }]);
+    const costs = mockConn.executedQueries.filter(({ sql }) => sql.includes('INSERT INTO inventory_movements')).map(({ params }) => params[5]);
+    assert.deepEqual(costs, [400, 200], 'each movement carries the cost it left at');
 });
 
 test('rolls back and releases when the response snapshot fails before commit', async () => {

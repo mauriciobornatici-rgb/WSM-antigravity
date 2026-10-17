@@ -78,34 +78,6 @@ class AccountingService {
         });
     }
 
-    /**
-     * ADR-027: a new cost on goods already in stock. The stock is valued at the product's cost
-     * (sales post their cost of goods sold with it), so the difference on the units in stock goes
-     * to the holding result: a gain when the cost goes up, a loss when it goes down.
-     */
-    async postInventoryRevaluation(connection, { productId, quantity, oldCost, newCost, description }) {
-        const amount = this._round(this._round(Number(quantity) * Number(newCost)) - this._round(Number(quantity) * Number(oldCost)));
-        if (amount === 0) return null;
-        const value = Math.abs(amount);
-        const lines = amount > 0
-            ? [
-                { account_code: '1.1.04.01', debit: value, credit: 0, notes: 'Mayor valor del stock' },
-                { account_code: '4.2.02.01', debit: 0, credit: value, notes: 'Resultado por tenencia' },
-            ]
-            : [
-                { account_code: '4.2.02.01', debit: value, credit: 0, notes: 'Resultado por tenencia' },
-                { account_code: '1.1.04.01', debit: 0, credit: value, notes: 'Menor valor del stock' },
-            ];
-        const entryId = await this.createJournalEntry(connection, {
-            date: new Date(),
-            description,
-            reference_type: 'stock_revaluation',
-            reference_id: productId,
-            lines,
-        });
-        return { entryId, amount };
-    }
-
     async createJournalEntry(connection, entryData) {
         const { date, description, reference_type, reference_id, reversal_of_entry_id, lines } = entryData;
 
@@ -235,25 +207,26 @@ class AccountingService {
             WHERE je.reference_type = 'invoice' AND je.reference_id = ? AND jel.account_code = '5.1.01.01'
             LIMIT 1
         `, [invoiceId]);
-        if (includeCost && cmvRows.length === 0) {
-            // The cost recorded when the stock left (sale movements carry it, ADR-013): the same
-            // cost a return reverses. Today's product cost only when the movement has none.
-            const [itemCosts] = await connection.query(`
-                SELECT ii.quantity, p.purchase_price, p.cost_price,
-                       (SELECT SUM(m.quantity * m.unit_cost) / NULLIF(SUM(m.quantity), 0)
-                        FROM inventory_movements m
-                        WHERE m.reference_id = ? AND m.product_id = ii.product_id AND m.type = 'sale' AND m.unit_cost > 0) AS sold_cost
-                FROM invoice_items ii
-                JOIN products p ON ii.product_id = p.id
-                WHERE ii.invoice_id = ?
-            `, [invoice.order_id || '', invoiceId]);
-            const totalCmv = this._round(itemCosts.reduce((sum, item) => {
-                const soldCost = Math.round(Number(item.sold_cost || 0) * 100) / 100;
-                const cost = soldCost > 0 ? soldCost : Number(item.purchase_price || item.cost_price || 0);
-                return sum + cost * Number(item.quantity || 0);
-            }, 0));
-            if (totalCmv > 0) {
-                await this.createJournalEntry(connection, {
+        if (includeCost && invoice.order_id && cmvRows.length === 0) {
+            // ADR-027 (D8): the cost of goods sold is posted when the goods leave, with the entry
+            // linked to their movements. The invoice only covers what its order took out of stock
+            // without one (recorded before that rule), at the cost the movement carries: the same
+            // cost a return reverses. A manual invoice without an order moved no goods (D9).
+            const [movements] = await connection.query(
+                `SELECT id, quantity, unit_cost
+                 FROM inventory_movements
+                 WHERE reference_id = ? AND type = 'sale' AND reference_type = 'order' AND journal_entry_id IS NULL
+                 FOR UPDATE`,
+                [invoice.order_id]
+            );
+            const costed = movements.filter((movement) => Number(movement.unit_cost || 0) > 0);
+            const totalCents = costed.reduce(
+                (sum, movement) => sum + Math.round(Number(movement.quantity || 0) * Math.round(Number(movement.unit_cost) * 100)),
+                0
+            );
+            if (totalCents > 0) {
+                const totalCmv = totalCents / 100;
+                const entryId = await this.createJournalEntry(connection, {
                     date: invoice.issue_date,
                     description: `Costo de Mercadería Vendida - Factura ${invoiceLabel}`,
                     reference_type: 'invoice',
@@ -263,6 +236,10 @@ class AccountingService {
                         { account_code: '1.1.04.01', debit: 0, credit: totalCmv, notes: 'Salida de inventario' }
                     ]
                 });
+                await connection.query(
+                    'UPDATE inventory_movements SET journal_entry_id = ? WHERE id IN (?)',
+                    [entryId, costed.map((movement) => movement.id)]
+                );
             }
         }
     }

@@ -6,6 +6,8 @@ import { businessError } from '../utils/businessError.js';
 import { normalizeProductImageUrl } from '../utils/imagePolicy.js';
 import goodsReceptionService from '../domains/procurement/GoodsReceptionService.js';
 import accountingService from './accounting.service.js';
+import inventoryValuation, { effectiveCost, repricedSalePrice, roundCost } from '../domains/inventory/InventoryValuation.js';
+import { hasPermission, PERMISSIONS } from '@wsm/common';
 
 class InventoryService extends BaseService {
     constructor() {
@@ -271,6 +273,9 @@ class InventoryService extends BaseService {
         if (normalized.purchase_price != null) {
             normalized.purchase_price = Math.round((Number(normalized.purchase_price) + Number.EPSILON) * 100) / 100;
         }
+        for (const flag of ['auto_update_cost', 'auto_update_price']) {
+            if (Object.prototype.hasOwnProperty.call(normalized, flag)) normalized[flag] = normalized[flag] ? 1 : 0;
+        }
         normalized.barcode = await this.ensureUniqueBarcode(normalized.barcode);
         normalized.location = this.normalizeLocation(normalized.location);
         normalized.image_url = normalizeProductImageUrl(normalized.image_url);
@@ -337,45 +342,41 @@ class InventoryService extends BaseService {
     }
 
     /**
-     * ADR-027 (usuario, 2026-10-17): the stock is valued at the product's cost, and sales post
-     * their cost of goods sold with it. A new cost on units already in stock revalues them with
-     * an entry against the holding result, so the ledger keeps matching stock × cost. The
-     * inventory rows are locked (as a sale or a transfer locks them): the quantity revalued is the
-     * one that stays. Returns what was posted, or null when nothing changes.
+     * ADR-027 (usuario, 2026-10-17): the stock is valued at the product's cost and sales post their
+     * cost of goods sold with it. A new cost changes the product and revalues the units in stock
+     * in the same transaction; with auto_update_price on and no price typed, the sale price follows
+     * the cost keeping the markup (D1). The caller holds the product's stock rows (L3, `stockRows`)
+     * and the product FOR UPDATE (L4), and passes it as `product`. Returns what changed, or null.
      */
-    async revalueStockForCostChange(connection, { product, newCost, userId = null, source, batchId = null }) {
+    async changeProductCost(connection, { product, stockRows, newCost, salePrice = undefined, userId = null, source, details = {} }) {
         if (newCost == null) return null;
-        const oldCost = Number(product.purchase_price || 0);
-        const cost = Math.round((Number(newCost) + Number.EPSILON) * 100) / 100;
+        const oldCost = effectiveCost(product);
+        const cost = roundCost(newCost);
         if (cost === oldCost) return null;
-        const [rows] = await connection.query('SELECT quantity FROM inventory WHERE product_id = ? FOR UPDATE', [product.id]);
-        const quantity = rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
-        if (quantity <= 0) return null;
-        const posted = await accountingService.postInventoryRevaluation(connection, {
-            productId: product.id,
-            quantity,
-            oldCost,
-            newCost: cost,
-            description: `Revaluación de stock de ${product.name || product.sku}: ${quantity} u. de costo $${oldCost} a $${cost}`,
+        const changes = { purchase_price: cost };
+        // A price typed together with the cost wins; otherwise it follows the cost if the product says so.
+        const priceTyped = salePrice !== undefined && salePrice !== null
+            && Math.round(Number(salePrice) * 10000) !== Math.round(Number(product.sale_price || 0) * 10000);
+        if (!priceTyped && Number(product.auto_update_price ?? 1) === 1) {
+            const repriced = repricedSalePrice({ salePrice: product.sale_price, vatRate: product.vat_rate, oldCost, newCost: cost });
+            if (repriced != null) changes.sale_price = repriced;
+        }
+        await connection.query(
+            `UPDATE products SET ${Object.keys(changes).map((column) => `${this._validateColumn(column)} = ?`).join(', ')} WHERE id = ?`,
+            [...Object.values(changes), product.id]
+        );
+        const revaluation = await inventoryValuation.revalue(connection, {
+            product, rows: stockRows, newCost: cost, userId, source, details,
         });
-        if (!posted) return null;
-        await auditService.log({
-            user_id: userId,
-            action: 'REVALUE_STOCK',
-            entity_type: 'product',
-            entity_id: product.id,
-            old_values: { cost: oldCost },
-            new_values: { cost, quantity, amount: posted.amount, journal_entry_id: posted.entryId, source, ...(batchId ? { batch_id: batchId } : {}) },
-        }, connection);
-        return { quantity, amount: posted.amount };
+        return { oldCost, cost, salePrice: changes.sale_price ?? null, revaluation };
     }
 
     /**
-     * The manual product edit, in one transaction with the product locked, so a new cost and its
-     * revaluation (ADR-027) are saved together. When the cost is sent, the stock rows are locked
-     * before the product, in the same order as a sale (stock, then the product it references).
+     * The manual product edit, in one transaction, so a new cost and its revaluation (ADR-027) are
+     * saved together. The stock rows are locked before the product, in the same order as a sale
+     * (L3 then L4). Changing the cost of an existing product takes a manager or an admin (D5).
      */
-    async updateProduct(id, body, userId = null, ipAddress = null) {
+    async updateProduct(id, body, userId = null, ipAddress = null, actorRole = null) {
         const data = { ...body };
         const hasFamilyName = Object.prototype.hasOwnProperty.call(data, 'family_name');
         const familyName = data.family_name;
@@ -385,19 +386,35 @@ class InventoryService extends BaseService {
         delete data.stock_initial;
         // Checked before touching the database (a data: URL is refused).
         if (Object.prototype.hasOwnProperty.call(data, 'image_url')) data.image_url = normalizeProductImageUrl(data.image_url);
-        if (data.purchase_price != null) data.purchase_price = Math.round((Number(data.purchase_price) + Number.EPSILON) * 100) / 100;
+        const newCost = data.purchase_price != null ? roundCost(data.purchase_price) : null;
+        delete data.purchase_price;
+        for (const flag of ['auto_update_cost', 'auto_update_price']) {
+            if (Object.prototype.hasOwnProperty.call(data, flag)) data[flag] = data[flag] ? 1 : 0;
+        }
 
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
-            if (data.purchase_price != null) {
-                await connection.query('SELECT id FROM inventory WHERE product_id = ? FOR UPDATE', [id]);
-            }
+            const stockRows = newCost != null
+                ? (await inventoryValuation.lockStock(connection, [id])).get(id)
+                : [];
             const [rows] = await connection.query('SELECT * FROM products WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [id]);
             const previous = rows[0];
             if (!previous) {
                 await connection.rollback();
                 return null;
+            }
+            // The form sends the cost it shows: the stored one is no change (a product whose cost
+            // still lives in cost_price has purchase_price 0, and saving it must not zero the stock).
+            const costChanges = newCost != null && newCost !== roundCost(previous.purchase_price)
+                && newCost !== effectiveCost(previous);
+            const costPolicyChanges = Object.prototype.hasOwnProperty.call(data, 'auto_update_cost')
+                && data.auto_update_cost !== Number(previous.auto_update_cost ?? 1);
+            if ((costChanges || costPolicyChanges) && !hasPermission(actorRole, PERMISSIONS.PRODUCTS_COST_EDIT)) {
+                throw businessError(403, {
+                    error: 'cost_edit_not_allowed',
+                    message: 'Cambiar el costo de un producto (o si se actualiza solo) lo puede hacer un gerente o un administrador: revalúa el stock.'
+                });
             }
             await this.applyProductCatalogOptions(data, previous, connection);
             if (Object.prototype.hasOwnProperty.call(data, 'barcode')) {
@@ -413,7 +430,13 @@ class InventoryService extends BaseService {
                     [...columns.map((column) => data[column]), id]
                 );
             }
-            await this.revalueStockForCostChange(connection, { product: previous, newCost: data.purchase_price, userId, source: 'product_edit' });
+            if (costChanges) {
+                // The price policy just saved applies to this change too.
+                const product = { ...previous, ...data, sale_price: previous.sale_price };
+                await this.changeProductCost(connection, {
+                    product, stockRows, newCost, salePrice: data.sale_price, userId, source: 'product_edit',
+                });
+            }
             const [[updated]] = await connection.query('SELECT * FROM products WHERE id = ?', [id]);
             await auditService.log({
                 user_id: userId,

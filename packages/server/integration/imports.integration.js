@@ -171,9 +171,15 @@ test('ADR-027: a new cost on goods in stock is revalued (import and manual edit)
     await productImportService.commit([{ row: 2, sku, name: 'Revaluada QA', sale_price: 3000, cost: 1000, stock: 10 }], { batchId }, null);
     const [[product]] = await pool.query('SELECT id FROM products WHERE sku = ?', [sku]);
 
-    const raised = await productImportService.commit([{ row: 2, sku, cost: '1.200' }], { updateExisting: true, batchId: crypto.randomUUID() }, null);
+    // D5: without the permission the new cost is refused and nothing is saved.
+    const refused = await productImportService.commit([{ row: 2, sku, cost: '1.200' }], { updateExisting: true, batchId: crypto.randomUUID() }, null);
+    assert.equal(refused.rows[0].action, 'error');
+    const raised = await productImportService.commit([{ row: 2, sku, cost: '1.200' }], { updateExisting: true, canEditCost: true, batchId: crypto.randomUUID() }, null);
     assert.match(raised.rows[0].warnings.join(' '), /asiento de revaluación \(ganancia por tenencia de \$2\.000,00\)/);
-    await inventoryService.updateProduct(product.id, { purchase_price: 900 }, null);
+    await inventoryService.updateProduct(product.id, { purchase_price: 900 }, null, null, 'admin');
+    // D1: the price followed both changes keeping the markup (3000 final → 3600 → 2700).
+    const [[repriced]] = await pool.query('SELECT sale_price, vat_rate FROM products WHERE id = ?', [product.id]);
+    assert.equal(Math.round(Number(repriced.sale_price) * (1 + Number(repriced.vat_rate) / 100) * 100) / 100, 2700);
 
     const [[initial]] = await pool.query(
         `SELECT COALESCE(SUM(jel.debit - jel.credit), 0) AS net FROM journal_entries je

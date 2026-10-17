@@ -102,9 +102,12 @@ function productDb({ existing = [EXISTING], barcodes = [], locations = ['DEP-A1'
         if (statement.startsWith('SELECT id, sku, barcode FROM products')) return [barcodes];
         if (statement.startsWith('SELECT code FROM warehouse_locations')) return [locations.filter((code) => params[0].map((value) => value.toLowerCase()).includes(code.toLowerCase())).map((code) => ({ code }))];
         if (statement.startsWith('SELECT id, name, tax_id FROM suppliers')) return [suppliers];
-        if (statement.includes('FROM inventory WHERE product_id IN')) return [[]];
+        if (statement.includes('FROM inventory WHERE product_id IN')) {
+            return [Object.entries(stockOf).filter(([id]) => params[0].includes(id)).map(([id, quantity]) => ({
+                id: `inv-${id}`, product_id: id, location: 'General', quantity, reserved_quantity: 0,
+            }))];
+        }
         if (statement.startsWith('SELECT * FROM products WHERE id IN')) return [existing.filter((row) => params[0].includes(row.id))];
-        if (statement.startsWith('SELECT quantity FROM inventory WHERE product_id = ?')) return [stockOf[params[0]] ? [{ quantity: stockOf[params[0]] }] : []];
         if (statement.startsWith('SELECT id, name, active FROM product_catalog_options WHERE option_key')) return [[{ id: `opt-${params[0].slice(0, 6)}`, name: 'Valor', active: 1 }]];
         if (statement.includes('FROM product_families')) return [[{ id: 'family-1' }]];
         return undefined;
@@ -196,22 +199,47 @@ test('product commit: creates with opening stock and one entry for the batch, up
 test('product preview: what was read is shown, no opening stock where nothing is sold, a new cost on stock warns', async () => {
     const { db } = productDb({ locations: ['DEP-A1', 'Cuarentena'] });
     db.query = ((query) => async (sql, params) => {
-        if (String(sql).includes('FROM inventory WHERE product_id IN')) return [[{ product_id: 'p-old', quantity: '7' }]];
+        // Mermas carries no value (D3): its units are not revalued.
+        if (String(sql).includes('FROM inventory WHERE product_id IN')) {
+            return [[{ product_id: 'p-old', location: 'General', quantity: '7' }, { product_id: 'p-old', location: 'Mermas', quantity: '4' }]];
+        }
         return query(sql, params);
     })(db.query);
     const service = new ProductImportService({ db });
-    const preview = await service.preview([
+    const rows = [
         { row: 2, sku: 'NEW-1', name: 'Remera', sale_price: '12.100', cost: '4132,2314', stock: 2, location: 'cuarentena' },
         { row: 3, sku: 'NEW-2', name: 'Short', sale_price: '9.900,5', cost: 4000, stock: 1 },
         { row: 4, sku: 'OLD-1', cost: 600 },
         { row: 5, sku: 'NEW-3', name: 'Pesado', sale_price: 1, stock: 2e9 },
-    ], { updateExisting: true });
+    ];
+    const preview = await service.preview(rows, { updateExisting: true, canEditCost: true });
     const result = new Map(preview.rows.map((row) => [row.row, row]));
     assert.match(result.get(2).errors[0], /no se puede cargar en "Cuarentena"/);
     assert.deepEqual(result.get(3).values, { sale_price: 9900.5, cost: 4000, stock: 1 });
     assert.deepEqual(result.get(2).values, { sale_price: 12100, cost: 4132.23, stock: 2 });
     assert.match(result.get(4).warnings.join(' '), /El costo cambia y hay 7 unidades en stock: se registra un asiento de revaluación \(ganancia por tenencia de \$700,00\)/);
+    // D1: the final price 1210 follows the cost 500 → 600 keeping the markup.
+    assert.match(result.get(4).warnings.join(' '), /El precio de venta acompaña al costo: pasa a \$1\.452,00 final/);
     assert.match(result.get(5).errors[0], /Stock inicial: 2000000000 es demasiado grande/);
+
+    // D5: without the permission a new cost on an existing product is a row error; the same cost is not.
+    const refused = await service.preview([{ row: 4, sku: 'OLD-1', cost: 600 }, { row: 5, sku: 'OLD-1x', name: 'Nuevo', sale_price: 1, cost: 9 }], { updateExisting: true });
+    assert.match(refused.rows[0].errors[0], /cambiar el costo de un producto existente lo puede hacer un gerente o un administrador/);
+    assert.equal(refused.rows[1].action, 'create', 'a new product takes its cost from the file');
+    const same = await service.preview([{ row: 4, sku: 'OLD-1', cost: '500,00', name: 'Pelota Pro' }], { updateExisting: true });
+    assert.equal(same.rows[0].action, 'update');
+});
+
+test('product preview: a cost loaded on stock that had none is an opening adjustment (D6); no price to follow', async () => {
+    const { db } = productDb({ existing: [{ ...EXISTING, purchase_price: '0.00', cost_price: null }] });
+    db.query = ((query) => async (sql, params) => {
+        if (String(sql).includes('FROM inventory WHERE product_id IN')) return [[{ product_id: 'p-old', location: 'General', quantity: 3 }]];
+        return query(sql, params);
+    })(db.query);
+    const preview = await new ProductImportService({ db }).preview([{ row: 2, sku: 'OLD-1', cost: 250 }], { updateExisting: true, canEditCost: true });
+    const warnings = preview.rows[0].warnings.join(' ');
+    assert.match(warnings, /El producto no tenía costo y hay 3 unidades en stock: se registran por \$750,00 como ajuste de inventario inicial/);
+    assert.doesNotMatch(warnings, /acompaña al costo/, 'without a previous cost there is no markup to keep');
 });
 
 test('product commit: a catalog value that is turned off is used, with a warning; a new one is audited', async (t) => {
@@ -234,14 +262,26 @@ test('product commit: a new cost on goods in stock is revalued with its entry; s
     accountingService.createJournalEntry = async (connection, entry) => { entries.push(entry); return 'je-r'; };
     t.after(() => { accountingService.createJournalEntry = originalEntry; });
     const { db, calls } = productDb({ stockOf: { 'p-old': 7 } });
-    await new ProductImportService({ db }).commit([{ row: 2, sku: 'OLD-1', cost: 600 }], { updateExisting: true, batchId: 'b-9' }, 'u-1');
+    await new ProductImportService({ db }).commit([{ row: 2, sku: 'OLD-1', cost: 600 }], { updateExisting: true, canEditCost: true, batchId: 'b-9' }, 'u-1');
     const order = calls.map(({ statement }) => statement);
-    const stockLock = order.findIndex((statement) => statement.startsWith('SELECT id FROM inventory WHERE product_id IN'));
+    const stockLock = order.findIndex((statement) => statement.startsWith('SELECT id, product_id, location, quantity, reserved_quantity FROM inventory WHERE product_id IN (?) ORDER BY product_id, id FOR UPDATE'));
     const productLock = order.findIndex((statement) => statement.startsWith('SELECT * FROM products WHERE id IN'));
-    assert.ok(stockLock >= 0 && stockLock < productLock, 'the order of a sale: stock, then the product');
+    assert.ok(stockLock >= 0 && stockLock < productLock, 'the order of a sale: stock (L3), then the product (L4)');
     assert.deepEqual(entries[0].lines.map(({ account_code, debit, credit }) => [account_code, debit, credit]), [['1.1.04.01', 700, 0], ['4.2.02.01', 0, 700]]);
     const revalued = audits.find(({ action }) => action === 'REVALUE_STOCK');
     assert.deepEqual([revalued.new_values.source, revalued.new_values.batch_id, revalued.new_values.amount], ['import', 'b-9', 700]);
+    // D1: the cost and the price that follows it (1210 final → 1452, net 1200) in one update.
+    const update = calls.find(({ statement }) => statement.startsWith('UPDATE products SET'));
+    assert.deepEqual([update.statement, update.params], ['UPDATE products SET `purchase_price` = ?, `sale_price` = ? WHERE id = ?', [600, 1200, 'p-old']]);
+    const audited = audits.find(({ action }) => action === 'UPDATE_PRODUCT');
+    assert.deepEqual(audited.old_values, { purchase_price: '500.00', sale_price: '1000.0000' });
+    assert.deepEqual(audited.new_values, { purchase_price: 600, sale_price: 1200, source: 'import', batch_id: 'b-9' });
+
+    // Without the permission the batch saves nothing for that row (D5).
+    const refused = productDb({ stockOf: { 'p-old': 7 } });
+    const response = await new ProductImportService({ db: refused.db }).commit([{ row: 2, sku: 'OLD-1', cost: 600 }], { updateExisting: true, batchId: 'b-10' }, 'u-2');
+    assert.equal(response.rows[0].action, 'error');
+    assert.equal(refused.calls.some(({ statement }) => statement.startsWith('UPDATE products')), false);
 });
 
 test('product commit: a deadlock with another import answers 409 busy (the batch can be sent again)', async (t) => {
@@ -399,10 +439,11 @@ test('import controller hands the rows to the service of the entity', async (t) 
     productImportService.commit = async (rows, options, userId) => { seen.push(['commit', rows.length, options, userId]); return { summary: {}, rows: [] }; };
     t.after(() => Object.assign(productImportService, original));
     const call = (handler, req) => new Promise((resolve, reject) => handler(req, { json: resolve }, (error) => (error ? reject(error) : resolve())));
-    await call(previewImport, { params: { entity: 'products' }, body: { rows: [{ row: 2 }], update_existing: true } });
-    await call(commitImport, { params: { entity: 'products' }, body: { rows: [{ row: 2 }], update_existing: false, batch_id: 'b-1' }, user: { id: 'u-9' } });
+    await call(previewImport, { params: { entity: 'products' }, body: { rows: [{ row: 2 }], update_existing: true }, user: { id: 'u-1', role: 'manager' } });
+    await call(commitImport, { params: { entity: 'products' }, body: { rows: [{ row: 2 }], update_existing: false, batch_id: 'b-1' }, user: { id: 'u-9', role: 'warehouse' } });
+    // canEditCost: a new cost on an existing product takes a manager or an admin (ADR-027, D5).
     assert.deepEqual(seen, [
-        ['preview', 1, { updateExisting: true }],
-        ['commit', 1, { updateExisting: false, batchId: 'b-1' }, 'u-9'],
+        ['preview', 1, { updateExisting: true, canEditCost: true }],
+        ['commit', 1, { updateExisting: false, canEditCost: false, batchId: 'b-1' }, 'u-9'],
     ]);
 });

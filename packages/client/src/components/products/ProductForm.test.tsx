@@ -10,6 +10,11 @@ vi.mock("@/services/api", () => ({
     },
 }));
 
+const auth = vi.hoisted(() => ({ role: "admin" }));
+vi.mock("@/context/AuthContext", () => ({
+    useAuth: () => ({ user: { id: "u-1", role: auth.role } }),
+}));
+
 const storedProduct: Product = {
     id: "p-1",
     sku: "SKU-1",
@@ -75,5 +80,49 @@ describe("ProductForm prices (ADR-015)", () => {
 
         await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
         expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ sale_price: 826.4463 });
+    });
+});
+
+describe("ProductForm cost policy (ADR-027)", () => {
+    it("shows the price that follows a new cost and sends both options, checked by default", async () => {
+        auth.role = "manager";
+        const onSubmit = vi.fn();
+        render(<ProductForm initialData={storedProduct} onSubmit={onSubmit} onCancel={vi.fn()} />);
+
+        expect((screen.getByLabelText("Actualizar el costo con cada compra") as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText("Ajustar el precio de venta al costo") as HTMLInputElement).checked).toBe(true);
+        // Cost 500 → 600: the final price 1210 keeps the markup and becomes 1452.
+        fireEvent.change(screen.getByLabelText(/Precio compra neto/), { target: { value: "600" } });
+        expect(screen.getByText(/el precio final pasa a \$ 1\.452,00/)).toBeTruthy();
+
+        fireEvent.click(screen.getByLabelText("Ajustar el precio de venta al costo"));
+        expect(screen.queryByText(/el precio final pasa a/)).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+        expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ purchase_price: 600, auto_update_cost: true, auto_update_price: false });
+    });
+
+    it("starts from the legacy cost when purchase_price is empty, so saving does not zero it", async () => {
+        auth.role = "admin";
+        const onSubmit = vi.fn();
+        render(<ProductForm initialData={{ ...storedProduct, purchase_price: 0, cost_price: 450 }} onSubmit={onSubmit} onCancel={vi.fn()} />);
+
+        expect((screen.getByLabelText(/Precio compra neto/) as HTMLInputElement).value).toBe("450");
+        fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+        expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ purchase_price: 450 });
+    });
+
+    it("does not let a warehouse user change the cost of an existing product (D5)", () => {
+        auth.role = "warehouse";
+        render(<ProductForm initialData={{ ...storedProduct, auto_update_cost: 0 }} onSubmit={vi.fn()} onCancel={vi.fn()} />);
+
+        expect((screen.getByLabelText(/Precio compra neto/) as HTMLInputElement).disabled).toBe(true);
+        expect(screen.getByText(/Solo un gerente o un administrador puede cambiar el costo/)).toBeTruthy();
+        const costOption = screen.getByLabelText("Actualizar el costo con cada compra") as HTMLInputElement;
+        expect(costOption.disabled).toBe(true);
+        expect(costOption.checked).toBe(false);
+        expect((screen.getByLabelText("Ajustar el precio de venta al costo") as HTMLInputElement).disabled).toBe(false);
     });
 });
