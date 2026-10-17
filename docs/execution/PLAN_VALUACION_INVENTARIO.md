@@ -58,10 +58,10 @@ Un interbloqueo o una espera agotada responden 409 `busy`.
 
 | # | Qué | Estado |
 |---|---|---|
-| I1 | Núcleo `domains/inventory/InventoryValuation.js`; migración 065 (cuenta 2.1.01.02, `journal_entry_id`, `inventory_valuation_since`, casillas por producto, permiso de costo); CMV al salir en el mostrador y en los extras del retiro; factura sin CMV duplicado; edición de costo con revaluación y orden L3/L4; casilla de precio; diagnóstico. | pendiente |
-| I2 | Pedidos: CMV al armar, Tiendanube, cancelación, pedido facturado antes del picking, reemisión. | pendiente |
-| I3 | Devoluciones de clientes y garantías. | pendiente |
-| I4 | Conteos, transferencias y Mermas, stock inicial, orden de locks de la importación. | pendiente |
+| I1 | Núcleo `domains/inventory/InventoryValuation.js`; migración 065 (cuenta 2.1.01.02, `journal_entry_id`, `inventory_valuation_since`, casillas por producto, permiso de costo); CMV al salir en el mostrador y en los extras del retiro; factura sin CMV duplicado; edición de costo con revaluación y orden L3/L4; casilla de precio; diagnóstico. | hecho (`5aa8a3c`) |
+| I2 | Pedidos: CMV al armar, Tiendanube, cancelación, pedido facturado antes del picking, reemisión. | hecho (`8b61dc5`) |
+| I3 | Devoluciones de clientes y garantías. | hecho (`cfd9f7e`) |
+| I4 | Conteos, transferencias y Mermas, stock inicial, orden de locks de la importación. | hecho (`955d247`) |
 | I5 | Compras: recepción con la cuenta puente y revaluación, factura que salda el puente y reparte la diferencia, sin factura de mercadería sin remito; migración 066. | pendiente |
 | I6 | Devoluciones a proveedor vinculadas al remito. | pendiente |
 | I7 | Unificación del costo (`cost_price` como espejo), quitar `productUnitCosts`, deshabilitar movimientos libres, simulación extendida. | pendiente |

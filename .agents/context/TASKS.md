@@ -192,6 +192,8 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - AUD-015 frenó la primera versión (`c71c41d`): el mayor no era stock × costo. El usuario eligió la opción a (costo de última compra).
 - La migración 064 (cuenta 4.2.02.01) ya está aplicada en QA, en la base local y en la de simulación: no tocarla.
 - Avance por incrementos I1-I8 (estado en la tabla del plan).
+- 2026-10-17: I1-I4 hechos y commiteados (`5aa8a3c`, `8b61dc5`, `cfd9f7e`, `955d247`). Migración 065 aplicada en QA, `wsm_sports_erp` y `wsm_simulacion`. Evidencia: unit 1014/1014, `qa:integration` 141/141, validate 0 (en I1), simulación 153/153 (en I2).
+- Próximo: I5 (compras: recepción contra 2.1.01.02, factura que salda el puente, D2, migración 066), I6, I7, I8; después guardián + auditor (AUD-016), ADR-027 reescrito y PR.
 
 ## Próximos pasos
 
