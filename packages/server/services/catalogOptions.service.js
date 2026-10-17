@@ -12,11 +12,11 @@ const CATALOG_PRODUCT_FIELDS = Object.freeze({
     color: { id: 'color_option_id', value: 'color' }
 });
 
-function normalizeCatalogOptionName(value) {
+export function normalizeCatalogOptionName(value) {
     return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ');
 }
 
-function catalogOptionKey(type, name, parentId = null) {
+export function catalogOptionKey(type, name, parentId = null) {
     return crypto.createHash('sha256').update(`${type}|${parentId || ''}|${name.toLocaleLowerCase('es-AR')}`).digest('hex');
 }
 

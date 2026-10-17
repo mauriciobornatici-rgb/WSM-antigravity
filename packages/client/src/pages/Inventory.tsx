@@ -26,9 +26,14 @@ import { InventoryProcureDialog } from "@/components/inventory/InventoryProcureD
 import { analyzeInventoryABC } from "@/lib/inventoryAnalytics";
 import { grossPrice } from "@/lib/pricing";
 import { ProductCatalogMastersTab } from "@/components/inventory/ProductCatalogMastersTab";
+import { ImportDialog } from "@/components/imports/ImportDialog";
+import { useAuth } from "@/context/AuthContext";
+import { hasPermission, PERMISSIONS } from "@wsm/common";
 
 export default function InventoryPage() {
     const PRODUCTS_PAGE_SIZE = 20;
+    const { user } = useAuth();
+    const canManageInventory = hasPermission(user?.role, PERMISSIONS.INVENTORY_MANAGE);
     const [products, setProducts] = useState<ProductWithStock[]>([]);
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -373,6 +378,15 @@ export default function InventoryPage() {
                         <Download className="h-4 w-4" />
                         Exportar CSV
                     </Button>
+                    {canManageInventory && (
+                        <ImportDialog
+                            entity="products"
+                            onImported={() => {
+                                invalidateInventorySnapshotCache();
+                                return loadData(true);
+                            }}
+                        />
+                    )}
                     <Button
                         variant="outline"
                         onClick={() => setIsLabelsDialogOpen(true)}

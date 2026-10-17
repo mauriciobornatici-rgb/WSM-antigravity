@@ -16,6 +16,7 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { showErrorToast } from "@/lib/errorHandling"
 import { isApiError } from "@/services/httpClient"
+import { ImportDialog } from "@/components/imports/ImportDialog"
 import type { ClientUpsertInput } from "@/types/api"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { NO_TAX_CONDITION, TAX_CONDITION_OPTIONS, taxConditionCuitError, taxConditionName } from "@/lib/taxConditions"
@@ -151,11 +152,14 @@ export default function ClientsPage() {
                     <h2 className="text-3xl font-bold tracking-tight">Clientes</h2>
                     <p className="text-muted-foreground">Gestión de cartera de clientes y cuentas corrientes.</p>
                 </div>
-                <CreateClientDialog
-                    open={isCreateOpen}
-                    onOpenChange={setIsCreateOpen}
-                    onSubmit={handleCreateClient}
-                />
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                    <ImportDialog entity="clients" onImported={loadClients} />
+                    <CreateClientDialog
+                        open={isCreateOpen}
+                        onOpenChange={setIsCreateOpen}
+                        onSubmit={handleCreateClient}
+                    />
+                </div>
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
@@ -411,7 +415,7 @@ function CreateClientDialog({ open, onOpenChange, onSubmit }: { open: boolean, o
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogTrigger asChild>
-                <Button className="gap-2">
+                <Button className="w-full gap-2 sm:w-auto">
                     <Plus className="h-4 w-4" /> Nuevo Cliente
                 </Button>
             </DialogTrigger>

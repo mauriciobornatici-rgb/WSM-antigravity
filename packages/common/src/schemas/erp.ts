@@ -399,7 +399,7 @@ export const supplierSchema = z.object({
   phone: z.string().nullable().optional(),
   tax_id: z.string().max(50).nullable().optional(),
   address: z.string().nullable().optional(),
-  category: z.string().nullable().optional(),
+  category: z.string().max(100).nullable().optional(),
   account_balance: z.coerce.number().optional(),
 });
 

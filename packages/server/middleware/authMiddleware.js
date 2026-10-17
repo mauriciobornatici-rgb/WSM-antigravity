@@ -7,7 +7,13 @@ import { getCookieValue, isTrustedCookieRequest } from '../utils/authCookie.js';
 const env = getEnvConfig();
 const JWT_SECRET = env.jwtSecret;
 
+// The /api routers are mounted one after another, each behind this check: a request for the
+// last one used to read the session from the database once per mount (up to 9 times). Once a
+// request is authenticated it is not checked again.
+const AUTHENTICATED = Symbol('authenticated');
+
 export const authenticateToken = async (req, res, next) => {
+    if (req[AUTHENTICATED]) return next();
     const authHeader = req.headers.authorization;
     const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
     const cookieToken = getCookieValue(req.headers.cookie);
@@ -67,6 +73,7 @@ export const authenticateToken = async (req, res, next) => {
             role: users[0].role,
             token_version: dbTokenVersion
         };
+        req[AUTHENTICATED] = true;
         next();
     } catch (error) {
         next(error);

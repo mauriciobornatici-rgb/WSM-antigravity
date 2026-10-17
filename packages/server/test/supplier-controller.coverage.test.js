@@ -97,8 +97,8 @@ test('createSupplier inserts, audits and returns the new row', async (t) => {
     assert.equal(res.status, 200);
     assert.equal(res.body.name, 'Proveedor SA');
     const insert = calls.find((c) => c.statement.startsWith('INSERT INTO suppliers'));
-    assert.equal(insert.params.length, 7);
-    assert.deepEqual(insert.params.slice(1), ['Proveedor SA', '30-1', 'Ana', 'a@b.c', '1', 'X']);
+    assert.equal(insert.params.length, 8);
+    assert.deepEqual(insert.params.slice(1), ['Proveedor SA', '30-1', 'Ana', 'a@b.c', '1', 'X', null]);
     assert.equal(logs[0].action, 'CREATE_SUPPLIER');
     assert.equal(logs[0].user_id, 'u1');
     assert.equal(logs[0].entity_id, insert.params[0]);
@@ -146,7 +146,7 @@ test('updateSupplier updates, audits old and new values', async (t) => {
     const res = await runHandler(updateSupplier, { params: { id: 's1' }, body, user: { id: 'u2' } });
     assert.equal(res.body.id, 's1');
     const update = calls.find((c) => c.statement.startsWith('UPDATE suppliers'));
-    assert.deepEqual(update.params, ['Proveedor SA', '30-1', 'Ana', 'a@b.c', '1', 'X', 's1']);
+    assert.deepEqual(update.params, ['Proveedor SA', '30-1', 'Ana', 'a@b.c', '1', 'X', null, 's1'], 'a form without category keeps the stored one');
     assert.equal(logs[0].action, 'UPDATE_SUPPLIER');
     assert.deepEqual(logs[0].old_values, { id: 's1', name: 'viejo' });
     assert.equal(logs[0].user_id, 'u2');
@@ -236,6 +236,22 @@ test('a supplier CUIT is locked and compared without dashes; an unchanged one is
     assert.equal(res.body.id, 's1');
     assert.deepEqual(calls.locks[0].params, ['supplier_tax_id:301', 3]);
     assert.equal(calls.some((c) => c.statement.includes('AND id != ?')), false);
+});
+
+test('the supplier category (rubro) the form sends is saved; an edit without it keeps the stored one', async (t) => {
+    const calls = installPool(t, async (statement) => {
+        if (statement.startsWith('SELECT id FROM suppliers')) return [[]];
+        if (statement.startsWith('UPDATE')) return [{ affectedRows: 1 }];
+        if (statement.includes('FOR UPDATE')) return [[{ id: 's1', tax_id: '30-1', category: 'Calzado' }]];
+        return [[{ id: 's1', name: 'Proveedor SA' }]];
+    });
+    installAudit(t);
+    await runHandler(createSupplier, { body: { ...body, category: '  Indumentaria ' } });
+    assert.equal(calls.find((c) => c.statement.startsWith('INSERT INTO suppliers')).params[7], 'Indumentaria');
+    await runHandler(updateSupplier, { params: { id: 's1' }, body });
+    assert.equal(calls.filter((c) => c.statement.startsWith('UPDATE suppliers'))[0].params[6], 'Calzado');
+    await runHandler(updateSupplier, { params: { id: 's1' }, body: { ...body, category: '' } });
+    assert.equal(calls.filter((c) => c.statement.startsWith('UPDATE suppliers'))[1].params[6], null, 'emptied on purpose');
 });
 
 test('supplier handlers propagate database errors to next', async (t) => {

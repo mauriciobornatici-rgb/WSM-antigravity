@@ -163,6 +163,30 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
   - cheques al reemitir: se confirma lo implementado.
 - [x] Migración 063 (aprobada): índices `customer_check_allocations(invoice_id)` y `transactions(reference_id, type)`. Aplicada solo en QA y en las bases locales. El CHECK de inventario pasa a 064.
 
+- [x] PR #8 mergeado con autorización del usuario (`53c892e`).
+- Rama `feat/simulacion-en-red` (opción `-Red` para abrir la simulación en la red wifi): subida, sin PR ni merge.
+
+## Importador desde planillas (2026-10-17, rama `feat/importador`, pedido del usuario)
+
+- [x] ADR-026 / AUD-014: importar productos, clientes y proveedores desde Excel o CSV. Incluye:
+  - plantillas descargables;
+  - vista previa por fila;
+  - importación en tandas de 50 filas;
+  - mismas reglas que la carga manual;
+  - idempotencia al reimportar.
+  Guía: `docs/execution/GUIA_IMPORTACION.md`. Revisado por guardián, seguridad y UX; todo lo técnico corregido.
+- [x] De paso:
+  - la categoría de proveedores se guarda;
+  - la búsqueda de proveedores no se rompe con datos vacíos;
+  - CSV injection en todas las exportaciones;
+  - la sesión se consulta una sola vez por petición;
+  - acentos y voseo en el formulario de producto.
+- Evidencia: validate 0 (998 + 110); coverage 96,79/90,78/94,42; integración 127/127; RBAC OK; E2E 6/6; simulación 153/153.
+- Pendiente del usuario (AUD-014):
+  1. asiento de revaluación al cambiar el costo de un producto con stock;
+  2. si el cajero puede importar clientes.
+- Hosting del usuario: Vercel gratuito + MySQL de Hostinger, evaluando un VPS. Los workers (ARCA, Tiendanube) y las imágenes subidas necesitan un proceso permanente (el `Dockerfile` ya lo arma).
+
 ## Próximos pasos
 
 1. Usuario: simular todos los procesos con `scripts/simulacion.ps1` según `docs/execution/GUIA_SIMULACION.md`, y hacer la homologación de ARCA con credenciales de prueba.

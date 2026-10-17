@@ -227,6 +227,46 @@ async function run() {
             expected: 403
         },
         {
+            name: 'cashier cannot import products',
+            method: 'POST',
+            endpoint: '/api/imports/products/preview',
+            token: cashier,
+            expected: 403,
+            body: { rows: [{ row: 2, sku: 'RBAC-1', name: 'x', sale_price: 1 }] }
+        },
+        {
+            name: 'warehouse cannot import clients',
+            method: 'POST',
+            endpoint: '/api/imports/clients/preview',
+            token: warehouse,
+            expected: 403,
+            body: { rows: [{ row: 2, name: 'Cliente RBAC' }] }
+        },
+        {
+            name: 'cashier can preview a client import (nothing is saved)',
+            method: 'POST',
+            endpoint: '/api/imports/clients/preview',
+            token: cashier,
+            expected: 200,
+            body: { rows: [{ row: 2, name: 'Cliente RBAC' }] }
+        },
+        {
+            name: 'an unknown import kind is 404',
+            method: 'POST',
+            endpoint: '/api/imports/orders/preview',
+            token: manager,
+            expected: 404,
+            body: { rows: [{ row: 2 }] }
+        },
+        {
+            name: 'an import batch bigger than allowed is rejected',
+            method: 'POST',
+            endpoint: '/api/imports/suppliers/commit',
+            token: manager,
+            expected: 400,
+            body: { rows: Array.from({ length: 51 }, (_, index) => ({ row: index + 2, name: `Proveedor ${index}` })), batch_id: '00000000-0000-4000-8000-000000000000' }
+        },
+        {
             name: 'manager can list POS exceptions',
             method: 'GET',
             endpoint: '/api/pos/exceptions',

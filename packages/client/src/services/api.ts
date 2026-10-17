@@ -68,9 +68,13 @@ import type {
     CustomerCheck,
     OutgoingCheck
 } from "@/types/api";
+import type { ImportEntity, ImportResponse } from "@wsm/common";
 import { httpClient, isApiError } from "./httpClient";
 
 type GenericRecord = Record<string, unknown>;
+
+/** One spreadsheet row as the import sends it: its row number and the cells by column key. */
+export type ImportRow = { row: number } & Record<string, string | number | boolean | null>;
 
 /** Funds for "Caja 2" movements (ADR-015); "initial" only sends (opening balance). */
 export type TreasuryFund = "drawer" | "treasury" | "bank" | "initial";
@@ -542,6 +546,15 @@ export const api = {
 
     deleteSupplier: (id: string) =>
         httpClient.del<{ success: boolean }>(`/api/suppliers/${id}`),
+
+    // ==================== IMPORTS (spreadsheets) ====================
+    // Checks every row of a file and says what would happen, without saving.
+    previewImport: (entity: ImportEntity, data: { rows: ImportRow[]; update_existing: boolean }) =>
+        httpClient.post<ImportResponse>(`/api/imports/${entity}/preview`, data),
+
+    // Saves one batch of rows (IMPORT_BATCH_ROWS at most).
+    commitImport: (entity: ImportEntity, data: { rows: ImportRow[]; update_existing: boolean; batch_id: string }) =>
+        httpClient.post<ImportResponse>(`/api/imports/${entity}/commit`, data),
 
     // ==================== TRANSACTIONS ====================
     getTransactions: (filters?: { supplier_id?: string; client_id?: string; type?: string; start_date?: string; end_date?: string }) =>

@@ -9,6 +9,8 @@ const Progress = React.forwardRef<
 >(({ className, value, ...props }, ref) => (
     <ProgressPrimitive.Root
         ref={ref}
+        // The value reaches the progressbar too, so screen readers announce it (not "busy").
+        value={value ?? null}
         className={cn(
             "relative h-4 w-full overflow-hidden rounded-full bg-secondary",
             className
