@@ -94,14 +94,15 @@ test('C4: drawer expenses and income are posted', async (t) => {
 test('C6: an approved return reverses the cost of what came back once the sale posted its CMV', async (t) => {
     const entries = [];
     mockPool(t, async (sql) => {
-        const statement = String(sql);
+        const statement = String(sql).replace(/\s+/g, ' ');
         if (statement.includes('SELECT * FROM client_returns')) return [[{ id: 'r', status: 'pending', order_id: 'o', client_id: null }]];
         if (statement.includes('SELECT * FROM client_return_items')) return [[
             { product_id: 'p', quantity: 2, unit_price: 50, condition_status: 'sellable' },
             { product_id: 'p', quantity: 1, unit_price: 50, condition_status: 'damaged' },
         ]];
         if (statement.includes('SELECT id, vat_rate FROM products')) return [[{ id: 'p', vat_rate: 21 }]];
-        if (statement.includes('purchase_price, cost_price FROM products')) return [[{ id: 'p', purchase_price: 30 }]];
+        // ADR-027: today's cost, read under lock after the stock.
+        if (statement.includes('auto_update_cost') && statement.includes('FROM products WHERE id IN')) return [[{ id: 'p', purchase_price: 30 }]];
         if (statement.includes('JOIN invoices i ON i.id = je.reference_id')) return [[{ id: 'je-cmv' }]];
         return [[]];
     });
@@ -123,4 +124,48 @@ test('C6: an approved return reverses the cost of what came back once the sale p
         [ACCOUNTS.INVENTORY_LOSSES, 30, 0],   // 1 damaged unit × 30 lost
         [ACCOUNTS.COGS, 0, 90],
     ]);
+});
+
+test('ADR-027: a return comes back at today\'s cost, reverses the cost it was sold at, and the difference is holding result', async (t) => {
+    const entries = [];
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql).replace(/\s+/g, ' ').trim();
+        calls.push(statement);
+        if (statement.includes('SELECT * FROM client_returns')) return [[{ id: 'r', status: 'pending', order_id: 'o', client_id: null }]];
+        if (statement.includes('SELECT * FROM client_return_items')) return [[
+            { product_id: 'p', quantity: 2, unit_price: 50, condition_status: 'sellable' },
+            { product_id: 'p', quantity: 1, unit_price: 50, condition_status: 'loss' },
+        ]];
+        if (statement.includes('SELECT id, vat_rate FROM products')) return [[{ id: 'p', vat_rate: 21 }]];
+        if (statement.includes('auto_update_cost') && statement.includes('FROM products WHERE id IN')) return [[{ id: 'p', purchase_price: 30 }]];
+        // Sold at 25 (the movements keep the entry of that sale).
+        if (statement.includes('m.journal_entry_id IS NOT NULL')) return [[{ id: 'm-sale' }]];
+        if (statement.includes('AS cost FROM inventory_movements')) return [[{ cost: '25.00' }]];
+        if (statement.startsWith('INSERT INTO inventory_movements')) return [{ affectedRows: 1, params }];
+        return [[]];
+    });
+    const originals = { journal: accountingService.createJournalEntry, number: returnsService._nextCreditNoteNumber, log: auditService.log };
+    accountingService.createJournalEntry = async (_c, entry) => { entries.push(entry); return `je-${entries.length}`; };
+    returnsService._nextCreditNoteNumber = async () => 'NC-1';
+    auditService.log = async () => {};
+    t.after(() => {
+        accountingService.createJournalEntry = originals.journal;
+        returnsService._nextCreditNoteNumber = originals.number;
+        auditService.log = originals.log;
+    });
+
+    await returnsService.approveReturn('r', null, null);
+
+    const stockLock = calls.findIndex((statement) => statement.startsWith('SELECT id, product_id, location, quantity, reserved_quantity FROM inventory'));
+    const costLock = calls.findIndex((statement) => statement.includes('auto_update_cost'));
+    assert.ok(stockLock >= 0 && stockLock < costLock, 'stock (L3) before cost (L4)');
+    const cost = entries.find((entry) => entry.description.startsWith('Reversión de costo'));
+    assert.deepEqual(sides(cost), [
+        [ACCOUNTS.INVENTORY, 60, 0],          // 2 units back at today's 30
+        [ACCOUNTS.INVENTORY_LOSSES, 25, 0],   // 1 unit lost, at the 25 it was sold at
+        [ACCOUNTS.COGS, 0, 75],               // 3 units of cost of goods sold reversed at 25
+        [ACCOUNTS.HOLDING_RESULT, 0, 10],     // the 2 units gained 5 each while out
+    ]);
+    assert.ok(calls.some((statement) => statement.startsWith('UPDATE inventory_movements SET journal_entry_id')));
 });

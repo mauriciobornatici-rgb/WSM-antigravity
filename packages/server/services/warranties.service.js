@@ -6,6 +6,7 @@ import { businessYear } from '../utils/businessDate.js';
 import { businessError } from '../utils/businessError.js';
 import { ACCOUNTS, LOCATIONS } from '../utils/paymentAccounts.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
+import inventoryValuation, { isValuedLocation } from '../domains/inventory/InventoryValuation.js';
 import { allocateCents, grossLineAmounts, lineAmounts } from '../utils/vatMath.js';
 import { outputVatLines, splitByRate } from '../utils/vatAccounts.js';
 import auditService from './audit.service.js';
@@ -45,16 +46,20 @@ class WarrantiesService extends BaseService {
             const done = new Set(movementRows.map((row) => row.type));
             const alreadyReplaced = done.has('warranty_replacement');
             const productId = previous.product_id;
-            const unitCost = productId
-                ? (await accountingService.productUnitCosts(connection, [productId])).get(productId) || 0
-                : 0;
+            // ADR-027: the product's stock (L3) and then its cost (L4), read under lock. The unit is
+            // valued at today's cost while it is in stock, like any other (it is revalued with them).
+            let unitCost = 0;
+            if (productId) {
+                await inventoryValuation.lockStock(connection, [productId]);
+                unitCost = (await inventoryValuation.lockCosts(connection, [productId])).get(productId)?.cost || 0;
+            }
             const effects = [];
 
             // The defective unit the client hands in waits in quarantine: it is worth its cost
             // while the supplier may still take it back (ADR-014).
             if (changes.status === 'received' && productId && !done.has('warranty_intake')) {
-                await this._moveDefectiveUnit(connection, { claimId: id, productId, to: LOCATIONS.QUARANTINE, type: 'warranty_intake', unitCost, userId, reason: 'Garantía: unidad defectuosa recibida del cliente' });
-                await this._postWarranty(connection, id, 'Ingreso de unidad defectuosa en garantía', ACCOUNTS.INVENTORY, ACCOUNTS.WARRANTY_COSTS, unitCost);
+                const movementId = await this._moveDefectiveUnit(connection, { claimId: id, productId, to: LOCATIONS.QUARANTINE, type: 'warranty_intake', unitCost, userId, reason: 'Garantía: unidad defectuosa recibida del cliente' });
+                await this._postWarranty(connection, id, 'Ingreso de unidad defectuosa en garantía', ACCOUNTS.INVENTORY, ACCOUNTS.WARRANTY_COSTS, unitCost, [movementId]);
                 done.add('warranty_intake');
                 effects.push('intake');
             }
@@ -74,14 +79,10 @@ class WarrantiesService extends BaseService {
                 const reason = changes.status === 'supplier_rejected'
                     ? 'Garantía rechazada por el proveedor: baja'
                     : (changes.status === 'rejected' ? 'Garantía rechazada: unidad devuelta al cliente' : 'Garantía reparada: unidad devuelta al cliente');
-                // At the cost it came in with, so intake and write-off cancel exactly.
-                const [intake] = await connection.query(
-                    "SELECT unit_cost FROM inventory_movements WHERE reference_type = 'warranty_claim' AND reference_id = ? AND type = 'warranty_intake' LIMIT 1",
-                    [id]
-                );
-                const intakeCost = Number(intake[0]?.unit_cost ?? unitCost);
-                await this._moveDefectiveUnit(connection, { claimId: id, productId, from, type: 'warranty_writeoff', unitCost: intakeCost, userId, reason });
-                await this._postWarranty(connection, id, reason, ACCOUNTS.WARRANTY_COSTS, ACCOUNTS.INVENTORY, intakeCost);
+                // At today's cost, the value it has in the ledger: a new cost while it waited
+                // revalued it with the rest of the stock (ADR-027).
+                const movementId = await this._moveDefectiveUnit(connection, { claimId: id, productId, from, type: 'warranty_writeoff', unitCost, userId, reason });
+                await this._postWarranty(connection, id, reason, ACCOUNTS.WARRANTY_COSTS, ACCOUNTS.INVENTORY, unitCost, [movementId]);
                 effects.push('writeoff');
             }
 
@@ -91,7 +92,7 @@ class WarrantiesService extends BaseService {
                     throw businessError(409, { error: 'warranty_without_product', message: 'La garantía no tiene producto para reemplazar.' });
                 }
                 const locked = await stockLedger.lockSellableRows(connection, [previous.product_id]);
-                await stockLedger.consumeAvailable(connection, locked.get(previous.product_id) || [], {
+                const { movementIds } = await stockLedger.consumeAvailable(connection, locked.get(previous.product_id) || [], {
                     productId: previous.product_id,
                     quantity: 1,
                     orderId: id,
@@ -101,7 +102,7 @@ class WarrantiesService extends BaseService {
                     referenceType: 'warranty_claim',
                     unitCost,
                 });
-                await this._postWarranty(connection, id, 'Reemplazo de producto por garantía', ACCOUNTS.WARRANTY_COSTS, ACCOUNTS.INVENTORY, unitCost);
+                await this._postWarranty(connection, id, 'Reemplazo de producto por garantía', ACCOUNTS.WARRANTY_COSTS, ACCOUNTS.INVENTORY, unitCost, movementIds);
                 replacement = { quantity: 1, unit_cost: unitCost };
             }
 
@@ -127,8 +128,9 @@ class WarrantiesService extends BaseService {
         }
     }
 
-    async _postWarranty(connection, claimId, description, debitAccount, creditAccount, amount) {
-        await accountingService.createJournalEntryIfAny(connection, {
+    // The movements keep the entry that valued them (ADR-027).
+    async _postWarranty(connection, claimId, description, debitAccount, creditAccount, amount, movementIds = []) {
+        const entryId = await accountingService.createJournalEntryIfAny(connection, {
             date: new Date(),
             description,
             reference_type: 'warranty_claim',
@@ -138,10 +140,13 @@ class WarrantiesService extends BaseService {
                 { account_code: creditAccount, debit: 0, credit: amount, notes: description },
             ],
         });
+        await inventoryValuation.linkMovements(connection, movementIds, entryId);
+        return entryId;
     }
 
     // Moves the claim's single defective unit between non-sellable locations (or in/out of
     // stock), never below what is reserved, with a movement that records where it went.
+    // Returns the movement id.
     async _moveDefectiveUnit(connection, { claimId, productId, from = null, to = null, type, unitCost, userId, reason }) {
         if (from) {
             const [taken] = await connection.query(
@@ -163,12 +168,14 @@ class WarrantiesService extends BaseService {
                 [crypto.randomUUID(), productId, to]
             );
         }
+        const movementId = crypto.randomUUID();
         await connection.query(
             `INSERT INTO inventory_movements (
                 id, type, product_id, from_location, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
             ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, 'warranty_claim', ?, ?)`,
-            [crypto.randomUUID(), type, productId, from, to, unitCost, reason, claimId, userId || null]
+            [movementId, type, productId, from, to, unitCost, reason, claimId, userId || null]
         );
+        return movementId;
     }
 
     async getWarranties(filters = {}) {
@@ -240,6 +247,33 @@ class ReturnsService extends BaseService {
         return rows[0]?.from_location || 'General';
     }
 
+    // Whether the sale of the order already posted its cost of goods sold (ADR-027).
+    async _saleCostPosted(connection, orderId) {
+        const [posted] = await connection.query(
+            `SELECT m.id FROM inventory_movements m
+             WHERE m.reference_id = ? AND m.type = 'sale' AND m.journal_entry_id IS NOT NULL
+             UNION ALL
+             SELECT je.id FROM journal_entries je
+             JOIN invoices i ON i.id = je.reference_id AND je.reference_type = 'invoice' AND i.deleted_at IS NULL
+             JOIN journal_entry_lines jl ON jl.journal_entry_id = je.id AND jl.account_code = ?
+             WHERE i.order_id = ? LIMIT 1`,
+            [orderId, ACCOUNTS.COGS, orderId]
+        );
+        return posted.length > 0;
+    }
+
+    // The cost a product left at in that order's sale (its cost of goods sold), or `fallback`.
+    async _soldCost(connection, orderId, productId, fallback) {
+        const [sold] = await connection.query(
+            `SELECT SUM(quantity * unit_cost) / NULLIF(SUM(quantity), 0) AS cost
+             FROM inventory_movements
+             WHERE reference_id = ? AND product_id = ? AND type = 'sale' AND unit_cost > 0`,
+            [orderId, productId]
+        );
+        const soldCost = Number(sold?.[0]?.cost || 0);
+        return soldCost > 0 ? Math.round(soldCost * 100) / 100 : fallback;
+    }
+
     async _increaseInventoryForReturn(connection, { returnId, item, actorUserId, orderId = null, unitCost = 0 }) {
         const quantity = Number(item.quantity || 0);
         if (quantity <= 0) return { restocked: 0, discarded: 0, reentered: 0, lost: 0 };
@@ -287,17 +321,19 @@ class ReturnsService extends BaseService {
             }
         }
 
+        const valued = Boolean(targetLocation) && isValuedLocation(targetLocation);
+        const movementId = crypto.randomUUID();
         await connection.query(
             `INSERT INTO inventory_movements (
                 id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'client_return', ?, ?)`,
             [
-                crypto.randomUUID(),
+                movementId,
                 movementType,
                 item.product_id,
                 targetLocation,
                 quantity,
-                Number(unitCost || 0),
+                valued ? Number(unitCost || 0) : 0,
                 movementReason,
                 returnId,
                 actorUserId || null
@@ -310,7 +346,9 @@ class ReturnsService extends BaseService {
             discarded: sellable ? 0 : quantity,
             // For the cost entry: units back in stock vs. units lost (a rejected line is not taken back).
             reentered: targetLocation ? quantity : 0,
-            lost: !targetLocation && condition !== 'rejected' ? quantity : 0
+            lost: !targetLocation && condition !== 'rejected' ? quantity : 0,
+            valued,
+            movementId,
         };
     }
 
@@ -795,66 +833,45 @@ class ReturnsService extends BaseService {
             
             let restockedTotal = 0;
             let discardedTotal = 0;
-            let reenteredCost = 0;
-            let lostCost = 0;
-            const unitCosts = await accountingService.productUnitCosts(conn, items.map((item) => item.product_id));
+            // ADR-027: the stock of the returned products (L3), then their cost (L4). What comes back
+            // enters at today's cost; the cost of goods sold is reversed at the cost it left at.
+            const productIds = items.map((item) => item.product_id);
+            await inventoryValuation.lockStock(conn, productIds);
+            const costs = await inventoryValuation.lockCosts(conn, productIds);
+            // The cost of goods sold was posted when the goods left (the movements keep the entry),
+            // or by the invoice for sales recorded before that rule. Otherwise the units never left
+            // the ledger and nothing is reversed. A return without an order reverses at today's cost.
+            const costPosted = returnRow.order_id ? await this._saleCostPosted(conn, returnRow.order_id) : true;
+            const reentries = [];
             for (const item of items) {
-                // The cost recorded when it was sold (the CMV was posted at that cost);
-                // today's cost only for sales recorded before movements carried it.
-                let unitCost = unitCosts.get(item.product_id) || 0;
-                if (returnRow.order_id) {
-                    const [sold] = await conn.query(
-                        `SELECT SUM(quantity * unit_cost) / NULLIF(SUM(quantity), 0) AS cost
-                         FROM inventory_movements
-                         WHERE reference_id = ? AND product_id = ? AND type = 'sale' AND unit_cost > 0`,
-                        [returnRow.order_id, item.product_id]
-                    );
-                    const soldCost = Number(sold?.[0]?.cost || 0);
-                    if (soldCost > 0) unitCost = Math.round(soldCost * 100) / 100;
-                }
+                const todayCost = costs.get(item.product_id)?.cost || 0;
                 const impact = await this._increaseInventoryForReturn(conn, {
                     returnId,
                     item,
                     actorUserId,
                     orderId: returnRow.order_id || null,
-                    unitCost
+                    unitCost: todayCost
                 });
                 restockedTotal += impact.restocked;
                 discardedTotal += impact.discarded;
-                reenteredCost += unitCost * (impact.reentered || 0);
-                lostCost += unitCost * (impact.lost || 0);
+                if (!costPosted || (!impact.reentered && !impact.lost)) continue;
+                // Without the order, the cost it was sold at is unknown: today's (no holding result),
+                // and a unit lost is not reclassified (its cost stays as sold).
+                const exitCost = returnRow.order_id ? await this._soldCost(conn, returnRow.order_id, item.product_id, todayCost) : todayCost;
+                reentries.push({
+                    quantity: impact.reentered || 0,
+                    lost: returnRow.order_id ? impact.lost || 0 : 0,
+                    exitCost,
+                    unitCost: impact.valued ? todayCost : 0,
+                    movementIds: impact.reentered ? [impact.movementId] : [],
+                });
             }
-
-            // The sale moved the cost to CMV; undo it for what came back. Units back in stock
-            // return to Inventory; units lost are reclassified as inventory losses. Only when
-            // the original sale posted its CMV, otherwise there is nothing to reverse.
-            if (returnRow.order_id && (reenteredCost > 0 || lostCost > 0)) {
-                // The cost was posted when the goods left (ADR-027: the movements keep the entry),
-                // or by the invoice for sales recorded before that rule.
-                const [cmvPosted] = await conn.query(
-                    `SELECT m.id FROM inventory_movements m
-                     WHERE m.reference_id = ? AND m.type = 'sale' AND m.journal_entry_id IS NOT NULL
-                     UNION ALL
-                     SELECT je.id FROM journal_entries je
-                     JOIN invoices i ON i.id = je.reference_id AND je.reference_type = 'invoice' AND i.deleted_at IS NULL
-                     JOIN journal_entry_lines jl ON jl.journal_entry_id = je.id AND jl.account_code = ?
-                     WHERE i.order_id = ? LIMIT 1`,
-                    [returnRow.order_id, ACCOUNTS.COGS, returnRow.order_id]
-                );
-                if (cmvPosted.length > 0) {
-                    await accountingService.createJournalEntryIfAny(conn, {
-                        date: new Date(),
-                        description: 'Reversión de costo por devolución de cliente',
-                        reference_type: 'client_return',
-                        reference_id: returnId,
-                        lines: [
-                            { account_code: ACCOUNTS.INVENTORY, debit: reenteredCost, credit: 0, notes: 'Mercadería reingresada al costo' },
-                            { account_code: ACCOUNTS.INVENTORY_LOSSES, debit: lostCost, credit: 0, notes: 'Mercadería devuelta no recuperable' },
-                            { account_code: ACCOUNTS.COGS, debit: 0, credit: reenteredCost + lostCost, notes: 'Reversión de CMV' }
-                        ]
-                    });
-                }
-            }
+            await inventoryValuation.postReentry(conn, {
+                referenceType: 'client_return',
+                referenceId: returnId,
+                description: 'Reversión de costo por devolución de cliente',
+                lines: reentries,
+            });
 
             let creditNoteId = null;
             let creditNoteNumber = null;

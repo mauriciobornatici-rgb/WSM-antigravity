@@ -249,9 +249,11 @@ test('return inventory impact covers supplier RMA, loss, rejection and zero quan
     const rejected = await returnsService._increaseInventoryForReturn(connection, { returnId: 'r', item: { product_id: 'p', quantity: 1, condition_status: 'rejected' } });
     // RMA units are back in a stock location (cost returns to inventory); a loss is lost;
     // a rejected line was never taken back.
-    assert.deepEqual(rma, { restocked: 0, discarded: 2, reentered: 2, lost: 0 });
-    assert.deepEqual(loss, { restocked: 0, discarded: 1, reentered: 0, lost: 1 });
-    assert.deepEqual(rejected, { restocked: 0, discarded: 1, reentered: 0, lost: 0 });
+    const counts = ({ restocked, discarded, reentered, lost, valued }) => ({ restocked, discarded, reentered, lost, valued });
+    assert.deepEqual(counts(rma), { restocked: 0, discarded: 2, reentered: 2, lost: 0, valued: true });
+    assert.deepEqual(counts(loss), { restocked: 0, discarded: 1, reentered: 0, lost: 1, valued: false });
+    assert.deepEqual(counts(rejected), { restocked: 0, discarded: 1, reentered: 0, lost: 0, valued: false });
+    assert.ok(rma.movementId, 'the movement that brought them back, to link it to its entry (ADR-027)');
     assert.ok(calls.some((call) => call.sql.includes('INSERT INTO inventory (')));
     assert.ok(calls.some((call) => call.params?.includes('rejected')));
 });
@@ -268,7 +270,8 @@ test('sellable return goes back to the location it was sold from, traced at cost
         returnId: 'r', actorUserId: 'u', orderId: 'o-1', unitCost: 7,
         item: { product_id: 'p', quantity: 2, condition_status: 'SELLABLE', unit_price: 12.5 },
     });
-    assert.deepEqual(result, { restocked: 2, discarded: 0, reentered: 2, lost: 0 });
+    const movement0 = calls.find(({ sql }) => sql.includes('INSERT INTO inventory_movements'));
+    assert.deepEqual(result, { restocked: 2, discarded: 0, reentered: 2, lost: 0, valued: true, movementId: movement0.params[0] });
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('SELECT id FROM inventory') && params[1] === 'SALON'));
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE inventory') && params[1] === 'inv-salon'));
     const movement = calls.find(({ sql }) => sql.includes('INSERT INTO inventory_movements'));

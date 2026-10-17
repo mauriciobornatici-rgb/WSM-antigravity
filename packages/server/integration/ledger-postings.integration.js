@@ -7,6 +7,7 @@ import financeService from '../services/finance.service.js';
 import accountingService from '../services/accounting.service.js';
 import supplierPaymentService from '../domains/procurement/SupplierPaymentService.js';
 import { creditNotesService, warrantiesService } from '../services/warranties.service.js';
+import inventoryService from '../services/inventory.service.js';
 
 test.after(async () => {
     await closePool();
@@ -93,13 +94,16 @@ test('ADR-014: a repaired warranty hands the unit back: no phantom unit stays in
     await pool.query("INSERT INTO warranty_claims (id, product_id, issue_description, status) VALUES (?, ?, 'Falla', 'initiated')", [id, productId]);
 
     await warrantiesService.updateWarrantyStatus(id, { status: 'received' }, null, null);
-    await pool.query('UPDATE products SET purchase_price = 45 WHERE id = ?', [productId]); // cost changes meanwhile
+    // The cost changes meanwhile: the unit in quarantine is revalued with the rest (ADR-027).
+    await inventoryService.updateProduct(productId, { purchase_price: 45 }, null, null, 'admin');
     await warrantiesService.updateWarrantyStatus(id, { status: 'resolved', resolution_type: 'repaired' }, null, null);
     await warrantiesService.updateWarrantyStatus(id, { status: 'closed' }, null, null);
 
     assert.equal((await stockOf(productId)).quantity, 0);
-    // Written off at the intake cost: inventory and warranty cost both net to zero.
-    assert.deepEqual(await postedLines('warranty_claim', id), { '1.1.04.01': 0, '5.1.02.03': 0 });
+    // Written off at today's cost (45), the value it had in the ledger: in at 30, revalued by 15,
+    // out at 45. Inventory nets to zero; the 15 is warranty cost against the holding gain.
+    assert.deepEqual(await postedLines('warranty_claim', id), { '1.1.04.01': -15, '5.1.02.03': 15 });
+    assert.deepEqual(await postedLines('stock_revaluation', productId), { '1.1.04.01': 15, '4.2.02.01': -15 });
 });
 
 test('ADR-014: a refunded warranty keeps the defective unit (ours now) in quarantine at cost', async () => {

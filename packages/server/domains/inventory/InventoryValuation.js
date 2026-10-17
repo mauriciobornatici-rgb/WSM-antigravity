@@ -160,19 +160,23 @@ export class InventoryValuation {
      * Goods that come back to stock after their cost of goods sold was posted (a packed order that
      * is cancelled, a customer return): they enter at today's cost and the cost of goods sold is
      * reversed at the cost they left at. The difference is the holding result of those units while
-     * they were out. One entry for the document; the movements that brought them back keep the link.
-     * @param {Array<{quantity:number, exitCost:number, unitCost:number, movementIds?:string[]}>} lines
+     * they were out. Units that came back unusable (`lost`) never enter: their cost moves from the
+     * cost of goods sold to inventory losses. One entry for the document; the movements that
+     * brought goods back keep the link.
+     * @param {Array<{quantity:number, lost?:number, exitCost:number, unitCost:number, movementIds?:string[]}>} lines
      */
     async postReentry(connection, { referenceType, referenceId, description, lines, date = new Date() }) {
         let inventoryCents = 0;
-        let cogsCents = 0;
+        let returnedCents = 0;
+        let lostCents = 0;
         const movementIds = [];
         for (const line of lines || []) {
             inventoryCents += valueCents(line.quantity, line.unitCost);
-            cogsCents += valueCents(line.quantity, line.exitCost);
+            returnedCents += valueCents(line.quantity, line.exitCost);
+            lostCents += valueCents(line.lost, line.exitCost);
             movementIds.push(...(line.movementIds || []));
         }
-        const holdingCents = inventoryCents - cogsCents;
+        const holdingCents = inventoryCents - returnedCents;
         const entryId = await this.accounting.createJournalEntryIfAny(connection, {
             date,
             description,
@@ -180,7 +184,8 @@ export class InventoryValuation {
             reference_id: referenceId,
             lines: [
                 { account_code: ACCOUNTS.INVENTORY, debit: inventoryCents / 100, credit: 0, notes: 'Reingreso de mercadería al costo actual' },
-                { account_code: ACCOUNTS.COGS, debit: 0, credit: cogsCents / 100, notes: 'Reversión del costo de lo vendido' },
+                { account_code: ACCOUNTS.INVENTORY_LOSSES, debit: lostCents / 100, credit: 0, notes: 'Mercadería devuelta no recuperable' },
+                { account_code: ACCOUNTS.COGS, debit: 0, credit: (returnedCents + lostCents) / 100, notes: 'Reversión del costo de lo vendido' },
                 {
                     account_code: ACCOUNTS.HOLDING_RESULT,
                     debit: holdingCents < 0 ? -holdingCents / 100 : 0,

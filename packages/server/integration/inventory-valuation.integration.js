@@ -264,3 +264,35 @@ test('an order whose invoice already posted its cost (before ADR-027) is packed 
     assert.deepEqual((await ledgerOf('order', orderId)).lines, []);
     assert.ok((await saleMovements(orderId)).every((movement) => movement.journal_entry_id === legacyEntry));
 });
+
+test('a return after a cost change comes back at today\'s cost and reverses the cost it was sold at; a lost unit goes to losses', async () => {
+    const { returnsService } = await import('../services/warranties.service.js');
+    const productId = await seedProduct({ cost: 100, salePrice: 300, stock: [{ location: 'QA-A', quantity: 5 }] });
+    const order = await counterSale([{ product_id: productId, quantity: 3 }]);
+    await inventoryService.updateProduct(productId, { purchase_price: 120 }, null, null, 'admin');
+
+    const created = await returnsService.createReturn({
+        order_id: order.id,
+        customer_name: 'Cliente QA',
+        reason: 'Cambio',
+        items: [
+            { product_id: productId, quantity: 2, condition_status: 'sellable' },
+            { product_id: productId, quantity: 1, condition_status: 'loss' },
+        ],
+    });
+    await returnsService.approveReturn(created.id, null, null);
+
+    // 2 back at 120 (240), 3 × 100 of cost reversed, 1 × 100 lost, 40 of holding gain.
+    assert.deepEqual((await ledgerOf('client_return', created.id)).lines.filter(([account]) => ['1.1.04.01', '5.1.01.01', '5.1.02.02', '4.2.02.01'].includes(account)), [
+        ['1.1.04.01', 240, 0],
+        ['4.2.02.01', 0, 40],
+        ['5.1.01.01', 0, 300],
+        ['5.1.02.02', 100, 0],
+    ]);
+    const [[back]] = await pool.query(
+        "SELECT unit_cost, journal_entry_id FROM inventory_movements WHERE reference_id = ? AND type = 'return'",
+        [created.id]
+    );
+    assert.equal(Number(back.unit_cost), 120);
+    assert.ok(back.journal_entry_id);
+});
