@@ -512,11 +512,13 @@ test('processReceptionApproval successfully approves reception, updates stock, u
                     defect_description: null
                 }]];
             }
-            if (sql.includes('SELECT id FROM inventory')) {
-                return [[{ id: 'inv-row-1' }]];
+            // ADR-027: the stock rows (L3), then the product with its cost (L4).
+            if (sql.includes('reserved_quantity') && sql.includes('FROM inventory')) {
+                return [[{ id: 'inv-row-1', product_id: 'product-1', location: 'Depot-A', quantity: 5, reserved_quantity: 0 }]];
             }
-            if (sql.includes('SELECT quantity_ordered, quantity_received FROM purchase_order_items WHERE id')) {
-                return [[{ quantity_ordered: 20, quantity_received: 10 }]];
+            if (sql.includes('auto_update_cost')) return [[{ id: 'product-1', purchase_price: 50 }]];
+            if (sql.includes('FROM purchase_order_items WHERE id IN')) {
+                return [[{ id: 'po-item-1', quantity_ordered: 20, quantity_received: 10 }]];
             }
             if (sql.includes('quantity_ordered') && sql.includes('purchase_order_items')) {
                 return [[{ ordered_qty: 20, received_qty: 20 }]];
@@ -557,7 +559,7 @@ test('processReceptionApproval rejects receptions without a complete quality che
                 return [[{ id: 'reception-1', status: 'pending_qc', supplier_id: 'supplier-1' }]];
             }
             if (sql.includes('SELECT * FROM reception_items')) {
-                return [[{ id: 'item-1', product_id: 'product-1', quantity_received: 4 }]];
+                return [[{ id: 'item-1', product_id: 'product-1', quantity_received: 4, unit_cost: 9 }]];
             }
             if (sql.includes('FROM quality_checks')) return [[]];
             return [[]];

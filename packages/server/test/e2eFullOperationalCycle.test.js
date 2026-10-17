@@ -115,7 +115,7 @@ test("Ciclo Operativo Completo Integral: Configuración -> Compra -> WMS -> Fact
                 reception_id: "rec-e2e-1",
                 product_id: memoryState.product.id,
                 quantity_received: 20,
-                unit_price: 50000,
+                unit_cost: 50000,
                 location: "Góndola A-2"
             }]];
         }

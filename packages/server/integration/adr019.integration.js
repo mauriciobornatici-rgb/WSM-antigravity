@@ -175,7 +175,7 @@ test('Bajos: a location code with stock cannot be renamed, and a deleted supplie
     await assert.rejects(
         () => new SupplierInvoiceService().createSupplierInvoice({
             invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplier.id, issue_date: '2026-10-13',
-            net_amount: 100, vat_amount: 21, vat_rate: 21, total_amount: 121,
+            net_amount: 100, vat_amount: 21, vat_rate: 21, total_amount: 121, purchase_kind: 'expense',
         }, null),
         (err) => err.statusCode === 404 && err.responseBody.error === 'supplier_not_found'
     );

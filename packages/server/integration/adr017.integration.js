@@ -84,8 +84,15 @@ test('ADR-017: a shipping absorbed by the business is kept on the order but neve
 test('ADR-017: a purchase with two rates and its return reverse the fiscal credit per rate', async () => {
     const supplierId = crypto.randomUUID();
     await pool.query('INSERT INTO suppliers (id, name) VALUES (?, ?)', [supplierId, `Proveedor QA ${supplierId.slice(0, 8)}`]);
+    // ADR-027 (D2): goods are invoiced against their delivery note (here one approved before the rule).
+    const receptionId = crypto.randomUUID();
+    await pool.query(
+        "INSERT INTO receptions (id, reception_number, supplier_id, remito_number, status) VALUES (?, ?, ?, ?, 'approved')",
+        [receptionId, `REC-QA-${receptionId.slice(0, 8)}`, supplierId, `R-${receptionId.slice(0, 6)}`]
+    );
     const invoice = await new SupplierInvoiceService().createSupplierInvoice({
         invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-12',
+        reception_ids: [receptionId],
         vat_lines: [{ vat_rate: 21, net_amount: 1000, vat_amount: 210 }, { vat_rate: 10.5, net_amount: 1000, vat_amount: 105 }],
         total_amount: 2315,
     }, null);

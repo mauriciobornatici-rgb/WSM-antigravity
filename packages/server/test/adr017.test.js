@@ -39,6 +39,8 @@ function supplierInvoiceHarness(t) {
     mockPool(t, async (sql, params) => {
         calls.push({ sql: String(sql), params });
         if (/FROM suppliers WHERE id = \? AND deleted_at IS NULL FOR UPDATE/.test(String(sql))) return [[{ id: params[0] }]];
+        // A delivery note received before ADR-027: the invoice debits inventory as it always did.
+        if (String(sql).includes('FROM receptions WHERE id IN')) return [[{ id: 'r', supplier_id: 's', status: 'approved' }]];
         return [[]];
     });
     const originals = { journal: accountingService.createJournalEntry, audit: auditService.log };
@@ -54,7 +56,7 @@ function supplierInvoiceHarness(t) {
 test('a Factura A with several rates books one fiscal credit line per rate and stores them', async (t) => {
     const { journals, calls } = supplierInvoiceHarness(t);
     await new SupplierInvoiceService().createSupplierInvoice({
-        invoice_number: '0001-1', invoice_type: 'A', supplier_id: 's', issue_date: '2026-10-12',
+        invoice_number: '0001-1', invoice_type: 'A', supplier_id: 's', issue_date: '2026-10-12', reception_id: 'r',
         vat_lines: [{ vat_rate: 21, net_amount: 1000, vat_amount: 210 }, { vat_rate: 10.5, net_amount: 2000, vat_amount: 210 }],
         other_taxes: 30, total_amount: 3450,
     }, 'u');

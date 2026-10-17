@@ -177,7 +177,7 @@ test('getReceptions filters and groups items per reception', async (t) => {
 function receptionRules(overrides = {}) {
     return [
         ['FROM purchase_orders WHERE id = ? FOR UPDATE', overrides.order ?? [[{ id: 'po1', supplier_id: 'sup1', status: 'sent' }]]],
-        ['FROM purchase_order_items', overrides.poItems ?? [[{ id: 'poi1', product_id: 'p1', quantity_ordered: 10, quantity_received: 2 }]]],
+        ['FROM purchase_order_items', overrides.poItems ?? [[{ id: 'poi1', product_id: 'p1', quantity_ordered: 10, quantity_received: 2, unit_cost: '12.00' }]]],
         ['FROM reception_items ri', overrides.pending ?? [[{ po_item_id: 'poi1', pending_quantity: 3 }]]],
         ['SELECT supplier_id FROM purchase_orders', overrides.poSupplier ?? [[{ supplier_id: 'sup1' }]]],
         ['SELECT id FROM receptions', overrides.dupes ?? [[]]],
@@ -251,7 +251,7 @@ test('createReception 409 when quantity exceeds pending balance (ordered - recei
 
 test('createReception requires a supplier when none can be derived', async (t) => {
     await expectReceptionFailure(t, receptionRules(),
-        { items: [{ product_id: 'p1', quantity_received: 1 }] }, { message: /supplier_id es obligatorio/ });
+        { items: [{ product_id: 'p1', quantity_received: 1, unit_cost: 3 }] }, { message: /supplier_id es obligatorio/ });
     await expectReceptionFailure(t, receptionRules({ order: [[{ id: 'po1', status: 'partial' }]], poItems: [[]], poSupplier: [[]] }),
         { purchase_order_id: 'po1', items: [] }, { message: /supplier_id es obligatorio/ });
 });
@@ -269,7 +269,8 @@ test('createReception from a purchase order inserts reception and items, then au
             purchase_order_id: 'po1',
             remito_number: 'R-9',
             notes: 'n',
-            items: [{ po_item_id: 'poi1', product_id: 'p1', quantity_received: 5, quantity_expected: 5, unit_cost: 12, location_assigned: 'A1', batch_number: 'L1', expiration_date: '2027-01-01', notes: 'ok' }]
+            // ADR-027 (D1): with an order the cost is the order's, whatever the screen sends.
+            items: [{ po_item_id: 'poi1', product_id: 'p1', quantity_received: 5, quantity_expected: 5, unit_cost: 99, location_assigned: 'A1', batch_number: 'L1', expiration_date: '2027-01-01', notes: 'ok' }]
         },
         user: { id: 'u1' }
     });
@@ -288,11 +289,11 @@ test('createReception from a purchase order inserts reception and items, then au
     assert.ok(!calls.some((c) => /journal|accounting/i.test(c.statement)));
 });
 
-test('createReception without purchase order applies defaults', async (t) => {
+test('createReception without purchase order applies defaults and keeps the typed cost in cents', async (t) => {
     const logs = installAudit(t);
     const { calls } = installPool(t, receptionRules());
     const res = await runHandler(ctrl.createReception, {
-        body: { supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 2 }] }
+        body: { supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 2, unit_cost: 8.456 }] }
     });
     assert.equal(res.status, 200);
     assert.ok(!calls.some((c) => c.statement.startsWith('SELECT id FROM receptions')));
@@ -300,8 +301,20 @@ test('createReception without purchase order applies defaults', async (t) => {
     assert.deepEqual(header.params.slice(2), [null, 'supX', null, null]);
     const row = calls.find((c) => c.statement.startsWith('INSERT INTO reception_items'));
     assert.deepEqual([row.params[3], row.params[4], row.params[6], row.params[7], row.params[8], row.params[9], row.params[10]],
-        [null, 0, 0, 'General', null, null, null]);
+        [null, 0, 8.46, 'General', null, null, null]);
     assert.equal(logs[0].payload.user_id, null);
+});
+
+test('createReception without purchase order needs a cost, whole quantities and one line per product (ADR-027)', async (t) => {
+    await expectReceptionFailure(t, receptionRules(),
+        { supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 2 }] },
+        { statusCode: 400, errorCode: 'RECEPTION_COST_REQUIRED' });
+    await expectReceptionFailure(t, receptionRules(),
+        { supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 1.5, unit_cost: 3 }] },
+        { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
+    await expectReceptionFailure(t, receptionRules(),
+        { supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 1, unit_cost: 3 }, { product_id: 'p1', quantity_received: 1, unit_cost: 3 }] },
+        { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
 });
 
 test('createReception derives the supplier from the purchase order', async (t) => {

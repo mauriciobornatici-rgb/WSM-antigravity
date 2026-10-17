@@ -245,6 +245,8 @@ export function SupplierInvoiceForm({
     const selectedReceptions = receptions.filter(r => receptionIds.includes(r.id));
     const receivedNet = receptionsNetTotal(selectedReceptions);
     const receivedDifference = round2(netVal - receivedNet);
+    // ADR-027 (D2): goods are invoiced against their delivery notes (the stock came in with them).
+    const goodsWithoutReception = effectivePurchaseKind === 'goods' && receptionIds.length === 0;
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -259,6 +261,12 @@ export function SupplierInvoiceForm({
         }
         if (netVal <= 0) {
             toast.error("El Neto Gravado debe ser mayor a 0");
+            return;
+        }
+        if (goodsWithoutReception) {
+            toast.error("Elegí el remito de la mercadería", {
+                description: "Una factura de mercadería se carga contra su remito. Si es un flete o un gasto, cambiá el tipo de compra.",
+            });
             return;
         }
 
@@ -300,6 +308,12 @@ export function SupplierInvoiceForm({
                     description: difference > 0 ? 'El neto facturado es mayor al recibido en los remitos.' : 'El neto facturado es menor al recibido en los remitos.',
                 });
             }
+            const updates = result?.cost_updates ?? [];
+            if (updates.length > 0) {
+                toast.info(updates.length === 1 ? 'Se actualizó el costo de 1 producto' : `Se actualizó el costo de ${updates.length} productos`, {
+                    description: updates.slice(0, 3).map(update => `${update.name || 'Producto'}: ${formatMoney(update.old_cost)} → ${formatMoney(update.new_cost)}`).join(' · '),
+                });
+            }
         } catch {
             // Handled by parent or API caller
         } finally {
@@ -327,13 +341,18 @@ export function SupplierInvoiceForm({
 
                 {/* Optional Reception Links (one or several remitos) */}
                 <fieldset className="space-y-2" aria-describedby="receptions-help">
-                    <legend className="text-sm font-medium leading-none">Remitos a facturar (opcional)</legend>
+                    <legend className="text-sm font-medium leading-none">
+                        Remitos a facturar {effectivePurchaseKind === 'goods' ? '*' : '(opcional)'}
+                    </legend>
                     {!supplierId ? (
                         <p id="receptions-help" className="text-xs text-muted-foreground">Elegí un proveedor para ver sus remitos pendientes de factura.</p>
                     ) : loadingDropdowns ? (
                         <p id="receptions-help" className="text-xs text-muted-foreground">Cargando remitos...</p>
                     ) : receptions.length === 0 ? (
-                        <p id="receptions-help" className="text-xs text-muted-foreground">Este proveedor no tiene remitos aprobados sin facturar.</p>
+                        <p id="receptions-help" className="text-xs text-muted-foreground">
+                            Este proveedor no tiene remitos aprobados sin facturar.
+                            {effectivePurchaseKind === 'goods' ? ' Registrá primero la recepción de la mercadería (puede ser sin orden de compra).' : ''}
+                        </p>
                     ) : (
                         <>
                             <p id="receptions-help" className="text-xs text-muted-foreground">Podés marcar uno o varios remitos del mismo proveedor.</p>
@@ -364,7 +383,8 @@ export function SupplierInvoiceForm({
                             <p className="text-sm font-medium">Recibido en los remitos: {formatMoney(receivedNet)}</p>
                             {Math.abs(receivedDifference) > 0.01 ? (
                                 <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">
-                                    La factura difiere de lo recibido en {formatMoney(Math.abs(receivedDifference))}
+                                    La factura difiere de lo recibido en {formatMoney(Math.abs(receivedDifference))}. La diferencia
+                                    corrige el costo de los productos que se actualizan con cada compra; en los de costo fijo va a resultados.
                                 </p>
                             ) : null}
                         </div>

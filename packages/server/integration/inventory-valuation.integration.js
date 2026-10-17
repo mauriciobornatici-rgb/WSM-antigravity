@@ -337,3 +337,102 @@ test('moving goods to Mermas is a loss, bringing them back a recovery; opening s
         (error) => error.statusCode === 400 && error.errorCode === 'initial_stock_location'
     );
 });
+
+// ---- I5: purchases go through 2.1.01.02 "Mercadería recibida a facturar" (D1, D2) ----
+
+async function receiveWithoutOrder(supplierId, productId, quantity, unitCost, { failed = 0 } = {}) {
+    const { default: receptionService } = await import('../domains/procurement/ReceptionService.js');
+    const { QualityCheckService } = await import('../domains/procurement/QualityCheckService.js');
+    const { default: goodsReceptionService } = await import('../domains/procurement/GoodsReceptionService.js');
+    const reception = await receptionService.createReception({
+        supplier_id: supplierId, remito_number: `R-${crypto.randomUUID().slice(0, 8)}`,
+        items: [{ product_id: productId, quantity_received: quantity, unit_cost: unitCost, location_assigned: 'QA-A' }],
+    }, null);
+    await new QualityCheckService().createQualityCheck({
+        reception_id: reception.id, product_id: productId, result: failed ? 'partial' : 'passed',
+        quantity_checked: quantity, quantity_passed: quantity - failed, quantity_failed: failed,
+    }, null);
+    await goodsReceptionService.processReceptionApproval(reception.id, {});
+    return reception.id;
+}
+
+async function seedSupplier() {
+    const supplierId = crypto.randomUUID();
+    await pool.query('INSERT INTO suppliers (id, name) VALUES (?, ?)', [supplierId, `Proveedor QA ${supplierId.slice(0, 8)}`]);
+    return supplierId;
+}
+
+test('a purchase enters the ledger with its delivery note and the invoice clears it; the difference corrects the cost (D1)', async () => {
+    const { SupplierInvoiceService } = await import('../domains/procurement/SupplierInvoiceService.js');
+    const supplierId = await seedSupplier();
+    const productId = await seedProduct({ cost: 100, salePrice: 200, stock: [{ location: 'QA-A', quantity: 3 }] });
+
+    // 4 units at 120 (no purchase order): the 3 in stock go to 120 (+60) and the 4 enter at 120.
+    const receptionId = await receiveWithoutOrder(supplierId, productId, 4, 120);
+    assert.deepEqual((await ledgerOf('goods_received', receptionId)).lines, [['1.1.04.01', 480, 0], ['2.1.01.02', 0, 480]]);
+    const [[afterReception]] = await pool.query('SELECT purchase_price, sale_price FROM products WHERE id = ?', [productId]);
+    assert.deepEqual([Number(afterReception.purchase_price), Number(afterReception.sale_price)], [120, 240]);
+
+    // The invoice says 520 net (+21 % VAT): 480 clear 2.1.01.02, 40 more is holding result, and the
+    // cost becomes 130 (520 / 4), revaluing the 7 units in stock by 70.
+    const invoice = await new SupplierInvoiceService().createSupplierInvoice({
+        invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-17',
+        reception_ids: [receptionId], net_amount: 520, vat_amount: 109.2, vat_rate: 21, total_amount: 629.2,
+    }, null);
+    assert.deepEqual((await ledgerOf('supplier_invoice', invoice.id)).lines, [
+        ['1.1.05.02', 109.2, 0], ['2.1.01.01', 0, 629.2], ['2.1.01.02', 480, 0], ['4.2.02.01', 40, 0],
+    ]);
+    assert.deepEqual(invoice.cost_updates.map((update) => [update.old_cost, update.new_cost]), [[120, 130]]);
+    assert.deepEqual((await ledgerOf('stock_revaluation', productId)).lines, [
+        ['1.1.04.01', 60, 0], ['1.1.04.01', 70, 0], ['4.2.02.01', 0, 60], ['4.2.02.01', 0, 70],
+    ]);
+    const [[link]] = await pool.query('SELECT cleared_amount FROM supplier_invoice_receptions WHERE reception_id = ?', [receptionId]);
+    assert.equal(Number(link.cleared_amount), 480);
+    // What this delivery note left in 2.1.01.02 is now cleared.
+    const [[bridge]] = await pool.query(
+        `SELECT COALESCE(SUM(jel.credit - jel.debit), 0) AS balance FROM journal_entries je
+         JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id AND jel.account_code = '2.1.01.02'
+         WHERE (je.reference_type = 'goods_received' AND je.reference_id = ?) OR (je.reference_type = 'supplier_invoice' AND je.reference_id = ?)`,
+        [receptionId, invoice.id]
+    );
+    assert.equal(Number(bridge.balance), 0);
+});
+
+test('a product with a fixed cost keeps it: the reception and the invoice send the differences to holding result', async () => {
+    const { SupplierInvoiceService } = await import('../domains/procurement/SupplierInvoiceService.js');
+    const supplierId = await seedSupplier();
+    const productId = await seedProduct({ cost: 100, stock: [{ location: 'QA-A', quantity: 2 }] });
+    await pool.query('UPDATE products SET auto_update_cost = 0 WHERE id = ?', [productId]);
+
+    const receptionId = await receiveWithoutOrder(supplierId, productId, 2, 110, { failed: 1 });
+    // 1 approved and 1 in quarantine, both valued at the fixed 100; 20 paid above it.
+    assert.deepEqual((await ledgerOf('goods_received', receptionId)).lines, [['1.1.04.01', 200, 0], ['2.1.01.02', 0, 220], ['4.2.02.01', 20, 0]]);
+
+    // A Factura B: its VAT is cost. 242 against 220 received: 22 more of holding result, no cost change.
+    const invoice = await new SupplierInvoiceService().createSupplierInvoice({
+        invoice_number: `B-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'B', supplier_id: supplierId, issue_date: '2026-10-17',
+        reception_ids: [receptionId], net_amount: 200, vat_amount: 42, vat_rate: 21, total_amount: 242,
+    }, null);
+    assert.deepEqual((await ledgerOf('supplier_invoice', invoice.id)).lines, [['2.1.01.01', 0, 242], ['2.1.01.02', 220, 0], ['4.2.02.01', 22, 0]]);
+    assert.equal(invoice.cost_updates, undefined);
+    const [[product]] = await pool.query('SELECT purchase_price FROM products WHERE id = ?', [productId]);
+    assert.equal(Number(product.purchase_price), 100);
+});
+
+test('goods are never invoiced without their delivery note (D2), and a delivery note needs a cost', async () => {
+    const { SupplierInvoiceService } = await import('../domains/procurement/SupplierInvoiceService.js');
+    const { default: receptionService } = await import('../domains/procurement/ReceptionService.js');
+    const supplierId = await seedSupplier();
+    const productId = await seedProduct({ cost: 10 });
+    await assert.rejects(
+        () => new SupplierInvoiceService().createSupplierInvoice({
+            invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-17',
+            net_amount: 100, vat_amount: 21, vat_rate: 21, total_amount: 121,
+        }, null),
+        (err) => err.statusCode === 409 && err.responseBody.error === 'goods_invoice_requires_reception'
+    );
+    await assert.rejects(
+        () => receptionService.createReception({ supplier_id: supplierId, items: [{ product_id: productId, quantity_received: 1 }] }, null),
+        (err) => err.statusCode === 400 && err.errorCode === 'RECEPTION_COST_REQUIRED'
+    );
+});

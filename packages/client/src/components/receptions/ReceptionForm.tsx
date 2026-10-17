@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { AlertCircle, Package } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { AlertCircle, Package, Plus, Trash2 } from "lucide-react";
 import { api } from "@/services/api";
-import type { PurchaseOrder, Supplier } from "@/types";
+import type { Product, PurchaseOrder, Supplier } from "@/types";
 import { showErrorToast } from "@/lib/errorHandling";
+import { formatMoney } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ArgentinaDateInput } from "@/components/common/ArgentinaDateInput";
@@ -31,6 +32,17 @@ interface ReceptionItem {
     expiration_date: string;
     rejected: boolean;
     notes: string;
+}
+
+// A small purchase without a purchase order (ADR-027, D2): the lines and their cost are typed here.
+const NO_ORDER = "none";
+
+interface ManualItem {
+    product_id: string;
+    product_name: string;
+    sku: string;
+    quantity_received: string;
+    unit_cost: string;
 }
 
 function toReceptionItem(item: PurchaseOrderItem): ReceptionItem {
@@ -71,10 +83,46 @@ export function ReceptionForm({
     const [purchaseOrderId, setPurchaseOrderId] = useState(initialOrderId ?? "");
     const [remitoNumber, setRemitoNumber] = useState("");
     const [notes, setNotes] = useState("");
+    const withoutOrder = purchaseOrderId === NO_ORDER;
+    const [products, setProducts] = useState<Product[]>([]);
+    const [productSearch, setProductSearch] = useState("");
+    const [manualItems, setManualItems] = useState<ManualItem[]>([]);
 
     useEffect(() => {
         void loadSuppliers();
     }, []);
+
+    useEffect(() => {
+        if (!withoutOrder || products.length > 0) return;
+        api.getProducts()
+            .then((response) => setProducts(response))
+            .catch((error) => showErrorToast("Error al cargar productos", error));
+    }, [withoutOrder, products.length]);
+
+    const productMatches = useMemo(() => {
+        const query = productSearch.trim().toLowerCase();
+        if (!query) return [];
+        return products
+            .filter((product) => !manualItems.some((item) => item.product_id === product.id))
+            .filter((product) => [product.name, product.sku, product.barcode].some((value) => String(value || "").toLowerCase().includes(query)))
+            .slice(0, 8);
+    }, [productSearch, products, manualItems]);
+
+    function addManualItem(product: Product) {
+        const cost = Number(product.purchase_price || 0) > 0 ? Number(product.purchase_price) : Number(product.cost_price || 0);
+        setManualItems((current) => [...current, {
+            product_id: product.id,
+            product_name: product.name,
+            sku: product.sku,
+            quantity_received: "1",
+            unit_cost: cost > 0 ? String(cost) : "",
+        }]);
+        setProductSearch("");
+    }
+
+    function updateManualItem(index: number, patch: Partial<ManualItem>) {
+        setManualItems((current) => current.map((item, currentIndex) => (currentIndex === index ? { ...item, ...patch } : item)));
+    }
 
     useEffect(() => {
         if (!supplierId) {
@@ -87,10 +135,11 @@ export function ReceptionForm({
     }, [supplierId, initialOrderId]);
 
     useEffect(() => {
-        if (!purchaseOrderId) {
+        if (!purchaseOrderId || purchaseOrderId === NO_ORDER) {
             setItems([]);
             return;
         }
+        setManualItems([]);
         void loadPurchaseOrderItems(purchaseOrderId);
     }, [purchaseOrderId]);
 
@@ -134,7 +183,38 @@ export function ReceptionForm({
         event.preventDefault();
 
         if (!supplierId || !purchaseOrderId) {
-            showErrorToast("Datos incompletos", new Error("Selecciona proveedor y orden de compra"));
+            showErrorToast("Datos incompletos", new Error("Elegí el proveedor y la orden de compra (o «Sin orden de compra»)."));
+            return;
+        }
+
+        if (withoutOrder) {
+            if (manualItems.length === 0) {
+                showErrorToast("Sin productos", new Error("Agregá los productos que llegaron."));
+                return;
+            }
+            const invalid = manualItems.find((item) => {
+                const quantity = Number(item.quantity_received);
+                return !Number.isInteger(quantity) || quantity <= 0 || !(Number(item.unit_cost) > 0);
+            });
+            if (invalid) {
+                showErrorToast("Datos incompletos", new Error(`Revisá ${invalid.product_name}: la cantidad tiene que ser un número entero y el costo, mayor a 0.`));
+                return;
+            }
+            setSubmitting(true);
+            try {
+                await onSubmit({
+                    supplier_id: supplierId,
+                    items: manualItems.map((item) => ({
+                        product_id: item.product_id,
+                        quantity_received: Number(item.quantity_received),
+                        unit_cost: Math.round(Number(item.unit_cost) * 100) / 100,
+                    })),
+                    ...(remitoNumber ? { remito_number: remitoNumber } : {}),
+                    ...(notes ? { notes } : {}),
+                });
+            } finally {
+                setSubmitting(false);
+            }
             return;
         }
 
@@ -201,9 +281,10 @@ export function ReceptionForm({
                     <Label htmlFor="order">Orden de compra *</Label>
                     <Select value={purchaseOrderId} onValueChange={setPurchaseOrderId} disabled={!supplierId}>
                         <SelectTrigger id="order">
-                            <SelectValue placeholder={supplierId ? "Selecciona OC" : "Selecciona proveedor primero"} />
+                            <SelectValue placeholder={supplierId ? "Elegí la OC o «Sin orden de compra»" : "Selecciona proveedor primero"} />
                         </SelectTrigger>
                         <SelectContent>
+                            <SelectItem value={NO_ORDER}>Sin orden de compra (compra chica)</SelectItem>
                             {purchaseOrders.map((order) => (
                                 <SelectItem key={order.id} value={order.id}>
                                     {order.po_number ?? order.id} - {order.order_date ? new Date(order.order_date).toLocaleDateString("es-AR") : "-"}
@@ -223,6 +304,114 @@ export function ReceptionForm({
                     />
                 </div>
             </div>
+
+            {withoutOrder && (
+                <section className="space-y-3" aria-labelledby="manual-items-title">
+                    <h3 id="manual-items-title" className="flex items-center gap-2 font-semibold">
+                        <Package className="h-5 w-5 text-blue-600" />
+                        Productos recibidos
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                        Cargá el costo neto (sin IVA) de cada producto, como figura en el remito o en la lista del proveedor.
+                        Si después la factura trae otro importe, la diferencia corrige el costo.
+                    </p>
+                    <div className="space-y-2">
+                        <Label htmlFor="manual-product-search">Buscar producto</Label>
+                        <Input
+                            id="manual-product-search"
+                            value={productSearch}
+                            onChange={(event) => setProductSearch(event.target.value)}
+                            placeholder="Nombre, SKU o código de barras"
+                            autoComplete="off"
+                        />
+                        {productMatches.length > 0 ? (
+                            <ul className="divide-y rounded-md border" aria-label="Productos encontrados">
+                                {productMatches.map((product) => (
+                                    <li key={product.id}>
+                                        <button
+                                            type="button"
+                                            className="flex min-h-11 w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-muted/60"
+                                            onClick={() => addManualItem(product)}
+                                        >
+                                            <span>
+                                                {product.name}
+                                                <span className="ml-2 text-xs text-muted-foreground">{product.sku}</span>
+                                            </span>
+                                            <Plus className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : productSearch.trim() ? (
+                            <p className="text-xs text-muted-foreground" aria-live="polite">No hay productos con ese texto.</p>
+                        ) : null}
+                    </div>
+                    {manualItems.length > 0 ? (
+                        <div className="overflow-x-auto rounded-lg border">
+                            <table className="w-full min-w-[620px] text-sm">
+                                <thead className="bg-muted/50">
+                                    <tr>
+                                        <th className="px-3 py-2 text-left font-semibold">Producto</th>
+                                        <th className="px-3 py-2 text-center font-semibold">Cantidad</th>
+                                        <th className="px-3 py-2 text-center font-semibold">Costo neto unitario</th>
+                                        <th className="px-3 py-2 text-right font-semibold">Subtotal neto</th>
+                                        <th className="px-3 py-2"><span className="sr-only">Quitar</span></th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                    {manualItems.map((item, index) => (
+                                        <tr key={item.product_id}>
+                                            <td className="px-3 py-2">
+                                                <div className="font-medium">{item.product_name}</div>
+                                                <div className="text-xs text-muted-foreground">{item.sku}</div>
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                <Input
+                                                    type="number"
+                                                    min="1"
+                                                    step="1"
+                                                    inputMode="numeric"
+                                                    aria-label={`Cantidad de ${item.product_name}`}
+                                                    className="mx-auto h-9 w-24 text-center"
+                                                    value={item.quantity_received}
+                                                    onChange={(event) => updateManualItem(index, { quantity_received: event.target.value })}
+                                                />
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                <Input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    inputMode="decimal"
+                                                    aria-label={`Costo neto unitario de ${item.product_name}`}
+                                                    className="mx-auto h-9 w-32 text-center"
+                                                    value={item.unit_cost}
+                                                    onChange={(event) => updateManualItem(index, { unit_cost: event.target.value })}
+                                                />
+                                            </td>
+                                            <td className="px-3 py-2 text-right font-mono">
+                                                {formatMoney((Number(item.quantity_received) || 0) * (Number(item.unit_cost) || 0))}
+                                            </td>
+                                            <td className="px-3 py-2 text-right">
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-11 w-11"
+                                                    aria-label={`Quitar ${item.product_name}`}
+                                                    onClick={() => setManualItems((current) => current.filter((_, currentIndex) => currentIndex !== index))}
+                                                >
+                                                    <Trash2 className="h-4 w-4 text-red-500" />
+                                                </Button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : null}
+                </section>
+            )}
 
             {items.length > 0 && (
                 <div className="space-y-3">

@@ -214,13 +214,24 @@ async function main() {
     await step('5. Factura de proveedor, pago parcial y saldo', async () => {
         const before = await supplierBalance();
         check('Saldo proveedor antes de facturar', before, 0);
+        // ADR-027 (D2): la mercadería se factura contra sus remitos.
         ctx.supInv = await call('POST', '/api/supplier-invoices', {
             invoice_number: `0001-${RUN.slice(-8)}`, invoice_type: 'A', supplier_id: ctx.supplier.id, purchase_order_id: ctx.po.id,
+            reception_ids: [ctx.rec1.id, ctx.rec2.id],
             issue_date: new Date().toISOString().slice(0, 10), net_amount: 440000, vat_amount: 92400, total_amount: 532400,
         });
         check('Saldo proveedor = factura', await supplierBalance(), 532400);
+        // La mercadería entró al mayor con los remitos (contra 2.1.01.02) y la factura la salda.
+        const [bridge] = await q(
+            `SELECT COALESCE(SUM(jel.credit - jel.debit), 0) AS v FROM journal_entries je
+             JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id AND jel.account_code = '2.1.01.02'
+             WHERE (je.reference_type = 'goods_received' AND je.reference_id IN (?, ?))
+                OR (je.reference_type = 'supplier_invoice' AND je.reference_id = ?)`,
+            [ctx.rec1.id, ctx.rec2.id, ctx.supInv.id]
+        );
+        check('Mercadería recibida a facturar queda en 0 al facturar los remitos', money(bridge.v), 0);
         try {
-            await call('POST', '/api/supplier-invoices', { invoice_number: `0001-${RUN.slice(-8)}`, invoice_type: 'A', supplier_id: ctx.supplier.id, issue_date: new Date().toISOString().slice(0, 10), net_amount: 1, vat_amount: 0 }, { expect: 409 });
+            await call('POST', '/api/supplier-invoices', { invoice_number: `0001-${RUN.slice(-8)}`, invoice_type: 'A', supplier_id: ctx.supplier.id, issue_date: new Date().toISOString().slice(0, 10), net_amount: 1, vat_amount: 0, reception_ids: [ctx.rec1.id] }, { expect: 409 });
             check('Factura de proveedor duplicada → 409', true, true);
         } catch (e) { check('Factura de proveedor duplicada → rechazada', e.status >= 400 && e.status < 500, true); }
         await call('POST', '/api/supplier-payments', { supplier_id: ctx.supplier.id, payments: [{ amount: 200000, payment_method: 'transfer', reference_number: `TRF-${RUN}` }] });

@@ -71,10 +71,30 @@ export class ReceptionService {
     async createReception(data, userId, ipAddress = null) {
         const { purchase_order_id, supplier_id, remito_number, items, notes } = data;
         const id = crypto.randomUUID();
+        // ADR-027: the cost of each line is what the goods enter the ledger at. With an order it is
+        // the order's (D1); without one (a small purchase) it is typed and must be there.
+        const costByPoItem = new Map();
 
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
+
+            if (!purchase_order_id) {
+                const products = new Set();
+                for (const item of items) {
+                    if (products.has(item.product_id)) {
+                        throw Object.assign(new Error('La recepción contiene el mismo producto en más de una línea; unificá las cantidades.'), { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
+                    }
+                    products.add(item.product_id);
+                    const receiving = Number(item.quantity_received || 0);
+                    if (!Number.isInteger(receiving) || receiving <= 0) {
+                        throw Object.assign(new Error('La cantidad recibida debe ser un número entero mayor a cero.'), { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
+                    }
+                    if (!(Math.round(Number(item.unit_cost || 0) * 100) > 0)) {
+                        throw Object.assign(new Error('Cargá el costo (neto, sin IVA) de cada producto del remito.'), { statusCode: 400, errorCode: 'RECEPTION_COST_REQUIRED' });
+                    }
+                }
+            }
 
             if (purchase_order_id) {
                 const [orders] = await connection.query(
@@ -95,10 +115,11 @@ export class ReceptionService {
                 }
 
                 const [poItems] = await connection.query(
-                    'SELECT id, product_id, quantity_ordered, quantity_received FROM purchase_order_items WHERE purchase_order_id = ? FOR UPDATE',
+                    'SELECT id, product_id, quantity_ordered, quantity_received, unit_cost FROM purchase_order_items WHERE purchase_order_id = ? FOR UPDATE',
                     [purchase_order_id]
                 );
                 const poItemById = new Map(poItems.map((item) => [item.id, item]));
+                for (const poItem of poItems) costByPoItem.set(poItem.id, Number(poItem.unit_cost || 0));
                 const [pendingRows] = await connection.query(`
                     SELECT ri.po_item_id, COALESCE(SUM(ri.quantity_received), 0) AS pending_quantity
                     FROM reception_items ri
@@ -185,7 +206,7 @@ export class ReceptionService {
                         item.po_item_id || null,
                         item.quantity_expected || 0,
                         item.quantity_received,
-                        item.unit_cost || 0,
+                        purchase_order_id ? costByPoItem.get(item.po_item_id) || 0 : Math.round(Number(item.unit_cost) * 100) / 100,
                         item.location_assigned || 'General',
                         item.batch_number || null,
                         item.expiration_date || null,

@@ -200,6 +200,36 @@ export class InventoryValuation {
     }
 
     /**
+     * A new cost for a product (manual edit, import, reception, supplier invoice): it changes the
+     * product and revalues the units in stock in the same transaction. With auto_update_price on and
+     * no price typed, the sale price follows the cost keeping the markup (D1). The caller holds the
+     * product's stock rows (L3, `stockRows`) and the product FOR UPDATE (L4), and passes it as
+     * `product`. Returns what changed, or null when the cost is the same.
+     */
+    async changeCost(connection, { product, stockRows, newCost, salePrice = undefined, userId = null, source, details = {} }) {
+        if (newCost == null) return null;
+        const oldCost = effectiveCost(product);
+        const cost = roundCost(newCost);
+        if (cost === oldCost) return null;
+        const changes = { purchase_price: cost };
+        // A price typed together with the cost wins; otherwise it follows the cost if the product says so.
+        const priceTyped = salePrice !== undefined && salePrice !== null
+            && Math.round(Number(salePrice) * 10000) !== Math.round(Number(product.sale_price || 0) * 10000);
+        if (!priceTyped && Number(product.auto_update_price ?? 1) === 1) {
+            const repriced = repricedSalePrice({ salePrice: product.sale_price, vatRate: product.vat_rate, oldCost, newCost: cost });
+            if (repriced != null) changes.sale_price = repriced;
+        }
+        await connection.query(
+            `UPDATE products SET ${Object.keys(changes).map((column) => `\`${column}\` = ?`).join(', ')} WHERE id = ?`,
+            [...Object.values(changes), product.id]
+        );
+        const revaluation = await this.revalue(connection, {
+            product, rows: stockRows, newCost: cost, userId, source, details,
+        });
+        return { oldCost, cost, salePrice: changes.sale_price ?? null, revaluation };
+    }
+
+    /**
      * A new cost on goods already in stock: the units in valued locations are revalued against the
      * holding result, or against the opening adjustment when the cost was 0 (D6: those goods had
      * never been valued, it is not a gain). The caller holds the product's stock rows (L3, `rows`)

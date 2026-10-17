@@ -8,7 +8,7 @@ import goodsReceptionService from '../domains/procurement/GoodsReceptionService.
 import { NON_SELLABLE_LOCATIONS } from '../domains/inventory/StockLedger.js';
 import accountingService from './accounting.service.js';
 import inventoryValuation, {
-    effectiveCost, isValuedLocation, repricedSalePrice, roundCost, valueCents,
+    effectiveCost, isValuedLocation, roundCost, valueCents,
 } from '../domains/inventory/InventoryValuation.js';
 import { hasPermission, PERMISSIONS } from '@wsm/common';
 
@@ -361,27 +361,8 @@ class InventoryService extends BaseService {
      * the cost keeping the markup (D1). The caller holds the product's stock rows (L3, `stockRows`)
      * and the product FOR UPDATE (L4), and passes it as `product`. Returns what changed, or null.
      */
-    async changeProductCost(connection, { product, stockRows, newCost, salePrice = undefined, userId = null, source, details = {} }) {
-        if (newCost == null) return null;
-        const oldCost = effectiveCost(product);
-        const cost = roundCost(newCost);
-        if (cost === oldCost) return null;
-        const changes = { purchase_price: cost };
-        // A price typed together with the cost wins; otherwise it follows the cost if the product says so.
-        const priceTyped = salePrice !== undefined && salePrice !== null
-            && Math.round(Number(salePrice) * 10000) !== Math.round(Number(product.sale_price || 0) * 10000);
-        if (!priceTyped && Number(product.auto_update_price ?? 1) === 1) {
-            const repriced = repricedSalePrice({ salePrice: product.sale_price, vatRate: product.vat_rate, oldCost, newCost: cost });
-            if (repriced != null) changes.sale_price = repriced;
-        }
-        await connection.query(
-            `UPDATE products SET ${Object.keys(changes).map((column) => `${this._validateColumn(column)} = ?`).join(', ')} WHERE id = ?`,
-            [...Object.values(changes), product.id]
-        );
-        const revaluation = await inventoryValuation.revalue(connection, {
-            product, rows: stockRows, newCost: cost, userId, source, details,
-        });
-        return { oldCost, cost, salePrice: changes.sale_price ?? null, revaluation };
+    async changeProductCost(connection, args) {
+        return inventoryValuation.changeCost(connection, args);
     }
 
     /**

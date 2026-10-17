@@ -462,6 +462,8 @@ export type SupplierInvoiceCreateResult = {
     // Neto recibido al costo y diferencia contra el neto de la factura (solo con remitos vinculados).
     receptions_net?: number;
     receptions_difference?: number;
+    // ADR-027 (D1): productos cuyo costo (y precio, si lo sigue) cambió con esta factura.
+    cost_updates?: Array<{ product_id: string; name?: string; old_cost: number; new_cost: number; new_sale_price?: number }>;
 };
 
 type ReceptionRecord = {
