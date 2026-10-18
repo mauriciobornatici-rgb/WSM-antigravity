@@ -133,6 +133,9 @@ export const supplierReturnFiltersSchema = z.object({
 
 export const supplierReturnCreateSchema = z.object({
   supplier_id: uuidSchema,
+  // ADR-027 (D7): the delivery note the goods came with. Before the supplier invoices it, the
+  // return lowers what is owed for that delivery note instead of the supplier's account.
+  reception_id: optionalUuidSchema,
   notes: z.string().nullable().optional(),
   items: z.array(
     z.object({

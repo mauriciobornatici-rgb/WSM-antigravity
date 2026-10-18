@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ReceptionPicker } from '@/components/receptions/ReceptionPicker';
 
 interface ReturnFormProps {
     onCancel: () => void;
@@ -29,6 +30,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [products, setProducts] = useState<Product[]>([]);
     const [selectedSupplierId, setSelectedSupplierId] = useState('');
+    const [receptionId, setReceptionId] = useState('');
     const [items, setItems] = useState<ReturnItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [notes, setNotes] = useState('');
@@ -128,6 +130,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
 
         const payload: Parameters<typeof api.createReturn>[0] = {
             supplier_id: selectedSupplierId,
+            ...(receptionId ? { reception_id: receptionId } : {}),
             items,
             ...(notes ? { notes } : {}),
         };
@@ -149,8 +152,8 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <div className="space-y-2">
                     <Label htmlFor="supplier">Proveedor</Label>
-                    <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
-                        <SelectTrigger>
+                    <Select value={selectedSupplierId} onValueChange={(value) => { setSelectedSupplierId(value); setReceptionId(''); }}>
+                        <SelectTrigger id="supplier">
                             <SelectValue placeholder="Seleccionar proveedor..." />
                         </SelectTrigger>
                         <SelectContent>
@@ -165,7 +168,13 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                         Solo se mostrarán los productos que se hayan recibido previamente de este proveedor.
                     </p>
                 </div>
-                <div className="space-y-2">
+                <ReceptionPicker
+                    id="return-reception"
+                    supplierId={selectedSupplierId}
+                    value={receptionId}
+                    onChange={setReceptionId}
+                />
+                <div className="space-y-2 lg:col-span-2">
                     <Label htmlFor="notes">Notas / Motivo General</Label>
                     <Input
                         id="notes"

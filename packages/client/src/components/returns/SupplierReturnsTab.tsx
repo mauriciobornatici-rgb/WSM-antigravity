@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { QueryErrorBanner, QueryLoadingState } from "./QueryStates"
+import { ReceptionPicker } from "@/components/receptions/ReceptionPicker"
 import { returnStatusLabel } from "./helpers"
 import type { SupplierReturnRow, SupplierReturnFormItem, SupplierReturnFormField } from "@/types/returns"
 import type { Supplier } from "@/types"
@@ -29,6 +30,7 @@ export function SupplierReturnsTab() {
 
     // Form state for creating a new return
     const [supplierId, setSupplierId] = useState("")
+    const [receptionId, setReceptionId] = useState("")
     const [notes, setNotes] = useState("")
     const [items, setItems] = useState<SupplierReturnFormItem[]>([
         { product_id: "", quantity: 1, unit_cost: 0, reason: "Defectuoso" }
@@ -130,12 +132,14 @@ export function SupplierReturnsTab() {
         try {
             await createReturnMutation.mutateAsync({
                 supplier_id: supplierId,
+                ...(receptionId ? { reception_id: receptionId } : {}),
                 notes: notes.trim(),
                 items: validItems,
             })
             toast.success("Devolución a proveedor registrada en borrador")
             setCreateOpen(false)
             setSupplierId("")
+            setReceptionId("")
             setNotes("")
             setItems([{ product_id: "", quantity: 1, unit_cost: 0, reason: "Defectuoso" }])
         } catch (error) {
@@ -359,9 +363,9 @@ export function SupplierReturnsTab() {
                     <div className="space-y-4">
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div className="space-y-2">
-                                <Label>Proveedor</Label>
-                                <Select value={supplierId} onValueChange={setSupplierId}>
-                                    <SelectTrigger>
+                                <Label htmlFor="supplier-return-supplier">Proveedor</Label>
+                                <Select value={supplierId} onValueChange={(value) => { setSupplierId(value); setReceptionId("") }}>
+                                    <SelectTrigger id="supplier-return-supplier">
                                         <SelectValue placeholder="Seleccionar proveedor" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -373,7 +377,13 @@ export function SupplierReturnsTab() {
                                     </SelectContent>
                                 </Select>
                             </div>
-                            <div className="space-y-2">
+                            <ReceptionPicker
+                                id="supplier-return-reception"
+                                supplierId={supplierId}
+                                value={receptionId}
+                                onChange={setReceptionId}
+                            />
+                            <div className="space-y-2 sm:col-span-2">
                                 <Label>Notas/Observaciones</Label>
                                 <Input
                                     placeholder="Ej: Lote defectuoso detectado por control de calidad..."

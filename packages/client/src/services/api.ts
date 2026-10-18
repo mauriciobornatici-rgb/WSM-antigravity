@@ -395,6 +395,8 @@ export type OrderShippingInput = { amount: number; charge_customer: boolean; vat
 
 type ReturnCreateInput = {
     supplier_id: string;
+    // ADR-027 (D7): remito con el que llegó la mercadería que se devuelve.
+    reception_id?: string;
     notes?: string;
     items: Array<{
         product_id: string;

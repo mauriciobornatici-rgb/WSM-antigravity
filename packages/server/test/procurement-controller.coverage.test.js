@@ -413,11 +413,32 @@ test('createReturn inserts draft return with items and audits', async (t) => {
     assert.deepEqual(lifecycle, ['begin', 'commit', 'release']);
     const header = calls.find((c) => c.statement.startsWith('INSERT INTO supplier_returns'));
     assert.ok(header.statement.includes("'draft'"));
-    assert.deepEqual(header.params.slice(1), [`SR-${year}-0012`, 's1', 'roto']);
+    assert.deepEqual(header.params.slice(1), [`SR-${year}-0012`, 's1', 'roto', null]);
     const rows = calls.filter((c) => c.statement.startsWith('INSERT INTO supplier_return_items'));
     assert.deepEqual(rows.map((c) => c.params.slice(2)), [['p1', 2, 10, 'dañado'], ['p2', 1, 0, null]]);
     assert.equal(logs[0].payload.action, 'CREATE_SUPPLIER_RETURN');
     assert.equal(logs[0].conn, connection);
+});
+
+test('createReturn against a delivery note checks it is this supplier\'s, approved, and brought the products (D7)', async (t) => {
+    installAudit(t);
+    const rules = (reception, lines) => [
+        ['FROM receptions WHERE id = ?', [reception]],
+        ['FROM reception_items WHERE reception_id = ?', [lines]],
+        ['MAX(CAST', [[{ max_seq: 1 }]]],
+        ['SELECT `last_value`', [[{ last_value: 1 }]]],
+    ];
+    const body = { supplier_id: 's1', reception_id: '11111111-1111-4111-8111-111111111111', items: [{ product_id: 'p1', quantity: 1 }] };
+    const ok = installPool(t, rules([{ id: 'rec', supplier_id: 's1', status: 'approved' }], [{ product_id: 'p1' }]));
+    await runHandler(ctrl.createReturn, { body });
+    assert.equal(ok.calls.find((c) => c.statement.startsWith('INSERT INTO supplier_returns')).params[4], body.reception_id);
+
+    installPool(t, rules([{ id: 'rec', supplier_id: 'other', status: 'approved' }], [{ product_id: 'p1' }]));
+    const foreign = await runHandler(ctrl.createReturn, { body });
+    assert.deepEqual([foreign.status, foreign.body.error], [400, 'invalid_reception']);
+    installPool(t, rules([{ id: 'rec', supplier_id: 's1', status: 'approved' }], [{ product_id: 'p2' }]));
+    const missing = await runHandler(ctrl.createReturn, { body });
+    assert.deepEqual([missing.status, missing.body.error], [400, 'product_not_in_reception']);
 });
 
 test('createReturn without items or notes still creates the draft', async (t) => {
