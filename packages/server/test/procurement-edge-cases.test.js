@@ -307,6 +307,57 @@ test('a return against a delivery note not invoiced yet lowers what is owed for 
     );
 });
 
+test('supplier return approval refuses fractional units: the stock would stay and the value would leave (AUD-016)', async (t) => {
+    const calls = [];
+    const { lifecycle } = installConnection(t, async (sql, params) => {
+        const statement = String(sql);
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT * FROM supplier_returns')) return [[{ id: 'r-frac', status: 'draft', return_number: 'DR-F', supplier_id: 's' }]];
+        if (statement.includes('SELECT * FROM supplier_return_items')) return [[{ product_id: 'p', quantity: '0.40', unit_cost: 100 }]];
+        return [[]];
+    });
+    await assert.rejects(
+        () => new SupplierReturnService().approveSupplierReturn('r-frac', null),
+        (err) => err.statusCode === 409 && err.responseBody.error === 'invalid_return_quantity'
+    );
+    assert.equal(calls.some(({ sql }) => /^(INSERT|UPDATE)/.test(sql.trim())), false);
+    assert.deepEqual(lifecycle, ['begin', 'rollback', 'release']);
+});
+
+test('a return against a delivery note its purchase order invoiced lowers what is owed to the supplier (AUD-016)', async (t) => {
+    const calls = [];
+    installConnection(t, async (sql, params) => {
+        const statement = String(sql).replace(/\s+/g, ' ');
+        calls.push({ sql: statement, params });
+        if (statement.includes('SELECT * FROM supplier_returns')) return [[{ id: 'r5', status: 'draft', return_number: 'DR-5', supplier_id: 's', reception_id: 'rec' }]];
+        if (statement.includes('SELECT * FROM supplier_return_items')) return [[{ product_id: 'p', quantity: 1, unit_cost: 30 }]];
+        if (statement.includes('SELECT id, supplier_id, status FROM receptions')) return [[{ id: 'rec', supplier_id: 's', status: 'approved' }]];
+        if (statement.includes('FROM reception_items WHERE reception_id = ?')) return [[{ id: 'ri', product_id: 'p', quantity_received: 5, returned_quantity: 0, unit_cost: 30 }]];
+        // Before ADR-019 the order was invoiced without naming its delivery notes.
+        if (statement.includes('AS invoiced FROM receptions r')) return [[{ invoiced: 1 }]];
+        if (statement.startsWith('SELECT id, product_id, location, quantity, reserved_quantity FROM inventory')) return [[{ id: 'i', product_id: 'p', location: 'General', quantity: 3, reserved_quantity: 0 }]];
+        if (statement.includes('auto_update_cost') && statement.includes('FROM products')) return [[{ id: 'p', purchase_price: 30 }]];
+        if (statement.startsWith('SELECT id, location, quantity, reserved_quantity')) return [[{ id: 'i', location: 'General', quantity: 3, reserved_quantity: 0 }]];
+        if (statement.startsWith('UPDATE inventory')) return [{ affectedRows: 1 }];
+        // The supplier's last posted goods invoice: a Factura A at 21 %.
+        if (statement.includes('FROM supplier_invoices si')) return [[{ id: 'si', net_amount: 100, vat_amount: 21, invoice_type: 'A' }]];
+        if (statement.includes('FROM journal_entry_lines jl JOIN journal_entries je')) return [[{ account_code: '1.1.05.02', amount: 21 }]];
+        return [[]];
+    });
+    const entries = [];
+    const originals = { audit: auditService.log, journal: accountingService.createJournalEntry };
+    auditService.log = async () => {};
+    accountingService.createJournalEntry = async (_c, entry) => { entries.push(entry); return 'je-5'; };
+    t.after(() => { auditService.log = originals.audit; accountingService.createJournalEntry = originals.journal; });
+
+    await new SupplierReturnService().approveSupplierReturn('r5', null);
+    // It used to count as "not invoiced, before ADR-027": stock out with no entry, debt untouched.
+    assert.deepEqual(entries[0].lines.map((l) => [l.account_code, l.debit, l.credit]), [
+        ['2.1.01.01', 36.3, 0], ['1.1.04.01', 0, 30], ['1.1.05.02', 0, 6.3],
+    ]);
+    assert.ok(calls.some(({ sql }) => sql.includes('UPDATE suppliers SET account_balance')));
+});
+
 test('supplier return approval accepts missing historical cost without creating zero-value accounting', async (t) => {
     const calls = [];
     const { lifecycle } = installConnection(t, async (sql, params) => {
@@ -360,14 +411,20 @@ test('goods reception rejects duplicate products, missing costs and missing qual
             if (mode === 'duplicate') return [[{ product_id: 'p', unit_cost: 1 }, { product_id: 'p', unit_cost: 1 }]];
             return [[{ id: 'ri', product_id: 'p', quantity_received: 1, unit_cost: mode === 'cost' ? 0 : 5 }]];
         }
-        if (statement.includes('FROM quality_checks')) return [[]];
+        if (statement.includes('FROM quality_checks')) {
+            return [mode === 'cost' ? [{ quantity_checked: 1, quantity_passed: 1, quantity_failed: 0 }] : []];
+        }
+        const stock = receptionStock(statement, [], [{ id: 'p', name: 'Pelota', purchase_price: 0 }]);
+        if (stock) return stock;
         return [[]];
     });
     const service = new GoodsReceptionService();
     await assert.rejects(() => service.processReceptionApproval('r'), (e) => e.errorCode === 'RECEPTION_DUPLICATE_PRODUCT_ITEMS');
-    // ADR-027: the goods enter the ledger at the delivery note's cost: without one they cannot.
+    // ADR-027: the goods enter the ledger at the delivery note's cost: without one, and with no
+    // cost in the product either, they cannot (and the message says who loads it, and where).
     mode = 'cost';
-    await assert.rejects(() => service.processReceptionApproval('r'), (e) => e.errorCode === 'RECEPTION_COST_REQUIRED' && e.statusCode === 409);
+    await assert.rejects(() => service.processReceptionApproval('r'), (e) => e.errorCode === 'RECEPTION_COST_REQUIRED' && e.statusCode === 409
+        && /Pelota no tiene costo/.test(e.message) && /gerente o un administrador/.test(e.message));
     mode = 'qc';
     await assert.rejects(() => service.processReceptionApproval('r'), (e) => e.errorCode === 'RECEPTION_QC_INCOMPLETE');
 });
@@ -477,22 +534,43 @@ test('goods reception: a purchase at another cost revalues the stock and moves t
     assert.equal(fixed.calls.some(({ sql }) => sql.startsWith('UPDATE products SET')), false);
 });
 
-test('goods reception refuses a delivery note without cost (free goods are loaded at cost; the invoice corrects it)', async (t) => {
-    const calls = [];
-    const { lifecycle } = installConnection(t, async (sql, params) => {
-        const statement = String(sql);
-        calls.push({ sql: statement, params });
-        if (statement.includes('SELECT * FROM receptions')) return [[{
-            id: 'r-free', status: 'pending', supplier_id: 's', reception_number: 'REC-FREE',
-        }]];
-        if (statement.includes('SELECT * FROM reception_items')) return [[{
-            id: 'ri-free', product_id: 'gift', quantity_received: 2, unit_cost: 0,
-            location_assigned: '', batch_number: null, po_item_id: null,
-        }]];
-        return [[]];
-    });
+test('goods reception without a cost takes the product\'s, and refuses only when the product has none (AUD-016)', async (t) => {
+    const run = async (productCost) => {
+        const calls = [];
+        const { lifecycle } = installConnection(t, async (sql, params) => {
+            const statement = String(sql);
+            calls.push({ sql: statement, params });
+            if (statement.includes('SELECT * FROM receptions')) return [[{
+                id: 'r-free', status: 'pending', supplier_id: 's', reception_number: 'REC-FREE',
+            }]];
+            // An order line typed without a cost: the delivery note copied 0.
+            if (statement.includes('SELECT * FROM reception_items')) return [[{
+                id: 'ri-free', product_id: 'gift', quantity_received: 2, unit_cost: 0,
+                location_assigned: '', batch_number: null, po_item_id: null,
+            }]];
+            if (statement.includes('FROM quality_checks')) return [[{ quantity_checked: 2, quantity_passed: 2, quantity_failed: 0 }]];
+            const stock = receptionStock(statement, [], [{ id: 'gift', name: 'Regalo', purchase_price: productCost }]);
+            if (stock) return stock;
+            return [[]];
+        });
+        const entries = [];
+        const originals = { audit: auditService.log, journal: accountingService.createJournalEntry };
+        auditService.log = async () => {};
+        accountingService.createJournalEntry = async (_c, entry) => { entries.push(entry); return 'je-free'; };
+        t.after(() => { auditService.log = originals.audit; accountingService.createJournalEntry = originals.journal; });
+        return { calls, lifecycle, entries, approve: () => new GoodsReceptionService().processReceptionApproval('r-free') };
+    };
 
-    await assert.rejects(() => new GoodsReceptionService().processReceptionApproval('r-free'), (e) => e.errorCode === 'RECEPTION_COST_REQUIRED');
-    assert.equal(calls.some(({ sql }) => /^(INSERT|UPDATE)/.test(sql)), false);
-    assert.deepEqual(lifecycle, ['begin', 'rollback', 'release']);
+    // Nothing to value it at: refused before writing anything (it used to stay stuck for good).
+    const none = await run(0);
+    await assert.rejects(none.approve, (e) => e.errorCode === 'RECEPTION_COST_REQUIRED');
+    assert.equal(none.calls.some(({ sql }) => /^(INSERT|UPDATE)/.test(sql)), false);
+    assert.deepEqual(none.lifecycle, ['begin', 'rollback', 'release']);
+
+    // The product has a cost: the line keeps it (for its invoice) and the goods enter at it.
+    const costed = await run(7);
+    await costed.approve();
+    const fixed = costed.calls.find(({ sql }) => sql.startsWith('UPDATE reception_items SET unit_cost'));
+    assert.deepEqual(fixed.params, [7, 'ri-free']);
+    assert.deepEqual(costed.entries.at(-1).lines.map((l) => [l.account_code, l.debit, l.credit]), [['1.1.04.01', 14, 0], ['2.1.01.02', 0, 14]]);
 });

@@ -68,7 +68,7 @@ export const updateWarehouseLocation = catchAsync(async (req, res) => {
     res.json(await inventoryLocationsService.updateLocation(req.params.id, req.body, req.user?.id, getRequestIp(req)));
 });
 export const createProduct = catchAsync(async (req, res) => {
-    const newItem = await inventoryService.createProduct(req.body, req.user?.id);
+    const newItem = await inventoryService.createProduct(req.body, req.user?.id, req.user?.role || null);
     res.json(newItem);
 });
 
@@ -208,11 +208,5 @@ export const transferStock = catchAsync(async (req, res) => {
         quantity,
         req.user?.id
     );
-    res.json(result);
-});
-
-export const bulkUpdateTiendaNube = catchAsync(async (req, res) => {
-    const { products } = req.body;
-    const result = await inventoryService.bulkUpdateTiendaNube(products, req.user?.id);
     res.json(result);
 });

@@ -126,20 +126,29 @@ function PolicyOption({ id, checked, disabled, onChange, label, hint }: {
     label: string;
     hint: string;
 }) {
+    // The whole card toggles the box (the label stretches over it), while the hint stays a
+    // description and not part of the name; a blocked one says why.
     return (
-        <div className="flex min-h-11 items-start gap-3 rounded-lg border p-3">
+        <div className={`relative flex min-h-11 items-start gap-3 rounded-lg border p-3 ${disabled ? "opacity-60" : "hover:bg-muted/40"}`}>
             <input
                 id={id}
                 type="checkbox"
-                className="mt-0.5 h-5 w-5 shrink-0 cursor-pointer accent-primary disabled:cursor-not-allowed"
+                className="mt-0.5 h-5 w-5 shrink-0 accent-primary"
                 checked={checked}
                 disabled={disabled}
                 onChange={(event) => onChange(event.target.checked)}
                 aria-describedby={`${id}-hint`}
             />
             <div>
-                <label htmlFor={id} className="block cursor-pointer text-sm font-medium">{label}</label>
-                <p id={`${id}-hint`} className="text-xs text-muted-foreground" aria-live="polite">{hint}</p>
+                <label
+                    htmlFor={id}
+                    className={`block text-sm font-medium after:absolute after:inset-0 after:content-[''] ${disabled ? "cursor-not-allowed after:cursor-not-allowed" : "cursor-pointer after:cursor-pointer"}`}
+                >
+                    {label}
+                </label>
+                <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+                    {disabled ? "Solo un gerente o un administrador puede cambiarlo." : hint}
+                </p>
             </div>
         </div>
     );
@@ -175,8 +184,10 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
 
     const isEditMode = Boolean(initialData);
     const { user } = useAuth();
-    // D5 (ADR-027): a new cost on an existing product revalues its stock: manager or admin only.
-    const canEditCost = !isEditMode || hasPermission(user?.role, PERMISSIONS.PRODUCTS_COST_EDIT);
+    // D5 (ADR-027): a new cost on an existing product revalues its stock: manager or admin only. A
+    // new product takes its first cost from anyone (D6), but a fixed cost is a policy: never from others.
+    const hasCostPermission = hasPermission(user?.role, PERMISSIONS.PRODUCTS_COST_EDIT);
+    const canEditCost = !isEditMode || hasCostPermission;
     const [autoUpdateCost, setAutoUpdateCost] = useState(flagOn(initialData?.auto_update_cost));
     const [autoUpdatePrice, setAutoUpdatePrice] = useState(flagOn(initialData?.auto_update_price));
     // The chosen rate drives every net/final calculation; the typed final price is kept when it changes.
@@ -760,7 +771,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                     name="purchase_price"
                                     render={({ field }) => (
                                         <FormItem>
-                                            <FormLabel>Precio compra neto (s/IVA)</FormLabel>
+                                            <FormLabel>Costo de compra neto (s/IVA)</FormLabel>
                                             <FormControl>
                                                 <Input inputMode="decimal" type="number" min="0" step="0.01" {...field} value={field.value ?? ""} disabled={!canEditCost} />
                                             </FormControl>
@@ -768,7 +779,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                                 Final c/IVA: {formatMoney(grossPrice(purchaseWatch, vatRate))}
                                                 {!canEditCost
                                                     ? " · Solo un gerente o un administrador puede cambiar el costo."
-                                                    : isEditMode ? " · Si cambiás el costo y hay stock, se revalúa ese stock con un asiento." : ""}
+                                                    : isEditMode ? " · Si cambiás el costo, el stock que tenés pasa a valer al costo nuevo y queda registrado en contabilidad." : ""}
                                             </FormDescription>
                                             <FormMessage />
                                         </FormItem>
@@ -785,7 +796,7 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                                             </FormControl>
                                             <FormDescription className="text-xs" aria-live="polite">
                                                 {followingFinal != null
-                                                    ? `Con el costo nuevo, el precio final pasa a ${formatMoney(followingFinal)} (mantiene el margen). Si querés otro, escribilo.`
+                                                    ? `Con el costo nuevo, el precio final pasa a ${formatMoney(followingFinal)} al guardar (mantiene el margen). Si querés otro, escribilo o destildá «Ajustar el precio de venta al costo».`
                                                     : `Precio final con IVA; se guarda el neto. Neto: ${formatMoney(saleNet)} · IVA ${vatRate}%: ${formatMoney(saleVat)}`}
                                             </FormDescription>
                                             <FormMessage />
@@ -800,12 +811,12 @@ export function ProductForm({ initialData, onSubmit, onCancel }: ProductFormProp
                             <PolicyOption
                                 id="product-auto-update-cost"
                                 checked={autoUpdateCost}
-                                disabled={!canEditCost}
+                                disabled={!hasCostPermission}
                                 onChange={setAutoUpdateCost}
                                 label="Actualizar el costo con cada compra"
                                 hint={autoUpdateCost
-                                    ? "El costo pasa a ser el de la última compra y el stock se revalúa."
-                                    : "El costo queda fijo; la diferencia con lo que se paga va a resultados."}
+                                    ? "Cada compra a otro precio cambia el costo del producto y vuelve a valuar el stock."
+                                    : "El costo no cambia con las compras; si pagás distinto, la diferencia se anota como ganancia o pérdida."}
                             />
                             <PolicyOption
                                 id="product-auto-update-price"

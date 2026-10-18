@@ -1,6 +1,7 @@
 // ADR-027: checks that the ledger of Inventario (1.1.04.01) equals the stock valued at the
 // product cost, to the cent. Read only: every query is a plain SELECT.
 import { UNVALUED_LOCATIONS, effectiveCost, valueCents } from '../../domains/inventory/InventoryValuation.js';
+import { invoicedByOrderSql } from '../../domains/procurement/receptionInvoicing.js';
 
 const cents = (value) => Math.round(Number(value || 0) * 100);
 
@@ -136,7 +137,7 @@ export async function runCutover(connection, { runId, userId = null, accounting,
                 [row.entry_id, row.order_id]
             );
             report.sales_linked_to_invoice_cost += Number(linked?.affectedRows || 0);
-        } else if (['pending', 'picking', 'confirmed'].includes(String(row.order_status || '').toLowerCase())) {
+        } else if (['pending', 'picking', 'confirmed'].includes(String(row.order_status || '').trim().toLowerCase())) {
             const reversed = await accounting.reverseDocumentEntries(connection, {
                 referenceType: 'invoice',
                 referenceId: row.invoice_id,
@@ -148,19 +149,26 @@ export async function runCutover(connection, { runId, userId = null, accounting,
     }
 
     // 2b. Sales that left without any cost posted (not invoiced, or invoiced before the ledger):
-    // their cost is posted now, at the cost the movement carries (today's when it has none).
+    // their cost is posted now, at the cost the movement carries (today's when it has none). A
+    // cancelled order brought its goods back: it sold nothing, so no cost (the final adjustment
+    // covers the stock either way).
     const [unposted] = await connection.query(
         `SELECT m.id, m.reference_id AS order_id, m.quantity, m.unit_cost, p.purchase_price, p.cost_price
-         FROM inventory_movements m LEFT JOIN products p ON p.id = m.product_id
+         FROM inventory_movements m
+         LEFT JOIN products p ON p.id = m.product_id
+         LEFT JOIN orders o ON o.id = m.reference_id
          WHERE m.type = 'sale' AND m.reference_type = 'order' AND m.journal_entry_id IS NULL
+           AND LOWER(TRIM(COALESCE(o.status, ''))) <> 'cancelled'
          ORDER BY m.reference_id, m.id`
     );
     const byOrder = new Map();
     for (const movement of unposted) {
         const cost = Number(movement.unit_cost || 0) > 0 ? Number(movement.unit_cost) : effectiveCost(movement);
-        const current = byOrder.get(movement.order_id) || { cents: 0, ids: [] };
+        const current = byOrder.get(movement.order_id) || { cents: 0, ids: [], costs: [] };
         current.cents += valueCents(movement.quantity, cost);
         current.ids.push(movement.id);
+        // A movement without a cost keeps the one posted: a later cancellation reverses at it.
+        if (!(Number(movement.unit_cost || 0) > 0) && cost > 0) current.costs.push([cost, movement.id]);
         byOrder.set(movement.order_id, current);
     }
     report.costs_posted_for_sales = { orders: 0, amount: 0 };
@@ -177,34 +185,45 @@ export async function runCutover(connection, { runId, userId = null, accounting,
         });
         if (!entryId) continue;
         await connection.query('UPDATE inventory_movements SET journal_entry_id = ? WHERE id IN (?)', [entryId, sale.ids]);
+        for (const [cost, movementId] of sale.costs) {
+            await connection.query('UPDATE inventory_movements SET unit_cost = ? WHERE id = ?', [cost, movementId]);
+        }
         report.costs_posted_for_sales.orders += 1;
         report.costs_posted_for_sales.amount = Math.round((report.costs_posted_for_sales.amount + sale.cents / 100) * 100) / 100;
     }
 
     // 3. Delivery notes approved and not invoiced: their goods enter 2.1.01.02, so the invoice
-    // that comes clears it like any other. One whose purchase order was invoiced without marking
-    // it (before ADR-019 that was the usual way) is not opened: it is listed for review.
+    // that comes clears it like any other. One whose purchase order was invoiced without naming
+    // its delivery notes (before ADR-019 that was the usual way) is not opened: it is listed for
+    // review. One opened after the supplier took goods back without a delivery note (before D7)
+    // is listed too: its invoice will bring less than what is opened.
     const [openReceptions] = await connection.query(
         `SELECT r.id, r.reception_number, r.remito_number,
-                EXISTS (SELECT 1 FROM supplier_invoices si2 WHERE r.purchase_order_id IS NOT NULL AND si2.purchase_order_id = r.purchase_order_id) AS order_invoiced,
+                ${invoicedByOrderSql('r')} AS order_invoiced,
+                EXISTS (SELECT 1 FROM supplier_returns sr
+                        JOIN supplier_return_items sri ON sri.return_id = sr.id
+                        WHERE sr.supplier_id = r.supplier_id AND sr.status = 'approved' AND sr.reception_id IS NULL
+                          AND sr.created_at >= r.created_at
+                          AND sri.product_id IN (SELECT ri2.product_id FROM reception_items ri2 WHERE ri2.reception_id = r.id)) AS returned_after,
                 COALESCE(SUM(GREATEST(ri.quantity_received - COALESCE(ri.returned_quantity, 0), 0) * ri.unit_cost), 0) AS value
          FROM receptions r JOIN reception_items ri ON ri.reception_id = r.id
          WHERE r.status = 'approved'
            AND NOT EXISTS (SELECT 1 FROM supplier_invoice_receptions sir WHERE sir.reception_id = r.id)
            AND NOT EXISTS (SELECT 1 FROM supplier_invoices si WHERE si.reception_id = r.id)
            AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.reference_type = 'goods_received' AND je.reference_id = r.id)
-         GROUP BY r.id, r.reception_number, r.remito_number, r.purchase_order_id
+         GROUP BY r.id, r.reception_number, r.remito_number, r.purchase_order_id, r.supplier_id, r.created_at
          ORDER BY r.id`
     );
     report.opened_goods_to_invoice = { receptions: 0, amount: 0 };
     report.receptions_invoiced_by_their_order = [];
+    report.opened_with_returns_after = [];
     for (const reception of openReceptions) {
+        const label = { id: reception.id, remito: reception.remito_number || reception.reception_number, value: cents(reception.value) / 100 };
         if (Number(reception.order_invoiced)) {
-            report.receptions_invoiced_by_their_order.push({
-                id: reception.id, remito: reception.remito_number || reception.reception_number, value: cents(reception.value) / 100,
-            });
+            report.receptions_invoiced_by_their_order.push(label);
             continue;
         }
+        if (Number(reception.returned_after)) report.opened_with_returns_after.push(label);
         const valueCentsTotal = cents(reception.value);
         const entryId = await accounting.createJournalEntryIfAny(connection, {
             date: new Date(),

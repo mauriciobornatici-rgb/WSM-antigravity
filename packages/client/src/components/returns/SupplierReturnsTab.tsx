@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { QueryErrorBanner, QueryLoadingState } from "./QueryStates"
 import { ReceptionPicker } from "@/components/receptions/ReceptionPicker"
+import { receptionIdToSend } from "@/lib/receptionChoice"
 import { returnStatusLabel } from "./helpers"
 import type { SupplierReturnRow, SupplierReturnFormItem, SupplierReturnFormField } from "@/types/returns"
 import type { Supplier } from "@/types"
@@ -128,11 +129,20 @@ export function SupplierReturnsTab() {
             toast.error("Agregá al menos un producto válido con cantidad mayor a 0")
             return
         }
+        if (validItems.some((item) => !Number.isInteger(item.quantity))) {
+            toast.error("Se devuelven unidades enteras: revisá las cantidades")
+            return
+        }
+        if (!receptionId) {
+            toast.error("Elegí el remito con el que llegó la mercadería, o «Sin remito» si el proveedor ya la facturó")
+            return
+        }
 
         try {
+            const reception = receptionIdToSend(receptionId)
             await createReturnMutation.mutateAsync({
                 supplier_id: supplierId,
-                ...(receptionId ? { reception_id: receptionId } : {}),
+                ...(reception ? { reception_id: reception } : {}),
                 notes: notes.trim(),
                 items: validItems,
             })
@@ -431,10 +441,11 @@ export function SupplierReturnsTab() {
                                             <Input
                                                 type="number"
                                                 min="1"
-                                                step="any"
+                                                step="1"
+                                                inputMode="numeric"
                                                 className="h-9"
                                                 value={item.quantity}
-                                                onChange={(e) => handleItemChange(index, "quantity", Number(e.target.value))}
+                                                onChange={(e) => handleItemChange(index, "quantity", Math.trunc(Number(e.target.value)) || 0)}
                                             />
                                         </div>
                                         <div className="space-y-1 sm:col-span-2">

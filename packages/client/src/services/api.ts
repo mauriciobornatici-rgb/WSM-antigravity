@@ -473,6 +473,8 @@ type ReceptionRecord = {
     remito_number?: string | null;
     // Factura de proveedor que ya cubre este remito.
     supplier_invoice_id?: string | null;
+    // Su orden de compra se facturó sin nombrar los remitos (antes de ADR-019): ya está facturado.
+    invoiced_by_order?: number | boolean | null;
     supplier_name: string;
     po_number?: string;
     reception_date?: string;
@@ -1147,7 +1149,5 @@ export const api = {
     // ==================== INVENTORY NAMESPACE ====================
     inventory: {
         getProducts: (filters?: QueryParams) => httpClient.get<Product[]>(withQuery("/api/products", filters)),
-        bulkUpdateTiendaNube: (products: {id: string, tiendanube_sync_enabled: boolean, tiendanube_product_id: string, tiendanube_variant_id: string}[]) =>
-            httpClient.post<GenericRecord>("/api/products/tiendanube/bulk-update", { products }),
     },
 };

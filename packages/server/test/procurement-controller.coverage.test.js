@@ -317,6 +317,52 @@ test('createReception without purchase order needs a cost, whole quantities and 
         { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
 });
 
+test('createReception without an order: a cost other than the product\'s needs PRODUCTS_COST_EDIT (D5, AUD-016)', async (t) => {
+    const product = (cost) => ['FROM products WHERE id IN', [[{ id: 'p1', name: 'Pelota', purchase_price: cost, cost_price: 0 }]]];
+    const body = (unitCost) => ({ supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 2, unit_cost: unitCost }] });
+    const lineCost = (calls) => calls.find((c) => c.statement.startsWith('INSERT INTO reception_items')).params[6];
+
+    // Depósito: the product's cost goes through; another one is refused before saving anything.
+    installAudit(t);
+    let db = installPool(t, [product(10), ...receptionRules()]);
+    await runHandler(ctrl.createReception, { body: body(10), user: { id: 'w', role: 'warehouse' } });
+    assert.equal(lineCost(db.calls), 10);
+    db = installPool(t, [product(10), ...receptionRules()]);
+    const refused = await runHandler(ctrl.createReception, { body: body(0.01), user: { id: 'w', role: 'warehouse' } });
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.error, 'cost_edit_not_allowed');
+    assert.match(refused.body.message, /Pelota \(\$10\).*la factura/);
+    assert.deepEqual(db.lifecycle, ['begin', 'rollback', 'release']);
+    // A product without a cost takes the typed one from anyone (D6).
+    db = installPool(t, [product(0), ...receptionRules()]);
+    await runHandler(ctrl.createReception, { body: body(7), user: { id: 'w', role: 'warehouse' } });
+    assert.equal(lineCost(db.calls), 7);
+    // A manager types the delivery note's cost.
+    db = installPool(t, [product(10), ...receptionRules()]);
+    await runHandler(ctrl.createReception, { body: body(12.5), user: { id: 'm', role: 'manager' } });
+    assert.equal(lineCost(db.calls), 12.5);
+});
+
+test('createReception without an order refuses order lines; with one, the supplier is the order\'s and a line without cost takes the product\'s', async (t) => {
+    await expectReceptionFailure(t, receptionRules(),
+        { supplier_id: 'supX', items: [{ product_id: 'p1', po_item_id: 'poi1', quantity_received: 1, unit_cost: 3 }] },
+        { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
+    await expectReceptionFailure(t, receptionRules(),
+        { purchase_order_id: 'po1', supplier_id: 'other', items: [{ po_item_id: 'poi1', product_id: 'p1', quantity_received: 1 }] },
+        { statusCode: 400, errorCode: 'RECEPTION_SUPPLIER_MISMATCH' });
+
+    installAudit(t);
+    const { calls } = installPool(t, [
+        ['FROM products WHERE id IN', [[{ id: 'p1', name: 'Pelota', purchase_price: 9, cost_price: 0 }]]],
+        ...receptionRules({ poItems: [[{ id: 'poi1', product_id: 'p1', quantity_ordered: 10, quantity_received: 0, unit_cost: 0 }]] }),
+    ]);
+    await runHandler(ctrl.createReception, {
+        body: { purchase_order_id: 'po1', supplier_id: 'sup1', items: [{ po_item_id: 'poi1', product_id: 'p1', quantity_received: 1 }] },
+    });
+    const row = calls.find((c) => c.statement.startsWith('INSERT INTO reception_items'));
+    assert.equal(row.params[6], 9, 'an order typed without a price does not leave the delivery note stuck');
+});
+
 test('createReception derives the supplier from the purchase order', async (t) => {
     installAudit(t);
     const { calls } = installPool(t, receptionRules());

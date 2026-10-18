@@ -2,6 +2,7 @@ import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
 import { ACCOUNTS } from '../../utils/paymentAccounts.js';
 import { netFromGross } from '../../utils/vatMath.js';
+import { businessError } from '../../utils/businessError.js';
 
 /**
  * Goods valued at the last purchase cost (ADR-027, opción a: replacement cost, RT 17).
@@ -26,8 +27,20 @@ import { netFromGross } from '../../utils/vatMath.js';
 // D3: goods moved to Mermas are a loss when they get there, so they carry no value.
 export const UNVALUED_LOCATIONS = Object.freeze(['Mermas']);
 
+/**
+ * A location as the database compares it (its collation ignores case and accents): "mermas" and
+ * "Mermas" are the same row, so they must be the same here.
+ */
+export function locationKey(location) {
+    return String(location || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+}
+
+export function sameLocation(a, b) {
+    return locationKey(a) === locationKey(b);
+}
+
 export function isValuedLocation(location) {
-    return !UNVALUED_LOCATIONS.includes(String(location || ''));
+    return !UNVALUED_LOCATIONS.some((unvalued) => sameLocation(unvalued, location));
 }
 
 const toCents = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100);
@@ -163,20 +176,25 @@ export class InventoryValuation {
      * they were out. Units that came back unusable (`lost`) never enter: their cost moves from the
      * cost of goods sold to inventory losses. One entry for the document; the movements that
      * brought goods back keep the link.
+     * Units that left with no cost posted (the product had no cost then: `exitCost` 0) were never
+     * valued: they enter against the opening adjustment, like a cost loaded from 0 (D6).
      * @param {Array<{quantity:number, lost?:number, exitCost:number, unitCost:number, movementIds?:string[]}>} lines
      */
     async postReentry(connection, { referenceType, referenceId, description, lines, date = new Date() }) {
         let inventoryCents = 0;
         let returnedCents = 0;
         let lostCents = 0;
+        let openingCents = 0;
         const movementIds = [];
         for (const line of lines || []) {
-            inventoryCents += valueCents(line.quantity, line.unitCost);
+            const cents = valueCents(line.quantity, line.unitCost);
+            inventoryCents += cents;
+            if (!(Number(line.exitCost || 0) > 0)) openingCents += cents;
             returnedCents += valueCents(line.quantity, line.exitCost);
             lostCents += valueCents(line.lost, line.exitCost);
             movementIds.push(...(line.movementIds || []));
         }
-        const holdingCents = inventoryCents - returnedCents;
+        const holdingCents = inventoryCents - openingCents - returnedCents;
         const entryId = await this.accounting.createJournalEntryIfAny(connection, {
             date,
             description,
@@ -192,6 +210,7 @@ export class InventoryValuation {
                     credit: holdingCents > 0 ? holdingCents / 100 : 0,
                     notes: 'Resultado por tenencia',
                 },
+                { account_code: ACCOUNTS.OPENING_ADJUSTMENT, debit: 0, credit: openingCents / 100, notes: 'Mercadería que salió sin costo cargado' },
             ],
         });
         if (!entryId) return null;
@@ -211,6 +230,14 @@ export class InventoryValuation {
         const oldCost = effectiveCost(product);
         const cost = roundCost(newCost);
         if (cost === oldCost) return null;
+        // A cost of 0 with stock would book its whole value as a loss, and the next cost would come
+        // back as an opening adjustment (D6), not as a gain: worthless goods go to Mermas instead.
+        if (!(cost > 0) && this.valuedQuantity(stockRows) > 0) {
+            throw businessError(409, {
+                error: 'cost_zero_with_stock',
+                message: `${product.name || 'El producto'} tiene stock: su costo no puede quedar en 0. Si la mercadería no vale nada, pasala a Mermas.`,
+            });
+        }
         // cost_price mirrors purchase_price (one cost): a stale cost_price would come back as the cost
         // when purchase_price is 0.
         const changes = { purchase_price: cost, cost_price: cost };

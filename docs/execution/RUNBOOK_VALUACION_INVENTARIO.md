@@ -28,7 +28,14 @@ la versión con ADR-027.
 4. **Contador:** confirmar que el ajuste único va contra 3.1.03.01 "Ajuste por inventario
    inicial" (decisión D4). La alternativa es una cuenta de ajuste de ejercicios anteriores.
 5. Desplegá la versión nueva con la **app detenida para la operación** (ventana de
-   mantenimiento): al arrancar se aplican las migraciones 064 a 066.
+   mantenimiento) y aplicá las migraciones 064 a 066 **sin arrancar el servidor**:
+
+   ```powershell
+   node scripts/run-migrations.js
+   ```
+
+   Arrancar el servidor también arranca los procesos automáticos de Tiendanube (pedidos y stock)
+   y de ARCA: moverían stock y asentarían en medio de la transición.
 
 ## Pasos
 
@@ -49,6 +56,10 @@ Desde `packages/server`, con el entorno de producción:
    node scripts/repair-inventory-valuation.js --out=transicion-simulacion.json
    ```
 
+   Conviene correrla sobre **una copia restaurada del backup**: aunque revierte todo, MySQL no
+   devuelve los números de asiento que usó, así que en producción deja saltos en la numeración.
+   Mientras corre bloquea los productos (por eso la app tiene que estar detenida).
+
    Revisá el informe:
 
    | Campo | Qué es |
@@ -56,9 +67,10 @@ Desde `packages/server`, con el entorno de producción:
    | `costs_from_cost_price` | Productos cuyo costo estaba solo en `cost_price` |
    | `sales_linked_to_invoice_cost` | Ventas cuyo costo ya lo había asentado la factura |
    | `reversed_costs_of_unpacked_orders` | Pedidos facturados y no armados: se revierte ese costo, que se asienta al armarlos |
-   | `costs_posted_for_sales` | Ventas que salieron sin costo asentado (no facturadas, o facturadas antes del mayor) |
+   | `costs_posted_for_sales` | Ventas que salieron sin costo asentado (no facturadas, o facturadas antes del mayor). Los pedidos anulados no cuentan: su mercadería volvió |
    | `opened_goods_to_invoice` | Remitos aprobados y sin facturar: abren 2.1.01.02 |
-   | `receptions_invoiced_by_their_order` | **Revisar a mano:** remitos sin factura propia cuya orden de compra sí se facturó (antes se facturaba por la OC sin marcar el remito). No abren 2.1.01.02. Si alguno no está realmente facturado, hay que cargarle la factura después |
+   | `receptions_invoiced_by_their_order` | **Revisar a mano:** remitos sin factura propia cuya orden de compra tiene una factura que no nombra remitos (antes se facturaba así). No abren 2.1.01.02: su mercadería ya está en el mayor. En pantalla figuran como "facturado con la orden de compra". Si alguno no estaba incluido en esa factura, cargale la suya: va contra 3.1.03.01 (el ajuste de la transición), sin sumar inventario de nuevo |
+   | `opened_with_returns_after` | **Revisar a mano:** remitos abiertos cuyo proveedor se llevó después mercadería de esos productos sin indicar remito. Su factura va a traer menos de lo abierto, y la diferencia bajaría el costo: conviene revisarla al cargarla |
    | `adjustment` | El ajuste final del mayor al stock valuado, contra 3.1.03.01 |
    | `after.ok` | Mayor = stock valuado y 2.1.01.02 = pendiente de los remitos |
 

@@ -32,7 +32,7 @@ describe("ProductForm prices (ADR-015)", () => {
         render(<ProductForm initialData={storedProduct} onSubmit={vi.fn()} onCancel={vi.fn()} />);
 
         expect((screen.getByLabelText(/Precio de venta final/) as HTMLInputElement).value).toBe("1210");
-        expect((screen.getByLabelText(/Precio compra neto/) as HTMLInputElement).value).toBe("500");
+        expect((screen.getByLabelText(/Costo de compra neto/) as HTMLInputElement).value).toBe("500");
         expect(screen.getByText(/Final c\/IVA: \$ 605,00/)).toBeTruthy();
         expect(screen.getByText(/Neto: \$ 1\.000,00/)).toBeTruthy();
     });
@@ -92,7 +92,7 @@ describe("ProductForm cost policy (ADR-027)", () => {
         expect((screen.getByLabelText("Actualizar el costo con cada compra") as HTMLInputElement).checked).toBe(true);
         expect((screen.getByLabelText("Ajustar el precio de venta al costo") as HTMLInputElement).checked).toBe(true);
         // Cost 500 → 600: the final price 1210 keeps the markup and becomes 1452.
-        fireEvent.change(screen.getByLabelText(/Precio compra neto/), { target: { value: "600" } });
+        fireEvent.change(screen.getByLabelText(/Costo de compra neto/), { target: { value: "600" } });
         expect(screen.getByText(/el precio final pasa a \$ 1\.452,00/)).toBeTruthy();
 
         fireEvent.click(screen.getByLabelText("Ajustar el precio de venta al costo"));
@@ -108,7 +108,7 @@ describe("ProductForm cost policy (ADR-027)", () => {
         const onSubmit = vi.fn();
         render(<ProductForm initialData={{ ...storedProduct, purchase_price: 0, cost_price: 450 }} onSubmit={onSubmit} onCancel={vi.fn()} />);
 
-        expect((screen.getByLabelText(/Precio compra neto/) as HTMLInputElement).value).toBe("450");
+        expect((screen.getByLabelText(/Costo de compra neto/) as HTMLInputElement).value).toBe("450");
         fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
         await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
         expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ purchase_price: 450 });
@@ -118,11 +118,24 @@ describe("ProductForm cost policy (ADR-027)", () => {
         auth.role = "warehouse";
         render(<ProductForm initialData={{ ...storedProduct, auto_update_cost: 0 }} onSubmit={vi.fn()} onCancel={vi.fn()} />);
 
-        expect((screen.getByLabelText(/Precio compra neto/) as HTMLInputElement).disabled).toBe(true);
+        expect((screen.getByLabelText(/Costo de compra neto/) as HTMLInputElement).disabled).toBe(true);
         expect(screen.getByText(/Solo un gerente o un administrador puede cambiar el costo/)).toBeTruthy();
         const costOption = screen.getByLabelText("Actualizar el costo con cada compra") as HTMLInputElement;
         expect(costOption.disabled).toBe(true);
         expect(costOption.checked).toBe(false);
         expect((screen.getByLabelText("Ajustar el precio de venta al costo") as HTMLInputElement).disabled).toBe(false);
+    });
+
+    it("lets a warehouse user load the first cost of a new product, but not fix it (D5, AUD-016)", () => {
+        auth.role = "warehouse";
+        render(<ProductForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
+
+        expect((screen.getByLabelText(/Costo de compra neto/) as HTMLInputElement).disabled).toBe(false);
+        const costOption = screen.getByLabelText("Actualizar el costo con cada compra") as HTMLInputElement;
+        expect(costOption.disabled).toBe(true);
+        expect(costOption.checked).toBe(true);
+        // The hint is a description, not part of the name, and says who can change it.
+        expect(costOption.getAttribute("aria-describedby")).toBe("product-auto-update-cost-hint");
+        expect(screen.getByText("Solo un gerente o un administrador puede cambiarlo.")).toBeTruthy();
     });
 });

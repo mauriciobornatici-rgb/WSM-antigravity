@@ -1,5 +1,65 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-016 — 2026-10-18 — ADR-027 completo (rama `feat/revaluacion-stock`): `guardian-integridad`, `revisor-seguridad`, `auditor-externo` y `revisor-ux`
+
+Veredicto del auditor: **con reservas**. El núcleo es correcto (asientos balanceados, orden de bloqueos, CMV sin duplicar, D1-D9). Hubo tres agujeros que rompían el invariante 1 después de la transición, uno de ellos inducido por el runbook. Cada hallazgo se verificó en el código antes de corregirlo.
+
+**Corregido (técnico):**
+- **Remitos anteriores a la transición** (auditor H1/H2/H4, guardián A1):
+  - su factura va contra 3.1.03.01 y no suma inventario otra vez;
+  - la rama del puente se decide por "hay remitos puenteados", así que un remito devuelto completo antes de facturar ya no debita inventario;
+  - un remito cuya OC se facturó sin nombrar remitos cuenta como facturado (`receptionInvoicing.js`, un solo criterio para transición, devolución y listados). La devolución contra él baja la deuda; en pantalla figura "facturado con la orden de compra".
+  - Runbook corregido.
+- **Seguridad E1 (media-alta):** Depósito ya no cambia el costo con un remito sin OC.
+  - Un costo distinto al del producto exige `PRODUCTS_COST_EDIT` (403). El producto sin costo toma el tipeado (D6).
+  - En pantalla el costo queda de solo lectura.
+  - El alta de producto con costo fijo también exige el permiso.
+- **Seguridad E2:** cantidades enteras en las devoluciones a proveedor (esquema, aprobación y pantalla).
+- **Remitos:**
+  - sin OC no aceptan `po_item_id`;
+  - con OC el proveedor tiene que ser el de la OC;
+  - `unit_cost` con máximo.
+- **Auditor H3:** una línea de OC sin costo ya no traba el remito. Toma el costo del producto, y si tampoco tiene, el mensaje dice quién lo carga y dónde.
+- **Reingreso de mercadería que salió sin costo** (anulación y devolución de cliente): entra contra 3.1.03.01 (guardián M3).
+- **Transición:**
+  - excluye los pedidos anulados del CMV histórico;
+  - guarda en el movimiento el costo usado;
+  - normaliza estados;
+  - lista los remitos abiertos con devoluciones previas sin remito;
+  - avisa en la simulación;
+  - el runbook pide aplicar las migraciones sin arrancar el servidor (workers) y simular sobre una copia.
+- **Reversión manual:** un asiento con líneas de 1.1.04.01 o 2.1.01.02, o con movimientos vinculados, ya no se revierte a mano (409). Se exceptúan las compras duplicadas `reception` del runbook.
+- **Ubicaciones:** se comparan sin mayúsculas ni acentos, como MySQL (transferencias, conteos, Mermas, stock inicial).
+- **Bloqueos:**
+  - 409 `busy` en venta, cambio de estado de pedido, garantía y ajuste de conteo;
+  - la recepción escribe el stock antes de los asientos de revaluación;
+  - la garantía solo bloquea stock si el estado puede moverlo.
+- **Costo 0 con stock valuado:** bloqueado (409). Sin esto, el costo siguiente volvía como ajuste de apertura.
+- **Limpieza:**
+  - se quitaron la ruta rota `POST /products/tiendanube/bulk-update` (siempre 500) y el esquema muerto de movimientos libres;
+  - la simulación del script de transición avisa que bloquea productos.
+
+**Residuales anotados (bajos, sin cambio):**
+- Al anular un pedido armado con faltante offline, no se revierte la parte del faltante. El mayor de Inventario no se afecta.
+- La reemisión de facturas anteriores deja los movimientos apuntando al asiento revertido. El importe es correcto.
+- En un pedido con productos de costo 0 y otros con costo, la devolución revierte el CMV del de costo 0 al costo de hoy.
+
+**Pendiente del usuario o del contador:**
+1. **Devolución a proveedor de mercadería ya facturada:** el crédito contra Proveedores sale del costo que tipea quien carga la devolución (Depósito incluido, ya era así desde ADR-011). ¿Lo deja así, toma el último costo facturado, o solo gerente o administrador puede cambiarlo?
+2. **Factura por menos unidades que el remito:** hoy la diferencia baja el costo (D1). ¿Las facturas parciales deberían saldar solo lo facturado?
+3. **Contador:**
+   - CMV histórico de la transición, en el período del corte o contra 3.1.03.01 (va con D4);
+   - IVA de facturas B/C al costo (con costo fijo termina en 4.2.02.01).
+
+**Evidencia:**
+- validate 0 (servidor 1032 + cliente 113, lint, tipos, build);
+- cobertura 96,79/90,76/94,72;
+- `qa:integration` 152/152 (pruebas nuevas: factura de remito anterior, remito devuelto completo, reingreso sin costo, devolución contra remito facturado por la OC, 403 de costo);
+- RBAC OK;
+- E2E 6/6;
+- simulación 161/161 (mayor = stock valuado);
+- transición simulada en `wsm_sports_erp` con `after.ok` true (70 remitos para revisar, todos con una factura de la OC que no nombra remitos).
+
 ## AUD-015 — 2026-10-17 — `guardian-integridad` sobre la revaluación del stock (ADR-027, rama local `feat/revaluacion-stock`)
 
 **No se mergea: falta definir el método de valuación.** El código está bien armado: es atómico, balanceado, no duplica en los reintentos y respeta el orden de locks. El problema es la premisa.

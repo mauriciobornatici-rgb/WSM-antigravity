@@ -8,6 +8,7 @@ import { ACCOUNTS } from '../../utils/paymentAccounts.js';
 import { allocateCents } from '../../utils/vatMath.js';
 import { businessError } from '../../utils/businessError.js';
 import defaultValuation, { isValuedLocation, valueCents } from '../inventory/InventoryValuation.js';
+import { invoicedByOrderSql } from './receptionInvoicing.js';
 
 export class SupplierReturnService {
     constructor({ valuation = defaultValuation } = {}) {
@@ -268,6 +269,13 @@ export class SupplierReturnService {
             if (items.length === 0) {
                 throw Object.assign(new Error('La devolución no tiene ítems'), { errorCode: 'RETURN_WITHOUT_ITEMS', statusCode: 400 });
             }
+            // Stock counts whole units: 0,4 would leave the stock as it was and still post its value.
+            if (items.some((item) => !Number.isInteger(Number(item.quantity)) || Number(item.quantity) <= 0)) {
+                throw businessError(409, {
+                    error: 'invalid_return_quantity',
+                    message: 'La devolución tiene cantidades con decimales: se devuelven unidades enteras. Cargala de nuevo.',
+                });
+            }
 
             // Same order as a supplier invoice: the supplier, then the delivery note (L1), its lines
             // (L2), the stock (L3) and the cost (L4), so neither waits on the other in a circle.
@@ -437,7 +445,13 @@ export class SupplierReturnService {
             "SELECT id FROM journal_entries WHERE reference_type = 'goods_received' AND reference_id = ? LIMIT 1",
             [reception.id]
         );
-        return { id: reception.id, pending: invoiced.length === 0, bridged: bridged.length > 0, lines: byProduct };
+        // One whose purchase order was invoiced without naming it is invoiced too: its goods are in
+        // the ledger and the supplier billed them, so the return lowers what is owed (AUD-016).
+        const [byOrder] = invoiced.length === 0 && bridged.length === 0
+            ? await connection.query(`SELECT ${invoicedByOrderSql('r')} AS invoiced FROM receptions r WHERE r.id = ?`, [reception.id])
+            : [[]];
+        const pending = invoiced.length === 0 && !Number(byOrder[0]?.invoiced || 0);
+        return { id: reception.id, pending, bridged: bridged.length > 0, lines: byProduct };
     }
 
     /**

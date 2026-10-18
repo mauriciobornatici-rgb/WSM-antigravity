@@ -42,6 +42,8 @@ type SupplierReceptionOption = {
     status: string;
     purchase_order_id?: string;
     supplier_invoice_id?: string | null;
+    // ADR-027: its purchase order was invoiced without naming its delivery notes (before ADR-019).
+    invoiced_by_order?: number | boolean | null;
     items?: Array<{
         quantity_received?: number;
         unit_cost?: number;
@@ -265,7 +267,9 @@ export function SupplierInvoiceForm({
         }
         if (goodsWithoutReception) {
             toast.error("Elegí el remito de la mercadería", {
-                description: "Una factura de mercadería se carga contra su remito. Si es un flete o un gasto, cambiá el tipo de compra.",
+                description: purchaseOrderId
+                    ? "Una factura de mercadería se carga contra su remito. Si es un flete o un gasto, desvinculá la orden de compra y cambiá el tipo de compra."
+                    : "Una factura de mercadería se carga contra su remito. Si es un flete o un gasto, cambiá el tipo de compra.",
             });
             return;
         }
@@ -310,9 +314,17 @@ export function SupplierInvoiceForm({
             }
             const updates = result?.cost_updates ?? [];
             if (updates.length > 0) {
-                toast.info(updates.length === 1 ? 'Se actualizó el costo de 1 producto' : `Se actualizó el costo de ${updates.length} productos`, {
-                    description: updates.slice(0, 3).map(update => `${update.name || 'Producto'}: ${formatMoney(update.old_cost)} → ${formatMoney(update.new_cost)}`).join(' · '),
-                });
+                const repriced = updates.filter(update => update.new_sale_price != null).length;
+                const shown = updates.slice(0, 3).map(update => `${update.name || 'Producto'}: ${formatMoney(update.old_cost)} → ${formatMoney(update.new_cost)}`
+                    + (update.new_sale_price != null ? ` · precio neto ${formatMoney(update.new_sale_price)}` : ''));
+                toast.info(
+                    (updates.length === 1 ? 'Se actualizó el costo de 1 producto' : `Se actualizó el costo de ${updates.length} productos`)
+                    + (repriced > 0 ? ` y el precio de venta de ${repriced}` : ''),
+                    {
+                        description: shown.join(' · ') + (updates.length > 3 ? ` · y ${updates.length - 3} más` : ''),
+                        duration: 10000,
+                    }
+                );
             }
         } catch {
             // Handled by parent or API caller
@@ -370,6 +382,11 @@ export function SupplierInvoiceForm({
                                             <span>
                                                 Remito {r.remito_number || r.reception_number}
                                                 {r.created_at ? <span className="text-muted-foreground"> · {new Date(r.created_at).toLocaleDateString('es-AR')}</span> : null}
+                                                {Number(r.invoiced_by_order) === 1 ? (
+                                                    <span className="block text-xs text-amber-800 dark:text-amber-300">
+                                                        Su orden de compra ya tiene una factura: elegilo solo si esa factura no lo incluyó.
+                                                    </span>
+                                                ) : null}
                                             </span>
                                             <span className="font-mono text-xs">{formatMoney(receptionNet(r))}</span>
                                         </Label>
@@ -383,8 +400,9 @@ export function SupplierInvoiceForm({
                             <p className="text-sm font-medium">Recibido en los remitos: {formatMoney(receivedNet)}</p>
                             {Math.abs(receivedDifference) > 0.01 ? (
                                 <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">
-                                    La factura difiere de lo recibido en {formatMoney(Math.abs(receivedDifference))}. La diferencia
-                                    corrige el costo de los productos que se actualizan con cada compra; en los de costo fijo va a resultados.
+                                    La factura es {receivedDifference > 0 ? 'mayor' : 'menor'} que lo recibido en {formatMoney(Math.abs(receivedDifference))}.
+                                    La diferencia corrige el costo de los productos que lo actualizan con cada compra; en los de costo fijo se anota como
+                                    {receivedDifference > 0 ? ' pérdida' : ' ganancia'}.
                                 </p>
                             ) : null}
                         </div>

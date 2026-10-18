@@ -197,7 +197,13 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
   - Migraciones 065 y 066 aplicadas en QA, `wsm_sports_erp` y `wsm_simulacion`.
   - Evidencia: validate 0 (1023 + 113); coverage 96,78/90,69/94,69; `qa:integration` 146/146 + corte 2/2; RBAC OK; E2E 6/6; simulación 161/161.
   - La transición en simulación sobre las bases locales: en `wsm_simulacion` el ajuste dio 0; en `wsm_sports_erp` quedaron 70 remitos facturados por OC para revisar.
-- En curso: revisiones guardián, seguridad, UX y auditor externo (AUD-016). Después: correcciones, `AUDIT.md`, PR y pedir autorización de merge.
+- [x] 2026-10-18: AUD-016 (guardián, seguridad, auditor externo y UX) corregido; detalle en `AUDIT.md`.
+  - Evidencia: validate 0 (1032 + 113); coverage 96,79/90,76/94,72; `qa:integration` 152/152; RBAC OK; E2E 6/6; simulación 161/161; transición simulada en `wsm_sports_erp` con `after.ok`.
+- Próximo: push de la rama, PR a `main` y pedir autorización de merge (nunca mergear sin ella).
+- Pendiente del usuario (AUD-016):
+  1. precio de crédito de la devolución a proveedor de mercadería facturada (hoy lo tipea quien carga, Depósito incluido);
+  2. factura por menos unidades que el remito (hoy la diferencia baja el costo).
+  - Contador: D4, CMV histórico de la transición, IVA de facturas B/C al costo.
 
 ## Próximos pasos
 

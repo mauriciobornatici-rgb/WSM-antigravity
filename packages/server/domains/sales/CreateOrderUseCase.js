@@ -4,6 +4,7 @@ import auditService from '../../services/audit.service.js';
 import defaultStockLedger from '../inventory/StockLedger.js';
 import defaultValuation from '../inventory/InventoryValuation.js';
 import { lineAmounts } from '../../utils/vatMath.js';
+import { businessError } from '../../utils/businessError.js';
 import { hasPermission, PERMISSIONS } from '@wsm/common';
 
 // A POS checkout without shipping is a counter sale: the customer leaves with the
@@ -664,6 +665,10 @@ export class CreateOrderUseCase {
                         idempotent_replay: true
                     };
                 }
+            }
+            // ADR-027: a sale also reads the cost under lock; a deadlock is answered, not a 500.
+            if (err?.code === 'ER_LOCK_DEADLOCK' || err?.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw businessError(409, { error: 'busy', message: 'Otra operación estaba usando estos productos. Reintentá en unos segundos.' });
             }
             throw err;
         } finally {

@@ -330,6 +330,12 @@ test('createProduct rejects data URL image payloads with 400', async (t) => {
         inventoryService.ensureUniqueBarcode = originalEnsureUniqueBarcode;
     });
 
+    // A fixed cost is a cost policy (D5): Depósito cannot start a product with it (AUD-016).
+    await assert.rejects(
+        () => inventoryService.createProduct({ name: 'Pelota', sku: 'PEL-002', purchase_price: 100, sale_price: 150, auto_update_cost: false }, 'user-1', 'warehouse'),
+        (error) => error.statusCode === 403 && error.errorCode === 'cost_edit_not_allowed'
+    );
+
     await assert.rejects(
         () => inventoryService.createProduct(
             {

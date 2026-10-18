@@ -63,15 +63,6 @@ export class GoodsReceptionService {
                 err.statusCode = 409;
                 throw err;
             }
-            // ADR-027: the goods enter the ledger at the delivery note's cost, so it must have one.
-            const uncosted = items.filter((item) => !(roundCost(item.unit_cost) > 0));
-            if (uncosted.length > 0) {
-                const err = new Error('Falta el costo de algún producto del remito: cargalo en la orden de compra o en el remito antes de aprobar.');
-                err.errorCode = 'RECEPTION_COST_REQUIRED';
-                err.statusCode = 409;
-                throw err;
-            }
-
             // The order's lines before the stock (L2 before L3, ADR-027), in a stable order.
             const poItemIds = items.map((item) => item.po_item_id).filter(Boolean).sort();
             const [poItemRows] = poItemIds.length > 0
@@ -121,6 +112,24 @@ export class GoodsReceptionService {
             let lossCents = 0;
             let bridgeCents = 0;
             const movementIds = [];
+            const costChanges = [];
+
+            // ADR-027: the goods enter the ledger at the delivery note's cost. An order line typed
+            // without one takes the product's (the invoice corrects it, D1); a product without a cost
+            // needs one first. The line keeps the cost it entered at, for its invoice.
+            for (const item of items) {
+                if (roundCost(item.unit_cost) > 0) continue;
+                const product = products.get(item.product_id);
+                const productCost = effectiveCost(product);
+                if (!(productCost > 0)) {
+                    const err = new Error(`${product?.name || 'Un producto del remito'} no tiene costo, ni en la orden de compra ni en su ficha: un gerente o un administrador tiene que cargarle el costo en Productos antes de aprobar.`);
+                    err.errorCode = 'RECEPTION_COST_REQUIRED';
+                    err.statusCode = 409;
+                    throw err;
+                }
+                item.unit_cost = productCost;
+                await connection.query('UPDATE reception_items SET unit_cost = ? WHERE id = ?', [productCost, item.id]);
+            }
 
             for (const item of items) {
                 const location = item.location_assigned || 'General';
@@ -133,16 +142,9 @@ export class GoodsReceptionService {
                 // the difference is holding result). A product without a cost always takes it (D6).
                 const fixedCost = Number(product.auto_update_cost ?? 1) === 0 && effectiveCost(product) > 0;
                 const valuedCost = fixedCost ? effectiveCost(product) : receiptCost;
-                if (!fixedCost) {
-                    await this.valuation.changeCost(connection, {
-                        product,
-                        stockRows: stockByProduct.get(item.product_id) || [],
-                        newCost: receiptCost,
-                        userId: actorUserId,
-                        source: 'reception',
-                        details: { reception_id: receptionId },
-                    });
-                }
+                // After the stock of every line (L3 before L5): the revaluation posts an entry, and the
+                // locked rows still hold the units there were before this delivery note.
+                if (!fixedCost) costChanges.push({ product, newCost: receiptCost });
 
                 const updateStock = async (loc, qty, isFailed = false) => {
                     if (qty <= 0) return;
@@ -233,6 +235,17 @@ export class GoodsReceptionService {
                         [item.quantity_received, item.po_item_id]
                     );
                 }
+            }
+
+            for (const { product, newCost } of costChanges) {
+                await this.valuation.changeCost(connection, {
+                    product,
+                    stockRows: stockByProduct.get(product.id) || [],
+                    newCost,
+                    userId: actorUserId,
+                    source: 'reception',
+                    details: { reception_id: receptionId },
+                });
             }
 
             if (reception.purchase_order_id) {

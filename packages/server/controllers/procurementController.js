@@ -1,3 +1,4 @@
+import { PERMISSIONS, hasPermission } from '@wsm/common';
 import catchAsync from '../utils/catchAsync.js';
 import inventoryService from '../services/inventory.service.js';
 import getRequestIp from '../utils/requestIp.js';
@@ -39,7 +40,10 @@ export const getReceptions = catchAsync(async (req, res) => {
 });
 
 export const createReception = catchAsync(async (req, res) => {
-    const result = await receptionService.createReception(req.body, req.user?.id, getRequestIp(req));
+    // Without an order, a cost other than the product's changes it: only with PRODUCTS_COST_EDIT (D5).
+    const result = await receptionService.createReception(req.body, req.user?.id, getRequestIp(req), {
+        canEditCost: hasPermission(req.user?.role, PERMISSIONS.PRODUCTS_COST_EDIT),
+    });
     res.json(result);
 });
 

@@ -65,6 +65,6 @@ Un interbloqueo o una espera agotada responden 409 `busy`.
 | I5 | Compras: recepción con la cuenta puente y revaluación, factura que salda el puente y reparte la diferencia, sin factura de mercadería sin remito; migración 066. | hecho (`a48985e`) |
 | I6 | Devoluciones a proveedor vinculadas al remito. | hecho (`aa35319`) |
 | I7 | Unificación del costo (`cost_price` como espejo), quitar `productUnitCosts`, deshabilitar movimientos libres, simulación extendida. | hecho (`a360432`) |
-| I8 | Script de transición (simulación por defecto, `--apply --confirm=<DB>`), runbook, cierre y revisión (AUD-016). | script y runbook hechos; falta la revisión |
+| I8 | Script de transición (simulación por defecto, `--apply --confirm=<DB>`), runbook, cierre y revisión (AUD-016). | hecho; revisión AUD-016 corregida (ver `AUDIT.md`) |
 
 El CHECK de inventario pasa a la migración **067**.

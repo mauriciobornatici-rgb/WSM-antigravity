@@ -36,6 +36,10 @@ if (apply) {
     }
 }
 console.error(`[transicion] destino ${target.host}:${target.port}/${target.database} (NODE_ENV=${target.node_env}) — ${apply ? 'APLICANDO CAMBIOS' : 'simulación (no escribe)'}`);
+if (!apply) {
+    // It reverts everything, but it locks the products while it runs and uses entry numbers.
+    console.error('[transicion] La simulación bloquea los productos mientras corre y deja saltos en la numeración de asientos: hacela con la app detenida, mejor sobre una copia restaurada del backup. Para solo mirar, usá diagnose-inventory-valuation.js.');
+}
 
 const connection = await pool.getConnection();
 let report = null;

@@ -384,26 +384,25 @@ test('getInventory, movements, batches and serials delegate to the service', asy
     assert.deepEqual(calls.getSerials[0], [{ status: 'in_stock' }]);
 });
 
-test('createProduct, transferStock and bulkUpdateTiendaNube pass the acting user; free movements are gone', async (t) => {
+test('createProduct and transferStock pass the acting user; free movements and the broken bulk update are gone', async (t) => {
     const calls = stubInventory(t, {
         createProduct: () => ({ id: 'p1' }),
-        transferStock: () => ({ moved: true }),
-        bulkUpdateTiendaNube: () => ({ updated: 2 })
+        transferStock: () => ({ moved: true })
     });
-    const user = { id: 'u1' };
+    const user = { id: 'u1', role: 'warehouse' };
     assert.deepEqual((await runHandler(controller.createProduct, { body: { sku: 'A' }, user })).body, { id: 'p1' });
-    assert.deepEqual(calls.createProduct[0], [{ sku: 'A' }, 'u1']);
+    // The role decides whether the product may start with a fixed cost (D5).
+    assert.deepEqual(calls.createProduct[0], [{ sku: 'A' }, 'u1', 'warehouse']);
     // ADR-027: a free movement carried any cost into the cost of goods sold.
     assert.equal(controller.createMovement, undefined);
+    // It called a service method that never existed: always a 500 (AUD-016).
+    assert.equal(controller.bulkUpdateTiendaNube, undefined);
     const transfer = await runHandler(controller.transferStock, {
         body: { product_id: 'p1', from_location: 'A', to_location: 'B', quantity: 3, ignored: true },
         user
     });
     assert.deepEqual(transfer.body, { moved: true });
     assert.deepEqual(calls.transferStock[0], ['p1', 'A', 'B', 3, 'u1']);
-    const bulk = await runHandler(controller.bulkUpdateTiendaNube, { body: { products: [{ id: 1 }] }, user });
-    assert.deepEqual(bulk.body, { updated: 2 });
-    assert.deepEqual(calls.bulkUpdateTiendaNube[0], [[{ id: 1 }], 'u1']);
 });
 
 test('transferStock propagates service errors (e.g. insufficient stock) to next()', async (t) => {

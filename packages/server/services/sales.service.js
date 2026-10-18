@@ -188,11 +188,15 @@ class SalesService extends BaseService {
                         ) VALUES (?, 'restock', ?, ?, ?, ?, ?, 'order', ?)`,
                         [movementId, m.product_id, location, quantity, unitCost, 'Order cancellation restock', orderId]
                     );
-                    // Only goods whose cost of goods sold was posted come back with an entry: an order
-                    // packed before ADR-027 left without one (its cost waited for the invoice).
-                    if (m.journal_entry_id) {
-                        reentries.push({ quantity, exitCost: Number(m.unit_cost || 0), unitCost, movementIds: [movementId] });
-                    }
+                    // Goods that left without their cost posted (the product had no cost then, or an
+                    // order packed before ADR-027) were never valued out: they come back against the
+                    // opening adjustment (exitCost 0), so the ledger still follows the stock.
+                    reentries.push({
+                        quantity,
+                        exitCost: m.journal_entry_id ? Number(m.unit_cost || 0) : 0,
+                        unitCost,
+                        movementIds: [movementId],
+                    });
                 }
                 await inventoryValuation.postReentry(connection, {
                     referenceType: 'order',
@@ -592,6 +596,9 @@ class SalesService extends BaseService {
                 : updated[0];
         } catch (err) {
             await connection.rollback();
+            if (err?.code === 'ER_LOCK_DEADLOCK' || err?.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw businessError(409, { error: 'busy', message: 'Otra operación estaba usando estos productos. Reintentá en unos segundos.' });
+            }
             throw err;
         } finally {
             connection.release();

@@ -78,7 +78,8 @@ test('an invoice for exactly what was received changes no cost; legacy and new d
     assert.equal(exact.changes.length, 0);
     assert.equal(same.cost_updates, undefined);
 
-    // r2 came before ADR-027 (never in 2.1.01.02): its value goes to inventory as it always did.
+    // r2 came before ADR-027 (never in 2.1.01.02): the transition valued its goods against
+    // 3.1.03.01, so its part settles that adjustment instead of adding inventory (AUD-016).
     const mixed = harness(t, {
         bridged: ['r1'],
         items: [
@@ -88,10 +89,21 @@ test('an invoice for exactly what was received changes no cost; legacy and new d
     });
     await mixed.service.createSupplierInvoice(invoice({ reception_ids: ['r1', 'r2'], net_amount: 190, vat_amount: 39.9, total_amount: 229.9 }), 'u');
     assert.deepEqual(lines(mixed.entries[0]), [
-        ['2.1.01.02', 100, 0], ['1.1.04.01', 100, 0], ['4.2.02.01', 0, 10], ['1.1.05.02', 39.9, 0], ['2.1.01.01', 0, 229.9],
+        ['2.1.01.02', 100, 0], ['3.1.03.01', 100, 0], ['4.2.02.01', 0, 10], ['1.1.05.02', 39.9, 0], ['2.1.01.01', 0, 229.9],
     ]);
     const links = mixed.calls.filter(({ statement }) => statement.startsWith('INSERT INTO supplier_invoice_receptions'));
     assert.deepEqual(links.map(({ params }) => params.slice(1)), [['r1', 100], ['r2', null]]);
+});
+
+test('a delivery note returned in full before its invoice: the invoice books no goods (AUD-016)', async (t) => {
+    // Everything went back to the supplier (D7): nothing pending in 2.1.01.02, nothing in stock.
+    const { service, entries, changes } = harness(t, {
+        items: [{ reception_id: 'r1', product_id: 'p', quantity_received: 2, returned_quantity: 2, unit_cost: 100 }],
+    });
+    await service.createSupplierInvoice(invoice({ net_amount: 200, vat_amount: 42, total_amount: 242 }), 'u');
+    // It used to fall back to "before ADR-027" and debit inventory for goods that are gone.
+    assert.deepEqual(lines(entries[0]), [['4.2.02.01', 200, 0], ['1.1.05.02', 42, 0], ['2.1.01.01', 0, 242]]);
+    assert.equal(changes.length, 0, 'no units to take a cost from');
 });
 
 test('a deadlock while invoicing answers 409 busy (the screen can retry)', async (t) => {

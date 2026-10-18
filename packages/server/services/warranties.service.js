@@ -48,8 +48,11 @@ class WarrantiesService extends BaseService {
             const productId = previous.product_id;
             // ADR-027: the product's stock (L3) and then its cost (L4), read under lock. The unit is
             // valued at today's cost while it is in stock, like any other (it is revalued with them).
+            // Only a status that can move the unit takes those locks (a note or "en revisión" does not).
+            const movesStock = replacesNow
+                || ['received', 'sent_to_supplier', 'supplier_rejected', 'rejected', 'resolved'].includes(changes.status);
             let unitCost = 0;
-            if (productId) {
+            if (productId && movesStock) {
                 await inventoryValuation.lockStock(connection, [productId]);
                 unitCost = (await inventoryValuation.lockCosts(connection, [productId])).get(productId)?.cost || 0;
             }
@@ -122,6 +125,9 @@ class WarrantiesService extends BaseService {
             return updated[0];
         } catch (error) {
             await connection.rollback();
+            if (error?.code === 'ER_LOCK_DEADLOCK' || error?.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw businessError(409, { error: 'busy', message: 'Otra operación estaba usando este producto. Reintentá en unos segundos.' });
+            }
             throw error;
         } finally {
             connection.release();
@@ -854,13 +860,17 @@ class ReturnsService extends BaseService {
                 });
                 restockedTotal += impact.restocked;
                 discardedTotal += impact.discarded;
-                if (!costPosted || (!impact.reentered && !impact.lost)) continue;
+                if (!impact.reentered && !impact.lost) continue;
                 // Without the order, the cost it was sold at is unknown: today's (no holding result),
-                // and a unit lost is not reclassified (its cost stays as sold).
-                const exitCost = returnRow.order_id ? await this._soldCost(conn, returnRow.order_id, item.product_id, todayCost) : todayCost;
+                // and a unit lost is not reclassified (its cost stays as sold). Goods that left with no
+                // cost posted were never valued: they come back against the opening adjustment
+                // (exitCost 0), and a lost one has nothing to reclassify.
+                let exitCost = todayCost;
+                if (!costPosted) exitCost = 0;
+                else if (returnRow.order_id) exitCost = await this._soldCost(conn, returnRow.order_id, item.product_id, todayCost);
                 reentries.push({
                     quantity: impact.reentered || 0,
-                    lost: returnRow.order_id ? impact.lost || 0 : 0,
+                    lost: returnRow.order_id && costPosted ? impact.lost || 0 : 0,
                     exitCost,
                     unitCost: impact.valued ? todayCost : 0,
                     movementIds: impact.reentered ? [impact.movementId] : [],

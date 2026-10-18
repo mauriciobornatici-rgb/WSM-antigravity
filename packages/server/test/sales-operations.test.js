@@ -43,7 +43,7 @@ test('_restoreInventoryForCancelledOrder ignores empty deductions, restocks at t
         if (String(sql).includes('FROM inventory_movements')) return [[
             { product_id: 'skip', from_location: 'A-1', quantity: 0, unit_cost: 10, journal_entry_id: 'je-sale' },
             { product_id: 'p-2', from_location: 'B-2', quantity: 3, unit_cost: 25, journal_entry_id: 'je-sale' },
-            // Packed before ADR-027: its cost waited for the invoice, so it comes back without an entry.
+            // Left with no cost posted (no cost then, or packed before ADR-027): never valued out.
             { product_id: 'p-3', from_location: 'B-3', quantity: 1, unit_cost: 40, journal_entry_id: null }
         ]];
         if (String(sql).replace(/\s+/g, ' ').includes('FROM products WHERE id IN')) return [[{ id: 'p-2', purchase_price: 30 }, { id: 'p-3', purchase_price: 40 }]];
@@ -57,11 +57,13 @@ test('_restoreInventoryForCancelledOrder ignores empty deductions, restocks at t
     assert.deepEqual(calls[stockLock].params, [['p-2', 'p-3']]);
     assert.ok(calls.some(({ sql, params }) => sql.includes("VALUES (?, 'restock'") && params.includes('B-2') && params.includes(30)));
     assert.equal(calls.some(({ params }) => params?.includes('skip')), false);
-    // 3 × 30 back in stock, 3 × 25 of cost reversed, 15 of holding result. p-3 posts nothing.
+    // 3 × 30 back in stock, 3 × 25 of cost reversed, 15 of holding result. p-3 comes back too, at
+    // today's 40, against the opening adjustment (AUD-016): otherwise the stock grows and the
+    // ledger does not.
     const lines = calls.filter(({ sql }) => sql.startsWith('INSERT INTO journal_entry_lines')).map(({ params }) => [params[2], params[3], params[4]]);
-    assert.deepEqual(lines, [['1.1.04.01', 90, 0], ['5.1.01.01', 0, 75], ['4.2.02.01', 0, 15]]);
+    assert.deepEqual(lines, [['1.1.04.01', 130, 0], ['5.1.01.01', 0, 75], ['4.2.02.01', 0, 15], ['3.1.03.01', 0, 40]]);
     const link = calls.find(({ sql }) => sql.startsWith('UPDATE inventory_movements SET journal_entry_id'));
-    assert.equal(link.params[1].length, 1, 'only the restock of goods whose cost was posted');
+    assert.equal(link.params[1].length, 2, 'both restocks keep the entry');
 });
 
 test('_restoreInventoryForCancelledOrder releases what is reserved and never touches other rows', async () => {

@@ -8,7 +8,7 @@ import goodsReceptionService from '../domains/procurement/GoodsReceptionService.
 import { NON_SELLABLE_LOCATIONS } from '../domains/inventory/StockLedger.js';
 import accountingService from './accounting.service.js';
 import inventoryValuation, {
-    effectiveCost, isValuedLocation, roundCost, valueCents,
+    effectiveCost, isValuedLocation, roundCost, sameLocation, valueCents,
 } from '../domains/inventory/InventoryValuation.js';
 import { hasPermission, PERMISSIONS } from '@wsm/common';
 
@@ -249,7 +249,7 @@ class InventoryService extends BaseService {
         return Number(rows[0]?.total_stock || 0);
     }
 
-    async createProduct(productData, userId) {
+    async createProduct(productData, userId, actorRole = null) {
         const id = crypto.randomUUID();
         const normalized = { ...productData };
         const rawStockInitial = Number(normalized.stock_initial ?? 0);
@@ -281,11 +281,19 @@ class InventoryService extends BaseService {
         for (const flag of ['auto_update_cost', 'auto_update_price']) {
             if (Object.prototype.hasOwnProperty.call(normalized, flag)) normalized[flag] = normalized[flag] ? 1 : 0;
         }
+        // A fixed cost is a cost policy, like editing it (D5): from the start only for a manager or
+        // an administrator. Whoever creates it otherwise gets the default (follow the purchases).
+        if (normalized.auto_update_cost === 0 && actorRole && !hasPermission(actorRole, PERMISSIONS.PRODUCTS_COST_EDIT)) {
+            throw businessError(403, {
+                error: 'cost_edit_not_allowed',
+                message: 'Solo un gerente o un administrador puede dejar el costo fijo.',
+            });
+        }
         normalized.barcode = await this.ensureUniqueBarcode(normalized.barcode);
         normalized.location = this.normalizeLocation(normalized.location);
         // Opening stock is goods to sell, as in the import: never in quarantine, waste or returns to
         // suppliers (in Mermas it would be valued in the ledger and not in the stock, ADR-027).
-        if (stockInitial > 0 && NON_SELLABLE_LOCATIONS.includes(normalized.location)) {
+        if (stockInitial > 0 && NON_SELLABLE_LOCATIONS.some((location) => sameLocation(location, normalized.location))) {
             throw businessError(400, {
                 error: 'initial_stock_location',
                 message: `El stock inicial no se puede cargar en "${normalized.location}": no es una ubicación de venta.`
@@ -620,7 +628,7 @@ class InventoryService extends BaseService {
         const normalizedFrom = String(fromLocation || 'General').trim();
         const normalizedTo = String(toLocation || 'General').trim();
 
-        if (normalizedFrom === normalizedTo) {
+        if (sameLocation(normalizedFrom, normalizedTo)) {
             throw businessError(400, { error: 'same_location', message: 'La ubicación de origen y destino no pueden ser iguales.' });
         }
 
@@ -631,7 +639,9 @@ class InventoryService extends BaseService {
             // Every row of the product in one ordered statement (L3, ADR-027): origin and destination
             // together, the same order as a sale or a revaluation.
             const productRows = (await inventoryValuation.lockStock(connection, [productId])).get(productId) || [];
-            const sourceRows = productRows.filter((row) => row.location === normalizedFrom);
+            // Compared as the database does (case and accents ignored): its unique key would refuse a
+            // second row for "mermas" next to "Mermas".
+            const sourceRows = productRows.filter((row) => sameLocation(row.location, normalizedFrom));
 
             if (sourceRows.length === 0) {
                 throw businessError(409, { error: 'insufficient_stock', message: `Stock insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: 0 (Físico: 0, Reservado: 0)` });
@@ -653,7 +663,7 @@ class InventoryService extends BaseService {
             // deleting a depleted row would break the FK for any prior allocation.
             await connection.query('UPDATE inventory SET quantity = ? WHERE id = ?', [remainingQty, sourceId]);
 
-            const targetRows = productRows.filter((row) => row.location === normalizedTo);
+            const targetRows = productRows.filter((row) => sameLocation(row.location, normalizedTo));
 
             if (targetRows.length > 0) {
                 await connection.query(

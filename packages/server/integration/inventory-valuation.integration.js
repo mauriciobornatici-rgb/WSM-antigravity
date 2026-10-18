@@ -344,10 +344,11 @@ async function receiveWithoutOrder(supplierId, productId, quantity, unitCost, { 
     const { default: receptionService } = await import('../domains/procurement/ReceptionService.js');
     const { QualityCheckService } = await import('../domains/procurement/QualityCheckService.js');
     const { default: goodsReceptionService } = await import('../domains/procurement/GoodsReceptionService.js');
+    // Typed by a manager: a cost other than the product's needs PRODUCTS_COST_EDIT (D5).
     const reception = await receptionService.createReception({
         supplier_id: supplierId, remito_number: `R-${crypto.randomUUID().slice(0, 8)}`,
         items: [{ product_id: productId, quantity_received: quantity, unit_cost: unitCost, location_assigned: 'QA-A' }],
-    }, null);
+    }, null, null, { canEditCost: true });
     await new QualityCheckService().createQualityCheck({
         reception_id: reception.id, product_id: productId, result: failed ? 'partial' : 'passed',
         quantity_checked: quantity, quantity_passed: quantity - failed, quantity_failed: failed,
@@ -435,4 +436,78 @@ test('goods are never invoiced without their delivery note (D2), and a delivery 
         () => receptionService.createReception({ supplier_id: supplierId, items: [{ product_id: productId, quantity_received: 1 }] }, null),
         (err) => err.statusCode === 400 && err.errorCode === 'RECEPTION_COST_REQUIRED'
     );
+    // Without PRODUCTS_COST_EDIT, a cost other than the product's is refused (D5, AUD-016).
+    await assert.rejects(
+        () => receptionService.createReception({ supplier_id: supplierId, items: [{ product_id: productId, quantity_received: 1, unit_cost: 0.01 }] }, null),
+        (err) => err.statusCode === 403 && err.errorCode === 'cost_edit_not_allowed'
+    );
+});
+
+// ---- AUD-016: delivery notes from before the rule, and goods that left with no cost ----
+
+async function seedLegacyReception(supplierId, productId, quantity, unitCost) {
+    // Approved before ADR-027: no 'goods_received' entry (its goods were valued by the transition).
+    const receptionId = crypto.randomUUID();
+    await pool.query(
+        "INSERT INTO receptions (id, reception_number, supplier_id, status) VALUES (?, ?, ?, 'approved')",
+        [receptionId, `REC-QA-${receptionId.slice(0, 8)}`, supplierId]
+    );
+    await pool.query(
+        'INSERT INTO reception_items (id, reception_id, product_id, quantity_received, unit_cost) VALUES (?, ?, ?, ?, ?)',
+        [crypto.randomUUID(), receptionId, productId, quantity, unitCost]
+    );
+    return receptionId;
+}
+
+test('the invoice of a delivery note from before the rule settles the transition adjustment, never adds inventory again', async () => {
+    const { SupplierInvoiceService } = await import('../domains/procurement/SupplierInvoiceService.js');
+    const supplierId = await seedSupplier();
+    const productId = await seedProduct({ cost: 50, stock: [{ location: 'QA-A', quantity: 4 }] });
+    const legacyId = await seedLegacyReception(supplierId, productId, 4, 50);
+
+    const invoice = await new SupplierInvoiceService().createSupplierInvoice({
+        invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-18',
+        reception_ids: [legacyId], net_amount: 200, vat_amount: 42, vat_rate: 21, total_amount: 242,
+    }, null);
+    assert.deepEqual((await ledgerOf('supplier_invoice', invoice.id)).lines, [['1.1.05.02', 42, 0], ['2.1.01.01', 0, 242], ['3.1.03.01', 200, 0]]);
+});
+
+test('a delivery note returned in full before its invoice: the invoice books no goods and 2.1.01.02 ends at 0', async () => {
+    const { SupplierInvoiceService } = await import('../domains/procurement/SupplierInvoiceService.js');
+    const { default: supplierReturnService } = await import('../domains/procurement/SupplierReturnService.js');
+    const supplierId = await seedSupplier();
+    const productId = await seedProduct({ cost: 30 });
+    const receptionId = await receiveWithoutOrder(supplierId, productId, 2, 30);
+    const back = await supplierReturnService.createReturn({
+        supplier_id: supplierId, reception_id: receptionId, items: [{ product_id: productId, quantity: 2, unit_cost: 30 }],
+    }, null);
+    await supplierReturnService.approveSupplierReturn(back.id, null);
+
+    // The supplier invoices anyway (a credit note of theirs will follow): nothing enters inventory.
+    const invoice = await new SupplierInvoiceService().createSupplierInvoice({
+        invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-18',
+        reception_ids: [receptionId], net_amount: 60, vat_amount: 12.6, vat_rate: 21, total_amount: 72.6,
+    }, null);
+    assert.deepEqual((await ledgerOf('supplier_invoice', invoice.id)).lines, [['1.1.05.02', 12.6, 0], ['2.1.01.01', 0, 72.6], ['4.2.02.01', 60, 0]]);
+    const [[bridge]] = await pool.query(
+        `SELECT COALESCE(SUM(l.credit - l.debit), 0) AS balance FROM journal_entries e
+         JOIN journal_entry_lines l ON l.journal_entry_id = e.id AND l.account_code = '2.1.01.02'
+         WHERE (e.reference_type = 'goods_received' AND e.reference_id = ?) OR (e.reference_type = 'supplier_return' AND e.reference_id = ?)
+            OR (e.reference_type = 'supplier_invoice' AND e.reference_id = ?)`,
+        [receptionId, back.id, invoice.id]
+    );
+    assert.equal(Number(bridge.balance), 0);
+});
+
+test('goods sold with no cost come back, after the cost is loaded, against the opening adjustment', async () => {
+    const productId = await seedProduct({ cost: 0, salePrice: 300, stock: [{ location: 'QA-A', quantity: 5 }] });
+    const orderId = await deliveryOrder(productId, 2);
+    await salesService.transitionOrderStatus(orderId, 'packed', null);
+    assert.deepEqual((await ledgerOf('order', orderId)).lines, [], 'nothing of value left');
+
+    // The cost arrives (D6: the 3 in stock against 3.1.03.01), then the order is cancelled.
+    await inventoryService.updateProduct(productId, { purchase_price: 50 }, null, null, 'admin');
+    await salesService.transitionOrderStatus(orderId, 'cancelled', null);
+    // It used to come back with no entry: stock up by 100, ledger unchanged.
+    assert.deepEqual((await ledgerOf('order', orderId)).lines, [['1.1.04.01', 100, 0], ['3.1.03.01', 0, 100]]);
 });

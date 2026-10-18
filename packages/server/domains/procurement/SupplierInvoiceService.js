@@ -210,7 +210,10 @@ export class SupplierInvoiceService {
             // products (L4) before any entry.
             const givesCredit = invoice_type === 'A' || invoice_type === 'M';
             const debitBase = Math.round((net + (givesCredit ? 0 : vat)) * 100) / 100;
-            const differenceCents = bridge && bridge.pendingCents > 0
+            // By the delivery notes, not by what is pending: one returned in full before the invoice
+            // (D7) left nothing pending, and its invoice must not book goods that are gone.
+            const bridged = bridge && bridge.bridgedCount > 0;
+            const differenceCents = bridged
                 ? Math.round(debitBase * 100) - bridge.pendingCents - bridge.legacyCents
                 : 0;
             const costUpdates = bridge && differenceCents !== 0
@@ -303,21 +306,31 @@ export class SupplierInvoiceService {
                     creditByAccount.set(account, current);
                 }
             }
-            // Goods whose delivery notes went through 2.1.01.02 clear it; delivery notes received
-            // before ADR-027 never did, so their part (and the difference, when all are like that)
-            // goes to inventory as it always did.
-            const goodsLines = bridge && bridge.pendingCents > 0
-                ? [
+            // Goods whose delivery notes went through 2.1.01.02 clear it. Delivery notes received
+            // before ADR-027 never did: their goods were valued with the stock by the transition,
+            // against 3.1.03.01 (D4), so their invoice settles that adjustment instead of adding
+            // inventory again (before the transition, its final adjustment nets the same amount).
+            const legacyLine = {
+                account_code: ACCOUNTS.OPENING_ADJUSTMENT,
+                notes: 'Remito anterior a la valuación por costo de última compra',
+            };
+            let goodsLines;
+            if (bridged) {
+                goodsLines = [
                     { account_code: ACCOUNTS.GOODS_TO_INVOICE, debit: bridge.pendingCents / 100, credit: 0, notes: 'Mercadería recibida a facturar' },
-                    { account_code: debitAccount.code, debit: bridge.legacyCents / 100, credit: 0, notes: debitAccount.notes },
+                    { ...legacyLine, debit: bridge.legacyCents / 100, credit: 0 },
                     {
                         account_code: ACCOUNTS.HOLDING_RESULT,
                         debit: differenceCents > 0 ? differenceCents / 100 : 0,
                         credit: differenceCents < 0 ? -differenceCents / 100 : 0,
                         notes: 'Diferencia entre lo facturado y lo recibido',
                     },
-                ]
-                : [{ account_code: debitAccount.code, debit: debitBase, credit: 0, notes: debitAccount.notes }];
+                ];
+            } else if (bridge) {
+                goodsLines = [{ ...legacyLine, debit: debitBase, credit: 0 }];
+            } else {
+                goodsLines = [{ account_code: debitAccount.code, debit: debitBase, credit: 0, notes: debitAccount.notes }];
+            }
             await accountingService.createJournalEntryIfAny(connection, {
                 date: issue_date || new Date(),
                 description: `Factura de Compra ${invoice_type} ${invoice_number}`,
@@ -415,7 +428,7 @@ export class SupplierInvoiceService {
                 legacyCents += cents;
             }
         }
-        return { pendingCents, legacyCents, lines, clearedByReception };
+        return { pendingCents, legacyCents, lines, clearedByReception, bridgedCount: bridgedIds.size };
     }
 
     /**

@@ -3,7 +3,7 @@ import pool from '../config/db.js';
 import auditService from './audit.service.js';
 import accountingService from './accounting.service.js';
 import { ACCOUNTS } from '../utils/paymentAccounts.js';
-import inventoryValuation, { isValuedLocation, valueCents } from '../domains/inventory/InventoryValuation.js';
+import inventoryValuation, { isValuedLocation, sameLocation, valueCents } from '../domains/inventory/InventoryValuation.js';
 
 const ACTIVE_STATUS = 'in_progress';
 const FINAL_STATUSES = new Set(['completed', 'adjusted']);
@@ -480,7 +480,7 @@ class StockAuditService {
             const conflicts = [];
             for (const item of items) {
                 const inventory = (stockByProduct.get(item.product_id) || [])
-                    .find((row) => row.location === session.location_code) || null;
+                    .find((row) => sameLocation(row.location, session.location_code)) || null;
                 lockedInventory.set(item.product_id, inventory);
                 if (Math.abs(asNumber(inventory?.quantity) - asNumber(item.expected_quantity)) > 0.0001) {
                     conflicts.push(item.sku || item.product_name);
@@ -564,6 +564,9 @@ class StockAuditService {
             await connection.commit();
         } catch (error) {
             await connection.rollback();
+            if (error?.code === 'ER_LOCK_DEADLOCK' || error?.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw businessError('Otra operación estaba usando estos productos. Reintentá en unos segundos.', 409, 'busy');
+            }
             throw error;
         } finally {
             connection.release();

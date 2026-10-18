@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ReceptionPicker } from '@/components/receptions/ReceptionPicker';
+import { receptionIdToSend } from '@/lib/receptionChoice';
 
 interface ReturnFormProps {
     onCancel: () => void;
@@ -128,9 +129,19 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
             return;
         }
 
+        if (!receptionId) {
+            showErrorToast('Elegí el remito', new Error('Elegí el remito con el que llegó la mercadería, o «Sin remito» si el proveedor ya la facturó.'));
+            return;
+        }
+        const invalid = items.find((item) => !Number.isInteger(item.quantity) || item.quantity < 1);
+        if (invalid) {
+            showErrorToast('Cantidad inválida', new Error(`Revisá ${invalid.product_name}: se devuelven unidades enteras, al menos 1.`));
+            return;
+        }
+        const reception = receptionIdToSend(receptionId);
         const payload: Parameters<typeof api.createReturn>[0] = {
             supplier_id: selectedSupplierId,
-            ...(receptionId ? { reception_id: receptionId } : {}),
+            ...(reception ? { reception_id: reception } : {}),
             items,
             ...(notes ? { notes } : {}),
         };
@@ -230,10 +241,12 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                                     <Label className="mb-1 text-xs sm:hidden">Cantidad</Label>
                                     <Input
                                         type="number"
-                                        min="0.01"
-                                        step="0.01"
+                                        min="1"
+                                        step="1"
+                                        inputMode="numeric"
+                                        aria-label={`Cantidad de ${item.product_name}`}
                                         value={item.quantity}
-                                        onChange={(e) => handleUpdateItem(index, 'quantity', Number.parseFloat(e.target.value) || 0)}
+                                        onChange={(e) => handleUpdateItem(index, 'quantity', Math.trunc(Number(e.target.value)) || 0)}
                                         className="h-8 text-center"
                                     />
                                 </div>

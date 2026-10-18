@@ -7,6 +7,7 @@ import {
     isValuedLocation,
     repricedSalePrice,
     roundCost,
+    sameLocation,
     valueCents,
 } from '../domains/inventory/InventoryValuation.js';
 import { checkInventoryValuation } from '../scripts/inventory-valuation/valuation.js';
@@ -52,6 +53,50 @@ test('valued locations, cost rules and cents (ADR-027)', () => {
     assert.equal(roundCost('600.004'), 600);
     assert.equal(valueCents(3, 33.33), 9999);
     assert.equal(valueCents(null, 10), 0);
+});
+
+test('locations compare as the database does: case and accents ignored (AUD-016)', () => {
+    assert.equal(isValuedLocation('mermas'), false, 'the same row as "Mermas" for MySQL');
+    assert.equal(isValuedLocation('MERMAS'), false);
+    assert.equal(isValuedLocation('Mérmas'), false);
+    assert.equal(sameLocation('Depósito', 'deposito'), true);
+    assert.equal(sameLocation('General', 'Salón'), false);
+    assert.equal(sameLocation(null, ''), true);
+});
+
+test('postReentry: goods that left with no cost posted come back against the opening adjustment (AUD-016)', async () => {
+    const accounting = fakeAccounting();
+    const valuation = new InventoryValuation({ accounting, audit: { log: async () => {} } });
+    const connection = recordingConnection(() => [{ affectedRows: 1 }]);
+    await valuation.postReentry(connection, {
+        referenceType: 'order',
+        referenceId: 'o-9',
+        description: 'Anulación',
+        lines: [
+            // Left at 25 (posted), back at 30: 15 of holding result.
+            { quantity: 3, exitCost: 25, unitCost: 30, movementIds: ['m1'] },
+            // Left with no cost (the product had none): back at today's 40, never valued out.
+            { quantity: 1, exitCost: 0, unitCost: 40, movementIds: ['m2'] },
+        ],
+    });
+    assert.deepEqual(lines(accounting.entries[0]), [
+        ['1.1.04.01', 130, 0], ['5.1.01.01', 0, 75], ['4.2.02.01', 0, 15], ['3.1.03.01', 0, 40],
+    ]);
+    assert.deepEqual(connection.calls[0].params, ['je-1', ['m1', 'm2']]);
+});
+
+test('changeCost refuses a cost of 0 while there is valued stock; Mermas alone does not block it', async () => {
+    const accounting = fakeAccounting();
+    const valuation = new InventoryValuation({ accounting, audit: { log: async () => {} } });
+    const product = { id: 'p', name: 'Pelota', purchase_price: 100, sale_price: 200 };
+    await assert.rejects(
+        () => valuation.changeCost(recordingConnection(), { product, stockRows: [{ location: 'General', quantity: 2 }], newCost: 0, source: 'product_edit' }),
+        (error) => error.statusCode === 409 && error.errorCode === 'cost_zero_with_stock' && /Mermas/.test(error.message)
+    );
+    const connection = recordingConnection(() => [{ affectedRows: 1 }]);
+    const changed = await valuation.changeCost(connection, { product, stockRows: [{ location: 'Mermas', quantity: 5 }], newCost: 0, source: 'product_edit' });
+    assert.equal(changed.cost, 0);
+    assert.equal(accounting.entries.length, 0, 'nothing valued to revalue');
 });
 
 test('repricedSalePrice keeps the markup on the final price, rounded to the cent, and stores its net', () => {

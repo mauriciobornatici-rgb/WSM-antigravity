@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import pool from '../config/db.js';
 import auditService from './audit.service.js';
 import { outputVatLines } from '../utils/vatAccounts.js';
+import { ACCOUNTS } from '../utils/paymentAccounts.js';
 
 class AccountingService {
     _round(val) {
@@ -706,7 +707,25 @@ class AccountingService {
             }
 
             const [lines] = await connection.query('SELECT * FROM journal_entry_lines WHERE journal_entry_id = ?', [id]);
-            
+
+            // ADR-027: Inventario and Mercadería recibida a facturar follow the stock and the delivery
+            // notes. Reversing one of their entries by hand moves the ledger without moving a unit:
+            // it is corrected with the operation itself (cancel, return, count). The old purchase
+            // entries posted twice ('reception') are the exception: their runbook reverses them.
+            const stockAccounts = [ACCOUNTS.INVENTORY, ACCOUNTS.GOODS_TO_INVOICE];
+            if (originalEntry.reference_type !== 'reception') {
+                const [linkedMovements] = await connection.query(
+                    'SELECT id FROM inventory_movements WHERE journal_entry_id = ? LIMIT 1',
+                    [id]
+                );
+                if (linkedMovements.length > 0 || lines.some((line) => stockAccounts.includes(line.account_code))) {
+                    const error = new Error('Este asiento acompaña movimientos de stock: se corrige con la operación (anulación, devolución o conteo), no revirtiéndolo a mano.');
+                    error.statusCode = 409;
+                    error.errorCode = 'stock_entry_not_reversible';
+                    throw error;
+                }
+            }
+
             // Create reversed lines
             const reversedLines = lines.map(l => ({
                 account_code: l.account_code,

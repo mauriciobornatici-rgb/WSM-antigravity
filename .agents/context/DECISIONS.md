@@ -119,6 +119,13 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
   - 065: cuenta 2.1.01.02, vínculo del movimiento con el asiento, fecha de corte y casillas por producto;
   - 066: lo saldado por remito, lo devuelto por remito y el remito de la devolución.
   El CHECK de inventario pasa a la **067**.
+- **AUD-016 (2026-10-18), reglas técnicas agregadas:**
+  - un remito anterior a la regla (sin asiento `goods_received`) se factura contra 3.1.03.01: su mercadería ya la valuó la transición;
+  - un remito cuya OC se facturó sin nombrar remitos cuenta como facturado;
+  - lo que salió sin costo asentado vuelve contra 3.1.03.01;
+  - sin `products.cost_edit`, el remito sin OC lleva el costo del producto (lo corrige la factura) y el producto nuevo no arranca con costo fijo;
+  - el costo no puede quedar en 0 con stock valuado;
+  - los asientos que acompañan stock no se revierten a mano.
 - **También del 2026-10-17:** el cajero puede importar clientes. PR #9 (importador) y PR #10 (`-Red`) se mergearon con autorización del usuario.
 
 ### ADR-026 — Importador de productos, clientes y proveedores desde planillas (usuario, 2026-10-17)
