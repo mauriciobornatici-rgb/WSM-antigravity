@@ -174,7 +174,9 @@ test('the valuation check compares the inventory ledger with the stock at cost, 
         if (statement.includes('GROUP BY p.id')) return [[{ id: 'p', sku: 'S', name: 'Sin costo', quantity: '3' }]];
         if (statement.includes('inventory_valuation_since')) return [[{ since }]];
         if (statement.includes('FROM inventory_movements')) return [[{ movements: '2', value: '40.5' }]];
-        if (statement.includes("account_code = '2.1.01.02'")) return [[{ balance: '0' }]];
+        if (statement.includes("account_code = '2.1.01.02'")) return [[{ balance: '120' }]];
+        // What the delivery notes that went through 2.1.01.02 still owe.
+        if (statement.includes('FROM reception_items ri')) return [[{ value: '120' }]];
         throw new Error(`unexpected ${statement}`);
     });
 
@@ -183,7 +185,8 @@ test('the valuation check compares the inventory ledger with the stock at cost, 
     assert.deepEqual(ok, {
         ok: true, inventory_ledger: 1500.25, stock_valued: 1500.25, difference: 0, valued_units: 12,
         products_with_stock_and_no_cost: [{ id: 'p', sku: 'S', name: 'Sin costo', quantity: 3 }],
-        valuation_since: null, sales_without_entry: { movements: 2, value: 40.5 }, goods_to_invoice_balance: 0,
+        valuation_since: null, sales_without_entry: { movements: 2, value: 40.5 },
+        goods_to_invoice_balance: 120, goods_to_invoice_pending: 120, goods_to_invoice_difference: 0,
     });
     assert.ok(matching.calls.every(({ statement }) => statement.startsWith('SELECT')), 'only reads');
     assert.deepEqual(matching.calls.find(({ statement }) => statement.includes('FROM inventory i JOIN products')).params, [['Mermas']]);
@@ -221,4 +224,101 @@ test('postReentry: goods back at today\'s cost, the cost of goods sold reversed 
     assert.deepEqual(lines(accounting.entries[1]), [['1.1.04.01', 10, 0], ['5.1.01.01', 0, 10]], 'no holding line when the cost did not change');
     assert.equal(await valuation.postReentry(connection, { referenceType: 'order', referenceId: 'o', description: 'x', lines: [] }), null);
     assert.equal(await valuation.postReentry(connection, { referenceType: 'order', referenceId: 'o', description: 'x' }), null);
+});
+
+test('runCutover aligns the old data once: costs, old sales, open delivery notes and one adjustment (I8)', async () => {
+    const { runCutover, checkCutoverPreconditions, CUTOVER_REFERENCE } = await import('../scripts/inventory-valuation/valuation.js');
+    const state = { ledgerCents: 90000, since: null };
+    const entries = [];
+    const audits = [];
+    const accounting = {
+        createJournalEntry: async (_c, entry) => {
+            entries.push(entry);
+            for (const line of entry.lines) {
+                if (line.account_code === '1.1.04.01') state.ledgerCents += Math.round(line.debit * 100) - Math.round(line.credit * 100);
+            }
+            return `je-${entries.length}`;
+        },
+        reverseDocumentEntries: async (_c, args) => (args.referenceId === 'i-b' ? ['rev-1'] : []),
+    };
+    accounting.createJournalEntryIfAny = async (c, entry) => {
+        const lines = entry.lines.filter((line) => line.debit > 0 || line.credit > 0);
+        return lines.length < 2 ? null : accounting.createJournalEntry(c, { ...entry, lines });
+    };
+    const connection = recordingConnection((statement) => {
+        if (statement.startsWith('INSERT IGNORE INTO company_settings')) return [{ affectedRows: 0 }];
+        if (statement.includes('inventory_valuation_since AS since FROM company_settings ORDER BY id LIMIT 1 FOR UPDATE')) return [[{ id: 1, since: state.since }]];
+        if (statement.startsWith('UPDATE products SET purchase_price = cost_price')) return [{ affectedRows: 2 }];
+        if (statement.startsWith('UPDATE products SET cost_price')) return [{ affectedRows: 5 }];
+        if (statement.startsWith('UPDATE company_settings')) { state.since = new Date(); return [{ affectedRows: 1 }]; }
+        if (statement.startsWith('UPDATE inventory_movements')) return [{ affectedRows: 2 }];
+        // The valuation check: ledger from the entries posted, stock worth 1000.
+        if (statement.includes("account_code = '1.1.04.01'")) return [[{ balance: String(state.ledgerCents / 100) }]];
+        if (statement.includes('AS value, COALESCE(SUM(i.quantity), 0) AS quantity')) return [[{ value: '1000', quantity: '10' }]];
+        if (statement.includes('GROUP BY p.id')) return [[]];
+        if (statement.includes('inventory_valuation_since AS since FROM company_settings')) return [[{ since: state.since }]];
+        if (statement.includes('FROM inventory_movements WHERE type = \'sale\' AND journal_entry_id IS NULL AND unit_cost > 0')) return [[{ movements: 0, value: 0 }]];
+        if (statement.includes("account_code = '2.1.01.02'")) return [[{ balance: '120' }]];
+        if (statement.includes('FROM reception_items ri WHERE')) return [[{ value: '120' }]];
+        // Invoices that posted the cost with the old rule.
+        if (statement.includes('JOIN invoices i ON i.id = je.reference_id')) {
+            return [[
+                { entry_id: 'je-a', invoice_id: 'i-a', order_id: 'o-a', order_status: 'completed', movements: 2 },
+                { entry_id: 'je-b', invoice_id: 'i-b', order_id: 'o-b', order_status: 'pending', movements: 0 },
+                { entry_id: 'je-c', invoice_id: 'i-c', order_id: null, order_status: null, movements: 0 },
+                { entry_id: 'je-d', invoice_id: 'i-d', order_id: 'o-d', order_status: 'delivered', movements: 0 },
+            ]];
+        }
+        if (statement.includes('FROM inventory_movements m LEFT JOIN products p')) {
+            return [[{ id: 'm1', order_id: 'o-x', quantity: 2, unit_cost: 0, purchase_price: 30 }, { id: 'm2', order_id: 'o-x', quantity: 1, unit_cost: 20 }]];
+        }
+        if (statement.includes('FROM receptions r JOIN reception_items ri')) {
+            return [[
+                { id: 'r1', reception_number: 'REC-1', remito_number: null, order_invoiced: 0, value: '120' },
+                { id: 'r2', reception_number: 'REC-2', remito_number: 'R-2', order_invoiced: 1, value: '50' },
+                { id: 'r3', reception_number: 'REC-3', remito_number: null, order_invoiced: 0, value: '0' },
+            ]];
+        }
+        throw new Error(`unexpected ${statement}`);
+    });
+
+    const report = await runCutover(connection, { runId: 'run-1', accounting, audit: { log: async (entry) => { audits.push(entry); } } });
+
+    assert.equal(report.costs_from_cost_price, 2);
+    assert.equal(report.sales_linked_to_invoice_cost, 2);
+    assert.deepEqual(report.reversed_costs_of_unpacked_orders, ['o-b'], 'only an order not packed yet');
+    assert.deepEqual(report.costs_posted_for_sales, { orders: 1, amount: 80 }, '2 × 30 (today, the movement had none) + 1 × 20');
+    assert.deepEqual(report.opened_goods_to_invoice, { receptions: 1, amount: 120 });
+    assert.deepEqual(report.receptions_invoiced_by_their_order, [{ id: 'r2', remito: 'R-2', value: 50 }]);
+    // 900 − 80 + 120 = 940 against 1000 in stock: one adjustment of 60 against 3.1.03.01.
+    assert.equal(report.adjustment, 60);
+    const adjustment = entries.find((entry) => entry.reference_type === CUTOVER_REFERENCE && entry.reference_id === 'run-1');
+    assert.deepEqual(lines(adjustment), [['1.1.04.01', 60, 0], ['3.1.03.01', 0, 60]]);
+    assert.equal(report.after.ok, true);
+    assert.equal(audits[0].action, 'INVENTORY_VALUATION_CUTOVER');
+    assert.equal(audits[0].new_values.ok, true);
+
+    // A second run finds the date and does nothing.
+    const again = await runCutover(connection, { runId: 'run-2', accounting, audit: { log: async () => {} } });
+    assert.equal(again.already_done, true);
+
+    // An adjustment the other way: more in the ledger than in stock.
+    state.since = null;
+    // 1020 − 80 + 120 = 1060 in the ledger against 1000 in stock.
+    state.ledgerCents = 102000;
+    const down = await runCutover(connection, { runId: 'run-3', accounting, audit: { log: async () => {} } });
+    assert.equal(down.adjustment, -60);
+    assert.deepEqual(lines(entries.at(-1)), [['3.1.03.01', 60, 0], ['1.1.04.01', 0, 60]]);
+
+    // Preconditions: the migrations are checked on the database, the repairs through the finders.
+    const preconditions = recordingConnection((statement) => {
+        if (statement.includes('FROM chart_of_accounts')) return [[{ code: '4.2.02.01' }]];
+        if (statement.includes('information_schema.COLUMNS')) return [[{ name: 'a' }, { name: 'b' }]];
+        throw new Error(`unexpected ${statement}`);
+    });
+    const problems = await checkCutoverPreconditions(preconditions, { findAffectedOrders: async () => [], findReceptionEntries: async () => [] });
+    assert.deepEqual(problems, [
+        'Faltan las migraciones 064/065 (cuentas 4.2.02.01 y 2.1.01.02).',
+        'Faltan las migraciones 065/066 (columnas de la valuación).',
+    ]);
 });
