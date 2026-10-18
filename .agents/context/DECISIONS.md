@@ -80,23 +80,46 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
-### ADR-027 — Revaluación del stock al cambiar el costo, y respuestas sobre el importador (usuario, 2026-10-17)
-- **EN ESPERA (AUD-015).** El guardián mostró que la premisa de abajo es falsa, y quedó verificado en el código:
-  - las compras debitan 1.1.04.01 al costo real de la factura (`SupplierInvoiceService`);
-  - la recepción entra stock sin asiento hasta la factura;
-  - las devoluciones y garantías salen o reingresan a costos históricos;
-  - en cambio, las ventas acreditan al `purchase_price`.
-  Por eso el mayor no es stock × costo, y revaluar todo el stock duplica valor en el caso común (comprar más caro y después subir el costo). Falta que el usuario elija el método de valuación. La implementación quedó en la rama local `feat/revaluacion-stock`, sin PR.
-- **Revaluación (sí, pendiente del método):**
-  - El stock se valúa al costo del producto (`purchase_price`), y las ventas asientan el CMV con ese costo.
-  - Cuando el costo de un producto con stock cambia, por importación o por edición a mano, las unidades en stock se revalúan con un asiento contra **4.2.02.01 Resultado por tenencia de mercaderías**: ganancia si sube, pérdida si baja. Queda auditado (`REVALUE_STOCK`).
-  - Así el mayor de Mercaderías sigue igual a stock × costo.
-  - Las compras no cambian el costo, así que no hay otros caminos.
-- **Bloqueos:** el stock del producto se bloquea antes que el producto (el orden de una venta), así la cantidad revaluada es la que queda.
-- **La edición manual del producto** pasó a una transacción en el servicio. Antes eran escrituras sueltas desde el controlador.
-- **Migración 064** (solo la cuenta). El CHECK de inventario pasa a la **065**.
-- **El cajero puede importar clientes** (sí), igual que darlos de alta a mano.
-- **PR #9** (importador) y **PR #10** (opción `-Red` de la simulación) mergeados con autorización del usuario.
+### ADR-027 — Valuación de la mercadería por costo de última compra (usuario, 2026-10-17)
+- **Estado:** implementado en la rama `feat/revaluacion-stock` (I1-I8). Plan y criterios en `docs/execution/PLAN_VALUACION_INVENTARIO.md`; transición en `RUNBOOK_VALUACION_INVENTARIO.md`.
+- **Origen:** la primera versión (revaluar al cambiar el costo) quedó frenada por AUD-015: el mayor no era stock × costo, porque las compras entraban al costo de la factura y las ventas salían a `purchase_price`. El usuario eligió la **opción a: costo de última compra** (costo de reposición, RT 17).
+- **Invariantes:**
+  - el mayor de Inventario (1.1.04.01) es igual a la suma de cantidad × costo del producto en las ubicaciones valuadas, al centavo; Mermas no se valúa;
+  - el saldo de **2.1.01.02 "Mercadería recibida a facturar"** es igual a lo pendiente de los remitos no facturados;
+  - todo movimiento de stock valuado deja su asiento en la misma transacción, con el costo leído bajo bloqueo, y queda vinculado a él (`inventory_movements.journal_entry_id`).
+- **Decisiones del usuario:**
+  - **D1:** el costo sale del remito (precio de la OC). Si la factura difiere, la diferencia va a tenencia y corrige el costo. Cada producto tiene dos casillas, marcadas por defecto:
+    - actualizar el costo con cada compra; si se desmarca, el costo queda fijo y la diferencia va a resultados;
+    - ajustar el precio de venta al costo manteniendo el margen.
+  - **D2:** no hay factura de mercadería sin remito. La compra chica se registra con un remito sin OC.
+  - **D3:** pasar a Mermas es una pérdida; traerla de vuelta la recupera.
+  - **D4:** el ajuste de la transición va contra 3.1.03.01. Lo tiene que confirmar el contador.
+  - **D5:** solo el administrador y el gerente cambian el costo (permiso `products.cost_edit`).
+  - **D6:** cargar el costo a stock que tenía costo 0 es un ajuste de inventario inicial, no una ganancia.
+  - **D7:** la devolución de mercadería sin facturar se hace contra su remito.
+  - **D8:** el costo de lo vendido se registra cuando la mercadería sale.
+  - **D9:** la factura manual sin pedido no registra costo.
+- **Asientos:**
+  - salidas: CMV contra Inventario; el faltante offline va contra 5.1.02.02;
+  - reingresos (anulación de pedido armado, devolución de cliente): al costo de hoy, revirtiendo el CMV al costo de salida, con la diferencia a 4.2.02.01;
+  - garantías y conteos: al costo vigente;
+  - recepción: Inventario contra 2.1.01.02;
+  - factura de compra: salda 2.1.01.02;
+  - devolución a proveedor: al costo en libros.
+- **Bloqueos:**
+  1. cabecera;
+  2. hijos;
+  3. inventario de todos los productos en una sentencia ordenada;
+  4. productos (FOR SHARE para leer, FOR UPDATE para cambiar el costo);
+  5. asientos.
+  Un interbloqueo responde 409 `busy`.
+- **Cambios de API:** se quitan POST `/api/movements` e `/api/inventory-movements`, porque grababan costos libres. La recepción con OC toma el costo de la OC.
+- **Migraciones:**
+  - 064: cuenta 4.2.02.01;
+  - 065: cuenta 2.1.01.02, vínculo del movimiento con el asiento, fecha de corte y casillas por producto;
+  - 066: lo saldado por remito, lo devuelto por remito y el remito de la devolución.
+  El CHECK de inventario pasa a la **067**.
+- **También del 2026-10-17:** el cajero puede importar clientes. PR #9 (importador) y PR #10 (`-Red`) se mergearon con autorización del usuario.
 
 ### ADR-026 — Importador de productos, clientes y proveedores desde planillas (usuario, 2026-10-17)
 - **Pedido del usuario:** agilizar la carga inicial y las actualizaciones masivas.

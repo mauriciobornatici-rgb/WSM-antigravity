@@ -192,8 +192,12 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - AUD-015 frenó la primera versión (`c71c41d`): el mayor no era stock × costo. El usuario eligió la opción a (costo de última compra).
 - La migración 064 (cuenta 4.2.02.01) ya está aplicada en QA, en la base local y en la de simulación: no tocarla.
 - Avance por incrementos I1-I8 (estado en la tabla del plan).
-- 2026-10-17: I1-I4 hechos y commiteados (`5aa8a3c`, `8b61dc5`, `cfd9f7e`, `955d247`). Migración 065 aplicada en QA, `wsm_sports_erp` y `wsm_simulacion`. Evidencia: unit 1014/1014, `qa:integration` 141/141, validate 0 (en I1), simulación 153/153 (en I2).
-- Próximo: I5 (compras: recepción contra 2.1.01.02, factura que salda el puente, D2, migración 066), I6, I7, I8; después guardián + auditor (AUD-016), ADR-027 reescrito y PR.
+- 2026-10-17: I1-I4 hechos y commiteados (`5aa8a3c`, `8b61dc5`, `cfd9f7e`, `955d247`).
+- 2026-10-18: I5 (`a48985e`), I6 (`aa35319`), I7 (`a360432`) e I8 (`8d8d8d3`) hechos; smoke RBAC con 2 casos nuevos (`c1fb816`); ADR-027 reescrito.
+  - Migraciones 065 y 066 aplicadas en QA, `wsm_sports_erp` y `wsm_simulacion`.
+  - Evidencia: validate 0 (1023 + 113); coverage 96,78/90,69/94,69; `qa:integration` 146/146 + corte 2/2; RBAC OK; E2E 6/6; simulación 161/161.
+  - La transición en simulación sobre las bases locales: en `wsm_simulacion` el ajuste dio 0; en `wsm_sports_erp` quedaron 70 remitos facturados por OC para revisar.
+- En curso: revisiones guardián, seguridad, UX y auditor externo (AUD-016). Después: correcciones, `AUDIT.md`, PR y pedir autorización de merge.
 
 ## Próximos pasos
 
