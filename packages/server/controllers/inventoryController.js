@@ -131,11 +131,6 @@ export const getProductMovements = catchAsync(async (req, res) => {
     res.json(rows);
 });
 
-export const createMovement = catchAsync(async (req, res) => {
-    const movement = await inventoryService.recordMovement(req.body, req.user?.id);
-    res.json(movement);
-});
-
 export const getBatches = catchAsync(async (req, res) => {
     const batches = await inventoryService.getBatches(req.query);
     res.json(batches);

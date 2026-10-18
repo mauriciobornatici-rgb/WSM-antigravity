@@ -544,6 +544,39 @@ async function main() {
         check('Caja suma el cobro del retiro', await shiftExpected(), ctx.cashExpected);
     });
 
+    await step('16b. Compra chica sin OC a otro costo y factura con diferencia (ADR-027)', async () => {
+        const [before] = await q('SELECT purchase_price FROM products WHERE id = ?', [ctx.p2.id]);
+        const newCost = money(Number(before.purchase_price) * 1.2);
+        const rec = await call('POST', '/api/receptions', {
+            supplier_id: ctx.supplier.id, remito_number: `R-${RUN}-3`,
+            items: [{ product_id: ctx.p2.id, quantity_received: 4, unit_cost: newCost, location_assigned: ctx.dep }],
+        });
+        await call('POST', '/api/quality-checks', { reception_id: rec.id, product_id: ctx.p2.id, result: 'pass', quantity_checked: 4, quantity_passed: 4, quantity_failed: 0 });
+        await call('POST', `/api/receptions/${rec.id}/approve`, {});
+        move(ctx.p2.id, ctx.dep, 4);
+        await verifyStock('Compra sin OC aprobada', ctx.pids);
+        const [after] = await q('SELECT purchase_price FROM products WHERE id = ?', [ctx.p2.id]);
+        check('El costo pasa al de la última compra (con revaluación del stock)', Number(after.purchase_price), newCost);
+        // La factura trae 100 más por unidad: la diferencia corrige el costo (D1).
+        const net = money(4 * newCost + 400);
+        const vat = money(net * 0.21);
+        const balance0 = await supplierBalance();
+        const inv = await call('POST', '/api/supplier-invoices', {
+            invoice_number: `0002-${RUN.slice(-8)}`, invoice_type: 'A', supplier_id: ctx.supplier.id, reception_ids: [rec.id],
+            issue_date: new Date().toISOString().slice(0, 10), net_amount: net, vat_amount: vat, total_amount: money(net + vat),
+        });
+        check('La factura corrige el costo con su diferencia', inv.cost_updates?.[0]?.new_cost, money(newCost + 100));
+        check('Saldo proveedor sube por la factura', await supplierBalance(), money(balance0 + net + vat));
+        const [bridge] = await q(
+            `SELECT COALESCE(SUM(jel.credit - jel.debit), 0) AS v FROM journal_entries je
+             JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id AND jel.account_code = '2.1.01.02'
+             WHERE (je.reference_type = 'goods_received' AND je.reference_id = ?)
+                OR (je.reference_type = 'supplier_invoice' AND je.reference_id = ?)`,
+            [rec.id, inv.id]
+        );
+        check('El remito sin OC también queda saldado al facturarlo', money(bridge.v), 0);
+    });
+
     await step('17. Cierre de caja sin diferencias', async () => {
         const exp = await shiftExpected();
         const closed = await call('POST', `/api/cash-shifts/${ctx.shift.id}/close`, { actual_balance: exp, notes: 'Cierre simulación' });
@@ -606,8 +639,9 @@ async function main() {
         const initialByOther = await call('POST', '/api/treasury/transfers', { idempotency_key: uuid(), from: 'initial', to: 'treasury', amount: 1 }).then(() => 'ok').catch((e) => e.status);
         check('Saldo inicial de Caja 2 lo carga el administrador (la corrida es admin)', initialByOther, 'ok');
         const [valued] = await q(
+            // Mermas carries no value (ADR-027, D3).
             `SELECT COALESCE(SUM(i.quantity * COALESCE(NULLIF(p.purchase_price, 0), p.cost_price, 0)), 0) AS v
-             FROM inventory i JOIN products p ON p.id = i.product_id WHERE i.product_id IN (?)`, [ctx.pids]);
+             FROM inventory i JOIN products p ON p.id = i.product_id WHERE i.product_id IN (?) AND i.location <> 'Mermas'`, [ctx.pids]);
         check('Mayor Inventario = stock físico valuado al costo', await ledgerDelta('inventory'), money(valued.v));
         const neg = await q('SELECT COUNT(*) n FROM inventory WHERE quantity < 0 OR reserved_quantity < 0 OR reserved_quantity > quantity');
         check('Inventario global sin negativos ni sobre-reservas', Number(neg[0].n), 0);

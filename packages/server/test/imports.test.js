@@ -272,7 +272,7 @@ test('product commit: a new cost on goods in stock is revalued with its entry; s
     assert.deepEqual([revalued.new_values.source, revalued.new_values.batch_id, revalued.new_values.amount], ['import', 'b-9', 700]);
     // D1: the cost and the price that follows it (1210 final → 1452, net 1200) in one update.
     const update = calls.find(({ statement }) => statement.startsWith('UPDATE products SET'));
-    assert.deepEqual([update.statement, update.params], ['UPDATE products SET `purchase_price` = ?, `sale_price` = ? WHERE id = ?', [600, 1200, 'p-old']]);
+    assert.deepEqual([update.statement, update.params], ['UPDATE products SET `purchase_price` = ?, `cost_price` = ?, `sale_price` = ? WHERE id = ?', [600, 600, 1200, 'p-old']]);
     const audited = audits.find(({ action }) => action === 'UPDATE_PRODUCT');
     assert.deepEqual(audited.old_values, { purchase_price: '500.00', sale_price: '1000.0000' });
     assert.deepEqual(audited.new_values, { purchase_price: 600, sale_price: 1200, source: 'import', batch_id: 'b-9' });

@@ -55,7 +55,6 @@ import type {
     UserCreateInput,
     UserUpdateInput,
     InventoryMovement,
-    InventoryMovementInput,
     InvoicePaymentRegisterInput,
     InvoicePaymentRegisterResponse,
     BulkPaymentInput,
@@ -924,9 +923,6 @@ export const api = {
         end_date?: string;
         limit?: number;
     }) => httpClient.get<InventoryMovement[]>(withQuery("/api/inventory-movements", filters)),
-
-    createInventoryMovement: (data: InventoryMovementInput) =>
-        httpClient.post<InventoryMovement>("/api/inventory-movements", data),
 
     getProductMovements: (productId: string) =>
         httpClient.get<InventoryMovement[]>(`/api/products/${productId}/movements`),

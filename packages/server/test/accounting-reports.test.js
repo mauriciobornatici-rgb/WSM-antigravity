@@ -129,26 +129,27 @@ test('getIncomeStatement merges posted and historical unposted operations', asyn
             { account_code: '4.1.01.01', account_name: 'Ventas', account_type: 'revenue', total_debit: 10, total_credit: 110 },
             { account_code: '5.1.01.01', account_name: 'CMV', account_type: 'expense', total_debit: 50, total_credit: 5 }
         ]];
-        return [[{ revenue: 20, cmv: 8 }]];
+        return [[{ revenue: 20 }]];
     }};
     const result = await accountingService.getIncomeStatement({ start_date: '2026-01-01', end_date: '2026-12-31' }, connection);
     assert.equal(result.total_revenues, 120);
-    assert.equal(result.total_expenses, 53);
-    assert.equal(result.net_result, 67);
+    // ADR-027: the cost is the one posted; an old invoice's cost is never estimated at today's cost.
+    assert.equal(result.total_expenses, 45);
+    assert.equal(result.net_result, 75);
     assert.equal(result.revenues[0].balance, 120);
-    assert.equal(result.expenses[0].balance, 53);
+    assert.equal(result.expenses[0].balance, 45);
 });
 
-test('getIncomeStatement creates historical rows when no matching account is posted', async () => {
+test('getIncomeStatement creates a historical revenue row when no matching account is posted', async () => {
     let call = 0;
     const connection = { query: async () => {
         call += 1;
-        return call === 1 ? [[]] : [[{ revenue: 100, cmv: 40 }]];
+        return call === 1 ? [[]] : [[{ revenue: 100 }]];
     }};
     const result = await accountingService.getIncomeStatement({}, connection);
     assert.equal(result.revenues[0].code, '4.1.01.01');
-    assert.equal(result.expenses[0].code, '5.1.01.01');
-    assert.equal(result.net_result, 60);
+    assert.deepEqual(result.expenses, []);
+    assert.equal(result.net_result, 100);
 });
 
 test('manual journal entry commits and audits, while failures rollback', async (t) => {

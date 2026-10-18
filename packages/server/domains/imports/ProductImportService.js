@@ -384,6 +384,8 @@ export class ProductImportService {
             color: catalog.color ?? null,
             location: product.location,
             purchase_price: product.cost ?? 0,
+            // One cost (ADR-027): cost_price mirrors it.
+            cost_price: product.cost ?? 0,
             sale_price: netFromGross(product.sale_price, vatRate),
             vat_rate: vatRate,
             stock_min: product.stock_min ?? 0,

@@ -211,7 +211,9 @@ export class InventoryValuation {
         const oldCost = effectiveCost(product);
         const cost = roundCost(newCost);
         if (cost === oldCost) return null;
-        const changes = { purchase_price: cost };
+        // cost_price mirrors purchase_price (one cost): a stale cost_price would come back as the cost
+        // when purchase_price is 0.
+        const changes = { purchase_price: cost, cost_price: cost };
         // A price typed together with the cost wins; otherwise it follows the cost if the product says so.
         const priceTyped = salePrice !== undefined && salePrice !== null
             && Math.round(Number(salePrice) * 10000) !== Math.round(Number(product.sale_price || 0) * 10000);

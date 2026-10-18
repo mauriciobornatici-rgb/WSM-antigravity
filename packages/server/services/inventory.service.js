@@ -275,6 +275,8 @@ class InventoryService extends BaseService {
         // the product and the movement keep (a 3-decimal cost left the ledger a cent off).
         if (normalized.purchase_price != null) {
             normalized.purchase_price = Math.round((Number(normalized.purchase_price) + Number.EPSILON) * 100) / 100;
+            // One cost (ADR-027): cost_price mirrors it.
+            normalized.cost_price = normalized.purchase_price;
         }
         for (const flag of ['auto_update_cost', 'auto_update_price']) {
             if (Object.prototype.hasOwnProperty.call(normalized, flag)) normalized[flag] = normalized[flag] ? 1 : 0;
@@ -489,51 +491,6 @@ class InventoryService extends BaseService {
 
         const [rows] = await pool.query(query, params);
         return rows;
-    }
-
-    async recordMovement(movementData, userId) {
-        const id = crypto.randomUUID();
-        await pool.query(`
-            INSERT INTO inventory_movements
-            (id, type, product_id, from_location, to_location, quantity,
-             unit_cost, reason, reference_type, reference_id, notes, performed_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-            id,
-            movementData.type,
-            movementData.product_id,
-            movementData.from_location || null,
-            movementData.to_location || null,
-            movementData.quantity,
-            movementData.unit_cost || 0,
-            movementData.reason || null,
-            movementData.reference_type || 'manual',
-            movementData.reference_id || null,
-            movementData.notes || null,
-            movementData.performed_by || userId || null
-        ]);
-
-        await auditService.log({
-            user_id: userId,
-            action: 'INVENTORY_MOVEMENT',
-            entity_type: 'inventory',
-            entity_id: movementData.product_id,
-            new_values: movementData
-        });
-
-        // Trigger Tienda Nube sync asynchronously
-        // We do this without await so it doesn't block the database transaction
-        setImmediate(async () => {
-            try {
-                // ADR-019: available stock (physical minus reserved), only when it changed.
-                const tiendanubeService = (await import('./tiendanube.service.js')).default;
-                await tiendanubeService.pushAvailableStock([movementData.product_id]);
-            } catch (err) {
-                console.error('[TiendaNube Sync] Error calculating stock for sync:', err);
-            }
-        });
-
-        return { id, ...movementData };
     }
 
     async getProductMovements(productId) {

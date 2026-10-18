@@ -384,18 +384,17 @@ test('getInventory, movements, batches and serials delegate to the service', asy
     assert.deepEqual(calls.getSerials[0], [{ status: 'in_stock' }]);
 });
 
-test('createProduct, createMovement, transferStock and bulkUpdateTiendaNube pass the acting user', async (t) => {
+test('createProduct, transferStock and bulkUpdateTiendaNube pass the acting user; free movements are gone', async (t) => {
     const calls = stubInventory(t, {
         createProduct: () => ({ id: 'p1' }),
-        recordMovement: () => ({ id: 'm1' }),
         transferStock: () => ({ moved: true }),
         bulkUpdateTiendaNube: () => ({ updated: 2 })
     });
     const user = { id: 'u1' };
     assert.deepEqual((await runHandler(controller.createProduct, { body: { sku: 'A' }, user })).body, { id: 'p1' });
     assert.deepEqual(calls.createProduct[0], [{ sku: 'A' }, 'u1']);
-    await runHandler(controller.createMovement, { body: { product_id: 'p1' }, user });
-    assert.deepEqual(calls.recordMovement[0], [{ product_id: 'p1' }, 'u1']);
+    // ADR-027: a free movement carried any cost into the cost of goods sold.
+    assert.equal(controller.createMovement, undefined);
     const transfer = await runHandler(controller.transferStock, {
         body: { product_id: 'p1', from_location: 'A', to_location: 'B', quantity: 3, ignored: true },
         user
@@ -519,7 +518,7 @@ test('updateProduct with a new cost on goods in stock revalues them with an entr
 
     const order = tracked.calls.map(({ statement }) => statement);
     assert.ok(order.indexOf(STOCK_LOCK) >= 0 && order.indexOf(STOCK_LOCK) < order.indexOf(PRODUCT_LOCK), 'stock (L3) before the product (L4)');
-    assert.deepEqual(updateColumns(tracked.calls), { purchase_price: 600 }, 'cents, as the column keeps it; no price to follow');
+    assert.deepEqual(updateColumns(tracked.calls), { purchase_price: 600, cost_price: 600 }, 'cents, as the column keeps it (cost_price mirrors it); no price to follow');
     assert.equal(entries.length, 1);
     assert.equal(entries[0].reference_type, 'stock_revaluation');
     assert.deepEqual(entryLines(entries[0]), [
@@ -599,17 +598,17 @@ test('updateProduct: the sale price follows a new cost keeping the markup, unles
 
     const follows = productEditConnection(t, { previous, stock: [1] });
     await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 600, sale_price: 1000 }, user: manager });
-    assert.deepEqual(updateColumns(follows.calls, 1), { purchase_price: 600, sale_price: 1200 });
+    assert.deepEqual(updateColumns(follows.calls, 1), { purchase_price: 600, cost_price: 600, sale_price: 1200 });
 
     const typed = productEditConnection(t, { previous, stock: [1] });
     await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 600, sale_price: 1100 }, user: manager });
     assert.deepEqual(updateColumns(typed.calls), { sale_price: 1100 });
-    assert.deepEqual(updateColumns(typed.calls, 1), { purchase_price: 600 }, 'a price typed with the cost wins');
+    assert.deepEqual(updateColumns(typed.calls, 1), { purchase_price: 600, cost_price: 600 }, 'a price typed with the cost wins');
 
     const off = productEditConnection(t, { previous, stock: [1] });
     await runHandler(controller.updateProduct, { params: { id: 'p1' }, body: { purchase_price: 600, auto_update_price: false }, user: manager });
     assert.deepEqual(updateColumns(off.calls), { auto_update_price: 0 });
-    assert.deepEqual(updateColumns(off.calls, 1), { purchase_price: 600 }, 'turned off in the same save: the price stays');
+    assert.deepEqual(updateColumns(off.calls, 1), { purchase_price: 600, cost_price: 600 }, 'turned off in the same save: the price stays');
 });
 
 test('updateProduct: unknown product answers null and rolls back; a deadlock answers 409 busy', async (t) => {

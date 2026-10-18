@@ -468,7 +468,7 @@ test('goods reception: a purchase at another cost revalues the stock and moves t
     assert.deepEqual(lines(follows.entries[0]), [['1.1.04.01', 60, 0], ['4.2.02.01', 0, 60]]);
     assert.deepEqual(lines(follows.entries[1]), [['1.1.04.01', 240, 0], ['2.1.01.02', 0, 240]]);
     const update = follows.calls.find(({ sql }) => sql.startsWith('UPDATE products SET'));
-    assert.deepEqual(update.params, [120, 240, 'p']);
+    assert.deepEqual(update.params, [120, 120, 240, 'p']);
 
     // A fixed cost stays: the 2 units enter at 100, the 40 paid above it is holding result.
     const fixed = await run({ id: 'p', name: 'Pelota', purchase_price: 100, sale_price: 200, vat_rate: 21, auto_update_cost: 0, auto_update_price: 1 });

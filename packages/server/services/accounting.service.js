@@ -38,18 +38,6 @@ class AccountingService {
         }));
     }
 
-    // Unit cost used for CMV (same rule as the sale's cost entry): purchase price, else cost price.
-    async productUnitCosts(connection, productIds) {
-        const ids = [...new Set((productIds || []).filter(Boolean))];
-        if (ids.length === 0) return new Map();
-        const result = await connection.query(
-            'SELECT id, purchase_price, cost_price FROM products WHERE id IN (?)',
-            [ids]
-        );
-        const rows = Array.isArray(result?.[0]) ? result[0] : [];
-        return new Map(rows.map((row) => [row.id, Number(row.purchase_price || row.cost_price || 0)]));
-    }
-
     // Posts an entry dropping zero lines; does nothing when every line is zero.
     async createJournalEntryIfAny(connection, entryData) {
         const lines = (entryData.lines || [])
@@ -498,18 +486,13 @@ class AccountingService {
         query += ' GROUP BY jel.account_code, coa.name, coa.type';
         const [rows] = await connection.query(query, params);
 
+        // Invoices from before the ledger: their revenue is shown. Their cost is not estimated at
+        // today's cost any more: since ADR-027 the cost of goods sold is posted when goods leave
+        // (and the valuation script posts the sales that left without it).
         let unpostedInvoiceQuery = `
             SELECT
-                COALESCE(SUM(i.total_amount - COALESCE(i.vat_amount, 0)), 0) AS revenue,
-                COALESCE(SUM(costs.cmv), 0) AS cmv
+                COALESCE(SUM(i.total_amount - COALESCE(i.vat_amount, 0)), 0) AS revenue
             FROM invoices i
-            LEFT JOIN (
-                SELECT ii.invoice_id,
-                       SUM(ii.quantity * COALESCE(NULLIF(p.purchase_price, 0), p.cost_price, 0)) AS cmv
-                FROM invoice_items ii
-                LEFT JOIN products p ON p.id = ii.product_id
-                GROUP BY ii.invoice_id
-            ) costs ON costs.invoice_id = i.id
             WHERE i.deleted_at IS NULL AND i.status <> 'cancelled'
               AND NOT EXISTS (
                   SELECT 1 FROM journal_entries posted
@@ -529,7 +512,6 @@ class AccountingService {
         }
         const [unpostedRows] = await connection.query(unpostedInvoiceQuery, unpostedParams);
         const unpostedRevenue = this._round(unpostedRows[0]?.revenue || 0);
-        const unpostedCmv = this._round(unpostedRows[0]?.cmv || 0);
 
         const revenueItems = [];
         const expenseItems = [];
@@ -565,13 +547,6 @@ class AccountingService {
             else revenueItems.push({ code: '4.1.01.01', name: 'Ventas de Mercaderías (operaciones históricas)', balance: unpostedRevenue });
             totalRevenue = this._round(totalRevenue + unpostedRevenue);
         }
-        if (unpostedCmv !== 0) {
-            const existingCmv = expenseItems.find((item) => item.code === '5.1.01.01');
-            if (existingCmv) existingCmv.balance = this._round(existingCmv.balance + unpostedCmv);
-            else expenseItems.push({ code: '5.1.01.01', name: 'Costo de Mercaderías Vendidas (histórico)', balance: unpostedCmv });
-            totalExpense = this._round(totalExpense + unpostedCmv);
-        }
-
         const netResult = this._round(totalRevenue - totalExpense);
 
         return {

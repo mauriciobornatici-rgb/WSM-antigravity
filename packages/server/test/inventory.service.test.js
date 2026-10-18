@@ -378,7 +378,7 @@ test('createProduct converts legacy cost and safely ignores malformed initial st
         name: 'Producto legado', cost_price: '125.50', stock_initial: 'invalido', location: '',
     }, null);
     assert.equal(created.purchase_price, 125.5, 'the legacy cost, in cents as the column keeps it');
-    assert.equal(created.cost_price, undefined);
+    assert.equal(created.cost_price, 125.5, 'one cost: cost_price mirrors it (ADR-027)');
     assert.equal(created.location, null);
     assert.equal(inventoryWrites, 0);
     assert.equal(audited.new_values.stock_initial, 0);

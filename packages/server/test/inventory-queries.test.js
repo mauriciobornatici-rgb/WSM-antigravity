@@ -84,29 +84,8 @@ test('batch and serial creation and updates handle optional fields', async (t) =
     assert.ok(calls.some(({ sql, params }) => sql.includes("'available'") && params.at(-1) === null));
 });
 
-test('recordMovement persists defaults, audits and tolerates background sync failure', async (t) => {
-    const calls = [];
-    mockPool(t, async (sql, params) => {
-        calls.push({ sql, params });
-        return [{ affectedRows: 1 }];
-    });
-    const originalAudit = auditService.log;
-    const originalStock = inventoryService.getProductStock;
-    const originalError = console.error;
-    auditService.log = async () => {};
-    inventoryService.getProductStock = async () => { throw new Error('offline'); };
-    console.error = () => {};
-    t.after(() => {
-        auditService.log = originalAudit;
-        inventoryService.getProductStock = originalStock;
-        console.error = originalError;
-    });
-
-    const movement = await inventoryService.recordMovement({ type: 'adjustment', product_id: 'product-1', quantity: 2 }, 'user-1');
-    assert.ok(movement.id);
-    assert.equal(calls[0].params[6], 0);
-    assert.equal(calls[0].params[8], 'manual');
-    await new Promise((resolve) => setImmediate(resolve));
+test('there is no free movement: every movement is written by the operation that moves the stock (ADR-027)', () => {
+    assert.equal(inventoryService.recordMovement, undefined);
 });
 
 test('transferStock rejects invalid, same-location, missing and reserved stock', async (t) => {
