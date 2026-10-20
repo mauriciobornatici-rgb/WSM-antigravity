@@ -80,6 +80,54 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-027 — Valuación de la mercadería por costo de última compra (usuario, 2026-10-17)
+- **Estado:** implementado en la rama `feat/revaluacion-stock` (I1-I8). Plan y criterios en `docs/execution/PLAN_VALUACION_INVENTARIO.md`; transición en `RUNBOOK_VALUACION_INVENTARIO.md`.
+- **Origen:** la primera versión (revaluar al cambiar el costo) quedó frenada por AUD-015: el mayor no era stock × costo, porque las compras entraban al costo de la factura y las ventas salían a `purchase_price`. El usuario eligió la **opción a: costo de última compra** (costo de reposición, RT 17).
+- **Invariantes:**
+  - el mayor de Inventario (1.1.04.01) es igual a la suma de cantidad × costo del producto en las ubicaciones valuadas, al centavo; Mermas no se valúa;
+  - el saldo de **2.1.01.02 "Mercadería recibida a facturar"** es igual a lo pendiente de los remitos no facturados;
+  - todo movimiento de stock valuado deja su asiento en la misma transacción, con el costo leído bajo bloqueo, y queda vinculado a él (`inventory_movements.journal_entry_id`).
+- **Decisiones del usuario:**
+  - **D1:** el costo sale del remito (precio de la OC). Si la factura difiere, la diferencia va a tenencia y corrige el costo. Cada producto tiene dos casillas, marcadas por defecto:
+    - actualizar el costo con cada compra; si se desmarca, el costo queda fijo y la diferencia va a resultados;
+    - ajustar el precio de venta al costo manteniendo el margen.
+  - **D2:** no hay factura de mercadería sin remito. La compra chica se registra con un remito sin OC.
+  - **D3:** pasar a Mermas es una pérdida; traerla de vuelta la recupera.
+  - **D4:** el ajuste de la transición va contra 3.1.03.01. Lo tiene que confirmar el contador.
+  - **D5:** solo el administrador y el gerente cambian el costo (permiso `products.cost_edit`).
+  - **D6:** cargar el costo a stock que tenía costo 0 es un ajuste de inventario inicial, no una ganancia.
+  - **D7:** la devolución de mercadería sin facturar se hace contra su remito.
+  - **D8:** el costo de lo vendido se registra cuando la mercadería sale.
+  - **D9:** la factura manual sin pedido no registra costo.
+- **Asientos:**
+  - salidas: CMV contra Inventario; el faltante offline va contra 5.1.02.02;
+  - reingresos (anulación de pedido armado, devolución de cliente): al costo de hoy, revirtiendo el CMV al costo de salida, con la diferencia a 4.2.02.01;
+  - garantías y conteos: al costo vigente;
+  - recepción: Inventario contra 2.1.01.02;
+  - factura de compra: salda 2.1.01.02;
+  - devolución a proveedor: al costo en libros.
+- **Bloqueos:**
+  1. cabecera;
+  2. hijos;
+  3. inventario de todos los productos en una sentencia ordenada;
+  4. productos (FOR SHARE para leer, FOR UPDATE para cambiar el costo);
+  5. asientos.
+  Un interbloqueo responde 409 `busy`.
+- **Cambios de API:** se quitan POST `/api/movements` e `/api/inventory-movements`, porque grababan costos libres. La recepción con OC toma el costo de la OC.
+- **Migraciones:**
+  - 064: cuenta 4.2.02.01;
+  - 065: cuenta 2.1.01.02, vínculo del movimiento con el asiento, fecha de corte y casillas por producto;
+  - 066: lo saldado por remito, lo devuelto por remito y el remito de la devolución.
+  El CHECK de inventario pasa a la **067**.
+- **AUD-016 (2026-10-18), reglas técnicas agregadas:**
+  - un remito anterior a la regla (sin asiento `goods_received`) se factura contra 3.1.03.01: su mercadería ya la valuó la transición;
+  - un remito cuya OC se facturó sin nombrar remitos cuenta como facturado;
+  - lo que salió sin costo asentado vuelve contra 3.1.03.01;
+  - sin `products.cost_edit`, el remito sin OC lleva el costo del producto (lo corrige la factura) y el producto nuevo no arranca con costo fijo;
+  - el costo no puede quedar en 0 con stock valuado;
+  - los asientos que acompañan stock no se revierten a mano.
+- **También del 2026-10-17:** el cajero puede importar clientes. PR #9 (importador) y PR #10 (`-Red`) se mergearon con autorización del usuario.
+
 ### ADR-026 — Importador de productos, clientes y proveedores desde planillas (usuario, 2026-10-17)
 - **Pedido del usuario:** agilizar la carga inicial y las actualizaciones masivas.
 - **Formato:**

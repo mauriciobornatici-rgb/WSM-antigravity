@@ -293,23 +293,26 @@ test('cancelSession records active/submitted cancellations and rejects final sta
 test('applyAdjustments reconciles positive and negative differences atomically', async (t) => {
     const auditCalls = stubAudit(t);
     const calls = [];
+    const stockLock = 'SELECT id, product_id, location, quantity, reserved_quantity FROM inventory WHERE product_id IN (?) ORDER BY product_id, id FOR UPDATE';
     mockPool(t, async (sql, params) => {
         const statement = String(sql);
-        calls.push({ sql: statement, params });
+        const normalized = statement.replace(/\s+/g, ' ').trim();
+        calls.push({ sql: statement, normalized, params });
         if (statement.startsWith('SELECT * FROM stock_audit_sessions')) return [[detailSession({ status: 'completed' })]];
         if (statement.includes('SELECT item.*, product.name')) return [[
-            detailItem({ product_id: 'product-1', expected_quantity: 5, counted_quantity: 3, variance: -2, purchase_price: 10 }),
-            detailItem({ id: 'item-2', product_id: 'product-2', expected_quantity: 0, counted_quantity: 4, variance: 4, purchase_price: 20, sku: 'NEW-2' }),
+            detailItem({ product_id: 'product-1', expected_quantity: 5, counted_quantity: 3, variance: -2 }),
+            detailItem({ id: 'item-2', product_id: 'product-2', expected_quantity: 0, counted_quantity: 4, variance: 4, sku: 'NEW-2' }),
             detailItem({ id: 'item-3', product_id: 'product-3', expected_quantity: 2, counted_quantity: 2, variance: 0, sku: 'OK-3' }),
         ]];
-        if (statement.startsWith('SELECT id, quantity, reserved_quantity')) {
-            if (params[0] === 'product-1') return [[{ id: 'inv-1', quantity: 5, reserved_quantity: 1 }]];
-            if (params[0] === 'product-3') return [[{ id: 'inv-3', quantity: 2, reserved_quantity: 0 }]];
-            return [[]];
-        }
+        if (normalized === stockLock) return [[
+            { id: 'inv-1', product_id: 'product-1', location: 'A-01', quantity: 5, reserved_quantity: 1 },
+            { id: 'inv-1b', product_id: 'product-1', location: 'B-02', quantity: 9, reserved_quantity: 0 },
+            { id: 'inv-3', product_id: 'product-3', location: 'A-01', quantity: 2, reserved_quantity: 0 },
+        ]];
         if (statement.includes('FROM stock_audit_sessions session')) return [[detailSession({ status: 'adjusted' })]];
         if (statement.includes('FROM stock_audit_items item')) return [[detailItem({ counted_quantity: 3, variance: -2 })]];
-        if (statement.includes('purchase_price, cost_price FROM products')) return [[
+        // ADR-027: today's cost, read under lock after the stock.
+        if (normalized.includes('auto_update_cost') && normalized.includes('FOR SHARE')) return [[
             { id: 'product-1', purchase_price: 10 }, { id: 'product-2', purchase_price: 20 }, { id: 'product-3', purchase_price: 5 },
         ]];
         return [{ affectedRows: 1 }];
@@ -320,6 +323,13 @@ test('applyAdjustments reconciles positive and negative differences atomically',
     t.after(() => { accountingService.createJournalEntry = originalEntry; });
     const result = await stockAuditService.applyAdjustments('audit-1', 'manager-1');
     assert.equal(result.status, 'adjusted');
+    // The count's rows only (never the products), then the stock (L3), then the cost (L4).
+    const itemsLock = calls.find(({ sql }) => sql.includes('SELECT item.*, product.name'));
+    assert.match(itemsLock.normalized, /FOR UPDATE OF item$/);
+    assert.doesNotMatch(itemsLock.normalized, /product\.purchase_price/);
+    const order = calls.map(({ normalized }) => normalized);
+    assert.ok(order.indexOf(stockLock) < order.findIndex((statement) => statement.includes('auto_update_cost')));
+    assert.deepEqual(calls.find(({ normalized }) => normalized === stockLock).params, [['product-1', 'product-2', 'product-3']]);
     // Net variance value: −2 × 10 + 4 × 20 = +60 surplus → Inventario / Pérdidas por faltantes.
     assert.equal(entries.length, 1);
     assert.equal(entries[0].reference_type, 'stock_audit');
@@ -327,12 +337,42 @@ test('applyAdjustments reconciles positive and negative differences atomically',
         ['1.1.04.01', 60, 0],
         ['5.1.02.02', 0, 60],
     ]);
-    const movementCosts = calls.filter(({ sql }) => sql.includes('INSERT INTO inventory_movements')).map(({ params }) => params[5]);
-    assert.deepEqual(movementCosts, [10, 20], 'movements carry the same cost the entry used');
-    assert.ok(calls.some(({ sql }) => sql.startsWith('UPDATE inventory SET quantity = ?')));
+    const movements = calls.filter(({ sql }) => sql.includes('INSERT INTO inventory_movements'));
+    assert.deepEqual(movements.map(({ params }) => params[5]), [10, 20], 'movements carry the same cost the entry used');
+    const link = calls.find(({ sql }) => sql.startsWith('UPDATE inventory_movements SET journal_entry_id'));
+    assert.deepEqual(link.params, ['je', movements.map(({ params }) => params[0])]);
+    assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE inventory SET quantity = ?') && params[1] === 'inv-1'), 'the row of the counted location');
     assert.ok(calls.some(({ sql }) => sql.startsWith('INSERT INTO inventory (id, product_id')));
-    assert.equal(calls.filter(({ sql }) => sql.includes('INSERT INTO inventory_movements')).length, 2);
+    assert.equal(movements.length, 2);
     assert.equal(auditCalls[0][0].new_values.adjusted_items, 2);
+});
+
+test('applyAdjustments in Mermas adjusts the quantity without value (D3)', async (t) => {
+    stubAudit(t);
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        const statement = String(sql);
+        const normalized = statement.replace(/\s+/g, ' ').trim();
+        calls.push({ sql: statement, params });
+        if (statement.startsWith('SELECT * FROM stock_audit_sessions')) return [[detailSession({ status: 'completed', location_code: 'Mermas' })]];
+        if (statement.includes('SELECT item.*, product.name')) return [[detailItem({ product_id: 'product-1', expected_quantity: 5, counted_quantity: 2, variance: -3 })]];
+        if (normalized.startsWith('SELECT id, product_id, location, quantity, reserved_quantity FROM inventory')) {
+            return [[{ id: 'inv-m', product_id: 'product-1', location: 'Mermas', quantity: 5, reserved_quantity: 0 }]];
+        }
+        if (normalized.includes('auto_update_cost')) return [[{ id: 'product-1', purchase_price: 10 }]];
+        if (statement.includes('FROM stock_audit_sessions session')) return [[detailSession({ status: 'adjusted' })]];
+        return [{ affectedRows: 1 }];
+    });
+    const entries = [];
+    const originalEntry = accountingService.createJournalEntry;
+    accountingService.createJournalEntry = async (_c, entry) => { entries.push(entry); return 'je'; };
+    t.after(() => { accountingService.createJournalEntry = originalEntry; });
+
+    await stockAuditService.applyAdjustments('audit-1', 'manager-1');
+
+    assert.equal(entries.length, 0);
+    assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE inventory SET quantity = ?') && params[0] === 2));
+    assert.equal(calls.find(({ sql }) => sql.includes('INSERT INTO inventory_movements')).params[5], 0);
 });
 
 test('applyAdjustments blocks stale, reserved, missing and non-completed audits', async (t) => {
@@ -344,8 +384,8 @@ test('applyAdjustments blocks stale, reserved, missing and non-completed audits'
             return [[detailSession({ status: mode === 'closed' ? 'in_progress' : mode === 'already' ? 'adjusted' : 'completed' })]];
         }
         if (statement.includes('SELECT item.*, product.name')) return [[detailItem({ expected_quantity: 5, counted_quantity: mode === 'reserved' ? 1 : 5, variance: 0 })]];
-        if (statement.startsWith('SELECT id, quantity, reserved_quantity')) {
-            return [[{ id: 'inv-1', quantity: mode === 'stale' ? 6 : 5, reserved_quantity: mode === 'reserved' ? 2 : 0 }]];
+        if (statement.replace(/\s+/g, ' ').trim().startsWith('SELECT id, product_id, location, quantity, reserved_quantity FROM inventory')) {
+            return [[{ id: 'inv-1', product_id: detailItem().product_id, location: 'A-01', quantity: mode === 'stale' ? 6 : 5, reserved_quantity: mode === 'reserved' ? 2 : 0 }]];
         }
         return [[]];
     });

@@ -19,7 +19,12 @@ export interface Product {
     color?: string | null
     image_url?: string | null
     purchase_price: number
+    // Costo anterior a la unificación: vale solo mientras purchase_price está vacío (ADR-027).
+    cost_price?: number | null
     sale_price: number
+    // ADR-027 (D1): la compra a otro costo actualiza el costo, y el precio sigue al costo. 1 = sí.
+    auto_update_cost?: boolean | number
+    auto_update_price?: boolean | number
     stock_current?: number
     stock_min?: number
     supplier_id?: string

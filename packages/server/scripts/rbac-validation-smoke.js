@@ -267,6 +267,26 @@ async function run() {
             body: { rows: Array.from({ length: 51 }, (_, index) => ({ row: index + 2, name: `Proveedor ${index}` })), batch_id: '00000000-0000-4000-8000-000000000000' }
         },
         {
+            // ADR-027: a free movement carried any cost into the cost of goods sold.
+            name: 'free inventory movements are closed, even for a manager',
+            method: 'POST',
+            endpoint: '/api/inventory-movements',
+            token: manager,
+            expected: 404,
+            body: { type: 'adjustment', product_id: '11111111-1111-4111-8111-111111111111', quantity: 1, unit_cost: 1 }
+        },
+        {
+            name: 'goods are not invoiced without their delivery note',
+            method: 'POST',
+            endpoint: '/api/supplier-invoices',
+            token: manager,
+            expected: 409,
+            body: {
+                invoice_number: '0001-RBAC', invoice_type: 'A', supplier_id: '11111111-1111-4111-8111-111111111111',
+                issue_date: '2026-10-17', net_amount: 100, vat_amount: 21, vat_rate: 21, total_amount: 121
+            }
+        },
+        {
             name: 'manager can list POS exceptions',
             method: 'GET',
             endpoint: '/api/pos/exceptions',

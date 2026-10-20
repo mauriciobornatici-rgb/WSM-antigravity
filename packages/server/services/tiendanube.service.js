@@ -8,6 +8,7 @@ import { lineAmounts, netFromGross } from '../utils/vatMath.js';
 import { resolveUnitPrice } from '../domains/sales/CreateOrderUseCase.js';
 // Locations whose units cannot be sold: the same list sales and reservations use.
 import { NON_SELLABLE_LOCATIONS } from '../domains/inventory/StockLedger.js';
+import inventoryValuation, { roundCost } from '../domains/inventory/InventoryValuation.js';
 
 export class TiendaNubeService {
     constructor({ db = pool, http = axios, env = process.env } = {}) {
@@ -1475,6 +1476,8 @@ export class TiendaNubeService {
                 const productId = crypto.randomUUID();
                 const variantId = crypto.randomUUID();
                 const stock = Number(variant.stock_initial || 0);
+                // Cents, as the column keeps it: the opening entry is posted from the same value (ADR-027).
+                const unitCost = roundCost(variant.purchase_price);
                 await connection.query(
                     `INSERT INTO products (
                         id, sku, barcode, name, description, category, size, color, brand,
@@ -1485,7 +1488,7 @@ export class TiendaNubeService {
                         productId, variant.sku, variant.barcode || null, data.name,
                         data.description || null, data.category || null, variant.size || null,
                         variant.color || null, data.brand || null, variant.image_url || null,
-                        Number(variant.purchase_price || 0), Number(variant.purchase_price || 0),
+                        unitCost, unitCost,
                         Number(variant.sale_price || 0)
                     ]
                 );
@@ -1499,18 +1502,20 @@ export class TiendaNubeService {
                         `INSERT INTO inventory (id, product_id, location, quantity) VALUES (?, ?, 'General', ?)`,
                         [crypto.randomUUID(), productId, stock]
                     );
+                    const movementId = crypto.randomUUID();
                     await connection.query(
                         `INSERT INTO inventory_movements (
                             id, type, product_id, to_location, quantity, unit_cost, reason,
                             reference_type, reference_id
                          ) VALUES (?, 'initial_stock', ?, 'General', ?, ?, 'Alta desde Tienda online', 'product', ?)`,
-                        [crypto.randomUUID(), productId, stock, Number(variant.purchase_price || 0), productId]
+                        [movementId, productId, stock, unitCost, productId]
                     );
                     // ADR-017: the opening stock enters the ledger too.
-                    await accountingService.postInitialStock(connection, {
-                        productId, quantity: stock, unitCost: Number(variant.purchase_price || 0),
+                    const entryId = await accountingService.postInitialStock(connection, {
+                        productId, quantity: stock, unitCost,
                         description: `Stock inicial de ${variant.sku}`
                     });
+                    await inventoryValuation.linkMovements(connection, [movementId], entryId);
                 }
             }
             await connection.commit();
@@ -1818,7 +1823,7 @@ export class TiendaNubeService {
                         sizeIndex >= 0 ? values[sizeIndex] || null : null,
                         colorIndex >= 0 ? values[colorIndex] || null : null,
                         remote.brand || null, remote.images?.[0]?.src || null,
-                        Number(variant.cost || 0), Number(variant.cost || 0),
+                        roundCost(variant.cost), roundCost(variant.cost),
                         // Tiendanube prices are final (VAT included); the catalog stores net.
                         netFromGross(variant.price, 21),
                         remoteId, String(variant.id)
@@ -1830,17 +1835,20 @@ export class TiendaNubeService {
                         `INSERT INTO inventory (id, product_id, location, quantity) VALUES (?, ?, 'General', ?)`,
                         [crypto.randomUUID(), productId, stock]
                     );
-                    // ADR-017: imported stock is traced like any other entry (kardex and ledger).
-                    const unitCost = Number(variant.cost || 0);
+                    // ADR-017: imported stock is traced like any other entry (kardex and ledger), at
+                    // the cost in cents the product keeps (ADR-027).
+                    const unitCost = roundCost(variant.cost);
+                    const movementId = crypto.randomUUID();
                     await db.query(
                         `INSERT INTO inventory_movements (
                             id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id
                          ) VALUES (?, 'initial_stock', ?, 'General', ?, ?, 'Importación desde Tiendanube', 'product', ?)`,
-                        [crypto.randomUUID(), productId, stock, unitCost, productId]
+                        [movementId, productId, stock, unitCost, productId]
                     );
-                    await accountingService.postInitialStock(db, {
+                    const entryId = await accountingService.postInitialStock(db, {
                         productId, quantity: stock, unitCost, description: `Stock inicial importado de ${sku}`
                     });
+                    await inventoryValuation.linkMovements(db, [movementId], entryId);
                 }
             } else {
                 await db.query(

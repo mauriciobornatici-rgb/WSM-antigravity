@@ -3,6 +3,7 @@ import pool from '../config/db.js';
 import auditService from './audit.service.js';
 import accountingService from './accounting.service.js';
 import { ACCOUNTS } from '../utils/paymentAccounts.js';
+import inventoryValuation, { isValuedLocation, sameLocation, valueCents } from '../domains/inventory/InventoryValuation.js';
 
 const ACTIVE_STATUS = 'in_progress';
 const FINAL_STATUSES = new Set(['completed', 'adjusted']);
@@ -461,22 +462,25 @@ class StockAuditService {
             if (!FINAL_STATUSES.has(session.status) || session.status === 'adjusted') {
                 throw businessError('La auditoría debe estar completada y sin aplicar.', 409, 'STOCK_AUDIT_NOT_ADJUSTABLE');
             }
+            // Only the count's rows are locked here (L2), never the products: locking a product
+            // before its stock is the reverse of a sale and deadlocked against one (ADR-027).
             const [items] = await connection.query(`
-                SELECT item.*, product.name AS product_name, product.sku, product.purchase_price
+                SELECT item.*, product.name AS product_name, product.sku
                 FROM stock_audit_items item
                 INNER JOIN products product ON product.id = item.product_id
                 WHERE item.audit_id = ?
                 ORDER BY product.name
-                FOR UPDATE
+                FOR UPDATE OF item
             `, [id]);
+            // The stock of every counted product in one ordered statement (L3), then its cost (L4).
+            const productIds = items.map((item) => item.product_id);
+            const stockByProduct = await inventoryValuation.lockStock(connection, productIds);
+            const costs = await inventoryValuation.lockCosts(connection, productIds);
             const lockedInventory = new Map();
             const conflicts = [];
             for (const item of items) {
-                const [inventoryRows] = await connection.query(
-                    'SELECT id, quantity, reserved_quantity FROM inventory WHERE product_id = ? AND location = ? LIMIT 1 FOR UPDATE',
-                    [item.product_id, session.location_code]
-                );
-                const inventory = inventoryRows[0] || null;
+                const inventory = (stockByProduct.get(item.product_id) || [])
+                    .find((row) => sameLocation(row.location, session.location_code)) || null;
                 lockedInventory.set(item.product_id, inventory);
                 if (Math.abs(asNumber(inventory?.quantity) - asNumber(item.expected_quantity)) > 0.0001) {
                     conflicts.push(item.sku || item.product_name);
@@ -494,13 +498,16 @@ class StockAuditService {
             }
 
             let adjustedItems = 0;
-            // Net value of the variances at the CMV unit cost: a shortage is a loss, a surplus recovers it.
-            let varianceValue = 0;
-            const unitCosts = await accountingService.productUnitCosts(connection, items.map((item) => item.product_id));
+            // Net value of the variances at today's cost: a shortage is a loss, a surplus recovers
+            // it. A count in Mermas moves nothing of value (D3: what is there is already a loss).
+            let varianceCents = 0;
+            const valued = isValuedLocation(session.location_code);
+            const movementIds = [];
             for (const item of items) {
                 const variance = asNumber(item.variance);
                 if (variance === 0) continue;
-                varianceValue += variance * (unitCosts.get(item.product_id) || 0);
+                const unitCost = valued ? costs.get(item.product_id)?.cost || 0 : 0;
+                varianceCents += valueCents(variance, unitCost);
                 const countedQuantity = asNumber(item.counted_quantity);
                 const inventory = lockedInventory.get(item.product_id);
                 if (inventory) {
@@ -511,23 +518,25 @@ class StockAuditService {
                         [crypto.randomUUID(), item.product_id, session.location_code, countedQuantity]
                     );
                 }
+                const movementId = crypto.randomUUID();
                 await connection.query(`
                     INSERT INTO inventory_movements
                         (id, type, product_id, from_location, to_location, quantity, unit_cost,
                          reason, reference_type, reference_id, performed_by)
                     VALUES (?, 'stock_adjustment', ?, ?, ?, ?, ?, ?, 'stock_audit', ?, ?)
                 `, [
-                    crypto.randomUUID(), item.product_id,
+                    movementId, item.product_id,
                     variance < 0 ? session.location_code : null,
                     variance > 0 ? session.location_code : null,
-                    Math.abs(variance), unitCosts.get(item.product_id) || 0,
+                    Math.abs(variance), unitCost,
                     `Ajuste por auditoría ${session.audit_number}`, id, userId || null,
                 ]);
+                movementIds.push(movementId);
                 adjustedItems += 1;
             }
-            const shortage = varianceValue < 0 ? -varianceValue : 0;
-            const surplus = varianceValue > 0 ? varianceValue : 0;
-            await accountingService.createJournalEntryIfAny(connection, {
+            const shortage = varianceCents < 0 ? -varianceCents / 100 : 0;
+            const surplus = varianceCents > 0 ? varianceCents / 100 : 0;
+            const entryId = await accountingService.createJournalEntryIfAny(connection, {
                 date: new Date(),
                 description: `Ajuste de inventario por conteo ${session.audit_number}`,
                 reference_type: 'stock_audit',
@@ -539,6 +548,7 @@ class StockAuditService {
                     { account_code: ACCOUNTS.INVENTORY_LOSSES, debit: 0, credit: surplus, notes: 'Sobrante de inventario' },
                 ],
             });
+            await inventoryValuation.linkMovements(connection, movementIds, entryId);
             await connection.query(
                 "UPDATE stock_audit_sessions SET status = 'adjusted', adjusted_by = ?, adjusted_at = NOW() WHERE id = ?",
                 [userId || null, id]
@@ -554,6 +564,9 @@ class StockAuditService {
             await connection.commit();
         } catch (error) {
             await connection.rollback();
+            if (error?.code === 'ER_LOCK_DEADLOCK' || error?.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw businessError('Otra operación estaba usando estos productos. Reintentá en unos segundos.', 409, 'busy');
+            }
             throw error;
         } finally {
             connection.release();

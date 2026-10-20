@@ -95,10 +95,23 @@ test('getSupplierInvoices applies supplier and status filters', async (t) => {
     assert.deepEqual(calls[0].params, ['s1', 'approved']);
 });
 
+// A delivery note received before ADR-027 (it never went through 2.1.01.02).
+const legacyReception = (statement) => (statement.startsWith('SELECT id, supplier_id, status')
+    ? [[{ id: 'r1', supplier_id: 's1', status: 'approved', remito_number: 'R-1' }]]
+    : [[]]);
+
+test('createSupplierInvoice refuses goods without their delivery note (ADR-027, D2)', async (t) => {
+    const { calls } = installPool(t, async () => [[]]);
+    const res = await runHandler(createSupplierInvoice, { body: invoiceBody });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, 'goods_invoice_requires_reception');
+    assert.equal(calls.length, 0, 'refused before touching the database');
+});
+
 test('createSupplierInvoice rejects duplicates with 409 and rolls back without posting', async (t) => {
     const { calls, lifecycle } = installPool(t, async () => [[{ id: 'dup' }]]);
     stub(t, accountingService, 'createJournalEntry', async () => { throw new Error('should not post'); });
-    const res = await runHandler(createSupplierInvoice, { body: invoiceBody });
+    const res = await runHandler(createSupplierInvoice, { body: { ...invoiceBody, reception_id: 'r1' } });
     assert.equal(res.status, 409);
     assert.equal(res.body.error, 'duplicate_invoice');
     assert.match(res.body.message, /A 0001-00000010/);
@@ -110,8 +123,10 @@ test('createSupplierInvoice rejects duplicates with 409 and rolls back without p
 test('createSupplierInvoice persists invoice, balance, ledger, journal entry and audit', async (t) => {
     const { calls, lifecycle, connection } = installPool(t, async (statement) => {
         // ADR-019: the delivery note is this supplier's, not invoiced yet, and received 100 net.
+        // Received before ADR-027: it never went through 2.1.01.02; the transition valued its goods
+        // against 3.1.03.01, so the invoice settles that adjustment (AUD-016).
         if (statement.startsWith('SELECT id, supplier_id, status')) return [[{ id: 'r1', supplier_id: 's1', status: 'approved', remito_number: 'R-1' }]];
-        if (statement.includes('AS net FROM reception_items')) return [[{ net: 100 }]];
+        if (statement.includes('FROM reception_items WHERE reception_id IN')) return [[{ reception_id: 'r1', product_id: 'p', quantity_received: 4, returned_quantity: 0, unit_cost: 25 }]];
         return [[]];
     });
     const journals = [];
@@ -147,7 +162,7 @@ test('createSupplierInvoice persists invoice, balance, ledger, journal entry and
     assert.equal(journals[0].conn, connection);
     const { lines, reference_type: refType } = journals[0].entry;
     assert.equal(refType, 'supplier_invoice');
-    assert.equal(lines[0].account_code, '1.1.04.01');
+    assert.equal(lines[0].account_code, '3.1.03.01');
     assert.equal(lines[0].debit, 100);
     assert.equal(lines[1].account_code, '1.1.05.02');
     assert.equal(lines[1].debit, 21);
@@ -159,6 +174,9 @@ test('createSupplierInvoice persists invoice, balance, ledger, journal entry and
     assert.equal(lines[3].credit, 126.01);
     const debits = Math.round((lines[0].debit + lines[1].debit + lines[2].debit) * 100) / 100;
     assert.equal(debits, lines[3].credit);
+    const link = calls.find((c) => c.statement.startsWith('INSERT INTO supplier_invoice_receptions'));
+    assert.deepEqual(link.params.slice(1), ['r1', null], 'nothing cleared from 2.1.01.02 for an old delivery note');
+    assert.deepEqual([res.body.receptions_net, res.body.receptions_difference], [100, 0]);
 
     assert.equal(logs[0].conn, connection);
     assert.equal(logs[0].payload.action, 'CREATE_SUPPLIER_INVOICE');
@@ -171,7 +189,7 @@ test('createSupplierInvoice derives total, uses defaults and non-A note', async 
     stub(t, accountingService, 'createJournalEntry', async (_c, entry) => { journals.push(entry); });
     stub(t, auditService, 'log', async () => {});
     const res = await runHandler(createSupplierInvoice, {
-        body: { invoice_number: '1', invoice_type: 'C', supplier_id: 's1', net_amount: 50, vat_amount: 10.5, total_amount: 60.5 }
+        body: { invoice_number: '1', invoice_type: 'C', supplier_id: 's1', net_amount: 50, vat_amount: 10.5, total_amount: 60.5, purchase_kind: 'expense' }
     });
     assert.equal(res.body.total_amount, 60.5);
     const insert = calls.find((c) => c.statement.startsWith('INSERT INTO supplier_invoices'));
@@ -182,7 +200,7 @@ test('createSupplierInvoice derives total, uses defaults and non-A note', async 
     assert.equal(insert.params[13], null);
     // ADR-016: a Factura C gives no fiscal credit: its VAT is part of the cost.
     assert.deepEqual(journals[0].lines.map((line) => [line.account_code, line.debit, line.credit]), [
-        ['1.1.04.01', 60.5, 0], ['2.1.01.01', 0, 60.5]
+        ['5.1.02.01', 60.5, 0], ['2.1.01.01', 0, 60.5]
     ]);
     assert.ok(journals[0].date instanceof Date);
 
@@ -195,18 +213,18 @@ test('createSupplierInvoice derives total, uses defaults and non-A note', async 
 
     // A typed total that disagrees with its parts would post an unbalanced entry.
     const mismatch = await runHandler(createSupplierInvoice, {
-        body: { invoice_number: '3', invoice_type: 'A', supplier_id: 's1', net_amount: 100, vat_amount: 21, total_amount: 150 }
+        body: { invoice_number: '3', invoice_type: 'A', supplier_id: 's1', net_amount: 100, vat_amount: 21, total_amount: 150, purchase_kind: 'expense' }
     });
     assert.equal(mismatch.status, 400);
     assert.equal(mismatch.body.error, 'invalid_invoice_total');
 });
 
 test('createSupplierInvoice rolls back and releases when the journal entry fails', async (t) => {
-    const { lifecycle } = installPool(t, async () => [[]]);
+    const { lifecycle } = installPool(t, async (statement) => legacyReception(statement));
     stub(t, accountingService, 'createJournalEntry', async () => { throw new Error('asiento invalido'); });
     let audited = false;
     stub(t, auditService, 'log', async () => { audited = true; });
-    await assert.rejects(() => runHandler(createSupplierInvoice, { body: invoiceBody }), /asiento invalido/);
+    await assert.rejects(() => runHandler(createSupplierInvoice, { body: { ...invoiceBody, reception_id: 'r1' } }), /asiento invalido/);
     assert.deepEqual(lifecycle, ['begin', 'rollback', 'release']);
     assert.equal(audited, false);
 });

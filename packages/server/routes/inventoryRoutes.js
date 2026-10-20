@@ -21,7 +21,6 @@ router.put('/product-catalog-options/:id', inventoryWriteRoles, validate(schemas
 router.get('/products', inventoryReadRoles, validateZod(zodSchemas.productFilters), inventoryController.getProducts);
 router.post('/products/image-upload', inventoryWriteRoles, validateZod(zodSchemas.uploadProductImage), inventoryController.uploadProductImage);
 router.post('/products', inventoryWriteRoles, validateZod(zodSchemas.product), inventoryController.createProduct);
-router.post('/products/tiendanube/bulk-update', inventoryWriteRoles, inventoryController.bulkUpdateTiendaNube);
 router.put('/products/:id', inventoryWriteRoles, validateZod(zodSchemas.product), inventoryController.updateProduct);
 router.delete('/products/:id', inventoryWriteRoles, validate(schemas.idParam), inventoryController.deleteProduct);
 router.get('/products/:id/movements', inventoryReadRoles, validate(schemas.idParam), inventoryController.getProductMovements);
@@ -42,11 +41,11 @@ router.post('/inventory/audits/:id/complete', stockCountRoles, validate(zodSchem
 router.post('/inventory/audits/:id/cancel', stockCountRoles, validate(zodSchemas.idParam), stockAuditController.cancelStockAudit);
 router.post('/inventory/audits/:id/adjust', stockAdjustRoles, validate(zodSchemas.idParam), stockAuditController.applyStockAuditAdjustments);
 
-// Movements (legacy + explicit alias)
+// Movements (legacy + explicit alias). Read only: every movement is written by the operation
+// that moves the stock, with its entry (ADR-027). A free movement carried any cost and fed the
+// cost of goods sold without moving anything.
 router.get('/movements', inventoryReadRoles, validate(schemas.inventoryMovementFilters), inventoryController.getMovements);
-router.post('/movements', inventoryWriteRoles, validate(schemas.inventoryMovementCreate), inventoryController.createMovement);
 router.get('/inventory-movements', inventoryReadRoles, validate(schemas.inventoryMovementFilters), inventoryController.getMovements);
-router.post('/inventory-movements', inventoryWriteRoles, validate(schemas.inventoryMovementCreate), inventoryController.createMovement);
 
 // Batches
 router.get('/batches', advancedInventoryRoles, validate(schemas.batchFilters), inventoryController.getBatches);

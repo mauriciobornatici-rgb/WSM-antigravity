@@ -40,7 +40,7 @@ Sirve para la carga inicial y para actualizaciones masivas, por ejemplo una list
   - por eso dos filas con el mismo nombre y sin CUIT no se pueden importar juntas: cargale el CUIT o el DNI a cada una;
   - un Responsable Inscripto necesita el CUIT de 11 dígitos.
 - **Revisá los importes:** en la vista previa de productos, la tabla *Así se leyeron los primeros productos* muestra precio, costo y stock como los entendió la aplicación. Un punto de más o de menos (`1.250` contra `1,250`) se ve ahí antes de guardar.
-- **Costo de un producto que ya tiene stock:** si la importación cambia el costo, la vista previa lo avisa. El valor contable del stock que ya estaba no se ajusta solo.
+- **Costo de un producto que ya tiene stock:** si la importación (o la edición a mano) cambia el costo, el stock que ya estaba se revalúa con un asiento contra *Resultado por tenencia de mercaderías*: ganancia si el costo sube, pérdida si baja. La vista previa muestra el importe antes de guardar.
 - **Ubicaciones que no venden** (Cuarentena, Mermas, Devoluciones a Proveedores) no reciben stock inicial.
 - **Actualizar los que ya existen:** solo cambian las celdas con valor. Una celda vacía no borra nada.
 - **Códigos que empiezan con 0:** en la plantilla la columna ya es de texto. En una planilla propia, escribilos con un apóstrofo adelante (`'0123...`) para que Excel no borre el cero.

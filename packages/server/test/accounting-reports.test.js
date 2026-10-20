@@ -10,22 +10,26 @@ test('postInvoiceAccountingEntries rejects missing invoices', async () => {
     await assert.rejects(() => accountingService.postInvoiceAccountingEntries(connection, 'missing'), /Invoice not found/);
 });
 
-test('postInvoiceAccountingEntries creates balanced sale, VAT and cost entries once', async (t) => {
+test('postInvoiceAccountingEntries posts sale and VAT, and the cost only of goods that left without one', async (t) => {
     const created = [];
+    const calls = [];
     const originalCreate = accountingService.createJournalEntry;
     accountingService.createJournalEntry = async (_connection, entry) => { created.push(entry); return `entry-${created.length}`; };
     t.after(() => { accountingService.createJournalEntry = originalCreate; });
 
-    const connection = { query: async (sql) => {
+    const connection = { query: async (sql, params) => {
+        calls.push({ sql, params });
         if (sql.includes('SELECT * FROM invoices')) return [[{
-            id: 'invoice-1', invoice_type: 'B', point_of_sale: 1, invoice_number: 12,
+            id: 'invoice-1', order_id: 'order-1', invoice_type: 'B', point_of_sale: 1, invoice_number: 12,
             issue_date: '2026-08-22', total_amount: 121, vat_amount: 21
         }]];
         if (sql.includes("jel.account_code = '4.1.01.01'")) return [[]];
         if (sql.includes("jel.account_code = '5.1.01.01'")) return [[]];
-        if (sql.includes('SELECT ii.quantity')) return [[
-            { quantity: 2, purchase_price: 30, cost_price: 20 },
-            { quantity: 1, purchase_price: 0, cost_price: 10 }
+        // Sale movements of the order still without an entry (recorded before ADR-027).
+        if (sql.includes('FROM inventory_movements')) return [[
+            { id: 'm-1', quantity: 2, unit_cost: 30 },
+            { id: 'm-2', quantity: 1, unit_cost: 10 },
+            { id: 'm-3', quantity: 4, unit_cost: 0 },
         ]];
         return [[]];
     }};
@@ -35,22 +39,33 @@ test('postInvoiceAccountingEntries creates balanced sale, VAT and cost entries o
     assert.equal(created[0].lines.length, 3);
     assert.equal(created[0].lines.reduce((sum, line) => sum + line.debit - line.credit, 0), 0);
     assert.equal(created[1].lines[0].debit, 70);
+    const movementQuery = calls.find((call) => call.sql.includes('FROM inventory_movements'));
+    assert.match(movementQuery.sql, /journal_entry_id IS NULL/);
+    assert.deepEqual(movementQuery.params, ['order-1']);
+    const link = calls.find((call) => call.sql.includes('UPDATE inventory_movements SET journal_entry_id'));
+    assert.deepEqual(link.params, ['entry-2', ['m-1', 'm-2']], 'the movements keep the entry that valued them; a cost of 0 posts nothing');
 });
 
-test('postInvoiceAccountingEntries skips already posted and zero-value movements', async (t) => {
+test('postInvoiceAccountingEntries posts no cost for a manual invoice without an order (D9) or when nothing is pending', async (t) => {
     const originalCreate = accountingService.createJournalEntry;
-    let created = 0;
-    accountingService.createJournalEntry = async () => { created += 1; };
+    const created = [];
+    accountingService.createJournalEntry = async (_connection, entry) => { created.push(entry); return 'entry'; };
     t.after(() => { accountingService.createJournalEntry = originalCreate; });
-    const connection = { query: async (sql) => {
-        if (sql.includes('SELECT * FROM invoices')) return [[{ invoice_type: 'B', point_of_sale: 1, invoice_number: 1, total_amount: 0, vat_amount: 0 }]];
+    const queried = [];
+    const connectionFor = (invoice, movements) => ({ query: async (sql) => {
+        queried.push(sql);
+        if (sql.includes('SELECT * FROM invoices')) return [[invoice]];
         if (sql.includes("jel.account_code = '4.1.01.01'")) return [[{ id: 'sale-entry' }]];
         if (sql.includes("jel.account_code = '5.1.01.01'")) return [[]];
-        if (sql.includes('SELECT ii.quantity')) return [[{ quantity: 1, purchase_price: 0, cost_price: 0 }]];
+        if (sql.includes('FROM inventory_movements')) return [movements];
         return [[]];
-    }};
-    await accountingService.postInvoiceAccountingEntries(connection, 'invoice-1');
-    assert.equal(created, 0);
+    }});
+    const invoice = { invoice_type: 'B', point_of_sale: 1, invoice_number: 1, total_amount: 0, vat_amount: 0 };
+
+    await accountingService.postInvoiceAccountingEntries(connectionFor({ ...invoice, order_id: null }, []), 'invoice-1');
+    assert.ok(!queried.some((sql) => sql.includes('FROM inventory_movements')), 'without an order no goods left');
+    await accountingService.postInvoiceAccountingEntries(connectionFor({ ...invoice, order_id: 'o' }, [{ id: 'm', quantity: 1, unit_cost: 0 }]), 'invoice-1');
+    assert.equal(created.length, 0);
 });
 
 test('getJournalEntries applies filters and joins transactions, inventory and credit notes', async () => {
@@ -114,26 +129,27 @@ test('getIncomeStatement merges posted and historical unposted operations', asyn
             { account_code: '4.1.01.01', account_name: 'Ventas', account_type: 'revenue', total_debit: 10, total_credit: 110 },
             { account_code: '5.1.01.01', account_name: 'CMV', account_type: 'expense', total_debit: 50, total_credit: 5 }
         ]];
-        return [[{ revenue: 20, cmv: 8 }]];
+        return [[{ revenue: 20 }]];
     }};
     const result = await accountingService.getIncomeStatement({ start_date: '2026-01-01', end_date: '2026-12-31' }, connection);
     assert.equal(result.total_revenues, 120);
-    assert.equal(result.total_expenses, 53);
-    assert.equal(result.net_result, 67);
+    // ADR-027: the cost is the one posted; an old invoice's cost is never estimated at today's cost.
+    assert.equal(result.total_expenses, 45);
+    assert.equal(result.net_result, 75);
     assert.equal(result.revenues[0].balance, 120);
-    assert.equal(result.expenses[0].balance, 53);
+    assert.equal(result.expenses[0].balance, 45);
 });
 
-test('getIncomeStatement creates historical rows when no matching account is posted', async () => {
+test('getIncomeStatement creates a historical revenue row when no matching account is posted', async () => {
     let call = 0;
     const connection = { query: async () => {
         call += 1;
-        return call === 1 ? [[]] : [[{ revenue: 100, cmv: 40 }]];
+        return call === 1 ? [[]] : [[{ revenue: 100 }]];
     }};
     const result = await accountingService.getIncomeStatement({}, connection);
     assert.equal(result.revenues[0].code, '4.1.01.01');
-    assert.equal(result.expenses[0].code, '5.1.01.01');
-    assert.equal(result.net_result, 60);
+    assert.deepEqual(result.expenses, []);
+    assert.equal(result.net_result, 100);
 });
 
 test('manual journal entry commits and audits, while failures rollback', async (t) => {

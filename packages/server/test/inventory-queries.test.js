@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import inventoryService from '../services/inventory.service.js';
 import auditService from '../services/audit.service.js';
+import accountingService from '../services/accounting.service.js';
 import { mockPool } from './helpers/mockDb.js';
 
 test('inventory product queries calculate stock, totals and supplier pagination', async (t) => {
@@ -83,29 +84,8 @@ test('batch and serial creation and updates handle optional fields', async (t) =
     assert.ok(calls.some(({ sql, params }) => sql.includes("'available'") && params.at(-1) === null));
 });
 
-test('recordMovement persists defaults, audits and tolerates background sync failure', async (t) => {
-    const calls = [];
-    mockPool(t, async (sql, params) => {
-        calls.push({ sql, params });
-        return [{ affectedRows: 1 }];
-    });
-    const originalAudit = auditService.log;
-    const originalStock = inventoryService.getProductStock;
-    const originalError = console.error;
-    auditService.log = async () => {};
-    inventoryService.getProductStock = async () => { throw new Error('offline'); };
-    console.error = () => {};
-    t.after(() => {
-        auditService.log = originalAudit;
-        inventoryService.getProductStock = originalStock;
-        console.error = originalError;
-    });
-
-    const movement = await inventoryService.recordMovement({ type: 'adjustment', product_id: 'product-1', quantity: 2 }, 'user-1');
-    assert.ok(movement.id);
-    assert.equal(calls[0].params[6], 0);
-    assert.equal(calls[0].params[8], 'manual');
-    await new Promise((resolve) => setImmediate(resolve));
+test('there is no free movement: every movement is written by the operation that moves the stock (ADR-027)', () => {
+    assert.equal(inventoryService.recordMovement, undefined);
 });
 
 test('transferStock rejects invalid, same-location, missing and reserved stock', async (t) => {
@@ -114,9 +94,9 @@ test('transferStock rejects invalid, same-location, missing and reserved stock',
 
     let mode = 'missing';
     const connection = mockPool(t, async (sql) => {
-        if (sql.includes('SELECT id, quantity, reserved_quantity')) {
-            if (mode === 'missing') return [[]];
-            return [[{ id: 'source-1', quantity: 5, reserved_quantity: 4 }]];
+        if (stockLockOf(sql)) {
+            if (mode === 'missing') return [[{ id: 'other', product_id: 'p1', location: 'Z', quantity: 9, reserved_quantity: 0 }]];
+            return [[{ id: 'source-1', product_id: 'p1', location: 'A', quantity: 5, reserved_quantity: 4 }]];
         }
         return [[]];
     });
@@ -126,14 +106,26 @@ test('transferStock rejects invalid, same-location, missing and reserved stock',
     mode = 'reserved';
     await assert.rejects(() => inventoryService.transferStock('p1', 'A', 'B', 2, 'u1'), /disponible insuficiente/);
     assert.equal(rollbacks, 2);
+
+    const deadlocked = mockPool(t, async () => { throw Object.assign(new Error('deadlock'), { code: 'ER_LOCK_DEADLOCK' }); });
+    deadlocked.rollback = async () => {};
+    await assert.rejects(() => inventoryService.transferStock('p1', 'A', 'B', 1, 'u1'), (error) => error.statusCode === 409 && error.errorCode === 'busy');
 });
+
+// Every row of the product, origin and destination, in one ordered statement (ADR-027, L3).
+const stockLockOf = (sql) => String(sql).replace(/\s+/g, ' ').trim()
+    === 'SELECT id, product_id, location, quantity, reserved_quantity FROM inventory WHERE product_id IN (?) ORDER BY product_id, id FOR UPDATE';
 
 test('transferStock moves an entire row into an existing target', async (t) => {
     const calls = [];
     const connection = mockPool(t, async (sql, params) => {
         calls.push({ sql, params });
-        if (sql.includes('SELECT id, quantity, reserved_quantity')) return [[{ id: 'source-1', quantity: 5, reserved_quantity: 0 }]];
-        if (sql.includes('SELECT id FROM inventory')) return [[{ id: 'target-1' }]];
+        if (stockLockOf(sql)) {
+            return [[
+                { id: 'source-1', product_id: 'p1', location: 'A', quantity: 5, reserved_quantity: 0 },
+                { id: 'target-1', product_id: 'p1', location: 'B', quantity: 1, reserved_quantity: 0 },
+            ]];
+        }
         return [{ affectedRows: 1 }];
     });
     let commits = 0;
@@ -149,15 +141,15 @@ test('transferStock moves an entire row into an existing target', async (t) => {
     // references inventory rows with ON DELETE RESTRICT (migration 044).
     assert.equal(calls.some(({ sql }) => sql.startsWith('DELETE FROM inventory')), false);
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE inventory SET quantity = ?') && params[0] === 0));
-    assert.ok(calls.some(({ sql }) => sql.includes('quantity = quantity + ?')));
+    assert.ok(calls.some(({ sql, params }) => sql.includes('quantity = quantity + ?') && params[1] === 'target-1'));
+    assert.equal(calls.some(({ sql }) => sql.includes('INSERT INTO journal_entries')), false, 'between valued locations nothing changes in value');
 });
 
 test('transferStock decrements partial source and creates a target location', async (t) => {
     const calls = [];
     mockPool(t, async (sql, params) => {
         calls.push({ sql, params });
-        if (sql.includes('SELECT id, quantity, reserved_quantity')) return [[{ id: 'source-1', quantity: 8, reserved_quantity: 1 }]];
-        if (sql.includes('SELECT id FROM inventory')) return [[]];
+        if (stockLockOf(sql)) return [[{ id: 'source-1', product_id: 'p1', location: 'General', quantity: 8, reserved_quantity: 1 }]];
         return [{ affectedRows: 1 }];
     });
     const originalAudit = auditService.log;
@@ -167,6 +159,38 @@ test('transferStock decrements partial source and creates a target location', as
     await inventoryService.transferStock('p1', '', 'C', 3, null);
     assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE inventory SET quantity = ?') && params[0] === 5));
     assert.ok(calls.some(({ sql }) => sql.startsWith('INSERT INTO inventory (id, product_id')));
+});
+
+test('transferStock to Mermas is a loss now, and back from Mermas a recovery at today\'s cost (D3)', async (t) => {
+    const entries = [];
+    const calls = [];
+    mockPool(t, async (sql, params) => {
+        calls.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
+        if (stockLockOf(sql)) {
+            return [[
+                { id: 'gen', product_id: 'p1', location: 'General', quantity: 8, reserved_quantity: 0 },
+                { id: 'waste', product_id: 'p1', location: 'Mermas', quantity: 2, reserved_quantity: 0 },
+            ]];
+        }
+        if (String(sql).includes('auto_update_cost')) return [[{ id: 'p1', purchase_price: '12.50' }]];
+        return [{ affectedRows: 1 }];
+    });
+    const originals = { audit: auditService.log, entry: accountingService.createJournalEntry };
+    auditService.log = async () => {};
+    accountingService.createJournalEntry = async (_c, entry) => { entries.push(entry); return `je-${entries.length}`; };
+    t.after(() => { auditService.log = originals.audit; accountingService.createJournalEntry = originals.entry; });
+
+    const out = await inventoryService.transferStock('p1', 'General', 'Mermas', 3, 'u1');
+    await inventoryService.transferStock('p1', 'Mermas', 'General', 1, 'u1');
+
+    assert.deepEqual(entries.map((entry) => entry.lines.map(({ account_code, debit, credit }) => [account_code, debit, credit])), [
+        [['5.1.02.02', 37.5, 0], ['1.1.04.01', 0, 37.5]],
+        [['1.1.04.01', 12.5, 0], ['5.1.02.02', 0, 12.5]],
+    ]);
+    assert.deepEqual([entries[0].reference_type, entries[0].reference_id], ['transfer', out.movementId]);
+    const movementCosts = calls.filter(({ sql }) => sql.includes('INSERT INTO inventory_movements')).map(({ params }) => params[5]);
+    assert.deepEqual(movementCosts, [12.5, 12.5]);
+    assert.deepEqual(calls.filter(({ sql }) => sql.startsWith('UPDATE inventory_movements SET journal_entry_id')).map(({ params }) => params[0]), ['je-1', 'je-2']);
 });
 
 test('inventory normalization canonicalizes empty, textual and family values', () => {

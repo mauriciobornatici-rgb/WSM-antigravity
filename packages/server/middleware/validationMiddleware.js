@@ -195,9 +195,6 @@ export const zodSchemas = {
     inventoryMovementFilters: z.object({
         query: commonSchemas.inventoryMovementFiltersSchema.optional()
     }),
-    inventoryMovementCreate: z.object({
-        body: commonSchemas.inventoryMovementCreateSchema
-    }),
     stockAuditCreate: z.object({
         body: commonSchemas.stockAuditCreateSchema
     }),

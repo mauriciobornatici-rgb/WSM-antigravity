@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import pool from '../config/db.js';
 import auditService from './audit.service.js';
 import { outputVatLines } from '../utils/vatAccounts.js';
+import { ACCOUNTS } from '../utils/paymentAccounts.js';
 
 class AccountingService {
     _round(val) {
@@ -36,18 +37,6 @@ class AccountingService {
             total_credit: this._round(r.total_credit),
             balance: this._round(r.balance)
         }));
-    }
-
-    // Unit cost used for CMV (same rule as the sale's cost entry): purchase price, else cost price.
-    async productUnitCosts(connection, productIds) {
-        const ids = [...new Set((productIds || []).filter(Boolean))];
-        if (ids.length === 0) return new Map();
-        const result = await connection.query(
-            'SELECT id, purchase_price, cost_price FROM products WHERE id IN (?)',
-            [ids]
-        );
-        const rows = Array.isArray(result?.[0]) ? result[0] : [];
-        return new Map(rows.map((row) => [row.id, Number(row.purchase_price || row.cost_price || 0)]));
     }
 
     // Posts an entry dropping zero lines; does nothing when every line is zero.
@@ -207,25 +196,26 @@ class AccountingService {
             WHERE je.reference_type = 'invoice' AND je.reference_id = ? AND jel.account_code = '5.1.01.01'
             LIMIT 1
         `, [invoiceId]);
-        if (includeCost && cmvRows.length === 0) {
-            // The cost recorded when the stock left (sale movements carry it, ADR-013): the same
-            // cost a return reverses. Today's product cost only when the movement has none.
-            const [itemCosts] = await connection.query(`
-                SELECT ii.quantity, p.purchase_price, p.cost_price,
-                       (SELECT SUM(m.quantity * m.unit_cost) / NULLIF(SUM(m.quantity), 0)
-                        FROM inventory_movements m
-                        WHERE m.reference_id = ? AND m.product_id = ii.product_id AND m.type = 'sale' AND m.unit_cost > 0) AS sold_cost
-                FROM invoice_items ii
-                JOIN products p ON ii.product_id = p.id
-                WHERE ii.invoice_id = ?
-            `, [invoice.order_id || '', invoiceId]);
-            const totalCmv = this._round(itemCosts.reduce((sum, item) => {
-                const soldCost = Math.round(Number(item.sold_cost || 0) * 100) / 100;
-                const cost = soldCost > 0 ? soldCost : Number(item.purchase_price || item.cost_price || 0);
-                return sum + cost * Number(item.quantity || 0);
-            }, 0));
-            if (totalCmv > 0) {
-                await this.createJournalEntry(connection, {
+        if (includeCost && invoice.order_id && cmvRows.length === 0) {
+            // ADR-027 (D8): the cost of goods sold is posted when the goods leave, with the entry
+            // linked to their movements. The invoice only covers what its order took out of stock
+            // without one (recorded before that rule), at the cost the movement carries: the same
+            // cost a return reverses. A manual invoice without an order moved no goods (D9).
+            const [movements] = await connection.query(
+                `SELECT id, quantity, unit_cost
+                 FROM inventory_movements
+                 WHERE reference_id = ? AND type = 'sale' AND reference_type = 'order' AND journal_entry_id IS NULL
+                 FOR UPDATE`,
+                [invoice.order_id]
+            );
+            const costed = movements.filter((movement) => Number(movement.unit_cost || 0) > 0);
+            const totalCents = costed.reduce(
+                (sum, movement) => sum + Math.round(Number(movement.quantity || 0) * Math.round(Number(movement.unit_cost) * 100)),
+                0
+            );
+            if (totalCents > 0) {
+                const totalCmv = totalCents / 100;
+                const entryId = await this.createJournalEntry(connection, {
                     date: invoice.issue_date,
                     description: `Costo de Mercadería Vendida - Factura ${invoiceLabel}`,
                     reference_type: 'invoice',
@@ -235,6 +225,10 @@ class AccountingService {
                         { account_code: '1.1.04.01', debit: 0, credit: totalCmv, notes: 'Salida de inventario' }
                     ]
                 });
+                await connection.query(
+                    'UPDATE inventory_movements SET journal_entry_id = ? WHERE id IN (?)',
+                    [entryId, costed.map((movement) => movement.id)]
+                );
             }
         }
     }
@@ -493,18 +487,13 @@ class AccountingService {
         query += ' GROUP BY jel.account_code, coa.name, coa.type';
         const [rows] = await connection.query(query, params);
 
+        // Invoices from before the ledger: their revenue is shown. Their cost is not estimated at
+        // today's cost any more: since ADR-027 the cost of goods sold is posted when goods leave
+        // (and the valuation script posts the sales that left without it).
         let unpostedInvoiceQuery = `
             SELECT
-                COALESCE(SUM(i.total_amount - COALESCE(i.vat_amount, 0)), 0) AS revenue,
-                COALESCE(SUM(costs.cmv), 0) AS cmv
+                COALESCE(SUM(i.total_amount - COALESCE(i.vat_amount, 0)), 0) AS revenue
             FROM invoices i
-            LEFT JOIN (
-                SELECT ii.invoice_id,
-                       SUM(ii.quantity * COALESCE(NULLIF(p.purchase_price, 0), p.cost_price, 0)) AS cmv
-                FROM invoice_items ii
-                LEFT JOIN products p ON p.id = ii.product_id
-                GROUP BY ii.invoice_id
-            ) costs ON costs.invoice_id = i.id
             WHERE i.deleted_at IS NULL AND i.status <> 'cancelled'
               AND NOT EXISTS (
                   SELECT 1 FROM journal_entries posted
@@ -524,7 +513,6 @@ class AccountingService {
         }
         const [unpostedRows] = await connection.query(unpostedInvoiceQuery, unpostedParams);
         const unpostedRevenue = this._round(unpostedRows[0]?.revenue || 0);
-        const unpostedCmv = this._round(unpostedRows[0]?.cmv || 0);
 
         const revenueItems = [];
         const expenseItems = [];
@@ -560,13 +548,6 @@ class AccountingService {
             else revenueItems.push({ code: '4.1.01.01', name: 'Ventas de Mercaderías (operaciones históricas)', balance: unpostedRevenue });
             totalRevenue = this._round(totalRevenue + unpostedRevenue);
         }
-        if (unpostedCmv !== 0) {
-            const existingCmv = expenseItems.find((item) => item.code === '5.1.01.01');
-            if (existingCmv) existingCmv.balance = this._round(existingCmv.balance + unpostedCmv);
-            else expenseItems.push({ code: '5.1.01.01', name: 'Costo de Mercaderías Vendidas (histórico)', balance: unpostedCmv });
-            totalExpense = this._round(totalExpense + unpostedCmv);
-        }
-
         const netResult = this._round(totalRevenue - totalExpense);
 
         return {
@@ -726,7 +707,25 @@ class AccountingService {
             }
 
             const [lines] = await connection.query('SELECT * FROM journal_entry_lines WHERE journal_entry_id = ?', [id]);
-            
+
+            // ADR-027: Inventario and Mercadería recibida a facturar follow the stock and the delivery
+            // notes. Reversing one of their entries by hand moves the ledger without moving a unit:
+            // it is corrected with the operation itself (cancel, return, count). The old purchase
+            // entries posted twice ('reception') are the exception: their runbook reverses them.
+            const stockAccounts = [ACCOUNTS.INVENTORY, ACCOUNTS.GOODS_TO_INVOICE];
+            if (originalEntry.reference_type !== 'reception') {
+                const [linkedMovements] = await connection.query(
+                    'SELECT id FROM inventory_movements WHERE journal_entry_id = ? LIMIT 1',
+                    [id]
+                );
+                if (linkedMovements.length > 0 || lines.some((line) => stockAccounts.includes(line.account_code))) {
+                    const error = new Error('Este asiento acompaña movimientos de stock: se corrige con la operación (anulación, devolución o conteo), no revirtiéndolo a mano.');
+                    error.statusCode = 409;
+                    error.errorCode = 'stock_entry_not_reversible';
+                    throw error;
+                }
+            }
+
             // Create reversed lines
             const reversedLines = lines.map(l => ({
                 account_code: l.account_code,

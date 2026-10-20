@@ -208,6 +208,36 @@ test('reverseJournalEntry permits a single immutable counter-entry and audits in
     assert.ok(calls.some((call) => call.sql.includes('INSERT INTO audit_logs')));
 });
 
+test('reverseJournalEntry refuses an entry that follows the stock, but not an old duplicate purchase (ADR-027)', async (t) => {
+    const scenario = { reference_type: 'goods_received', linked: false, lines: [
+        { account_code: '1.1.04.01', debit: 100, credit: 0 },
+        { account_code: '2.1.01.02', debit: 0, credit: 100 },
+    ] };
+    const connection = mockPool(t, async (sql) => {
+        if (sql.includes('SELECT * FROM journal_entries')) {
+            return [[{ id: 'entry-1', entry_number: 7, description: 'Remito', reference_type: scenario.reference_type }]];
+        }
+        if (sql.includes('WHERE reversal_of_entry_id = ?')) return [[]];
+        if (sql.includes('FROM journal_entry_lines')) return [scenario.lines];
+        if (sql.includes('FROM inventory_movements WHERE journal_entry_id')) return [scenario.linked ? [{ id: 'm-1' }] : []];
+        return [{ affectedRows: 1 }];
+    });
+    connection.rollback = async () => {};
+    const refused = (error) => error.statusCode === 409 && error.errorCode === 'stock_entry_not_reversible';
+
+    await assert.rejects(() => accountingService.reverseJournalEntry('entry-1', 'admin-1'), refused);
+    // An entry whose movements point to it, even without an inventory line (a cost of goods sold at 0).
+    Object.assign(scenario, { reference_type: 'order', linked: true, lines: [{ account_code: '5.1.01.01', debit: 0, credit: 0 }] });
+    await assert.rejects(() => accountingService.reverseJournalEntry('entry-1', 'admin-1'), refused);
+    // The duplicate purchase entries of RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS are still reversed.
+    Object.assign(scenario, { reference_type: 'reception', linked: false, lines: [
+        { account_code: '1.1.04.01', debit: 100, credit: 0 },
+        { account_code: '2.1.01.01', debit: 0, credit: 100 },
+    ] });
+    const result = await accountingService.reverseJournalEntry('entry-1', 'admin-1');
+    assert.equal(result.success, true);
+});
+
 test('reverseJournalEntry rejects an already reversed entry with 409', async (t) => {
     const connection = mockPool(t, async (sql) => {
         if (sql.includes('SELECT * FROM journal_entries')) {

@@ -13,12 +13,12 @@ export function uniqueId(prefix) {
     return `${prefix}-${crypto.randomUUID()}`.slice(0, 36);
 }
 
-/** Creates a product with stock rows: [{ location, quantity, reserved }]. */
-export async function seedProduct({ name = 'Producto QA', salePrice = 100, stock = [] } = {}) {
+/** Creates a product with stock rows: [{ location, quantity, reserved }]. cost: its purchase_price. */
+export async function seedProduct({ name = 'Producto QA', salePrice = 100, cost = 0, stock = [] } = {}) {
     const productId = crypto.randomUUID();
     await pool.query(
-        'INSERT INTO products (id, sku, name, sale_price) VALUES (?, ?, ?, ?)',
-        [productId, uniqueId('SKU'), name, salePrice]
+        'INSERT INTO products (id, sku, name, sale_price, purchase_price) VALUES (?, ?, ?, ?, ?)',
+        [productId, uniqueId('SKU'), name, salePrice, cost]
     );
     for (const row of stock) {
         await pool.query(

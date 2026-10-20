@@ -3,6 +3,9 @@ import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import { nextDocumentSequence } from '../../utils/documentSequence.js';
 import { businessYear } from '../../utils/businessDate.js';
+import { businessError } from '../../utils/businessError.js';
+import { effectiveCost, roundCost } from '../inventory/InventoryValuation.js';
+import { invoicedByOrderSql } from './receptionInvoicing.js';
 
 export class ReceptionService {
     async nextReceptionNumber(connection) {
@@ -25,7 +28,9 @@ export class ReceptionService {
             SELECT r.*, s.name AS supplier_name, po.po_number,
                    -- ADR-019: the purchase invoice that already covers this delivery note, if any.
                    (SELECT sir.supplier_invoice_id FROM supplier_invoice_receptions sir
-                    WHERE sir.reception_id = r.id LIMIT 1) AS supplier_invoice_id
+                    WHERE sir.reception_id = r.id LIMIT 1) AS supplier_invoice_id,
+                   -- ADR-027: its purchase order was invoiced without naming it (before ADR-019).
+                   ${invoicedByOrderSql('r')} AS invoiced_by_order
             FROM receptions r
             LEFT JOIN suppliers s ON r.supplier_id = s.id
             LEFT JOIN purchase_orders po ON r.purchase_order_id = po.id
@@ -68,13 +73,43 @@ export class ReceptionService {
         return receptions;
     }
 
-    async createReception(data, userId, ipAddress = null) {
+    /**
+     * @param {object} options
+     * @param {boolean} options.canEditCost whether the user may change a product's cost (D5). Without
+     *   it, a delivery note without an order keeps each product's cost: the supplier invoice corrects
+     *   it later (D1). A product without a cost takes the one typed (D6).
+     */
+    async createReception(data, userId, ipAddress = null, { canEditCost = false } = {}) {
         const { purchase_order_id, supplier_id, remito_number, items, notes } = data;
         const id = crypto.randomUUID();
+        // ADR-027: the cost of each line is what the goods enter the ledger at. With an order it is
+        // the order's (D1); without one (a small purchase) it is typed and must be there.
+        const costByPoItem = new Map();
+        let orderSupplierId = null;
 
         const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
+
+            if (!purchase_order_id) {
+                const products = new Set();
+                for (const item of items) {
+                    if (item.po_item_id) {
+                        throw Object.assign(new Error('Una recepción sin orden de compra no lleva ítems de una orden.'), { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
+                    }
+                    if (products.has(item.product_id)) {
+                        throw Object.assign(new Error('La recepción contiene el mismo producto en más de una línea; unificá las cantidades.'), { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
+                    }
+                    products.add(item.product_id);
+                    const receiving = Number(item.quantity_received || 0);
+                    if (!Number.isInteger(receiving) || receiving <= 0) {
+                        throw Object.assign(new Error('La cantidad recibida debe ser un número entero mayor a cero.'), { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
+                    }
+                    if (!(Math.round(Number(item.unit_cost || 0) * 100) > 0)) {
+                        throw Object.assign(new Error('Cargá el costo (neto, sin IVA) de cada producto del remito.'), { statusCode: 400, errorCode: 'RECEPTION_COST_REQUIRED' });
+                    }
+                }
+            }
 
             if (purchase_order_id) {
                 const [orders] = await connection.query(
@@ -93,12 +128,18 @@ export class ReceptionService {
                     error.errorCode = 'PURCHASE_ORDER_NOT_RECEIVABLE';
                     throw error;
                 }
+                // The delivery note is the order's supplier's: it is invoiced against that supplier.
+                orderSupplierId = orders[0].supplier_id || null;
+                if (supplier_id && orderSupplierId && supplier_id !== orderSupplierId) {
+                    throw Object.assign(new Error('El proveedor no es el de la orden de compra.'), { statusCode: 400, errorCode: 'RECEPTION_SUPPLIER_MISMATCH' });
+                }
 
                 const [poItems] = await connection.query(
-                    'SELECT id, product_id, quantity_ordered, quantity_received FROM purchase_order_items WHERE purchase_order_id = ? FOR UPDATE',
+                    'SELECT id, product_id, quantity_ordered, quantity_received, unit_cost FROM purchase_order_items WHERE purchase_order_id = ? FOR UPDATE',
                     [purchase_order_id]
                 );
                 const poItemById = new Map(poItems.map((item) => [item.id, item]));
+                for (const poItem of poItems) costByPoItem.set(poItem.id, Number(poItem.unit_cost || 0));
                 const [pendingRows] = await connection.query(`
                     SELECT ri.po_item_id, COALESCE(SUM(ri.quantity_received), 0) AS pending_quantity
                     FROM reception_items ri
@@ -140,14 +181,35 @@ export class ReceptionService {
                 }
             }
 
-            let effectiveSupplierId = supplier_id;
-            if (!effectiveSupplierId && purchase_order_id) {
-                const [po] = await connection.query('SELECT supplier_id FROM purchase_orders WHERE id = ?', [purchase_order_id]);
-                if (po.length > 0) effectiveSupplierId = po[0].supplier_id;
-            }
+            const effectiveSupplierId = supplier_id || orderSupplierId;
             if (!effectiveSupplierId) {
                 throw Object.assign(new Error('supplier_id es obligatorio'), { statusCode: 400, errorCode: 'SUPPLIER_REQUIRED' });
             }
+
+            // The cost each line enters at. An order line without a cost takes the product's (the
+            // invoice corrects it later, D1). Without an order, a cost other than the product's is a
+            // change of cost, reserved to a manager or an administrator (D5).
+            const productIds = [...new Set(items.map((item) => item.product_id).filter(Boolean))];
+            const [productRows] = productIds.length > 0
+                ? await connection.query('SELECT id, name, purchase_price, cost_price FROM products WHERE id IN (?)', [productIds])
+                : [[]];
+            const productById = new Map(productRows.map((row) => [row.id, row]));
+            const lineCosts = items.map((item) => {
+                const productCost = effectiveCost(productById.get(item.product_id));
+                if (purchase_order_id) {
+                    const orderCost = Number(costByPoItem.get(item.po_item_id) || 0);
+                    return orderCost > 0 ? orderCost : productCost;
+                }
+                const typed = roundCost(item.unit_cost);
+                if (!canEditCost && productCost > 0 && typed !== productCost) {
+                    const name = productById.get(item.product_id)?.name || item.product_id;
+                    throw businessError(403, {
+                        error: 'cost_edit_not_allowed',
+                        message: `Solo un gerente o un administrador puede cargar un costo distinto al de ${name} ($${productCost}). Dejá el costo actual: si la factura trae otro precio, el costo se corrige al cargarla.`,
+                    });
+                }
+                return typed;
+            });
 
             if (remito_number) {
                 const [duplicates] = await connection.query(
@@ -172,7 +234,7 @@ export class ReceptionService {
                 [id, receptionNumber, purchase_order_id || null, effectiveSupplierId, remito_number || null, notes || null]
             );
 
-            for (const item of items) {
+            for (const [index, item] of items.entries()) {
                 await connection.query(
                     `INSERT INTO reception_items (
                         id, reception_id, product_id, po_item_id, quantity_expected, quantity_received,
@@ -185,7 +247,7 @@ export class ReceptionService {
                         item.po_item_id || null,
                         item.quantity_expected || 0,
                         item.quantity_received,
-                        item.unit_cost || 0,
+                        lineCosts[index],
                         item.location_assigned || 'General',
                         item.batch_number || null,
                         item.expiration_date || null,

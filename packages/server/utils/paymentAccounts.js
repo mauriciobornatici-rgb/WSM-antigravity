@@ -10,6 +10,12 @@ export const ACCOUNTS = Object.freeze({
     RECEIVABLES: '1.1.03.01',
     INVENTORY: '1.1.04.01',
     SUPPLIERS: '2.1.01.01',
+    // ADR-027: goods received and not yet invoiced by the supplier.
+    GOODS_TO_INVOICE: '2.1.01.02',
+    // ADR-018: the counterpart of stock that entered without a purchase (opening stock).
+    OPENING_ADJUSTMENT: '3.1.03.01',
+    // ADR-027: the change in value of the goods in stock when their cost changes.
+    HOLDING_RESULT: '4.2.02.01',
     VAT_DEBIT_21: '2.1.02.02',
     SALES: '4.1.01.01',
     OTHER_INCOME: '4.2.01.01',

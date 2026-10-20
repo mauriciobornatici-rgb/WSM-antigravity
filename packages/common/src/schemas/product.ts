@@ -32,6 +32,10 @@ export const createProductSchema = z.object({
   // ADR-019: units of this product kept out of the online store (when the policy is on);
   // empty uses the store-wide quantity.
   tiendanube_safety_stock: z.coerce.number().int().min(0).max(100000).nullable().optional(),
+  // ADR-027 (D1): a purchase at another cost updates the product's cost, and a new cost moves the
+  // sale price keeping the markup. Both on by default; turned off, the value stays as loaded.
+  auto_update_cost: z.boolean().optional(),
+  auto_update_price: z.boolean().optional(),
   stock_initial: z.coerce.number().int().min(0).optional(),
   status: productStatusSchema.optional(),
 });

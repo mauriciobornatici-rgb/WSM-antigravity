@@ -177,7 +177,7 @@ test('getReceptions filters and groups items per reception', async (t) => {
 function receptionRules(overrides = {}) {
     return [
         ['FROM purchase_orders WHERE id = ? FOR UPDATE', overrides.order ?? [[{ id: 'po1', supplier_id: 'sup1', status: 'sent' }]]],
-        ['FROM purchase_order_items', overrides.poItems ?? [[{ id: 'poi1', product_id: 'p1', quantity_ordered: 10, quantity_received: 2 }]]],
+        ['FROM purchase_order_items', overrides.poItems ?? [[{ id: 'poi1', product_id: 'p1', quantity_ordered: 10, quantity_received: 2, unit_cost: '12.00' }]]],
         ['FROM reception_items ri', overrides.pending ?? [[{ po_item_id: 'poi1', pending_quantity: 3 }]]],
         ['SELECT supplier_id FROM purchase_orders', overrides.poSupplier ?? [[{ supplier_id: 'sup1' }]]],
         ['SELECT id FROM receptions', overrides.dupes ?? [[]]],
@@ -251,7 +251,7 @@ test('createReception 409 when quantity exceeds pending balance (ordered - recei
 
 test('createReception requires a supplier when none can be derived', async (t) => {
     await expectReceptionFailure(t, receptionRules(),
-        { items: [{ product_id: 'p1', quantity_received: 1 }] }, { message: /supplier_id es obligatorio/ });
+        { items: [{ product_id: 'p1', quantity_received: 1, unit_cost: 3 }] }, { message: /supplier_id es obligatorio/ });
     await expectReceptionFailure(t, receptionRules({ order: [[{ id: 'po1', status: 'partial' }]], poItems: [[]], poSupplier: [[]] }),
         { purchase_order_id: 'po1', items: [] }, { message: /supplier_id es obligatorio/ });
 });
@@ -269,7 +269,8 @@ test('createReception from a purchase order inserts reception and items, then au
             purchase_order_id: 'po1',
             remito_number: 'R-9',
             notes: 'n',
-            items: [{ po_item_id: 'poi1', product_id: 'p1', quantity_received: 5, quantity_expected: 5, unit_cost: 12, location_assigned: 'A1', batch_number: 'L1', expiration_date: '2027-01-01', notes: 'ok' }]
+            // ADR-027 (D1): with an order the cost is the order's, whatever the screen sends.
+            items: [{ po_item_id: 'poi1', product_id: 'p1', quantity_received: 5, quantity_expected: 5, unit_cost: 99, location_assigned: 'A1', batch_number: 'L1', expiration_date: '2027-01-01', notes: 'ok' }]
         },
         user: { id: 'u1' }
     });
@@ -288,11 +289,11 @@ test('createReception from a purchase order inserts reception and items, then au
     assert.ok(!calls.some((c) => /journal|accounting/i.test(c.statement)));
 });
 
-test('createReception without purchase order applies defaults', async (t) => {
+test('createReception without purchase order applies defaults and keeps the typed cost in cents', async (t) => {
     const logs = installAudit(t);
     const { calls } = installPool(t, receptionRules());
     const res = await runHandler(ctrl.createReception, {
-        body: { supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 2 }] }
+        body: { supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 2, unit_cost: 8.456 }] }
     });
     assert.equal(res.status, 200);
     assert.ok(!calls.some((c) => c.statement.startsWith('SELECT id FROM receptions')));
@@ -300,8 +301,66 @@ test('createReception without purchase order applies defaults', async (t) => {
     assert.deepEqual(header.params.slice(2), [null, 'supX', null, null]);
     const row = calls.find((c) => c.statement.startsWith('INSERT INTO reception_items'));
     assert.deepEqual([row.params[3], row.params[4], row.params[6], row.params[7], row.params[8], row.params[9], row.params[10]],
-        [null, 0, 0, 'General', null, null, null]);
+        [null, 0, 8.46, 'General', null, null, null]);
     assert.equal(logs[0].payload.user_id, null);
+});
+
+test('createReception without purchase order needs a cost, whole quantities and one line per product (ADR-027)', async (t) => {
+    await expectReceptionFailure(t, receptionRules(),
+        { supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 2 }] },
+        { statusCode: 400, errorCode: 'RECEPTION_COST_REQUIRED' });
+    await expectReceptionFailure(t, receptionRules(),
+        { supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 1.5, unit_cost: 3 }] },
+        { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
+    await expectReceptionFailure(t, receptionRules(),
+        { supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 1, unit_cost: 3 }, { product_id: 'p1', quantity_received: 1, unit_cost: 3 }] },
+        { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
+});
+
+test('createReception without an order: a cost other than the product\'s needs PRODUCTS_COST_EDIT (D5, AUD-016)', async (t) => {
+    const product = (cost) => ['FROM products WHERE id IN', [[{ id: 'p1', name: 'Pelota', purchase_price: cost, cost_price: 0 }]]];
+    const body = (unitCost) => ({ supplier_id: 'supX', items: [{ product_id: 'p1', quantity_received: 2, unit_cost: unitCost }] });
+    const lineCost = (calls) => calls.find((c) => c.statement.startsWith('INSERT INTO reception_items')).params[6];
+
+    // Depósito: the product's cost goes through; another one is refused before saving anything.
+    installAudit(t);
+    let db = installPool(t, [product(10), ...receptionRules()]);
+    await runHandler(ctrl.createReception, { body: body(10), user: { id: 'w', role: 'warehouse' } });
+    assert.equal(lineCost(db.calls), 10);
+    db = installPool(t, [product(10), ...receptionRules()]);
+    const refused = await runHandler(ctrl.createReception, { body: body(0.01), user: { id: 'w', role: 'warehouse' } });
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.error, 'cost_edit_not_allowed');
+    assert.match(refused.body.message, /Pelota \(\$10\).*la factura/);
+    assert.deepEqual(db.lifecycle, ['begin', 'rollback', 'release']);
+    // A product without a cost takes the typed one from anyone (D6).
+    db = installPool(t, [product(0), ...receptionRules()]);
+    await runHandler(ctrl.createReception, { body: body(7), user: { id: 'w', role: 'warehouse' } });
+    assert.equal(lineCost(db.calls), 7);
+    // A manager types the delivery note's cost.
+    db = installPool(t, [product(10), ...receptionRules()]);
+    await runHandler(ctrl.createReception, { body: body(12.5), user: { id: 'm', role: 'manager' } });
+    assert.equal(lineCost(db.calls), 12.5);
+});
+
+test('createReception without an order refuses order lines; with one, the supplier is the order\'s and a line without cost takes the product\'s', async (t) => {
+    await expectReceptionFailure(t, receptionRules(),
+        { supplier_id: 'supX', items: [{ product_id: 'p1', po_item_id: 'poi1', quantity_received: 1, unit_cost: 3 }] },
+        { statusCode: 400, errorCode: 'INVALID_RECEPTION_ITEMS' });
+    await expectReceptionFailure(t, receptionRules(),
+        { purchase_order_id: 'po1', supplier_id: 'other', items: [{ po_item_id: 'poi1', product_id: 'p1', quantity_received: 1 }] },
+        { statusCode: 400, errorCode: 'RECEPTION_SUPPLIER_MISMATCH' });
+
+    installAudit(t);
+    const { calls } = installPool(t, [
+        ['FROM products WHERE id IN', [[{ id: 'p1', name: 'Pelota', purchase_price: 9, cost_price: 0 }]]],
+        ...receptionRules({ poItems: [[{ id: 'poi1', product_id: 'p1', quantity_ordered: 10, quantity_received: 0, unit_cost: 0 }]] }),
+    ]);
+    await runHandler(ctrl.createReception, {
+        body: { purchase_order_id: 'po1', supplier_id: 'sup1', items: [{ po_item_id: 'poi1', product_id: 'p1', quantity_received: 1 }] },
+    });
+    const row = calls.find((c) => c.statement.startsWith('INSERT INTO reception_items'));
+    assert.equal(row.params[6], 9, 'an order typed without a price does not leave the delivery note stuck');
 });
 
 test('createReception derives the supplier from the purchase order', async (t) => {
@@ -400,11 +459,32 @@ test('createReturn inserts draft return with items and audits', async (t) => {
     assert.deepEqual(lifecycle, ['begin', 'commit', 'release']);
     const header = calls.find((c) => c.statement.startsWith('INSERT INTO supplier_returns'));
     assert.ok(header.statement.includes("'draft'"));
-    assert.deepEqual(header.params.slice(1), [`SR-${year}-0012`, 's1', 'roto']);
+    assert.deepEqual(header.params.slice(1), [`SR-${year}-0012`, 's1', 'roto', null]);
     const rows = calls.filter((c) => c.statement.startsWith('INSERT INTO supplier_return_items'));
     assert.deepEqual(rows.map((c) => c.params.slice(2)), [['p1', 2, 10, 'dañado'], ['p2', 1, 0, null]]);
     assert.equal(logs[0].payload.action, 'CREATE_SUPPLIER_RETURN');
     assert.equal(logs[0].conn, connection);
+});
+
+test('createReturn against a delivery note checks it is this supplier\'s, approved, and brought the products (D7)', async (t) => {
+    installAudit(t);
+    const rules = (reception, lines) => [
+        ['FROM receptions WHERE id = ?', [reception]],
+        ['FROM reception_items WHERE reception_id = ?', [lines]],
+        ['MAX(CAST', [[{ max_seq: 1 }]]],
+        ['SELECT `last_value`', [[{ last_value: 1 }]]],
+    ];
+    const body = { supplier_id: 's1', reception_id: '11111111-1111-4111-8111-111111111111', items: [{ product_id: 'p1', quantity: 1 }] };
+    const ok = installPool(t, rules([{ id: 'rec', supplier_id: 's1', status: 'approved' }], [{ product_id: 'p1' }]));
+    await runHandler(ctrl.createReturn, { body });
+    assert.equal(ok.calls.find((c) => c.statement.startsWith('INSERT INTO supplier_returns')).params[4], body.reception_id);
+
+    installPool(t, rules([{ id: 'rec', supplier_id: 'other', status: 'approved' }], [{ product_id: 'p1' }]));
+    const foreign = await runHandler(ctrl.createReturn, { body });
+    assert.deepEqual([foreign.status, foreign.body.error], [400, 'invalid_reception']);
+    installPool(t, rules([{ id: 'rec', supplier_id: 's1', status: 'approved' }], [{ product_id: 'p2' }]));
+    const missing = await runHandler(ctrl.createReturn, { body });
+    assert.deepEqual([missing.status, missing.body.error], [400, 'product_not_in_reception']);
 });
 
 test('createReturn without items or notes still creates the draft', async (t) => {

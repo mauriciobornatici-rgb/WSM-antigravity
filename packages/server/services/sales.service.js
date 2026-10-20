@@ -9,6 +9,7 @@ import accountingService from './accounting.service.js';
 import invoiceAuthorizationUseCase from '../domains/sales/InvoiceAuthorizationUseCase.js';
 import createOrderUseCase, { isOfflineReplay } from '../domains/sales/CreateOrderUseCase.js';
 import stockLedger from '../domains/inventory/StockLedger.js';
+import inventoryValuation, { isValuedLocation } from '../domains/inventory/InventoryValuation.js';
 import { grossLineAmounts, lineAmounts } from '../utils/vatMath.js';
 import { businessError } from '../utils/businessError.js';
 import { CLIENT_TAX_CONDITIONS } from '@wsm/common';
@@ -152,7 +153,7 @@ class SalesService extends BaseService {
         // If order was already packed or dispatched, it had physical stock deductions, so we restore physically
         if (['packed', 'dispatched', 'completed', 'delivered'].includes(statusStr)) {
             const [deductionMovements] = await connection.query(
-                `SELECT product_id, from_location, quantity, unit_cost
+                `SELECT product_id, from_location, quantity, unit_cost, journal_entry_id
                  FROM inventory_movements
                  WHERE reference_type = 'order'
                    AND reference_id = ?
@@ -160,33 +161,49 @@ class SalesService extends BaseService {
                  FOR UPDATE`,
                 [orderId]
             );
+            const moved = deductionMovements.filter((m) => Number(m.quantity || 0) > 0);
 
-            if (deductionMovements.length > 0) {
-                for (const m of deductionMovements) {
-                    const quantity = Number(m.quantity || 0);
-                    if (quantity <= 0) continue;
+            if (moved.length > 0) {
+                // ADR-027: the stock of the products (L3), then their cost (L4). The goods come back
+                // at today's cost; the cost of goods sold is reversed at the cost they left at.
+                const productIds = moved.map((m) => m.product_id);
+                await inventoryValuation.lockStock(connection, productIds);
+                const costs = await inventoryValuation.lockCosts(connection, productIds);
+                const reentries = [];
+                for (const m of moved) {
+                    const quantity = Number(m.quantity);
+                    const location = m.from_location || 'General';
+                    const unitCost = isValuedLocation(location) ? (costs.get(m.product_id)?.cost || 0) : 0;
                     await connection.query(
                         `INSERT INTO inventory (id, product_id, location, quantity)
                          VALUES (?, ?, ?, ?)
                          ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
-                        [crypto.randomUUID(), m.product_id, m.from_location || 'General', quantity]
+                        [crypto.randomUUID(), m.product_id, location, quantity]
                     );
 
+                    const movementId = crypto.randomUUID();
                     await connection.query(
                         `INSERT INTO inventory_movements (
                             id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id
                         ) VALUES (?, 'restock', ?, ?, ?, ?, ?, 'order', ?)`,
-                        [
-                            crypto.randomUUID(),
-                            m.product_id,
-                            m.from_location || 'General',
-                            quantity,
-                            Number(m.unit_cost || 0),
-                            'Order cancellation restock',
-                            orderId
-                        ]
+                        [movementId, m.product_id, location, quantity, unitCost, 'Order cancellation restock', orderId]
                     );
+                    // Goods that left without their cost posted (the product had no cost then, or an
+                    // order packed before ADR-027) were never valued out: they come back against the
+                    // opening adjustment (exitCost 0), so the ledger still follows the stock.
+                    reentries.push({
+                        quantity,
+                        exitCost: m.journal_entry_id ? Number(m.unit_cost || 0) : 0,
+                        unitCost,
+                        movementIds: [movementId],
+                    });
                 }
+                await inventoryValuation.postReentry(connection, {
+                    referenceType: 'order',
+                    referenceId: orderId,
+                    description: `Reingreso de mercadería por anulación del pedido ${String(orderId).slice(0, 8)}`,
+                    lines: reentries,
+                });
             }
         } else {
             // Check if exact allocations exist for this order
@@ -245,6 +262,36 @@ class SalesService extends BaseService {
                 }
             }
         }
+    }
+
+    /**
+     * ADR-027 (D8): the cost of the goods an order takes is posted when it is packed. An order
+     * invoiced before that rule had its cost posted by the invoice: its movements are linked to
+     * that entry instead of posting the cost twice.
+     */
+    async _postPackingCost(connection, orderId, exitLines) {
+        const movementIds = exitLines.flatMap((line) => line.movementIds || []);
+        if (movementIds.length === 0 && !exitLines.some((line) => Number(line.shortage || 0) > 0)) return null;
+        const [legacy] = await connection.query(
+            `SELECT je.id
+             FROM journal_entries je
+             JOIN invoices i ON i.id = je.reference_id AND je.reference_type = 'invoice' AND i.deleted_at IS NULL
+             JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id AND jel.account_code = '5.1.01.01'
+             WHERE i.order_id = ?
+               AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reversal_of_entry_id = je.id)
+             LIMIT 1`,
+            [orderId]
+        );
+        if (legacy.length > 0) {
+            await inventoryValuation.linkMovements(connection, movementIds, legacy[0].id);
+            return null;
+        }
+        return inventoryValuation.postExit(connection, {
+            referenceType: 'order',
+            referenceId: orderId,
+            description: `Costo de mercadería vendida - pedido ${String(orderId).slice(0, 8)} armado`,
+            lines: exitLines,
+        });
     }
 
     async createOrder(orderData, userId, actor = null) {
@@ -383,8 +430,20 @@ class SalesService extends BaseService {
                     [orderId]
                 );
 
+                // ADR-027 (D8): the goods leave now, and so does their cost. Every stock row of the
+                // order's products is locked in one ordered statement (L3) before any update, then
+                // their cost (L4): one order for every path, so packing never deadlocks a sale.
+                const [orderLines] = await connection.query(
+                    'SELECT product_id FROM order_items WHERE order_id = ?',
+                    [orderId]
+                );
+                const packedProducts = [...allocations, ...orderLines].map((row) => row.product_id);
+                await inventoryValuation.lockStock(connection, packedProducts);
+                const costs = await inventoryValuation.lockCosts(connection, packedProducts);
+                const costOf = (productId) => costs.get(productId)?.cost || 0;
+                const exitLines = [];
+
                 if (allocations.length > 0 || Number(order.allocation_tracked || 0)) {
-                    const allocationCosts = await accountingService.productUnitCosts(connection, allocations.map((alloc) => alloc.product_id));
                     for (const alloc of allocations) {
                         const reserved = Number(alloc.reserved_quantity || 0);
                         const picked = Math.min(reserved, Math.max(Number(alloc.picked_quantity || 0), 0));
@@ -402,12 +461,14 @@ class SalesService extends BaseService {
                         }
 
                         if (picked > 0) {
+                            const movementId = crypto.randomUUID();
                             await connection.query(
                                 `INSERT INTO inventory_movements (
                                     id, type, product_id, from_location, quantity, unit_cost, reason, reference_type, reference_id
                                 ) VALUES (?, 'sale', ?, ?, ?, ?, 'Order stock deduction (allocated)', 'order', ?)`,
-                                [crypto.randomUUID(), alloc.product_id, alloc.location_code || 'General', picked, allocationCosts.get(alloc.product_id) || 0, orderId]
+                                [movementId, alloc.product_id, alloc.location_code || 'General', picked, costOf(alloc.product_id), orderId]
                             );
+                            exitLines.push({ quantity: picked, unitCost: costOf(alloc.product_id), movementIds: [movementId] });
                         }
 
                         await connection.query(
@@ -431,16 +492,19 @@ class SalesService extends BaseService {
                         const extra = Number(item.picked_quantity || 0) - Number(item.allocated_picked || 0);
                         if (extra <= 0) continue;
                         const lockedRows = await stockLedger.lockSellableRows(connection, [item.product_id], { channel: 'order' });
-                        await stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
+                        const { consumed, shortage, movementIds } = await stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
                             productId: item.product_id,
                             productName: item.product_id,
                             quantity: extra,
                             orderId,
                             userId,
                             reason: 'Order stock deduction (beyond reservation)',
-                            unitCost: (await accountingService.productUnitCosts(connection, [item.product_id])).get(item.product_id) || 0,
+                            unitCost: costOf(item.product_id),
                             allowShortage: Boolean(assumeFullyPicked)
                         });
+                        // Goods that left through another channel without stock in the system: their
+                        // cost goes against inventory differences (they were never in the ledger).
+                        exitLines.push({ quantity: consumed, shortage, unitCost: costOf(item.product_id), movementIds });
                     }
                 } else {
                     // Legacy fallback: release reservations & deduct physical stock
@@ -480,18 +544,20 @@ class SalesService extends BaseService {
                         // Deduct what was picked from unreserved stock, never below zero.
                         if (pickQty > 0) {
                             const lockedRows = await stockLedger.lockSellableRows(connection, [item.product_id]);
-                            await stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
+                            const { consumed, movementIds } = await stockLedger.consumeAvailable(connection, lockedRows.get(item.product_id) || [], {
                                 productId: item.product_id,
                                 productName: item.product_id,
                                 quantity: pickQty,
                                 orderId,
                                 userId,
                                 reason: 'Order stock deduction',
-                                unitCost: (await accountingService.productUnitCosts(connection, [item.product_id])).get(item.product_id) || 0
+                                unitCost: costOf(item.product_id)
                             });
+                            exitLines.push({ quantity: consumed, unitCost: costOf(item.product_id), movementIds });
                         }
                     }
                 }
+                await this._postPackingCost(connection, orderId, exitLines);
             }
 
             if (nextStatus === 'cancelled') {
@@ -530,6 +596,9 @@ class SalesService extends BaseService {
                 : updated[0];
         } catch (err) {
             await connection.rollback();
+            if (err?.code === 'ER_LOCK_DEADLOCK' || err?.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw businessError(409, { error: 'busy', message: 'Otra operación estaba usando estos productos. Reintentá en unos segundos.' });
+            }
             throw err;
         } finally {
             connection.release();

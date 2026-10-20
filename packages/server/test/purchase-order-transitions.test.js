@@ -134,10 +134,11 @@ function receptionApprovalPool(t, orderStatus) {
         calls.push({ statement, params });
         if (statement.startsWith('SELECT * FROM receptions')) return [[{ id: 'r-1', status: 'pending_qc', purchase_order_id: 'po-1', supplier_id: 's-1' }]];
         if (statement.startsWith('SELECT id, status FROM purchase_orders')) return [[{ id: 'po-1', status: orderStatus }]];
-        if (statement.startsWith('SELECT * FROM reception_items')) return [[{ id: 'ri-1', product_id: 'p-1', po_item_id: 'poi-1', quantity_received: 2 }]];
+        if (statement.startsWith('SELECT * FROM reception_items')) return [[{ id: 'ri-1', product_id: 'p-1', po_item_id: 'poi-1', quantity_received: 2, unit_cost: 7 }]];
         if (statement.includes('FROM quality_checks')) return [[{ quantity_checked: 2, quantity_passed: 2, quantity_failed: 0 }]];
-        if (statement.startsWith('SELECT id FROM inventory')) return [[{ id: 'inv-1' }]];
-        if (statement.startsWith('SELECT quantity_ordered, quantity_received FROM purchase_order_items')) return [[{ quantity_ordered: 10, quantity_received: 0 }]];
+        if (statement.startsWith('SELECT id, product_id, location, quantity, reserved_quantity FROM inventory')) return [[{ id: 'inv-1', product_id: 'p-1', location: 'General', quantity: 1 }]];
+        if (statement.includes('auto_update_cost')) return [[{ id: 'p-1', purchase_price: 7 }]];
+        if (statement.includes('FROM purchase_order_items WHERE id IN')) return [[{ id: 'poi-1', quantity_ordered: 10, quantity_received: 0 }]];
         if (statement.includes('AS ordered_qty')) return [[{ ordered_qty: 10, received_qty: 2 }]];
         return [{ affectedRows: 1 }];
     });

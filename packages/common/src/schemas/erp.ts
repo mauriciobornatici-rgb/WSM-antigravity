@@ -67,11 +67,15 @@ export const orderItemPickSchema = z.object({
 });
 
 // 2. Purchase Orders & Procurement
+// A net unit cost: it becomes the product's cost and values its stock (ADR-027). The bound keeps
+// a typo from overflowing the DECIMAL columns or posting an absurd entry.
+const unitCostSchema = z.coerce.number().min(0).max(99_999_999);
+
 export const purchaseOrderItemSchema = z.object({
   product_id: uuidSchema,
   quantity_ordered: z.coerce.number().int().min(1).optional(),
   quantity: z.coerce.number().int().min(1).optional(),
-  unit_cost: z.coerce.number().min(0),
+  unit_cost: unitCostSchema,
 }).refine(data => (data.quantity_ordered !== undefined) !== (data.quantity !== undefined), {
   message: "Debe proveer quantity_ordered o quantity, pero no ambos.",
   path: ["quantity_ordered"]
@@ -100,7 +104,7 @@ export const receptionItemSchema = z.object({
   po_item_id: optionalUuidSchema,
   quantity_expected: z.coerce.number().int().min(0).optional(),
   quantity_received: z.coerce.number().int().min(0),
-  unit_cost: z.coerce.number().min(0).optional(),
+  unit_cost: unitCostSchema.optional(),
   location_assigned: z.string().nullable().optional(),
   batch_number: z.string().nullable().optional(),
   expiration_date: z.string().nullable().optional(),
@@ -133,12 +137,16 @@ export const supplierReturnFiltersSchema = z.object({
 
 export const supplierReturnCreateSchema = z.object({
   supplier_id: uuidSchema,
+  // ADR-027 (D7): the delivery note the goods came with. Before the supplier invoices it, the
+  // return lowers what is owed for that delivery note instead of the supplier's account.
+  reception_id: optionalUuidSchema,
   notes: z.string().nullable().optional(),
   items: z.array(
     z.object({
       product_id: uuidSchema,
-      quantity: z.coerce.number().positive(),
-      unit_cost: z.coerce.number().min(0).optional(),
+      // Whole units: the stock is counted in units.
+      quantity: z.coerce.number().int().positive(),
+      unit_cost: unitCostSchema.optional(),
       reason: z.string().nullable().optional(),
     })
   ).min(1),
@@ -300,19 +308,6 @@ export const inventoryMovementFiltersSchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
 });
 
-export const inventoryMovementCreateSchema = z.object({
-  type: z.string().max(50),
-  product_id: uuidSchema,
-  from_location: z.string().nullable().optional(),
-  to_location: z.string().nullable().optional(),
-  quantity: z.coerce.number().positive(),
-  unit_cost: z.coerce.number().min(0).optional(),
-  reason: z.string().nullable().optional(),
-  reference_type: z.string().nullable().optional(),
-  reference_id: z.string().nullable().optional(),
-  notes: z.string().nullable().optional(),
-  performed_by: optionalUuidSchema,
-});
 
 export const batchFiltersSchema = z.object({
   product_id: optionalUuidSchema,

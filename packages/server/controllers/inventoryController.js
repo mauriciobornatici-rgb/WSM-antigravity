@@ -10,7 +10,7 @@ import catchAsync from '../utils/catchAsync.js';
 import auditService from '../services/audit.service.js';
 import getRequestIp from '../utils/requestIp.js';
 import { applyPaginationHeaders, getPagination } from '../utils/pagination.js';
-import { normalizeProductImageUrl, parseProductImageDataUrl } from '../utils/imagePolicy.js';
+import { parseProductImageDataUrl } from '../utils/imagePolicy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_UPLOADS_DIR = path.resolve(__dirname, '../uploads/products');
@@ -68,54 +68,13 @@ export const updateWarehouseLocation = catchAsync(async (req, res) => {
     res.json(await inventoryLocationsService.updateLocation(req.params.id, req.body, req.user?.id, getRequestIp(req)));
 });
 export const createProduct = catchAsync(async (req, res) => {
-    const newItem = await inventoryService.createProduct(req.body, req.user?.id);
+    const newItem = await inventoryService.createProduct(req.body, req.user?.id, req.user?.role || null);
     res.json(newItem);
 });
 
+// One transaction in the service: a new cost and its stock revaluation are saved together (ADR-027).
 export const updateProduct = catchAsync(async (req, res) => {
-    const { id } = req.params;
-    const previous = await inventoryService.findById(id);
-    const data = { ...req.body };
-    const hasFamilyName = Object.prototype.hasOwnProperty.call(data, 'family_name');
-    const familyName = data.family_name;
-    delete data.family_name;
-    if (data.cost_price != null && data.purchase_price == null) {
-        data.purchase_price = data.cost_price;
-    }
-    delete data.cost_price;
-    delete data.stock_initial;
-
-    await inventoryService.applyProductCatalogOptions(data, previous || {});
-
-    if (Object.prototype.hasOwnProperty.call(data, 'barcode')) {
-        data.barcode = await inventoryService.ensureUniqueBarcode(data.barcode, id);
-    }
-    if (Object.prototype.hasOwnProperty.call(data, 'location')) {
-        data.location = inventoryService.normalizeLocation(data.location);
-    }
-    if (Object.prototype.hasOwnProperty.call(data, 'image_url')) {
-        data.image_url = normalizeProductImageUrl(data.image_url);
-    }
-    if (hasFamilyName) {
-        data.family_id = await inventoryService.resolveProductFamily(familyName, {
-            ...(previous || {}),
-            ...data
-        });
-    }
-
-    const updated = await inventoryService.update(id, data);
-    if (updated) {
-        await auditService.log({
-            user_id: req.user?.id || null,
-            action: 'UPDATE_PRODUCT',
-            entity_type: 'product',
-            entity_id: id,
-            old_values: previous || null,
-            new_values: updated,
-            ip_address: getRequestIp(req)
-        });
-    }
-    res.json(updated);
+    res.json(await inventoryService.updateProduct(req.params.id, req.body, req.user?.id || null, getRequestIp(req), req.user?.role || null));
 });
 
 export const uploadProductImage = catchAsync(async (req, res) => {
@@ -170,11 +129,6 @@ export const getProductMovements = catchAsync(async (req, res) => {
     const { id } = req.params;
     const rows = await inventoryService.getProductMovements(id);
     res.json(rows);
-});
-
-export const createMovement = catchAsync(async (req, res) => {
-    const movement = await inventoryService.recordMovement(req.body, req.user?.id);
-    res.json(movement);
 });
 
 export const getBatches = catchAsync(async (req, res) => {
@@ -254,11 +208,5 @@ export const transferStock = catchAsync(async (req, res) => {
         quantity,
         req.user?.id
     );
-    res.json(result);
-});
-
-export const bulkUpdateTiendaNube = catchAsync(async (req, res) => {
-    const { products } = req.body;
-    const result = await inventoryService.bulkUpdateTiendaNube(products, req.user?.id);
     res.json(result);
 });

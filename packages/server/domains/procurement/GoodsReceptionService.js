@@ -1,8 +1,16 @@
 import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
+import accountingService from '../../services/accounting.service.js';
+import defaultValuation, { effectiveCost, isValuedLocation, roundCost, valueCents } from '../inventory/InventoryValuation.js';
+import { ACCOUNTS } from '../../utils/paymentAccounts.js';
+import { businessError } from '../../utils/businessError.js';
 
 export class GoodsReceptionService {
+    constructor({ valuation = defaultValuation } = {}) {
+        this.valuation = valuation;
+    }
+
     async processReceptionApproval(receptionId, options = {}) {
         const approvedBy = options.approvedBy || null;
         const actorUserId = options.actorUserId || null;
@@ -41,7 +49,7 @@ export class GoodsReceptionService {
                 }
             }
 
-            const [items] = await connection.query('SELECT * FROM reception_items WHERE reception_id = ?', [receptionId]);
+            const [items] = await connection.query('SELECT * FROM reception_items WHERE reception_id = ? ORDER BY id FOR UPDATE', [receptionId]);
             if (items.length === 0) {
                 const err = new Error('Reception has no items');
                 err.errorCode = 'RECEPTION_HAS_NO_ITEMS';
@@ -55,10 +63,18 @@ export class GoodsReceptionService {
                 err.statusCode = 409;
                 throw err;
             }
+            // The order's lines before the stock (L2 before L3, ADR-027), in a stable order.
+            const poItemIds = items.map((item) => item.po_item_id).filter(Boolean).sort();
+            const [poItemRows] = poItemIds.length > 0
+                ? await connection.query(
+                    'SELECT id, quantity_ordered, quantity_received FROM purchase_order_items WHERE id IN (?) ORDER BY id FOR UPDATE',
+                    [poItemIds]
+                )
+                : [[]];
+            const poItemsById = new Map(poItemRows.map((row) => [row.id, row]));
 
+            const checks = new Map();
             for (const item of items) {
-                const location = item.location_assigned || 'General';
-
                 const [qcRows] = await connection.query(`
                     SELECT quantity_checked, quantity_passed, quantity_failed, defect_description
                     FROM quality_checks
@@ -84,41 +100,93 @@ export class GoodsReceptionService {
                     err.statusCode = 409;
                     throw err;
                 }
+                checks.set(item.id, qcRows[0]);
+            }
+
+            // The stock of every product (L3), then the products FOR UPDATE (L4): a purchase at
+            // another cost changes the product's cost and revalues its stock (D1).
+            const productIds = items.map((item) => item.product_id);
+            const stockByProduct = await this.valuation.lockStock(connection, productIds);
+            const products = await this.valuation.lockCosts(connection, productIds, { forUpdate: true });
+            let inventoryCents = 0;
+            let lossCents = 0;
+            let bridgeCents = 0;
+            const movementIds = [];
+            const costChanges = [];
+
+            // ADR-027: the goods enter the ledger at the delivery note's cost. An order line typed
+            // without one takes the product's (the invoice corrects it, D1); a product without a cost
+            // needs one first. The line keeps the cost it entered at, for its invoice.
+            for (const item of items) {
+                if (roundCost(item.unit_cost) > 0) continue;
+                const product = products.get(item.product_id);
+                const productCost = effectiveCost(product);
+                if (!(productCost > 0)) {
+                    const err = new Error(`${product?.name || 'Un producto del remito'} no tiene costo, ni en la orden de compra ni en su ficha: un gerente o un administrador tiene que cargarle el costo en Productos antes de aprobar.`);
+                    err.errorCode = 'RECEPTION_COST_REQUIRED';
+                    err.statusCode = 409;
+                    throw err;
+                }
+                item.unit_cost = productCost;
+                await connection.query('UPDATE reception_items SET unit_cost = ? WHERE id = ?', [productCost, item.id]);
+            }
+
+            for (const item of items) {
+                const location = item.location_assigned || 'General';
+                const qc = checks.get(item.id);
+                const passedQty = Number(qc.quantity_passed || 0);
+                const failedQty = Number(qc.quantity_failed || 0);
+                const receiptCost = roundCost(item.unit_cost);
+                const product = products.get(item.product_id) || { id: item.product_id };
+                // D1: the cost becomes the delivery note's, unless the product keeps a fixed cost (then
+                // the difference is holding result). A product without a cost always takes it (D6).
+                const fixedCost = Number(product.auto_update_cost ?? 1) === 0 && effectiveCost(product) > 0;
+                const valuedCost = fixedCost ? effectiveCost(product) : receiptCost;
+                // After the stock of every line (L3 before L5): the revaluation posts an entry, and the
+                // locked rows still hold the units there were before this delivery note.
+                if (!fixedCost) costChanges.push({ product, newCost: receiptCost });
 
                 const updateStock = async (loc, qty, isFailed = false) => {
                     if (qty <= 0) return;
+                    const valued = isValuedLocation(loc);
+                    bridgeCents += valueCents(qty, receiptCost);
+                    if (valued) inventoryCents += valueCents(qty, valuedCost);
+                    else lossCents += valueCents(qty, receiptCost);
 
+                    const movementId = crypto.randomUUID();
+                    movementIds.push(movementId);
                     await connection.query(`
                         INSERT INTO inventory_movements (
                             id, type, product_id, to_location, quantity, unit_cost,
                             reference_type, reference_id, performed_by, reason
                         ) VALUES (?, 'reception', ?, ?, ?, ?, 'reception', ?, ?, ?)
                     `, [
-                        crypto.randomUUID(),
+                        movementId,
                         item.product_id,
                         loc,
                         qty,
-                        item.unit_cost || 0,
+                        valued ? valuedCost : 0,
                         receptionId,
                         actorUserId,
                         isFailed ? 'Control de Calidad: Mercadería defectuosa segregada' : 'Recepción aprobada'
                     ]);
 
-                    const [existingInventory] = await connection.query(
-                        'SELECT id FROM inventory WHERE product_id = ? AND location = ? LIMIT 1',
-                        [item.product_id, loc]
-                    );
-
-                    if (existingInventory.length > 0) {
+                    // From the rows locked above (a plain read could miss a row committed meanwhile).
+                    const productRows = stockByProduct.get(item.product_id) || [];
+                    const existing = productRows.find((row) => row.location === loc);
+                    if (existing) {
                         await connection.query(
                             'UPDATE inventory SET quantity = quantity + ? WHERE id = ?',
-                            [qty, existingInventory[0].id]
+                            [qty, existing.id]
                         );
                     } else {
+                        const inventoryId = crypto.randomUUID();
                         await connection.query(
                             'INSERT INTO inventory (id, product_id, location, quantity) VALUES (?, ?, ?, ?)',
-                            [crypto.randomUUID(), item.product_id, loc, qty]
+                            [inventoryId, item.product_id, loc, qty]
                         );
+                        productRows.push({ id: inventoryId, product_id: item.product_id, location: loc, quantity: 0, reserved_quantity: 0 });
+                        stockByProduct.set(item.product_id, productRows);
                     }
 
                     if (item.batch_number) {
@@ -150,16 +218,13 @@ export class GoodsReceptionService {
                     `UPDATE reception_items
                      SET quantity_approved = ?, quantity_rejected = ?, rejection_reason = ?
                      WHERE id = ?`,
-                    [passedQty, failedQty, qcRows[0].defect_description || null, item.id]
+                    [passedQty, failedQty, qc.defect_description || null, item.id]
                 );
 
                 if (item.po_item_id) {
-                    const [poItems] = await connection.query(
-                        'SELECT quantity_ordered, quantity_received FROM purchase_order_items WHERE id = ? FOR UPDATE',
-                        [item.po_item_id]
-                    );
-                    const pendingBalance = Number(poItems[0]?.quantity_ordered || 0) - Number(poItems[0]?.quantity_received || 0);
-                    if (poItems.length === 0 || Number(item.quantity_received || 0) > pendingBalance) {
+                    const poItem = poItemsById.get(item.po_item_id);
+                    const pendingBalance = Number(poItem?.quantity_ordered || 0) - Number(poItem?.quantity_received || 0);
+                    if (!poItem || Number(item.quantity_received || 0) > pendingBalance) {
                         const err = new Error('La recepción excede el saldo pendiente de la orden y no puede aprobarse');
                         err.errorCode = 'RECEPTION_EXCEEDS_PENDING_QUANTITY';
                         err.statusCode = 409;
@@ -170,6 +235,17 @@ export class GoodsReceptionService {
                         [item.quantity_received, item.po_item_id]
                     );
                 }
+            }
+
+            for (const { product, newCost } of costChanges) {
+                await this.valuation.changeCost(connection, {
+                    product,
+                    stockRows: stockByProduct.get(product.id) || [],
+                    newCost,
+                    userId: actorUserId,
+                    source: 'reception',
+                    details: { reception_id: receptionId },
+                });
             }
 
             if (reception.purchase_order_id) {
@@ -197,9 +273,23 @@ export class GoodsReceptionService {
                 }
             }
 
-            // Accounting entry is posted once, from the supplier invoice
-            // (see supplierInvoiceController.createSupplierInvoice), to avoid
-            // double-posting the same purchase to the ledger.
+            // ADR-027: the goods enter the ledger now, against what is owed for them until the supplier
+            // invoices it (2.1.01.02); the invoice clears that account. Never reference_type
+            // 'reception': the duplicate-entries runbook reverses those (N5).
+            const holdingCents = inventoryCents + lossCents - bridgeCents;
+            const entryId = await accountingService.createJournalEntryIfAny(connection, {
+                date: new Date(),
+                description: `Mercadería recibida ${reception.remito_number ? `remito ${reception.remito_number}` : reception.reception_number || receptionId.slice(0, 8)}`,
+                reference_type: 'goods_received',
+                reference_id: receptionId,
+                lines: [
+                    { account_code: ACCOUNTS.INVENTORY, debit: inventoryCents / 100, credit: 0, notes: 'Mercadería ingresada al depósito' },
+                    { account_code: ACCOUNTS.INVENTORY_LOSSES, debit: lossCents / 100, credit: 0, notes: 'Ingresada a una ubicación sin valor' },
+                    { account_code: ACCOUNTS.HOLDING_RESULT, debit: holdingCents < 0 ? -holdingCents / 100 : 0, credit: holdingCents > 0 ? holdingCents / 100 : 0, notes: 'Diferencia con el costo fijo del producto' },
+                    { account_code: ACCOUNTS.GOODS_TO_INVOICE, debit: 0, credit: bridgeCents / 100, notes: 'Mercadería recibida a facturar' },
+                ],
+            });
+            await this.valuation.linkMovements(connection, movementIds, entryId);
 
             await connection.query(
                 'UPDATE receptions SET status = "approved", approved_by = ? WHERE id = ?',
@@ -219,6 +309,9 @@ export class GoodsReceptionService {
             return { success: true };
         } catch (error) {
             await connection.rollback();
+            if (error?.code === 'ER_LOCK_DEADLOCK' || error?.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw businessError(409, { error: 'busy', message: 'Otra operación estaba usando estos productos. Reintentá en unos segundos.' });
+            }
             throw error;
         } finally {
             connection.release();

@@ -164,6 +164,47 @@ test('clients: two imports saving the same CUIT at once create it once', async (
     assert.equal(Number(count), 1);
 });
 
+test('ADR-027: a new cost on goods in stock is revalued (import and manual edit), the ledger stays at stock × cost', async () => {
+    const { default: inventoryService } = await import('../services/inventory.service.js');
+    const sku = `IMP-${run}-REV`;
+    const batchId = crypto.randomUUID();
+    await productImportService.commit([{ row: 2, sku, name: 'Revaluada QA', sale_price: 3000, cost: 1000, stock: 10 }], { batchId }, null);
+    const [[product]] = await pool.query('SELECT id FROM products WHERE sku = ?', [sku]);
+
+    // D5: without the permission the new cost is refused and nothing is saved.
+    const refused = await productImportService.commit([{ row: 2, sku, cost: '1.200' }], { updateExisting: true, batchId: crypto.randomUUID() }, null);
+    assert.equal(refused.rows[0].action, 'error');
+    const raised = await productImportService.commit([{ row: 2, sku, cost: '1.200' }], { updateExisting: true, canEditCost: true, batchId: crypto.randomUUID() }, null);
+    assert.match(raised.rows[0].warnings.join(' '), /asiento de revaluación \(ganancia por tenencia de \$2\.000,00\)/);
+    await inventoryService.updateProduct(product.id, { purchase_price: 900 }, null, null, 'admin');
+    // D1: the price followed both changes keeping the markup (3000 final → 3600 → 2700).
+    const [[repriced]] = await pool.query('SELECT sale_price, vat_rate FROM products WHERE id = ?', [product.id]);
+    assert.equal(Math.round(Number(repriced.sale_price) * (1 + Number(repriced.vat_rate) / 100) * 100) / 100, 2700);
+
+    const [[initial]] = await pool.query(
+        `SELECT COALESCE(SUM(jel.debit - jel.credit), 0) AS net FROM journal_entries je
+         JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+         WHERE je.reference_type = 'product_import' AND je.reference_id = ? AND jel.account_code = '1.1.04.01'`,
+        [batchId]
+    );
+    const [revaluations] = await pool.query(
+        `SELECT jel.account_code, jel.debit, jel.credit FROM journal_entries je
+         JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+         WHERE je.reference_type = 'stock_revaluation' AND je.reference_id = ? ORDER BY je.entry_number, jel.account_code`,
+        [product.id]
+    );
+    assert.deepEqual(revaluations.map((line) => [line.account_code, Number(line.debit), Number(line.credit)]), [
+        ['1.1.04.01', 2000, 0], ['4.2.02.01', 0, 2000],
+        ['1.1.04.01', 0, 3000], ['4.2.02.01', 3000, 0],
+    ]);
+    const inventoryValue = Number(initial.net) + revaluations
+        .filter((line) => line.account_code === '1.1.04.01')
+        .reduce((sum, line) => sum + Number(line.debit) - Number(line.credit), 0);
+    assert.equal(inventoryValue, 10 * 900, 'the ledger matches the stock at the current cost');
+    const [[{ revalued }]] = await pool.query("SELECT COUNT(*) AS revalued FROM audit_logs WHERE action = 'REVALUE_STOCK' AND entity_id = ?", [product.id]);
+    assert.equal(Number(revalued), 2);
+});
+
 test('suppliers: the category (rubro) is saved and a CUIT already loaded is recognized', async () => {
     const cuit = freshCuit('33');
     await supplierImportService.commit([{ row: 2, name: `Textil Importada ${run}`, tax_id: cuit, contact_name: 'Ana', category: 'Indumentaria' }], { batchId: crypto.randomUUID() }, null);

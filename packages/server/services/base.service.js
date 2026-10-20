@@ -9,6 +9,7 @@ const TABLE_COLUMNS = {
         'category_option_id', 'subcategory_option_id', 'brand_option_id', 'size_option_id', 'color_option_id',
         'image_url', 'location',
         'purchase_price', 'cost_price', 'sale_price', 'vat_rate', 'origin', 'tiendanube_safety_stock',
+        'auto_update_cost', 'auto_update_price',
         'brand', 'size', 'color', 'unit_measure', 'stock_current', 'stock_min', 'supplier_id', 'status',
         'created_at', 'updated_at', 'deleted_at'
     ],

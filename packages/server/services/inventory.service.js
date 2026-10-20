@@ -5,7 +5,12 @@ import auditService from './audit.service.js';
 import { businessError } from '../utils/businessError.js';
 import { normalizeProductImageUrl } from '../utils/imagePolicy.js';
 import goodsReceptionService from '../domains/procurement/GoodsReceptionService.js';
+import { NON_SELLABLE_LOCATIONS } from '../domains/inventory/StockLedger.js';
 import accountingService from './accounting.service.js';
+import inventoryValuation, {
+    effectiveCost, isValuedLocation, roundCost, sameLocation, valueCents,
+} from '../domains/inventory/InventoryValuation.js';
+import { hasPermission, PERMISSIONS } from '@wsm/common';
 
 class InventoryService extends BaseService {
     constructor() {
@@ -244,7 +249,7 @@ class InventoryService extends BaseService {
         return Number(rows[0]?.total_stock || 0);
     }
 
-    async createProduct(productData, userId) {
+    async createProduct(productData, userId, actorRole = null) {
         const id = crypto.randomUUID();
         const normalized = { ...productData };
         const rawStockInitial = Number(normalized.stock_initial ?? 0);
@@ -270,9 +275,30 @@ class InventoryService extends BaseService {
         // the product and the movement keep (a 3-decimal cost left the ledger a cent off).
         if (normalized.purchase_price != null) {
             normalized.purchase_price = Math.round((Number(normalized.purchase_price) + Number.EPSILON) * 100) / 100;
+            // One cost (ADR-027): cost_price mirrors it.
+            normalized.cost_price = normalized.purchase_price;
+        }
+        for (const flag of ['auto_update_cost', 'auto_update_price']) {
+            if (Object.prototype.hasOwnProperty.call(normalized, flag)) normalized[flag] = normalized[flag] ? 1 : 0;
+        }
+        // A fixed cost is a cost policy, like editing it (D5): from the start only for a manager or
+        // an administrator. Whoever creates it otherwise gets the default (follow the purchases).
+        if (normalized.auto_update_cost === 0 && actorRole && !hasPermission(actorRole, PERMISSIONS.PRODUCTS_COST_EDIT)) {
+            throw businessError(403, {
+                error: 'cost_edit_not_allowed',
+                message: 'Solo un gerente o un administrador puede dejar el costo fijo.',
+            });
         }
         normalized.barcode = await this.ensureUniqueBarcode(normalized.barcode);
         normalized.location = this.normalizeLocation(normalized.location);
+        // Opening stock is goods to sell, as in the import: never in quarantine, waste or returns to
+        // suppliers (in Mermas it would be valued in the ledger and not in the stock, ADR-027).
+        if (stockInitial > 0 && NON_SELLABLE_LOCATIONS.some((location) => sameLocation(location, normalized.location))) {
+            throw businessError(400, {
+                error: 'initial_stock_location',
+                message: `El stock inicial no se puede cargar en "${normalized.location}": no es una ubicación de venta.`
+            });
+        }
         normalized.image_url = normalizeProductImageUrl(normalized.image_url);
         await this.applyProductCatalogOptions(normalized);
         const familyName = normalized.family_name;
@@ -294,12 +320,13 @@ class InventoryService extends BaseService {
                      ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
                     [crypto.randomUUID(), id, initialLocation, stockInitial]
                 );
+                const movementId = crypto.randomUUID();
                 await connection.query(
                     `INSERT INTO inventory_movements (
                         id, type, product_id, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
                     ) VALUES (?, 'initial_stock', ?, ?, ?, ?, ?, 'product', ?, ?)`,
                     [
-                        crypto.randomUUID(),
+                        movementId,
                         id,
                         initialLocation,
                         stockInitial,
@@ -310,12 +337,13 @@ class InventoryService extends BaseService {
                     ]
                 );
                 // Every stock movement leaves its entry (ADR-013): the opening stock is valued at cost.
-                await accountingService.postInitialStock(connection, {
+                const entryId = await accountingService.postInitialStock(connection, {
                     productId: id,
                     quantity: stockInitial,
                     unitCost: Number(normalized.purchase_price || 0),
                     description: `Stock inicial de ${normalized.name || normalized.sku || 'producto'}`,
                 });
+                await inventoryValuation.linkMovements(connection, [movementId], entryId);
                 await connection.commit();
             } catch (error) {
                 await connection.rollback();
@@ -334,6 +362,106 @@ class InventoryService extends BaseService {
         });
 
         return result;
+    }
+
+    /**
+     * ADR-027 (usuario, 2026-10-17): the stock is valued at the product's cost and sales post their
+     * cost of goods sold with it. A new cost changes the product and revalues the units in stock
+     * in the same transaction; with auto_update_price on and no price typed, the sale price follows
+     * the cost keeping the markup (D1). The caller holds the product's stock rows (L3, `stockRows`)
+     * and the product FOR UPDATE (L4), and passes it as `product`. Returns what changed, or null.
+     */
+    async changeProductCost(connection, args) {
+        return inventoryValuation.changeCost(connection, args);
+    }
+
+    /**
+     * The manual product edit, in one transaction, so a new cost and its revaluation (ADR-027) are
+     * saved together. The stock rows are locked before the product, in the same order as a sale
+     * (L3 then L4). Changing the cost of an existing product takes a manager or an admin (D5).
+     */
+    async updateProduct(id, body, userId = null, ipAddress = null, actorRole = null) {
+        const data = { ...body };
+        const hasFamilyName = Object.prototype.hasOwnProperty.call(data, 'family_name');
+        const familyName = data.family_name;
+        delete data.family_name;
+        if (data.cost_price != null && data.purchase_price == null) data.purchase_price = data.cost_price;
+        delete data.cost_price;
+        delete data.stock_initial;
+        // Checked before touching the database (a data: URL is refused).
+        if (Object.prototype.hasOwnProperty.call(data, 'image_url')) data.image_url = normalizeProductImageUrl(data.image_url);
+        const newCost = data.purchase_price != null ? roundCost(data.purchase_price) : null;
+        delete data.purchase_price;
+        for (const flag of ['auto_update_cost', 'auto_update_price']) {
+            if (Object.prototype.hasOwnProperty.call(data, flag)) data[flag] = data[flag] ? 1 : 0;
+        }
+
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+            const stockRows = newCost != null
+                ? (await inventoryValuation.lockStock(connection, [id])).get(id)
+                : [];
+            const [rows] = await connection.query('SELECT * FROM products WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [id]);
+            const previous = rows[0];
+            if (!previous) {
+                await connection.rollback();
+                return null;
+            }
+            // The form sends the cost it shows: the stored one is no change (a product whose cost
+            // still lives in cost_price has purchase_price 0, and saving it must not zero the stock).
+            const costChanges = newCost != null && newCost !== roundCost(previous.purchase_price)
+                && newCost !== effectiveCost(previous);
+            const costPolicyChanges = Object.prototype.hasOwnProperty.call(data, 'auto_update_cost')
+                && data.auto_update_cost !== Number(previous.auto_update_cost ?? 1);
+            if ((costChanges || costPolicyChanges) && !hasPermission(actorRole, PERMISSIONS.PRODUCTS_COST_EDIT)) {
+                throw businessError(403, {
+                    error: 'cost_edit_not_allowed',
+                    message: 'Cambiar el costo de un producto (o si se actualiza solo) lo puede hacer un gerente o un administrador: revalúa el stock.'
+                });
+            }
+            await this.applyProductCatalogOptions(data, previous, connection);
+            if (Object.prototype.hasOwnProperty.call(data, 'barcode')) {
+                data.barcode = await this.ensureUniqueBarcode(data.barcode, id, connection);
+            }
+            if (Object.prototype.hasOwnProperty.call(data, 'location')) data.location = this.normalizeLocation(data.location);
+            if (hasFamilyName) data.family_id = await this.resolveProductFamily(familyName, { ...previous, ...data }, connection);
+
+            const columns = Object.keys(data);
+            if (columns.length > 0) {
+                await connection.query(
+                    `UPDATE products SET ${columns.map((column) => `${this._validateColumn(column)} = ?`).join(', ')} WHERE id = ? AND deleted_at IS NULL`,
+                    [...columns.map((column) => data[column]), id]
+                );
+            }
+            if (costChanges) {
+                // The price policy just saved applies to this change too.
+                const product = { ...previous, ...data, sale_price: previous.sale_price };
+                await this.changeProductCost(connection, {
+                    product, stockRows, newCost, salePrice: data.sale_price, userId, source: 'product_edit',
+                });
+            }
+            const [[updated]] = await connection.query('SELECT * FROM products WHERE id = ?', [id]);
+            await auditService.log({
+                user_id: userId,
+                action: 'UPDATE_PRODUCT',
+                entity_type: 'product',
+                entity_id: id,
+                old_values: previous,
+                new_values: updated,
+                ip_address: ipAddress,
+            }, connection);
+            await connection.commit();
+            return updated;
+        } catch (error) {
+            await connection.rollback();
+            if (error?.code === 'ER_LOCK_DEADLOCK' || error?.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw businessError(409, { error: 'busy', message: 'Otra operación estaba usando este producto. Reintentá en unos segundos.' });
+            }
+            throw error;
+        } finally {
+            connection.release();
+        }
     }
 
     async getMovements(filters = {}, options = {}) {
@@ -371,51 +499,6 @@ class InventoryService extends BaseService {
 
         const [rows] = await pool.query(query, params);
         return rows;
-    }
-
-    async recordMovement(movementData, userId) {
-        const id = crypto.randomUUID();
-        await pool.query(`
-            INSERT INTO inventory_movements
-            (id, type, product_id, from_location, to_location, quantity,
-             unit_cost, reason, reference_type, reference_id, notes, performed_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-            id,
-            movementData.type,
-            movementData.product_id,
-            movementData.from_location || null,
-            movementData.to_location || null,
-            movementData.quantity,
-            movementData.unit_cost || 0,
-            movementData.reason || null,
-            movementData.reference_type || 'manual',
-            movementData.reference_id || null,
-            movementData.notes || null,
-            movementData.performed_by || userId || null
-        ]);
-
-        await auditService.log({
-            user_id: userId,
-            action: 'INVENTORY_MOVEMENT',
-            entity_type: 'inventory',
-            entity_id: movementData.product_id,
-            new_values: movementData
-        });
-
-        // Trigger Tienda Nube sync asynchronously
-        // We do this without await so it doesn't block the database transaction
-        setImmediate(async () => {
-            try {
-                // ADR-019: available stock (physical minus reserved), only when it changed.
-                const tiendanubeService = (await import('./tiendanube.service.js')).default;
-                await tiendanubeService.pushAvailableStock([movementData.product_id]);
-            } catch (err) {
-                console.error('[TiendaNube Sync] Error calculating stock for sync:', err);
-            }
-        });
-
-        return { id, ...movementData };
     }
 
     async getProductMovements(productId) {
@@ -545,7 +628,7 @@ class InventoryService extends BaseService {
         const normalizedFrom = String(fromLocation || 'General').trim();
         const normalizedTo = String(toLocation || 'General').trim();
 
-        if (normalizedFrom === normalizedTo) {
+        if (sameLocation(normalizedFrom, normalizedTo)) {
             throw businessError(400, { error: 'same_location', message: 'La ubicación de origen y destino no pueden ser iguales.' });
         }
 
@@ -553,10 +636,12 @@ class InventoryService extends BaseService {
 
         try {
             await connection.beginTransaction();
-            const [sourceRows] = await connection.query(
-                'SELECT id, quantity, reserved_quantity FROM inventory WHERE product_id = ? AND location = ? FOR UPDATE',
-                [productId, normalizedFrom]
-            );
+            // Every row of the product in one ordered statement (L3, ADR-027): origin and destination
+            // together, the same order as a sale or a revaluation.
+            const productRows = (await inventoryValuation.lockStock(connection, [productId])).get(productId) || [];
+            // Compared as the database does (case and accents ignored): its unique key would refuse a
+            // second row for "mermas" next to "Mermas".
+            const sourceRows = productRows.filter((row) => sameLocation(row.location, normalizedFrom));
 
             if (sourceRows.length === 0) {
                 throw businessError(409, { error: 'insufficient_stock', message: `Stock insuficiente en ${normalizedFrom}. Requerido: ${qty}, Disponible: 0 (Físico: 0, Reservado: 0)` });
@@ -578,10 +663,7 @@ class InventoryService extends BaseService {
             // deleting a depleted row would break the FK for any prior allocation.
             await connection.query('UPDATE inventory SET quantity = ? WHERE id = ?', [remainingQty, sourceId]);
 
-            const [targetRows] = await connection.query(
-                'SELECT id FROM inventory WHERE product_id = ? AND location = ? FOR UPDATE',
-                [productId, normalizedTo]
-            );
+            const targetRows = productRows.filter((row) => sameLocation(row.location, normalizedTo));
 
             if (targetRows.length > 0) {
                 await connection.query(
@@ -595,20 +677,51 @@ class InventoryService extends BaseService {
                 );
             }
 
+            // D3 (ADR-027): goods moved to Mermas are a loss now; brought back, the loss is
+            // recovered at today's cost. Between valued locations nothing changes in value.
+            const fromValued = isValuedLocation(normalizedFrom);
+            const toValued = isValuedLocation(normalizedTo);
+            const unitCost = fromValued !== toValued
+                ? (await inventoryValuation.lockCosts(connection, [productId])).get(productId)?.cost || 0
+                : 0;
+
             const movementId = crypto.randomUUID();
             await connection.query(`
                 INSERT INTO inventory_movements (
                     id, type, product_id, from_location, to_location, quantity, unit_cost, reason, reference_type, reference_id, performed_by
-                ) VALUES (?, 'transfer', ?, ?, ?, ?, 0, 'Internal location transfer', 'transfer', ?, ?)
+                ) VALUES (?, 'transfer', ?, ?, ?, ?, ?, 'Internal location transfer', 'transfer', ?, ?)
             `, [
                 movementId,
                 productId,
                 normalizedFrom,
                 normalizedTo,
                 qty,
+                unitCost,
                 movementId,
                 userId || null
             ]);
+            if (fromValued !== toValued) {
+                const value = valueCents(qty, unitCost) / 100;
+                const toWaste = !toValued;
+                const entryId = await accountingService.createJournalEntryIfAny(connection, {
+                    date: new Date(),
+                    description: toWaste
+                        ? `Pase a ${normalizedTo}: ${qty} u. dadas por perdidas`
+                        : `Recupero desde ${normalizedFrom}: ${qty} u. vuelven al stock valuado`,
+                    reference_type: 'transfer',
+                    reference_id: movementId,
+                    lines: toWaste
+                        ? [
+                            { account_code: '5.1.02.02', debit: value, credit: 0, notes: 'Mercadería dada de baja (Mermas)' },
+                            { account_code: '1.1.04.01', debit: 0, credit: value, notes: 'Salida del stock valuado' },
+                        ]
+                        : [
+                            { account_code: '1.1.04.01', debit: value, credit: 0, notes: 'Mercadería recuperada' },
+                            { account_code: '5.1.02.02', debit: 0, credit: value, notes: 'Recupero de mermas' },
+                        ],
+                });
+                await inventoryValuation.linkMovements(connection, [movementId], entryId);
+            }
 
             await auditService.log({
                 user_id: userId || null,
@@ -628,6 +741,9 @@ class InventoryService extends BaseService {
             return { success: true, movementId };
         } catch (error) {
             await connection.rollback();
+            if (error?.code === 'ER_LOCK_DEADLOCK' || error?.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw businessError(409, { error: 'busy', message: 'Otra operación estaba usando este producto. Reintentá en unos segundos.' });
+            }
             throw error;
         } finally {
             connection.release();
