@@ -186,7 +186,7 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - Hosting del usuario: Vercel gratuito + MySQL de Hostinger, evaluando un VPS. Los workers (ARCA, Tiendanube) y las imágenes subidas necesitan un proceso permanente (el `Dockerfile` ya lo arma).
 - [x] PR #9 (importador, `36c563a`) y PR #10 (`-Red`, `c84b638`) mergeados con autorización del usuario.
 
-## EN CURSO — valuación por costo de última compra (ADR-027, rama local `feat/revaluacion-stock`)
+## Valuación por costo de última compra (ADR-027) — mergeada en `main` (`5691c44`, PR #11, 2026-10-20, autorización del usuario)
 
 **Plan completo y decisiones D1-D9 del usuario: `docs/execution/PLAN_VALUACION_INVENTARIO.md`.** Leelo antes de seguir.
 - AUD-015 frenó la primera versión (`c71c41d`): el mayor no era stock × costo. El usuario eligió la opción a (costo de última compra).
@@ -199,7 +199,7 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
   - La transición en simulación sobre las bases locales: en `wsm_simulacion` el ajuste dio 0; en `wsm_sports_erp` quedaron 70 remitos facturados por OC para revisar.
 - [x] 2026-10-18: AUD-016 (guardián, seguridad, auditor externo y UX) corregido; detalle en `AUDIT.md`.
   - Evidencia: validate 0 (1032 + 113); coverage 96,79/90,76/94,72; `qa:integration` 152/152; RBAC OK; E2E 6/6; simulación 161/161; transición simulada en `wsm_sports_erp` con `after.ok`.
-- [x] `431a5ac` subido; PR #11 (`feat/revaluacion-stock` → `main`) abierto y vinculado a la sesión. Falta la autorización de merge del usuario (nunca mergear sin ella).
+- [x] `431a5ac` subido; PR #11 con CI verde (4/4), mergeado con autorización del usuario: `5691c44`. Este checkpoint queda sin commitear en `main` hasta la próxima rama.
 - Pendiente del usuario (AUD-016):
   1. precio de crédito de la devolución a proveedor de mercadería facturada (hoy lo tipea quien carga, Depósito incluido);
   2. factura por menos unidades que el remito (hoy la diferencia baja el costo).
