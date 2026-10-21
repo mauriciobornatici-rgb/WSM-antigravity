@@ -451,9 +451,10 @@ test('createReturn inserts draft return with items and audits', async (t) => {
         ['MAX(CAST', [[{ max_seq: 11 }]]],
         ['SELECT `last_value`', [[{ last_value: 3 }]]]
     ]);
+    // A manager may type the credit cost (ADR-028); without one, the last invoiced (here none: 0).
     const res = await runHandler(ctrl.createReturn, {
         body: { supplier_id: 's1', notes: 'roto', items: [{ product_id: 'p1', quantity: 2, unit_cost: 10, reason: 'dañado' }, { product_id: 'p2', quantity: 1 }] },
-        user: { id: 'u1' }
+        user: { id: 'u1', role: 'manager' }
     });
     assert.equal(res.body.return_number, `SR-${year}-0012`);
     assert.deepEqual(lifecycle, ['begin', 'commit', 'release']);
@@ -464,6 +465,45 @@ test('createReturn inserts draft return with items and audits', async (t) => {
     assert.deepEqual(rows.map((c) => c.params.slice(2)), [['p1', 2, 10, 'dañado'], ['p2', 1, 0, null]]);
     assert.equal(logs[0].payload.action, 'CREATE_SUPPLIER_RETURN');
     assert.equal(logs[0].conn, connection);
+});
+
+test('createReturn takes the last invoiced cost; only purchasing may change it (ADR-028)', async (t) => {
+    installAudit(t);
+    const rules = () => [
+        // The supplier's last invoice charged p1 at 12.50 net; p2 was never invoiced: its delivery note.
+        ['FROM supplier_invoice_items sii JOIN supplier_invoices si', [[{ product_id: 'p1', unit_cost: '12.50' }, { product_id: 'p1', unit_cost: '9.00' }]]],
+        ['FROM reception_items ri JOIN receptions r', [[{ product_id: 'p2', unit_cost: '7.00' }]]],
+        ['MAX(CAST', [[{ max_seq: 1 }]]],
+        ['SELECT `last_value`', [[{ last_value: 1 }]]],
+    ];
+    const items = (p1Cost) => [{ product_id: 'p1', quantity: 1, ...(p1Cost === undefined ? {} : { unit_cost: p1Cost }) }, { product_id: 'p2', quantity: 1 }];
+    const savedCosts = (calls) => calls.filter((c) => c.statement.startsWith('INSERT INTO supplier_return_items')).map((c) => c.params[4]);
+
+    let db = installPool(t, rules());
+    await runHandler(ctrl.createReturn, { body: { supplier_id: 's1', items: items() }, user: { id: 'w', role: 'warehouse' } });
+    assert.deepEqual(savedCosts(db.calls), [12.5, 7]);
+    // The same cost typed is fine; another one, only for purchasing.
+    db = installPool(t, rules());
+    await runHandler(ctrl.createReturn, { body: { supplier_id: 's1', items: items(12.5) }, user: { id: 'w', role: 'warehouse' } });
+    assert.deepEqual(savedCosts(db.calls), [12.5, 7]);
+    db = installPool(t, rules());
+    const refused = await runHandler(ctrl.createReturn, { body: { supplier_id: 's1', items: items(5) }, user: { id: 'w', role: 'warehouse' } });
+    assert.deepEqual([refused.status, refused.body.error], [403, 'return_cost_not_allowed']);
+    assert.match(refused.body.message, /\$12\.50/);
+    assert.deepEqual(db.lifecycle, ['begin', 'rollback', 'release']);
+    db = installPool(t, rules());
+    await runHandler(ctrl.createReturn, { body: { supplier_id: 's1', items: items(5) }, user: { id: 'm', role: 'manager' } });
+    assert.deepEqual(savedCosts(db.calls), [5, 7]);
+});
+
+test('getReturnSuggestedCosts answers per product, falling back to the product cost', async (t) => {
+    installPool(t, [
+        ['FROM supplier_invoice_items sii JOIN supplier_invoices si', [[]]],
+        ['FROM reception_items ri JOIN receptions r', [[]]],
+        ['FROM products WHERE id IN', [[{ id: 'p1', purchase_price: '0', cost_price: '4.5' }]]],
+    ]);
+    const res = await runHandler(ctrl.getReturnSuggestedCosts, { query: { supplier_id: 's1', product_ids: ['p1', 'p1'] } });
+    assert.deepEqual(res.body, [{ product_id: 'p1', unit_cost: 4.5, source: 'product' }]);
 });
 
 test('createReturn against a delivery note checks it is this supplier\'s, approved, and brought the products (D7)', async (t) => {

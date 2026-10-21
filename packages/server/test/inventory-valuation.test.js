@@ -315,7 +315,11 @@ test('runCutover aligns the old data once: costs, old sales, open delivery notes
             ]];
         }
         if (statement.includes('FROM inventory_movements m LEFT JOIN products p')) {
-            return [[{ id: 'm1', order_id: 'o-x', quantity: 2, unit_cost: 0, purchase_price: 30 }, { id: 'm2', order_id: 'o-x', quantity: 1, unit_cost: 20 }]];
+            // m1 left in an earlier fiscal year (its cost corrects that year: 3.1.02.02), m2 in this one.
+            return [[
+                { id: 'm1', order_id: 'o-x', quantity: 2, unit_cost: 0, purchase_price: 30, created_at: '2025-12-30T12:00:00' },
+                { id: 'm2', order_id: 'o-x', quantity: 1, unit_cost: 20, created_at: '2026-02-01T12:00:00' },
+            ]];
         }
         if (statement.includes('FROM receptions r JOIN reception_items ri')) {
             return [[
@@ -327,18 +331,22 @@ test('runCutover aligns the old data once: costs, old sales, open delivery notes
         throw new Error(`unexpected ${statement}`);
     });
 
-    const report = await runCutover(connection, { runId: 'run-1', accounting, audit: { log: async (entry) => { audits.push(entry); } } });
+    const fiscalYearStart = new Date(2026, 0, 1);
+    const report = await runCutover(connection, { runId: 'run-1', accounting, audit: { log: async (entry) => { audits.push(entry); } }, fiscalYearStart });
 
     assert.equal(report.costs_from_cost_price, 2);
     assert.equal(report.sales_linked_to_invoice_cost, 2);
     assert.deepEqual(report.reversed_costs_of_unpacked_orders, ['o-b'], 'only an order not packed yet');
-    assert.deepEqual(report.costs_posted_for_sales, { orders: 1, amount: 80 }, '2 × 30 (today, the movement had none) + 1 × 20');
+    assert.deepEqual(report.costs_posted_for_sales, { orders: 1, amount: 80, this_year: 20, earlier_years: 60 }, '2 × 30 (today, the movement had none) + 1 × 20');
+    const oldSale = entries.find((entry) => entry.reference_type === CUTOVER_REFERENCE && entry.reference_id === 'o-x');
+    assert.deepEqual(lines(oldSale), [['5.1.01.01', 20, 0], ['3.1.02.02', 60, 0], ['1.1.04.01', 0, 80]]);
+    assert.equal(report.fiscal_year_start, '2026-01-01');
     assert.deepEqual(report.opened_goods_to_invoice, { receptions: 1, amount: 120 });
     assert.deepEqual(report.receptions_invoiced_by_their_order, [{ id: 'r2', remito: 'R-2', value: 50 }]);
-    // 900 − 80 + 120 = 940 against 1000 in stock: one adjustment of 60 against 3.1.03.01.
+    // 900 − 80 + 120 = 940 against 1000 in stock: one adjustment of 60 against 3.1.02.02 (ADR-028).
     assert.equal(report.adjustment, 60);
     const adjustment = entries.find((entry) => entry.reference_type === CUTOVER_REFERENCE && entry.reference_id === 'run-1');
-    assert.deepEqual(lines(adjustment), [['1.1.04.01', 60, 0], ['3.1.03.01', 0, 60]]);
+    assert.deepEqual(lines(adjustment), [['1.1.04.01', 60, 0], ['3.1.02.02', 0, 60]]);
     assert.equal(report.after.ok, true);
     assert.equal(audits[0].action, 'INVENTORY_VALUATION_CUTOVER');
     assert.equal(audits[0].new_values.ok, true);
@@ -351,9 +359,9 @@ test('runCutover aligns the old data once: costs, old sales, open delivery notes
     state.since = null;
     // 1020 − 80 + 120 = 1060 in the ledger against 1000 in stock.
     state.ledgerCents = 102000;
-    const down = await runCutover(connection, { runId: 'run-3', accounting, audit: { log: async () => {} } });
+    const down = await runCutover(connection, { runId: 'run-3', accounting, audit: { log: async () => {} }, fiscalYearStart });
     assert.equal(down.adjustment, -60);
-    assert.deepEqual(lines(entries.at(-1)), [['3.1.03.01', 60, 0], ['1.1.04.01', 0, 60]]);
+    assert.deepEqual(lines(entries.at(-1)), [['3.1.02.02', 60, 0], ['1.1.04.01', 0, 60]]);
 
     // Preconditions: the migrations are checked on the database, the repairs through the finders.
     const preconditions = recordingConnection((statement) => {
@@ -363,7 +371,7 @@ test('runCutover aligns the old data once: costs, old sales, open delivery notes
     });
     const problems = await checkCutoverPreconditions(preconditions, { findAffectedOrders: async () => [], findReceptionEntries: async () => [] });
     assert.deepEqual(problems, [
-        'Faltan las migraciones 064/065 (cuentas 4.2.02.01 y 2.1.01.02).',
-        'Faltan las migraciones 065/066 (columnas de la valuación).',
+        'Faltan las migraciones 064/065/067 (cuentas 4.2.02.01, 2.1.01.02 y 3.1.02.02).',
+        'Faltan las migraciones 065/066/067 (columnas de la valuación).',
     ]);
 });

@@ -39,12 +39,12 @@ export async function checkInventoryValuation(connection) {
     const [[bridge]] = await connection.query(
         "SELECT COALESCE(SUM(credit - debit), 0) AS balance FROM journal_entry_lines WHERE account_code = '2.1.01.02'"
     );
-    // What the delivery notes that went through 2.1.01.02 and are not invoiced still owe.
+    // What the delivery notes that went through 2.1.01.02 still owe: their units not invoiced nor
+    // returned (ADR-028: a delivery note may be invoiced in parts).
     const [[pending]] = await connection.query(
-        `SELECT COALESCE(SUM(GREATEST(ri.quantity_received - COALESCE(ri.returned_quantity, 0), 0) * ri.unit_cost), 0) AS value
+        `SELECT COALESCE(SUM(GREATEST(ri.quantity_received - COALESCE(ri.invoiced_quantity, 0) - COALESCE(ri.returned_quantity, 0), 0) * ri.unit_cost), 0) AS value
          FROM reception_items ri
-         WHERE ri.reception_id IN (SELECT je.reference_id FROM journal_entries je WHERE je.reference_type = 'goods_received')
-           AND NOT EXISTS (SELECT 1 FROM supplier_invoice_receptions sir WHERE sir.reception_id = ri.reception_id)`
+         WHERE ri.reception_id IN (SELECT je.reference_id FROM journal_entries je WHERE je.reference_type = 'goods_received')`
     );
 
     const differenceCents = cents(ledger.balance) - cents(valued.value);
@@ -73,14 +73,15 @@ export const CUTOVER_AUDIT_ACTION = 'INVENTORY_VALUATION_CUTOVER';
  */
 export async function checkCutoverPreconditions(connection, { findAffectedOrders, findReceptionEntries }) {
     const problems = [];
-    const [accounts] = await connection.query("SELECT code FROM chart_of_accounts WHERE code IN ('4.2.02.01', '2.1.01.02')");
-    if (accounts.length < 2) problems.push('Faltan las migraciones 064/065 (cuentas 4.2.02.01 y 2.1.01.02).');
+    const [accounts] = await connection.query("SELECT code FROM chart_of_accounts WHERE code IN ('4.2.02.01', '2.1.01.02', '3.1.02.02')");
+    if (accounts.length < 3) problems.push('Faltan las migraciones 064/065/067 (cuentas 4.2.02.01, 2.1.01.02 y 3.1.02.02).');
     const [columns] = await connection.query(
         `SELECT CONCAT(TABLE_NAME, '.', COLUMN_NAME) AS name FROM information_schema.COLUMNS
          WHERE TABLE_SCHEMA = DATABASE() AND CONCAT(TABLE_NAME, '.', COLUMN_NAME) IN
-               ('inventory_movements.journal_entry_id', 'company_settings.inventory_valuation_since', 'supplier_invoice_receptions.cleared_amount')`
+               ('inventory_movements.journal_entry_id', 'company_settings.inventory_valuation_since',
+                'supplier_invoice_receptions.cleared_amount', 'reception_items.invoiced_quantity')`
     );
-    if (columns.length < 3) problems.push('Faltan las migraciones 065/066 (columnas de la valuación).');
+    if (columns.length < 4) problems.push('Faltan las migraciones 065/066/067 (columnas de la valuación).');
     const pendingC1 = await findAffectedOrders(connection);
     if (pendingC1.length > 0) problems.push(`Hay ${pendingC1.length} ventas POS sin descontar stock: corré antes RUNBOOK_REPARACION_STOCK_C1.`);
     const duplicates = await findReceptionEntries(connection);
@@ -93,8 +94,10 @@ export async function checkCutoverPreconditions(connection, { findAffectedOrders
  * ledger of Inventario with the stock at cost and opens 2.1.01.02 for the delivery notes not yet
  * invoiced. Runs once: a second run finds inventory_valuation_since set and does nothing.
  * `accounting` posts entries (accounting.service), `audit` logs (audit.service).
+ * `fiscalYearStart`: the first day of the fiscal year in course (ADR-028): what belongs to earlier
+ * years goes to 3.1.02.02. By default, January 1 of this year.
  */
-export async function runCutover(connection, { runId, userId = null, accounting, audit }) {
+export async function runCutover(connection, { runId, userId = null, accounting, audit, fiscalYearStart = new Date(new Date().getFullYear(), 0, 1) }) {
     // The cut-over date lives in the company settings (row 1, the one the app uses): without it a
     // second run would not know it was done.
     await connection.query('INSERT IGNORE INTO company_settings (id) VALUES (1)');
@@ -151,9 +154,10 @@ export async function runCutover(connection, { runId, userId = null, accounting,
     // 2b. Sales that left without any cost posted (not invoiced, or invoiced before the ledger):
     // their cost is posted now, at the cost the movement carries (today's when it has none). A
     // cancelled order brought its goods back: it sold nothing, so no cost (the final adjustment
-    // covers the stock either way).
+    // covers the stock either way). ADR-028 (contadora, RT 17): the cost of goods sold in an
+    // earlier fiscal year corrects that year's result: it goes to 3.1.02.02, not to this year's.
     const [unposted] = await connection.query(
-        `SELECT m.id, m.reference_id AS order_id, m.quantity, m.unit_cost, p.purchase_price, p.cost_price
+        `SELECT m.id, m.reference_id AS order_id, m.quantity, m.unit_cost, m.created_at, p.purchase_price, p.cost_price
          FROM inventory_movements m
          LEFT JOIN products p ON p.id = m.product_id
          LEFT JOIN orders o ON o.id = m.reference_id
@@ -164,23 +168,28 @@ export async function runCutover(connection, { runId, userId = null, accounting,
     const byOrder = new Map();
     for (const movement of unposted) {
         const cost = Number(movement.unit_cost || 0) > 0 ? Number(movement.unit_cost) : effectiveCost(movement);
-        const current = byOrder.get(movement.order_id) || { cents: 0, ids: [], costs: [] };
-        current.cents += valueCents(movement.quantity, cost);
+        const current = byOrder.get(movement.order_id) || { currentCents: 0, priorCents: 0, ids: [], costs: [] };
+        const saleCents = valueCents(movement.quantity, cost);
+        if (new Date(movement.created_at) < fiscalYearStart) current.priorCents += saleCents;
+        else current.currentCents += saleCents;
         current.ids.push(movement.id);
         // A movement without a cost keeps the one posted: a later cancellation reverses at it.
         if (!(Number(movement.unit_cost || 0) > 0) && cost > 0) current.costs.push([cost, movement.id]);
         byOrder.set(movement.order_id, current);
     }
-    report.costs_posted_for_sales = { orders: 0, amount: 0 };
+    report.fiscal_year_start = fiscalYearStart.toISOString().slice(0, 10);
+    report.costs_posted_for_sales = { orders: 0, amount: 0, this_year: 0, earlier_years: 0 };
     for (const [orderId, sale] of byOrder) {
+        const totalCents = sale.currentCents + sale.priorCents;
         const entryId = await accounting.createJournalEntryIfAny(connection, {
             date: new Date(),
             description: `Transición: costo de mercadería vendida del pedido ${String(orderId).slice(0, 8)}`,
             reference_type: CUTOVER_REFERENCE,
             reference_id: orderId,
             lines: [
-                { account_code: '5.1.01.01', debit: sale.cents / 100, credit: 0, notes: 'Costo de lo vendido sin registrar' },
-                { account_code: '1.1.04.01', debit: 0, credit: sale.cents / 100, notes: 'Salida de mercadería' },
+                { account_code: '5.1.01.01', debit: sale.currentCents / 100, credit: 0, notes: 'Costo de lo vendido sin registrar' },
+                { account_code: '3.1.02.02', debit: sale.priorCents / 100, credit: 0, notes: 'Costo de lo vendido de ejercicios anteriores' },
+                { account_code: '1.1.04.01', debit: 0, credit: totalCents / 100, notes: 'Salida de mercadería' },
             ],
         });
         if (!entryId) continue;
@@ -188,8 +197,11 @@ export async function runCutover(connection, { runId, userId = null, accounting,
         for (const [cost, movementId] of sale.costs) {
             await connection.query('UPDATE inventory_movements SET unit_cost = ? WHERE id = ?', [cost, movementId]);
         }
-        report.costs_posted_for_sales.orders += 1;
-        report.costs_posted_for_sales.amount = Math.round((report.costs_posted_for_sales.amount + sale.cents / 100) * 100) / 100;
+        const posted = report.costs_posted_for_sales;
+        posted.orders += 1;
+        posted.amount = (Math.round(posted.amount * 100) + totalCents) / 100;
+        posted.this_year = (Math.round(posted.this_year * 100) + sale.currentCents) / 100;
+        posted.earlier_years = (Math.round(posted.earlier_years * 100) + sale.priorCents) / 100;
     }
 
     // 3. Delivery notes approved and not invoiced: their goods enter 2.1.01.02, so the invoice
@@ -205,7 +217,7 @@ export async function runCutover(connection, { runId, userId = null, accounting,
                         WHERE sr.supplier_id = r.supplier_id AND sr.status = 'approved' AND sr.reception_id IS NULL
                           AND sr.created_at >= r.created_at
                           AND sri.product_id IN (SELECT ri2.product_id FROM reception_items ri2 WHERE ri2.reception_id = r.id)) AS returned_after,
-                COALESCE(SUM(GREATEST(ri.quantity_received - COALESCE(ri.returned_quantity, 0), 0) * ri.unit_cost), 0) AS value
+                COALESCE(SUM(GREATEST(ri.quantity_received - COALESCE(ri.invoiced_quantity, 0) - COALESCE(ri.returned_quantity, 0), 0) * ri.unit_cost), 0) AS value
          FROM receptions r JOIN reception_items ri ON ri.reception_id = r.id
          WHERE r.status = 'approved'
            AND NOT EXISTS (SELECT 1 FROM supplier_invoice_receptions sir WHERE sir.reception_id = r.id)
@@ -245,11 +257,14 @@ export async function runCutover(connection, { runId, userId = null, accounting,
     }
 
     // 4. What is still apart (purchases invoiced without a delivery note, returns never posted,
-    // goods bought at another cost, counts...): one adjustment against 3.1.03.01 (D4).
+    // goods bought at another cost, counts...): one adjustment. ADR-028 (contadora, RT 17): a change
+    // of valuation criterion and the errors it corrects come from earlier years: 3.1.02.02 "Ajuste
+    // de resultados de ejercicios anteriores", in equity, not the result of the year (D4).
     const middle = await checkInventoryValuation(connection);
     const adjustmentCents = cents(middle.stock_valued) - cents(middle.inventory_ledger);
     if (adjustmentCents !== 0) {
         const value = Math.abs(adjustmentCents) / 100;
+        const priorYears = { account_code: '3.1.02.02', notes: 'Ajuste de resultados de ejercicios anteriores (transición)' };
         await accounting.createJournalEntry(connection, {
             date: new Date(),
             description: 'Transición a la valuación por costo de última compra: ajuste del inventario al stock valuado',
@@ -258,10 +273,10 @@ export async function runCutover(connection, { runId, userId = null, accounting,
             lines: adjustmentCents > 0
                 ? [
                     { account_code: '1.1.04.01', debit: value, credit: 0, notes: 'Stock valuado al costo de última compra' },
-                    { account_code: '3.1.03.01', debit: 0, credit: value, notes: 'Ajuste por inventario inicial (transición)' },
+                    { ...priorYears, debit: 0, credit: value },
                 ]
                 : [
-                    { account_code: '3.1.03.01', debit: value, credit: 0, notes: 'Ajuste por inventario inicial (transición)' },
+                    { ...priorYears, debit: value, credit: 0 },
                     { account_code: '1.1.04.01', debit: 0, credit: value, notes: 'Stock valuado al costo de última compra' },
                 ],
         });
@@ -281,6 +296,7 @@ export async function runCutover(connection, { runId, userId = null, accounting,
             costs_from_cost_price: report.costs_from_cost_price,
             sales_linked_to_invoice_cost: report.sales_linked_to_invoice_cost,
             reversed_costs_of_unpacked_orders: report.reversed_costs_of_unpacked_orders.length,
+            fiscal_year_start: report.fiscal_year_start,
             costs_posted_for_sales: report.costs_posted_for_sales,
             opened_goods_to_invoice: report.opened_goods_to_invoice,
             adjustment: report.adjustment,

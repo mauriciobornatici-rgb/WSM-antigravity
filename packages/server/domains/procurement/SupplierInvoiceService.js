@@ -165,9 +165,16 @@ export class SupplierInvoiceService {
                 throw businessError(409, { error: 'duplicate_invoice', message });
             }
 
-            // ADR-019: the delivery notes must be this supplier's and not invoiced yet. Locked so
-            // two invoices loaded at the same time cannot both take the same delivery note (the
-            // unique key on the link table is the last guard).
+            // ADR-027: the invoice clears what its delivery notes put in 2.1.01.02. What it costs
+            // beyond (or below) that is the holding result, and the products that follow the last
+            // purchase take the invoiced cost, revaluing their stock (D1).
+            const givesCredit = invoice_type === 'A' || invoice_type === 'M';
+            const debitBase = Math.round((net + (givesCredit ? 0 : vat)) * 100) / 100;
+
+            // ADR-019: the delivery notes are this supplier's and approved. Locked (L1, then their
+            // lines L2) so two invoices or a return loaded at the same time wait for each other.
+            // ADR-028: each line is invoiced in the units the supplier charged; the rest stays to
+            // invoice (a later invoice, or a return).
             let receptionsNet = null;
             let bridge = null;
             if (receptionIds.length > 0) {
@@ -186,38 +193,20 @@ export class SupplierInvoiceService {
                         message: `Estos remitos no tienen el control de calidad aprobado: ${notApproved.map((row) => row.remito_number || row.reception_number).join(', ')}.`
                     });
                 }
-                const [invoiced] = await connection.query(
-                    // Locking read: sees an invoice committed while this one waited for the lock (AUD-007).
-                    'SELECT reception_id FROM supplier_invoice_receptions WHERE reception_id IN (?) FOR SHARE',
-                    [receptionIds]
-                );
-                if (invoiced.length > 0) {
-                    const labels = receptions
-                        .filter((row) => invoiced.some((link) => link.reception_id === row.id))
-                        .map((row) => row.remito_number || row.reception_number);
-                    throw businessError(409, {
-                        error: 'reception_already_invoiced',
-                        message: `Estos remitos ya están facturados: ${labels.join(', ')}.`
-                    });
-                }
-                bridge = await this._receptionsPending(connection, receptionIds);
+                bridge = await this._invoiceLines(connection, receptions, {
+                    items: data.items,
+                    netCents: Math.round(net * 100),
+                    vatToCostCents: givesCredit ? 0 : Math.round(vat * 100),
+                });
                 receptionsNet = (bridge.pendingCents + bridge.legacyCents) / 100;
             }
 
-            // ADR-027: the invoice clears what its delivery notes put in 2.1.01.02. What it costs
-            // beyond (or below) that is the holding result, and the products that follow the last
-            // purchase take the invoiced cost, revaluing their stock (D1). Locks: stock (L3) and
-            // products (L4) before any entry.
-            const givesCredit = invoice_type === 'A' || invoice_type === 'M';
-            const debitBase = Math.round((net + (givesCredit ? 0 : vat)) * 100) / 100;
-            // By the delivery notes, not by what is pending: one returned in full before the invoice
-            // (D7) left nothing pending, and its invoice must not book goods that are gone.
-            const bridged = bridge && bridge.bridgedCount > 0;
-            const differenceCents = bridged
-                ? Math.round(debitBase * 100) - bridge.pendingCents - bridge.legacyCents
-                : 0;
-            const costUpdates = bridge && differenceCents !== 0
-                ? await this._correctCosts(connection, bridge.lines, differenceCents, { userId: creatorId, invoiceId: id })
+            // Locks for a new cost: stock (L3) and products (L4), before any entry.
+            // The holding result: what the lines of bridged delivery notes cost against what they
+            // cleared (the lines of older delivery notes go whole to 3.1.02.02).
+            const differenceCents = bridge ? bridge.bridgedCostCents - bridge.pendingCents : 0;
+            const costUpdates = bridge
+                ? await this._correctCosts(connection, bridge.lines, { userId: creatorId, invoiceId: id })
                 : [];
 
             // 2. Insert Supplier Invoice
@@ -232,7 +221,7 @@ export class SupplierInvoiceService {
                 invoice_number,
                 invoice_type,
                 supplier_id,
-                receptionIds[0] || null,
+                bridge?.receptionIds[0] || receptionIds[0] || null,
                 purchase_order_id || null,
                 issue_date,
                 due_date || null,
@@ -244,20 +233,26 @@ export class SupplierInvoiceService {
                 creatorId,
                 purchaseKind
             ]);
-            for (const receptionId of receptionIds) {
-                try {
-                    const cleared = bridge?.clearedByReception.get(receptionId);
-                    await connection.query(
-                        'INSERT INTO supplier_invoice_receptions (supplier_invoice_id, reception_id, cleared_amount) VALUES (?, ?, ?)',
-                        [id, receptionId, cleared == null ? null : cleared / 100]
-                    );
-                } catch (err) {
-                    // The unique key is the last guard: another invoice took it at the same time.
-                    if (err?.code === 'ER_DUP_ENTRY') {
-                        throw businessError(409, { error: 'reception_already_invoiced', message: 'Algún remito ya fue facturado por otra factura cargada al mismo tiempo.' });
-                    }
-                    throw err;
-                }
+            // ADR-028: what this invoice charged per delivery note line, and the units it took.
+            for (const line of bridge?.lines || []) {
+                await connection.query(
+                    'UPDATE reception_items SET invoiced_quantity = invoiced_quantity + ? WHERE id = ?',
+                    [line.quantity, line.id]
+                );
+                await connection.query(
+                    `INSERT INTO supplier_invoice_items
+                        (id, supplier_invoice_id, reception_id, reception_item_id, product_id, quantity, unit_cost, cleared_amount)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [crypto.randomUUID(), id, line.receptionId, line.id, line.productId, line.quantity,
+                        roundCost(line.netCents / line.quantity / 100), line.bridged ? line.remitoCents / 100 : null]
+                );
+            }
+            for (const receptionId of bridge?.receptionIds || []) {
+                const cleared = bridge.clearedByReception.get(receptionId);
+                await connection.query(
+                    'INSERT INTO supplier_invoice_receptions (supplier_invoice_id, reception_id, cleared_amount) VALUES (?, ?, ?)',
+                    [id, receptionId, cleared == null ? null : cleared / 100]
+                );
             }
             for (const line of vatLines || []) {
                 await connection.query(
@@ -306,31 +301,28 @@ export class SupplierInvoiceService {
                     creditByAccount.set(account, current);
                 }
             }
-            // Goods whose delivery notes went through 2.1.01.02 clear it. Delivery notes received
-            // before ADR-027 never did: their goods were valued with the stock by the transition,
-            // against 3.1.03.01 (D4), so their invoice settles that adjustment instead of adding
-            // inventory again (before the transition, its final adjustment nets the same amount).
-            const legacyLine = {
-                account_code: ACCOUNTS.OPENING_ADJUSTMENT,
-                notes: 'Remito anterior a la valuación por costo de última compra',
-            };
-            let goodsLines;
-            if (bridged) {
-                goodsLines = [
+            // Goods whose delivery notes went through 2.1.01.02 clear it, and what they cost beyond
+            // (or below) it is holding result. Delivery notes received before ADR-027 never did: the
+            // transition valued their goods with the stock against 3.1.02.02 (ADR-028, earlier
+            // years), so their invoice settles that adjustment instead of adding inventory again
+            // (before the transition, its final adjustment nets the same amount).
+            const goodsLines = bridge
+                ? [
                     { account_code: ACCOUNTS.GOODS_TO_INVOICE, debit: bridge.pendingCents / 100, credit: 0, notes: 'Mercadería recibida a facturar' },
-                    { ...legacyLine, debit: bridge.legacyCents / 100, credit: 0 },
+                    {
+                        account_code: ACCOUNTS.PRIOR_PERIOD_ADJUSTMENT,
+                        debit: bridge.legacyCostCents / 100,
+                        credit: 0,
+                        notes: 'Remito anterior a la valuación por costo de última compra',
+                    },
                     {
                         account_code: ACCOUNTS.HOLDING_RESULT,
                         debit: differenceCents > 0 ? differenceCents / 100 : 0,
                         credit: differenceCents < 0 ? -differenceCents / 100 : 0,
                         notes: 'Diferencia entre lo facturado y lo recibido',
                     },
-                ];
-            } else if (bridge) {
-                goodsLines = [{ ...legacyLine, debit: debitBase, credit: 0 }];
-            } else {
-                goodsLines = [{ account_code: debitAccount.code, debit: debitBase, credit: 0, notes: debitAccount.notes }];
-            }
+                ]
+                : [{ account_code: debitAccount.code, debit: debitBase, credit: 0, notes: debitAccount.notes }];
             await accountingService.createJournalEntryIfAny(connection, {
                 date: issue_date || new Date(),
                 description: `Factura de Compra ${invoice_type} ${invoice_number}`,
@@ -398,58 +390,134 @@ export class SupplierInvoiceService {
     }
 
     /**
-     * What the delivery notes left in 2.1.01.02 (ADR-027): each line at its cost, minus what was
-     * returned to the supplier before invoicing (D7). Delivery notes received before the rule have
-     * no 'goods_received' entry: their value is `legacyCents` and never touches 2.1.01.02.
+     * The delivery note lines this invoice charges (ADR-028), locked (L2). A line has
+     * `received − invoiced − returned` units left to invoice (a return takes the units not invoiced
+     * first). With `items`, the invoice says how many units of each line and at what net cost, and
+     * the lines must add up to its net (one cent of rounding per line, spread by value). Without
+     * them, every unit left is invoiced and the difference with the net is spread by value (D1).
+     * Each line: what it clears from 2.1.01.02 (`remitoCents`, at the delivery note's cost), its
+     * net (`netCents`) and its cost (`costCents`: the net plus the VAT of a B or C invoice).
+     * Delivery notes received before ADR-027 have no 'goods_received' entry: they never went
+     * through 2.1.01.02 (`legacy*`).
      */
-    async _receptionsPending(connection, receptionIds) {
-        const [bridged] = await connection.query(
+    async _invoiceLines(connection, receptions, { items, netCents, vatToCostCents }) {
+        const receptionIds = receptions.map((row) => row.id);
+        const label = new Map(receptions.map((row) => [row.id, row.remito_number || row.reception_number]));
+        const [bridgedRows] = await connection.query(
             "SELECT DISTINCT reference_id FROM journal_entries WHERE reference_type = 'goods_received' AND reference_id IN (?)",
             [receptionIds]
         );
-        const bridgedIds = new Set(bridged.map((row) => row.reference_id));
-        const [items] = await connection.query(
-            `SELECT reception_id, product_id, quantity_received, COALESCE(returned_quantity, 0) AS returned_quantity, unit_cost
-             FROM reception_items WHERE reception_id IN (?) ORDER BY reception_id, id`,
+        const bridgedIds = new Set(bridgedRows.map((row) => row.reference_id));
+        const [rows] = await connection.query(
+            `SELECT ri.id, ri.reception_id, ri.product_id, p.name AS product_name, ri.quantity_received,
+                    COALESCE(ri.returned_quantity, 0) AS returned_quantity, COALESCE(ri.invoiced_quantity, 0) AS invoiced_quantity,
+                    ri.unit_cost
+             FROM reception_items ri LEFT JOIN products p ON p.id = ri.product_id
+             WHERE ri.reception_id IN (?) ORDER BY ri.id FOR UPDATE OF ri`,
             [receptionIds]
         );
-        const lines = [];
-        const clearedByReception = new Map(receptionIds.map((receptionId) => [receptionId, bridgedIds.has(receptionId) ? 0 : null]));
-        let pendingCents = 0;
-        let legacyCents = 0;
-        for (const item of items) {
-            const quantity = Math.max(0, Number(item.quantity_received || 0) - Number(item.returned_quantity || 0));
-            const cents = valueCents(quantity, item.unit_cost);
-            if (bridgedIds.has(item.reception_id)) {
-                pendingCents += cents;
-                clearedByReception.set(item.reception_id, clearedByReception.get(item.reception_id) + cents);
-                lines.push({ productId: item.product_id, quantity, unitCost: roundCost(item.unit_cost), cents });
-            } else {
-                legacyCents += cents;
+        const all = rows.map((row) => ({
+            id: row.id,
+            receptionId: row.reception_id,
+            productId: row.product_id,
+            productName: row.product_name || 'Un producto',
+            left: Math.max(0, Number(row.quantity_received || 0) - Number(row.invoiced_quantity || 0) - Number(row.returned_quantity || 0)),
+            unitCost: roundCost(row.unit_cost),
+            bridged: bridgedIds.has(row.reception_id),
+            quantity: 0,
+            netCents: 0,
+        }));
+        const exhausted = receptions.filter((row) => !all.some((line) => line.receptionId === row.id && line.left > 0));
+        if (exhausted.length > 0) {
+            throw businessError(409, {
+                error: 'reception_already_invoiced',
+                message: `Estos remitos ya están facturados (o devueltos) completos: ${exhausted.map((row) => label.get(row.id)).join(', ')}.`,
+            });
+        }
+
+        const explicit = Array.isArray(items) && items.length > 0;
+        if (explicit) {
+            const byId = new Map(all.map((line) => [line.id, line]));
+            const seen = new Set();
+            for (const item of items) {
+                const line = byId.get(item.reception_item_id);
+                const quantity = Number(item.quantity);
+                if (!line || seen.has(item.reception_item_id) || !Number.isInteger(quantity) || quantity < 0) {
+                    throw businessError(400, { error: 'invalid_invoice_item', message: 'Alguna línea no es de los remitos elegidos, está repetida o tiene una cantidad inválida.' });
+                }
+                seen.add(item.reception_item_id);
+                if (quantity > line.left) {
+                    throw businessError(409, {
+                        error: 'invoice_exceeds_reception',
+                        message: `De ${line.productName} quedan ${line.left} u. por facturar en el remito ${label.get(line.receptionId)}.`,
+                    });
+                }
+                line.quantity = quantity;
+                line.netCents = valueCents(quantity, item.unit_cost);
+            }
+        } else {
+            for (const line of all) {
+                line.quantity = line.left;
+                line.netCents = valueCents(line.left, line.unitCost);
             }
         }
-        return { pendingCents, legacyCents, lines, clearedByReception, bridgedCount: bridgedIds.size };
+        const lines = all.filter((line) => line.quantity > 0);
+        if (lines.length === 0) {
+            throw businessError(400, { error: 'invoice_without_items', message: 'Indicá al menos una línea con unidades facturadas.' });
+        }
+        for (const line of lines) line.remitoCents = valueCents(line.quantity, line.unitCost);
+
+        // What the lines add up to against the invoice's net: rounding (with lines) or the whole
+        // difference (without them), spread over the lines by value.
+        const residualCents = netCents - lines.reduce((sum, line) => sum + line.netCents, 0);
+        if (explicit && Math.abs(residualCents) > lines.length) {
+            const linesNet = (netCents - residualCents) / 100;
+            throw businessError(400, {
+                error: 'invoice_items_mismatch',
+                message: `Las líneas suman $${linesNet.toFixed(2)} y el neto de la factura es $${(netCents / 100).toFixed(2)}: revisá las unidades y los costos.`,
+            });
+        }
+        const residualShares = allocateCents(residualCents, lines.map((line) => line.remitoCents));
+        lines.forEach((line, index) => { line.netCents += residualShares[index]; });
+        const vatShares = allocateCents(vatToCostCents, lines.map((line) => line.netCents));
+        lines.forEach((line, index) => { line.costCents = line.netCents + (vatToCostCents ? vatShares[index] : 0); });
+
+        const totals = { pendingCents: 0, legacyCents: 0, bridgedCostCents: 0, legacyCostCents: 0 };
+        const clearedByReception = new Map();
+        for (const line of lines) {
+            if (line.bridged) {
+                totals.pendingCents += line.remitoCents;
+                totals.bridgedCostCents += line.costCents;
+                clearedByReception.set(line.receptionId, (clearedByReception.get(line.receptionId) || 0) + line.remitoCents);
+            } else {
+                totals.legacyCents += line.remitoCents;
+                totals.legacyCostCents += line.costCents;
+                if (!clearedByReception.has(line.receptionId)) clearedByReception.set(line.receptionId, null);
+            }
+        }
+        return { ...totals, lines, receptionIds: [...clearedByReception.keys()], clearedByReception };
     }
 
     /**
-     * D1 (a2): the difference between the invoice and its delivery notes is spread over their lines
-     * by value, and a product that follows the last purchase (auto_update_cost) takes the invoiced
-     * cost, revaluing its stock. Only when its cost is still the delivery note's (nobody changed it
-     * since): otherwise the difference stays as holding result. Returns the costs that changed.
+     * D1: a product that follows the last purchase (auto_update_cost) takes what this invoice
+     * charged for it per unit, revaluing its stock. Only when its cost is still the delivery note's
+     * (nobody changed it since): otherwise the difference stays as holding result. Lines of delivery
+     * notes received before ADR-027 do not move the cost. Returns the costs that changed.
      */
-    async _correctCosts(connection, lines, differenceCents, { userId, invoiceId }) {
-        const weighted = lines.filter((line) => line.cents > 0);
-        if (weighted.length === 0) return [];
-        const shares = allocateCents(differenceCents, weighted.map((line) => line.cents));
+    async _correctCosts(connection, lines, { userId, invoiceId }) {
         const byProduct = new Map();
-        weighted.forEach((line, index) => {
-            const current = byProduct.get(line.productId) || { quantity: 0, cents: 0, share: 0, costs: new Set() };
+        for (const line of lines) {
+            if (!line.bridged) continue;
+            const current = byProduct.get(line.productId) || { quantity: 0, cents: 0, remitoCents: 0, costs: new Set() };
             current.quantity += line.quantity;
-            current.cents += line.cents;
-            current.share += shares[index];
+            current.cents += line.costCents;
+            current.remitoCents += line.remitoCents;
             current.costs.add(line.unitCost);
             byProduct.set(line.productId, current);
-        });
+        }
+        // Invoiced at the delivery note's cost: it already is the cost, nothing to lock or change.
+        for (const [productId, line] of byProduct) if (line.cents === line.remitoCents) byProduct.delete(productId);
+        if (byProduct.size === 0) return [];
         const productIds = [...byProduct.keys()];
         const stockByProduct = await this.valuation.lockStock(connection, productIds);
         const products = await this.valuation.lockCosts(connection, productIds, { forUpdate: true });
@@ -458,7 +526,7 @@ export class SupplierInvoiceService {
             const product = products.get(productId);
             if (!product || Number(product.auto_update_cost ?? 1) === 0) continue;
             if (line.costs.size !== 1 || ![...line.costs][0] || [...line.costs][0] !== effectiveCost(product)) continue;
-            const newCost = roundCost((line.cents + line.share) / line.quantity / 100);
+            const newCost = roundCost(line.cents / line.quantity / 100);
             if (!(newCost > 0)) continue;
             const changed = await this.valuation.changeCost(connection, {
                 product,

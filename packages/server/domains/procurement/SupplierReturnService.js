@@ -7,7 +7,7 @@ import { businessYear } from '../../utils/businessDate.js';
 import { ACCOUNTS } from '../../utils/paymentAccounts.js';
 import { allocateCents } from '../../utils/vatMath.js';
 import { businessError } from '../../utils/businessError.js';
-import defaultValuation, { isValuedLocation, valueCents } from '../inventory/InventoryValuation.js';
+import defaultValuation, { effectiveCost, isValuedLocation, roundCost, valueCents } from '../inventory/InventoryValuation.js';
 import { invoicedByOrderSql } from './receptionInvoicing.js';
 
 export class SupplierReturnService {
@@ -182,7 +182,73 @@ export class SupplierReturnService {
         }
     }
 
-    async createReturn(data, userId, ipAddress = null) {
+    /**
+     * ADR-028: what the supplier takes each product back at, when it was already invoiced: the net
+     * cost of its last invoice. Against a delivery note, what was invoiced for that line, or else its
+     * cost. Without one, the supplier's last invoice for the product, then its last delivery note,
+     * then the product's cost. Returns [{ product_id, unit_cost, source }].
+     */
+    async suggestedCosts({ supplierId, receptionId = null, productIds }, executor = pool) {
+        const ids = [...new Set((productIds || []).filter(Boolean))];
+        const found = new Map();
+        if (ids.length === 0) return [];
+        if (receptionId) {
+            const [rows] = await executor.query(
+                `SELECT ri.product_id, ri.unit_cost,
+                        (SELECT sii.unit_cost FROM supplier_invoice_items sii
+                         JOIN supplier_invoices si ON si.id = sii.supplier_invoice_id
+                         WHERE sii.reception_item_id = ri.id AND COALESCE(si.status, '') <> 'cancelled'
+                         ORDER BY si.issue_date DESC, si.created_at DESC LIMIT 1) AS invoiced_cost
+                 FROM reception_items ri JOIN receptions r ON r.id = ri.reception_id
+                 WHERE ri.reception_id = ? AND r.supplier_id = ? AND ri.product_id IN (?)
+                 ORDER BY ri.id`,
+                [receptionId, supplierId, ids]
+            );
+            for (const row of rows) {
+                if (found.has(row.product_id)) continue;
+                const invoiced = roundCost(row.invoiced_cost);
+                found.set(row.product_id, invoiced > 0 ? { cost: invoiced, source: 'invoice' } : { cost: roundCost(row.unit_cost), source: 'reception' });
+            }
+        }
+        const missing = () => ids.filter((productId) => !found.has(productId));
+        if (missing().length > 0) {
+            const [rows] = await executor.query(
+                `SELECT sii.product_id, sii.unit_cost
+                 FROM supplier_invoice_items sii JOIN supplier_invoices si ON si.id = sii.supplier_invoice_id
+                 WHERE si.supplier_id = ? AND sii.product_id IN (?) AND COALESCE(si.status, '') <> 'cancelled'
+                 ORDER BY si.issue_date DESC, si.created_at DESC, sii.created_at DESC`,
+                [supplierId, missing()]
+            );
+            for (const row of rows) if (!found.has(row.product_id)) found.set(row.product_id, { cost: roundCost(row.unit_cost), source: 'invoice' });
+        }
+        if (missing().length > 0) {
+            const [rows] = await executor.query(
+                `SELECT ri.product_id, ri.unit_cost
+                 FROM reception_items ri JOIN receptions r ON r.id = ri.reception_id
+                 WHERE r.supplier_id = ? AND r.status = 'approved' AND ri.product_id IN (?) AND ri.unit_cost > 0
+                 ORDER BY r.created_at DESC, ri.id`,
+                [supplierId, missing()]
+            );
+            for (const row of rows) if (!found.has(row.product_id)) found.set(row.product_id, { cost: roundCost(row.unit_cost), source: 'reception' });
+        }
+        if (missing().length > 0) {
+            const [rows] = await executor.query('SELECT id, purchase_price, cost_price FROM products WHERE id IN (?)', [missing()]);
+            for (const row of rows) found.set(row.id, { cost: effectiveCost(row), source: 'product' });
+        }
+        return ids.map((productId) => ({
+            product_id: productId,
+            unit_cost: found.get(productId)?.cost ?? 0,
+            source: found.get(productId)?.source ?? 'product',
+        }));
+    }
+
+    /**
+     * @param {object} options
+     * @param {boolean} options.canSetCost whether the user may change what the supplier takes the goods
+     *   back at (ADR-028: purchasing, a manager or an administrator). Without it, the last invoiced
+     *   cost (`suggestedCosts`); a different one is refused.
+     */
+    async createReturn(data, userId, ipAddress = null, { canSetCost = false } = {}) {
         const { supplier_id, items, notes } = data;
         const receptionId = data.reception_id || null;
         const id = crypto.randomUUID();
@@ -205,6 +271,21 @@ export class SupplierReturnService {
                     throw businessError(400, { error: 'product_not_in_reception', message: 'Algún producto no vino en ese remito.' });
                 }
             }
+            const suggested = new Map((await this.suggestedCosts({
+                supplierId: supplier_id, receptionId, productIds: (items || []).map((item) => item.product_id),
+            }, connection)).map((row) => [row.product_id, row.unit_cost]));
+            const costs = (items || []).map((item) => {
+                const lastInvoiced = suggested.get(item.product_id) ?? 0;
+                if (item.unit_cost == null || item.unit_cost === '') return lastInvoiced;
+                const typed = roundCost(item.unit_cost);
+                if (typed !== lastInvoiced && !canSetCost) {
+                    throw businessError(403, {
+                        error: 'return_cost_not_allowed',
+                        message: `Solo un gerente o un administrador puede cambiar el costo de la devolución: se toma el último costo facturado ($${lastInvoiced.toFixed(2)}).`,
+                    });
+                }
+                return typed;
+            });
             const returnNumber = await this.nextSupplierReturnNumber(connection);
 
             await connection.query(`
@@ -212,7 +293,7 @@ export class SupplierReturnService {
                 VALUES (?, ?, ?, ?, 'draft', ?)
             `, [id, returnNumber, supplier_id, notes || null, receptionId]);
 
-            for (const item of items || []) {
+            for (const [index, item] of (items || []).entries()) {
                 await connection.query(`
                     INSERT INTO supplier_return_items (id, return_id, product_id, quantity, unit_cost, reason)
                     VALUES (?, ?, ?, ?, ?, ?)
@@ -221,7 +302,7 @@ export class SupplierReturnService {
                     id,
                     item.product_id,
                     item.quantity,
-                    item.unit_cost || 0,
+                    costs[index],
                     item.reason || null
                 ]);
             }
@@ -287,76 +368,78 @@ export class SupplierReturnService {
             await this.valuation.lockStock(connection, productIds);
             const costs = await this.valuation.lockCosts(connection, productIds);
 
-            let totalAmount = 0;
-            // ADR-027: the goods leave the ledger at their book value (today's cost; Mermas has none).
+            // ADR-027/028: the goods leave the ledger at their book value (today's cost; Mermas has
+            // none). Against a delivery note, the units it still had to invoice lower what is owed
+            // for it (2.1.01.02, D7, or 3.1.02.02 for one received before ADR-027); the units already
+            // invoiced lower what is owed to the supplier, at the return's cost (the last invoiced).
             let bookCents = 0;
             let wasteCents = 0;
             let bridgeCents = 0;
+            let legacyCents = 0;
+            let creditCents = 0;
+            let lossCents = 0;
             const movementIds = [];
             for (const item of items) {
+                const quantity = Number(item.quantity);
                 const bookCost = costs.get(item.product_id)?.cost || 0;
                 const moved = await this.decreaseInventory(connection, item, id, { unitCost: bookCost });
                 movementIds.push(...moved.movementIds);
                 bookCents += valueCents(moved.valuedQuantity, bookCost);
-                totalAmount = Math.round((totalAmount + Number(item.quantity) * Number(item.unit_cost || 0)) * 100) / 100;
                 const line = reception?.lines.get(item.product_id);
-                // What the supplier takes back is worth what was agreed: the delivery note's cost
-                // while it is pending, otherwise the price typed in the return.
-                const agreedCost = reception?.pending ? Number(line.unit_cost || 0) : Number(item.unit_cost || 0);
-                wasteCents += valueCents(moved.unvaluedQuantity, agreedCost);
-                if (reception?.pending) bridgeCents += valueCents(item.quantity, line.unit_cost);
+                const notInvoiced = line ? Math.min(quantity, line.toInvoice) : 0;
+                if (line) line.toInvoice -= notInvoiced;
+                const notInvoicedCents = valueCents(notInvoiced, line?.unit_cost);
+                if (reception?.bridged) bridgeCents += notInvoicedCents;
+                else legacyCents += notInvoicedCents;
+                const invoicedUnits = quantity - notInvoiced;
+                const itemCreditCents = valueCents(invoicedUnits, item.unit_cost);
+                creditCents += itemCreditCents;
+                // Invoiced units handed back for nothing are a loss (their book value).
+                if (invoicedUnits > 0 && itemCreditCents === 0) {
+                    lossCents += Math.round(valueCents(invoicedUnits, bookCost) * moved.valuedQuantity / quantity);
+                }
+                // Units that were in Mermas recover their loss at what was agreed for them.
+                if (moved.unvaluedQuantity > 0) {
+                    wasteCents += Math.round((notInvoicedCents + itemCreditCents) * moved.unvaluedQuantity / quantity);
+                }
                 if (line) {
                     await connection.query(
                         'UPDATE reception_items SET returned_quantity = returned_quantity + ? WHERE id = ?',
-                        [Number(item.quantity), line.id]
+                        [quantity, line.id]
                     );
                 }
             }
 
             await connection.query('UPDATE supplier_returns SET status = "approved" WHERE id = ?', [id]);
 
-            let accounting = null;
-            let entryId = null;
-            if (reception?.pending) {
-                // D7: the supplier has not invoiced that delivery note yet: the return lowers what
-                // is owed for it (2.1.01.02), and its invoice clears only what was kept.
-                accounting = reception.bridged
-                    ? { against: 'goods_to_invoice', amount: bridgeCents / 100 }
-                    : 'not_posted: delivery note received before ADR-027 (its goods were never booked)';
-                if (reception.bridged) {
-                    entryId = await this._postReturnEntry(connection, supplierReturn, {
-                        debit: { account_code: ACCOUNTS.GOODS_TO_INVOICE, cents: bridgeCents, notes: 'Mercadería recibida a facturar - devolución' },
-                        bookCents, wasteCents,
-                    });
-                }
-            } else if (totalAmount > 0) {
+            let supplierCredit = null;
+            if (creditCents > 0) {
                 // Mirror of the purchase (ADR-011): the VAT treatment follows the supplier's last
                 // posted invoice (its VAT/net ratio: 0 for a Factura C, 21 % or the mix for a Factura A).
-                accounting = await this._resolveReturnAccounting(connection, supplierReturn.supplier_id, totalAmount);
-                if (!accounting) {
+                supplierCredit = await this._resolveReturnAccounting(connection, supplierReturn.supplier_id, creditCents / 100);
+                if (!supplierCredit) {
                     // D7: goods the supplier never invoiced are returned against their delivery note.
                     throw businessError(409, {
                         error: 'supplier_return_requires_reception',
                         message: 'El proveedor todavía no facturó esta mercadería: elegí en la devolución el remito con el que llegó.',
                     });
                 }
-            } else if (bookCents > 0) {
-                // Handed back for nothing: the goods are a loss.
-                entryId = await this._postReturnEntry(connection, supplierReturn, {
-                    debit: { account_code: ACCOUNTS.INVENTORY_LOSSES, cents: bookCents, notes: 'Mercadería devuelta sin crédito del proveedor' },
-                    bookCents, wasteCents: 0,
-                });
             }
-            if (accounting && typeof accounting === 'object' && accounting.grossAmount != null) {
-                const { netAmount, grossAmount, vatLines = [] } = accounting;
-                entryId = await this._postReturnEntry(connection, supplierReturn, {
-                    debit: { account_code: ACCOUNTS.SUPPLIERS, cents: Math.round(grossAmount * 100), notes: 'Proveedores - devolución' },
-                    bookCents,
-                    wasteCents,
-                    costCents: Math.round(netAmount * 100),
-                    vatLines,
-                });
-
+            const grossCents = supplierCredit ? Math.round(supplierCredit.grossAmount * 100) : 0;
+            const entryId = await this._postReturnEntry(connection, supplierReturn, {
+                debits: [
+                    { account_code: ACCOUNTS.GOODS_TO_INVOICE, cents: bridgeCents, notes: 'Mercadería recibida a facturar - devolución' },
+                    { account_code: ACCOUNTS.PRIOR_PERIOD_ADJUSTMENT, cents: legacyCents, notes: 'Remito anterior a la valuación por costo de última compra - devolución' },
+                    { account_code: ACCOUNTS.INVENTORY_LOSSES, cents: lossCents, notes: 'Mercadería devuelta sin crédito del proveedor' },
+                    { account_code: ACCOUNTS.SUPPLIERS, cents: grossCents, notes: 'Proveedores - devolución' },
+                ],
+                agreedCents: bridgeCents + legacyCents + lossCents + (supplierCredit ? Math.round(supplierCredit.netAmount * 100) : 0),
+                bookCents,
+                wasteCents,
+                vatLines: supplierCredit?.vatLines || [],
+            });
+            if (supplierCredit) {
+                const grossAmount = grossCents / 100;
                 // Not a cash outflow: an adjustment that reduces what we owe the supplier.
                 await connection.query(`
                     INSERT INTO transactions (id, type, amount, description, reference_id, supplier_id)
@@ -385,10 +468,17 @@ export class SupplierReturnService {
                 old_values: { status: supplierReturn.status },
                 new_values: {
                     status: 'approved',
-                    total_amount: totalAmount,
+                    total_amount: creditCents / 100,
                     book_value: bookCents / 100,
-                    ...(reception ? { reception_id: reception.id, reception_pending: reception.pending } : {}),
-                    accounting: accounting || (entryId ? 'loss' : 'not_posted: nothing of value left the ledger'),
+                    ...(reception ? { reception_id: reception.id } : {}),
+                    accounting: entryId
+                        ? {
+                            goods_to_invoice: bridgeCents / 100,
+                            prior_periods: legacyCents / 100,
+                            supplier_credit: grossCents / 100,
+                            loss: lossCents / 100,
+                        }
+                        : 'not_posted: nothing of value left the ledger',
                 },
                 ip_address: ipAddress
             }, connection);
@@ -408,8 +498,9 @@ export class SupplierReturnService {
 
     /**
      * D7: the delivery note a return is made against, locked with its lines. A return never takes
-     * back more than that delivery note brought (minus what was already returned). `pending`: the
-     * supplier has not invoiced it yet. `bridged`: its goods went through 2.1.01.02 (ADR-027).
+     * back more than that delivery note brought (minus what was already returned). Each line's
+     * `toInvoice`: units the supplier has not invoiced yet (ADR-028: a return takes those first).
+     * `bridged`: its goods went through 2.1.01.02 (ADR-027).
      */
     async _lockReception(connection, supplierReturn, items) {
         const [receptions] = await connection.query(
@@ -421,7 +512,9 @@ export class SupplierReturnService {
             throw businessError(409, { error: 'invalid_reception', message: 'El remito de la devolución no está aprobado o es de otro proveedor.' });
         }
         const [lines] = await connection.query(
-            'SELECT id, product_id, quantity_received, COALESCE(returned_quantity, 0) AS returned_quantity, unit_cost FROM reception_items WHERE reception_id = ? ORDER BY id FOR UPDATE',
+            `SELECT id, product_id, quantity_received, COALESCE(returned_quantity, 0) AS returned_quantity,
+                    COALESCE(invoiced_quantity, 0) AS invoiced_quantity, unit_cost
+             FROM reception_items WHERE reception_id = ? ORDER BY id FOR UPDATE`,
             [reception.id]
         );
         const byProduct = new Map(lines.map((line) => [line.product_id, line]));
@@ -437,38 +530,39 @@ export class SupplierReturnService {
                 });
             }
         }
-        const [invoiced] = await connection.query(
-            'SELECT supplier_invoice_id FROM supplier_invoice_receptions WHERE reception_id = ? FOR SHARE',
-            [reception.id]
-        );
         const [bridged] = await connection.query(
             "SELECT id FROM journal_entries WHERE reference_type = 'goods_received' AND reference_id = ? LIMIT 1",
             [reception.id]
         );
-        // One whose purchase order was invoiced without naming it is invoiced too: its goods are in
-        // the ledger and the supplier billed them, so the return lowers what is owed (AUD-016).
-        const [byOrder] = invoiced.length === 0 && bridged.length === 0
+        // One whose purchase order was invoiced without naming it is invoiced in full: its goods are
+        // in the ledger and the supplier billed them, so the return lowers what is owed (AUD-016).
+        const [byOrder] = bridged.length === 0
             ? await connection.query(`SELECT ${invoicedByOrderSql('r')} AS invoiced FROM receptions r WHERE r.id = ?`, [reception.id])
             : [[]];
-        const pending = invoiced.length === 0 && !Number(byOrder[0]?.invoiced || 0);
-        return { id: reception.id, pending, bridged: bridged.length > 0, lines: byProduct };
+        const invoicedByOrder = Boolean(Number(byOrder[0]?.invoiced || 0));
+        for (const line of byProduct.values()) {
+            line.toInvoice = invoicedByOrder
+                ? 0
+                : Math.max(0, Number(line.quantity_received || 0) - Number(line.invoiced_quantity || 0) - Number(line.returned_quantity || 0));
+        }
+        return { id: reception.id, bridged: bridged.length > 0, lines: byProduct };
     }
 
     /**
-     * The return's entry (ADR-027): the goods leave inventory at their book value; what the supplier
-     * takes back (2.1.01.02, Proveedores or, for nothing, a loss) is `debit`; units that were in
-     * Mermas recover their loss; the rest is holding result. `costCents`: the agreed value of the
-     * goods when it is not `debit` itself (the VAT reversal is credited apart).
+     * The return's entry (ADR-027/028): the goods leave inventory at their book value; what the
+     * supplier takes them back against (2.1.01.02, 3.1.02.02, Proveedores or, for nothing, a loss)
+     * are the `debits`; units that were in Mermas recover their loss; the rest is holding result.
+     * `agreedCents`: what the goods were worth by those debits (net: the VAT reversal is apart).
      */
-    async _postReturnEntry(connection, supplierReturn, { debit, bookCents, wasteCents, costCents = debit.cents, vatLines = [] }) {
-        const holdingCents = costCents - bookCents - wasteCents;
+    async _postReturnEntry(connection, supplierReturn, { debits, agreedCents, bookCents, wasteCents, vatLines = [] }) {
+        const holdingCents = agreedCents - bookCents - wasteCents;
         return accountingService.createJournalEntryIfAny(connection, {
             date: new Date(),
             description: `Devolución a proveedor ${supplierReturn.return_number}`,
             reference_type: 'supplier_return',
             reference_id: supplierReturn.id,
             lines: [
-                { account_code: debit.account_code, debit: debit.cents / 100, credit: 0, notes: debit.notes },
+                ...debits.map((debit) => ({ account_code: debit.account_code, debit: debit.cents / 100, credit: 0, notes: debit.notes })),
                 { account_code: ACCOUNTS.HOLDING_RESULT, debit: holdingCents < 0 ? -holdingCents / 100 : 0, credit: holdingCents > 0 ? holdingCents / 100 : 0, notes: 'Diferencia con el costo de la mercadería' },
                 { account_code: ACCOUNTS.INVENTORY, debit: 0, credit: bookCents / 100, notes: 'Salida de mercadería devuelta' },
                 { account_code: ACCOUNTS.INVENTORY_LOSSES, debit: 0, credit: wasteCents / 100, notes: 'Recupero de mermas devueltas' },

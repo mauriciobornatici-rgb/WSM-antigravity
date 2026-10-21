@@ -28,6 +28,7 @@ router.post('/receptions/:id/approve', receptionRoles, validate(schemas.approveR
 // Supplier Returns
 router.get('/returns', supplierReturnRoles, validate(schemas.supplierReturnFilters), procurementController.getReturns);
 router.get('/supplier-returns', supplierReturnRoles, validate(schemas.supplierReturnFilters), procurementController.getSupplierReturns);
+router.get('/returns/suggested-costs', supplierReturnRoles, validate(schemas.supplierReturnSuggestedCosts), procurementController.getReturnSuggestedCosts);
 router.post('/returns', supplierReturnRoles, validate(schemas.supplierReturnCreate), procurementController.createReturn);
 router.post('/returns/:id/approve', supplierReturnRoles, validate(schemas.idParam), procurementController.approveReturn);
 

@@ -90,8 +90,18 @@ export const getReturns = catchAsync(async (req, res) => {
 
 export const getSupplierReturns = getReturns;
 
+// ADR-028: the credit of a return is the last invoiced cost; only purchasing changes it.
+const canSetReturnCost = (req) => hasPermission(req.user?.role, PERMISSIONS.PROCUREMENT_MANAGE);
+
+export const getReturnSuggestedCosts = catchAsync(async (req, res) => {
+    const { supplier_id: supplierId, reception_id: receptionId, product_ids: productIds } = req.query;
+    res.json(await supplierReturnService.suggestedCosts({ supplierId, receptionId, productIds }));
+});
+
 export const createReturn = catchAsync(async (req, res) => {
-    const result = await supplierReturnService.createReturn(req.body, req.user?.id, getRequestIp(req));
+    const result = await supplierReturnService.createReturn(req.body, req.user?.id, getRequestIp(req), {
+        canSetCost: canSetReturnCost(req),
+    });
     res.json(result);
 });
 

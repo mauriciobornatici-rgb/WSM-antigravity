@@ -96,9 +96,12 @@ test('getSupplierInvoices applies supplier and status filters', async (t) => {
 });
 
 // A delivery note received before ADR-027 (it never went through 2.1.01.02).
-const legacyReception = (statement) => (statement.startsWith('SELECT id, supplier_id, status')
-    ? [[{ id: 'r1', supplier_id: 's1', status: 'approved', remito_number: 'R-1' }]]
-    : [[]]);
+// A delivery note received before ADR-027, with one line left to invoice.
+const legacyReception = (statement) => {
+    if (statement.startsWith('SELECT id, supplier_id, status')) return [[{ id: 'r1', supplier_id: 's1', status: 'approved', remito_number: 'R-1' }]];
+    if (statement.includes('FROM reception_items ri')) return [[{ id: 'ri-1', reception_id: 'r1', product_id: 'p', quantity_received: 4, unit_cost: 25 }]];
+    return [[]];
+};
 
 test('createSupplierInvoice refuses goods without their delivery note (ADR-027, D2)', async (t) => {
     const { calls } = installPool(t, async () => [[]]);
@@ -124,9 +127,9 @@ test('createSupplierInvoice persists invoice, balance, ledger, journal entry and
     const { calls, lifecycle, connection } = installPool(t, async (statement) => {
         // ADR-019: the delivery note is this supplier's, not invoiced yet, and received 100 net.
         // Received before ADR-027: it never went through 2.1.01.02; the transition valued its goods
-        // against 3.1.03.01, so the invoice settles that adjustment (AUD-016).
+        // against 3.1.02.02 (ADR-028), so the invoice settles that adjustment (AUD-016).
         if (statement.startsWith('SELECT id, supplier_id, status')) return [[{ id: 'r1', supplier_id: 's1', status: 'approved', remito_number: 'R-1' }]];
-        if (statement.includes('FROM reception_items WHERE reception_id IN')) return [[{ reception_id: 'r1', product_id: 'p', quantity_received: 4, returned_quantity: 0, unit_cost: 25 }]];
+        if (statement.includes('FROM reception_items ri')) return [[{ id: 'ri-1', reception_id: 'r1', product_id: 'p', quantity_received: 4, returned_quantity: 0, unit_cost: 25 }]];
         return [[]];
     });
     const journals = [];
@@ -162,7 +165,7 @@ test('createSupplierInvoice persists invoice, balance, ledger, journal entry and
     assert.equal(journals[0].conn, connection);
     const { lines, reference_type: refType } = journals[0].entry;
     assert.equal(refType, 'supplier_invoice');
-    assert.equal(lines[0].account_code, '3.1.03.01');
+    assert.equal(lines[0].account_code, '3.1.02.02');
     assert.equal(lines[0].debit, 100);
     assert.equal(lines[1].account_code, '1.1.05.02');
     assert.equal(lines[1].debit, 21);

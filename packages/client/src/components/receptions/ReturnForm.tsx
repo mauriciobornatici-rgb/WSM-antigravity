@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ReceptionPicker } from '@/components/receptions/ReceptionPicker';
 import { receptionIdToSend } from '@/lib/receptionChoice';
+import { RETURN_COST_SOURCE, useReturnCosts } from '@/components/returns/useReturnCosts';
 
 interface ReturnFormProps {
     onCancel: () => void;
@@ -23,7 +24,9 @@ interface ReturnItem {
     product_name: string;
     sku: string;
     quantity: number;
+    // Typed by purchasing (ADR-028); otherwise the last invoiced cost applies.
     unit_cost: number;
+    cost_typed: boolean;
     reason: string;
 }
 
@@ -36,6 +39,11 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
     const [loading, setLoading] = useState(false);
     const [notes, setNotes] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const { canSetCost, costs } = useReturnCosts(selectedSupplierId, receptionId, items.map((item) => item.product_id));
+    // What the supplier takes it back at: typed by purchasing, or the last invoiced cost (ADR-028).
+    const costOf = (item: ReturnItem) => (canSetCost && item.cost_typed
+        ? item.unit_cost
+        : costs.get(item.product_id)?.unit_cost ?? 0);
 
     useEffect(() => {
         void loadSuppliers();
@@ -92,7 +100,8 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                 product_name: product.name,
                 sku: product.sku,
                 quantity: 1,
-                unit_cost: product.purchase_price || 0,
+                unit_cost: 0,
+                cost_typed: false,
                 reason: '',
             },
         ]);
@@ -115,7 +124,9 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                 }
             }
         }
-        setItems((prev) => prev.map((item, idx) => (idx === index ? { ...item, [field]: value } : item)));
+        setItems((prev) => prev.map((item, idx) => (idx === index
+            ? { ...item, [field]: value, ...(field === 'unit_cost' ? { cost_typed: true } : {}) }
+            : item)));
     };
 
     const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -142,7 +153,12 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
         const payload: Parameters<typeof api.createReturn>[0] = {
             supplier_id: selectedSupplierId,
             ...(reception ? { reception_id: reception } : {}),
-            items,
+            items: items.map((item) => ({
+                product_id: item.product_id,
+                quantity: item.quantity,
+                reason: item.reason,
+                ...(canSetCost && item.cost_typed ? { unit_cost: item.unit_cost } : {}),
+            })),
             ...(notes ? { notes } : {}),
         };
 
@@ -154,9 +170,9 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
         }
     };
 
-    // The cost is typed net (supplier invoice); what is shown is the final one (ADR-015).
+    // The cost is net (supplier invoice); what is shown is the final one (ADR-015).
     const vatRateOfItem = (item: ReturnItem) => products.find((p) => p.id === item.product_id)?.vat_rate;
-    const totalAmount = items.reduce((sum, item) => sum + grossLineTotal(item.quantity, item.unit_cost, vatRateOfItem(item)), 0);
+    const totalAmount = items.reduce((sum, item) => sum + grossLineTotal(item.quantity, costOf(item), vatRateOfItem(item)), 0);
 
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -256,12 +272,18 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                                         type="number"
                                         min="0"
                                         step="0.01"
-                                        value={item.unit_cost}
+                                        inputMode="decimal"
+                                        aria-label={`Costo unitario neto de ${item.product_name}`}
+                                        aria-describedby={`return-form-cost-${index}`}
+                                        value={costOf(item)}
+                                        readOnly={!canSetCost}
                                         onChange={(e) => handleUpdateItem(index, 'unit_cost', Number.parseFloat(e.target.value) || 0)}
                                         className="h-8 text-right"
                                     />
-                                    <p className="mt-0.5 text-right text-[11px] text-muted-foreground">
-                                        Costo final (c/IVA): {formatMoney(grossPrice(item.unit_cost, vatRateOfItem(item)))}
+                                    <p id={`return-form-cost-${index}`} className="mt-0.5 text-right text-[11px] text-muted-foreground">
+                                        {canSetCost && item.cost_typed ? '' : `${RETURN_COST_SOURCE[costs.get(item.product_id)?.source ?? 'product']}. `}
+                                        {canSetCost ? '' : 'Solo un gerente o un administrador puede cambiarlo. '}
+                                        Final (c/IVA): {formatMoney(grossPrice(costOf(item), vatRateOfItem(item)))}
                                     </p>
                                 </div>
                                 <div className="sm:col-span-2">

@@ -81,7 +81,9 @@ export type SupplierReturnItem = {
 export type SupplierReturnFormItem = {
     product_id: string;
     quantity: number;
+    // Typed by purchasing (ADR-028); otherwise the last invoiced cost applies.
     unit_cost: number;
+    cost_typed?: boolean;
     reason: string;
 };
 

@@ -18,6 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { QueryErrorBanner, QueryLoadingState } from "./QueryStates"
 import { ReceptionPicker } from "@/components/receptions/ReceptionPicker"
 import { receptionIdToSend } from "@/lib/receptionChoice"
+import { RETURN_COST_SOURCE, useReturnCosts } from "./useReturnCosts"
 import { returnStatusLabel } from "./helpers"
 import type { SupplierReturnRow, SupplierReturnFormItem, SupplierReturnFormField } from "@/types/returns"
 import type { Supplier } from "@/types"
@@ -72,6 +73,11 @@ export function SupplierReturnsTab() {
     const returns = returnsQuery.data ?? []
     const suppliers = (suppliersQuery.data ?? []) as Supplier[]
     const products = productsQuery.data ?? []
+    const { canSetCost, costs } = useReturnCosts(supplierId, receptionId, items.map((item) => item.product_id))
+    // What the supplier takes it back at: typed by purchasing, or the last invoiced cost.
+    const costOf = (item: SupplierReturnFormItem) => (canSetCost && item.cost_typed
+        ? item.unit_cost
+        : costs.get(item.product_id)?.unit_cost ?? 0)
 
     const loading = returnsQuery.isLoading || suppliersQuery.isLoading || productsQuery.isLoading
     const hasLoadError = returnsQuery.isError || suppliersQuery.isError || productsQuery.isError
@@ -102,14 +108,13 @@ export function SupplierReturnsTab() {
 
         if (field === "product_id") {
             currentItem.product_id = value as string
-            const prod = products.find((p) => p.id === value)
-            if (prod) {
-                currentItem.unit_cost = Number(prod.purchase_price || 0)
-            }
+            // A new product takes its own last invoiced cost.
+            currentItem.cost_typed = false
         } else if (field === "quantity") {
             currentItem.quantity = Number(value)
         } else if (field === "unit_cost") {
             currentItem.unit_cost = Number(value)
+            currentItem.cost_typed = true
         } else if (field === "reason") {
             currentItem.reason = value as string
         }
@@ -144,7 +149,12 @@ export function SupplierReturnsTab() {
                 supplier_id: supplierId,
                 ...(reception ? { reception_id: reception } : {}),
                 notes: notes.trim(),
-                items: validItems,
+                items: validItems.map((item) => ({
+                    product_id: item.product_id,
+                    quantity: item.quantity,
+                    reason: item.reason,
+                    ...(canSetCost && item.cost_typed ? { unit_cost: item.unit_cost } : {}),
+                })),
             })
             toast.success("Devolución a proveedor registrada en borrador")
             setCreateOpen(false)
@@ -449,17 +459,25 @@ export function SupplierReturnsTab() {
                                             />
                                         </div>
                                         <div className="space-y-1 sm:col-span-2">
-                                            <Label className="text-xs">Costo Unitario neto ($)</Label>
+                                            <Label htmlFor={`return-cost-${index}`} className="text-xs">Costo Unitario neto ($)</Label>
                                             <Input
+                                                id={`return-cost-${index}`}
                                                 type="number"
                                                 min="0"
                                                 step="0.01"
+                                                inputMode="decimal"
                                                 className="h-9"
-                                                value={item.unit_cost}
+                                                aria-describedby={`return-cost-hint-${index}`}
+                                                value={costOf(item)}
+                                                readOnly={!canSetCost}
                                                 onChange={(e) => handleItemChange(index, "unit_cost", Number(e.target.value))}
                                             />
-                                            <p className="text-[11px] text-muted-foreground">
-                                                Costo final (c/IVA): {formatMoney(grossPrice(item.unit_cost, products.find((p) => p.id === item.product_id)?.vat_rate))}
+                                            <p id={`return-cost-hint-${index}`} className="text-[11px] text-muted-foreground">
+                                                {item.product_id && !(canSetCost && item.cost_typed)
+                                                    ? `${RETURN_COST_SOURCE[costs.get(item.product_id)?.source ?? "product"]}. `
+                                                    : ""}
+                                                {canSetCost ? "" : "Solo un gerente o un administrador puede cambiarlo. "}
+                                                Final (c/IVA): {formatMoney(grossPrice(costOf(item), products.find((p) => p.id === item.product_id)?.vat_rate))}
                                             </p>
                                         </div>
                                         <div className="space-y-1 sm:col-span-3">

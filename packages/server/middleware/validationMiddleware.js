@@ -168,6 +168,9 @@ export const zodSchemas = {
     supplierReturnCreate: z.object({
         body: commonSchemas.supplierReturnCreateSchema
     }),
+    supplierReturnSuggestedCosts: z.object({
+        query: commonSchemas.supplierReturnSuggestedCostsSchema
+    }),
     supplierPaymentFilters: z.object({
         query: commonSchemas.supplierPaymentFiltersSchema.optional()
     }),

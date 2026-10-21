@@ -44,8 +44,17 @@ export function ReceptionPicker({ id, supplierId, value, onChange }: ReceptionPi
     }
 
     const selected = receptions.find((reception) => reception.id === value);
-    // Invoiced by its own invoice, or by an invoice of its purchase order that did not name it.
-    const invoiced = (reception: ReceptionOption) => Boolean(reception.supplier_invoice_id) || Number(reception.invoiced_by_order) === 1;
+    // ADR-028: what it still has to invoice (a return takes those units first).
+    const statusLabel = (reception: ReceptionOption) => {
+        if (Number(reception.invoiced_by_order) === 1) return "facturado con la orden de compra";
+        if (reception.invoice_status === "partial") return "facturado en parte";
+        if (reception.invoice_status === "pending") return "sin facturar";
+        if (reception.invoice_status === "returned") return "devuelto";
+        return reception.supplier_invoice_id ? "facturado" : "sin facturar";
+    };
+    const hasUninvoiced = (reception: ReceptionOption) => (reception.invoice_status
+        ? reception.invoice_status === "pending" || reception.invoice_status === "partial"
+        : !reception.supplier_invoice_id && Number(reception.invoiced_by_order) !== 1);
     const placeholder = !supplierId ? "Elegí primero el proveedor" : loading ? "Cargando remitos..." : "Elegí el remito";
 
     return (
@@ -59,10 +68,7 @@ export function ReceptionPicker({ id, supplierId, value, onChange }: ReceptionPi
                 <SelectContent>
                     {receptions.map((reception) => (
                         <SelectItem key={reception.id} value={reception.id}>
-                            Remito {reception.remito_number || reception.reception_number}
-                            {reception.supplier_invoice_id
-                                ? " · facturado"
-                                : Number(reception.invoiced_by_order) === 1 ? " · facturado con la orden de compra" : " · sin facturar"}
+                            Remito {reception.remito_number || reception.reception_number} · {statusLabel(reception)}
                         </SelectItem>
                     ))}
                     <SelectItem value={NO_RECEPTION}>Sin remito: el proveedor ya facturó esta mercadería</SelectItem>
@@ -75,8 +81,8 @@ export function ReceptionPicker({ id, supplierId, value, onChange }: ReceptionPi
                 </div>
             ) : null}
             <p id={`${id}-hint`} className="text-xs text-muted-foreground">
-                {selected && !invoiced(selected)
-                    ? "El proveedor todavía no lo facturó: la devolución descuenta lo que se le debe por ese remito y la factura cobra solo lo que quedó."
+                {selected && hasUninvoiced(selected)
+                    ? "Las unidades que el proveedor todavía no facturó bajan lo que se le debe por ese remito (su factura cobra solo lo que quedó); las ya facturadas bajan la deuda con el proveedor."
                     : "Si el proveedor todavía no facturó la mercadería, elegí su remito."}
             </p>
         </div>

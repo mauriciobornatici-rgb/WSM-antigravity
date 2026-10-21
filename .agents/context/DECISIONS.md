@@ -80,6 +80,38 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-028 — Factura de compra por línea, crédito de devoluciones y ejercicios anteriores (usuario y contadora, 2026-10-21)
+- **Origen:** pendientes de AUD-016. El usuario eligió "lo ideal" para la factura parcial y aceptó la recomendación sobre las devoluciones. La contadora respondió con las buenas prácticas de la profesión.
+- **Factura de compra por línea de remito:**
+  - indica cuántas unidades de cada línea cobra y a qué costo neto (`items`);
+  - las líneas tienen que sumar el neto, con un centavo de redondeo por línea;
+  - salda de 2.1.01.02 solo las unidades facturadas, al costo del remito;
+  - la diferencia de cada línea va a 4.2.02.01 y corrige el costo del producto que sigue la última compra (D1), ahora exacto por línea;
+  - un remito se puede facturar en varias facturas: queda pendiente lo que no se facturó;
+  - sin `items` (API anterior), se factura todo lo pendiente y la diferencia se reparte por valor;
+  - un remito sin unidades por facturar (facturado o devuelto completo) se rechaza.
+- **Devolución contra un remito:**
+  - toma primero las unidades no facturadas, que bajan su pendiente en 2.1.01.02;
+  - las ya facturadas bajan la deuda con el proveedor (Proveedores, con la reversión de IVA de ADR-011);
+  - el remito anterior a ADR-027 sin facturar va contra 3.1.02.02.
+- **Crédito de la devolución (decisión 1):**
+  - es el último costo facturado: el de la línea del remito, o la última factura del proveedor para el producto; si no hay, el costo del remito o el del producto;
+  - solo gerente o administrador (`procurement.manage`) puede cambiarlo; otro rol que lo cambie recibe 403 `return_cost_not_allowed`;
+  - endpoint `GET /api/returns/suggested-costs`.
+- **Ejercicios anteriores (contadora: buenas prácticas, RT 17):**
+  - cuenta nueva 3.1.02.02 "Ajuste de resultados de ejercicios anteriores", en el patrimonio;
+  - va ahí el ajuste de la transición (D4 queda resuelto así, en lugar de 3.1.03.01);
+  - también el costo de lo vendido de ejercicios cerrados que asienta la transición (`--inicio-ejercicio`); el del ejercicio en curso va a costo de lo vendido;
+  - y la parte de una factura o devolución de un remito anterior a ADR-027.
+  - El stock inicial y el costo cargado desde 0 (D6) siguen en 3.1.03.01.
+- **IVA de facturas B y C:** la contadora confirma que, si no se puede discriminar, va al costo (ya era así).
+- **Migración 067:**
+  - la cuenta 3.1.02.02;
+  - `reception_items.invoiced_quantity` (los remitos ya facturados quedan facturados completos);
+  - la tabla `supplier_invoice_items`;
+  - se quita la clave única de `supplier_invoice_receptions.reception_id`.
+  - El CHECK de inventario pasa a la **068**.
+
 ### ADR-027 — Valuación de la mercadería por costo de última compra (usuario, 2026-10-17)
 - **Estado:** implementado en la rama `feat/revaluacion-stock` (I1-I8). Plan y criterios en `docs/execution/PLAN_VALUACION_INVENTARIO.md`; transición en `RUNBOOK_VALUACION_INVENTARIO.md`.
 - **Origen:** la primera versión (revaluar al cambiar el costo) quedó frenada por AUD-015: el mayor no era stock × costo, porque las compras entraban al costo de la factura y las ventas salían a `purchase_price`. El usuario eligió la **opción a: costo de última compra** (costo de reposición, RT 17).
