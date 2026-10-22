@@ -11,6 +11,8 @@ export interface PendingDoc {
     dueDate: string;
     total: number;
     paid: number;
+    // ADR-029: supplier credit notes against the document (they lower what is owed too).
+    credited?: number;
     pending: number;
     status: string;
     isOverdue?: boolean;
@@ -50,7 +52,8 @@ export function CurrentAccountsPendingDocsTable({ pendingDocuments }: CurrentAcc
                         </TableRow>
                     ) : (
                         pendingDocuments.map((doc) => {
-                            const pctPaid = doc.total > 0 ? Math.round((doc.paid / doc.total) * 100) : 0;
+                            const credited = doc.credited ?? 0;
+                            const pctPaid = doc.total > 0 ? Math.min(100, Math.round(((doc.paid + credited) / doc.total) * 100)) : 0;
                             const isOverdue = Boolean(doc.isOverdue);
 
                             return (
@@ -82,6 +85,11 @@ export function CurrentAccountsPendingDocsTable({ pendingDocuments }: CurrentAcc
                                     </TableCell>
                                     <TableCell className="text-right font-mono text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
                                         {formatMoney(doc.paid)}
+                                        {credited > 0 ? (
+                                            <span className="block text-[10px] font-normal text-muted-foreground">
+                                                + {formatMoney(credited)} en notas de crédito
+                                            </span>
+                                        ) : null}
                                     </TableCell>
                                     <TableCell className="text-right font-mono text-xs font-bold text-amber-500">
                                         {formatMoney(doc.pending)}

@@ -34,7 +34,7 @@ la versión con ADR-027.
    `--inicio-ejercicio=AAAA-MM-DD` (hora argentina). Para aplicar es obligatorio; la simulación, sin él,
    toma el 1 de enero del año en curso.
 5. Desplegá la versión nueva con la **app detenida para la operación** (ventana de
-   mantenimiento) y aplicá las migraciones 064 a 068 **sin arrancar el servidor**:
+   mantenimiento) y aplicá las migraciones 064 a 069 **sin arrancar el servidor**:
 
    ```powershell
    node scripts/run-migrations.js
@@ -75,10 +75,10 @@ Desde `packages/server`, con el entorno de producción:
    | `reversed_costs_of_unpacked_orders` | Pedidos facturados y no armados: se revierte ese costo, que se asienta al armarlos |
    | `costs_posted_for_sales` | Ventas que salieron sin costo asentado (no facturadas, o facturadas antes del mayor). Los pedidos anulados no cuentan: su mercadería volvió. `this_year` va a costo de lo vendido; `earlier_years` (ventas anteriores a `--inicio-ejercicio`), a 3.1.02.02 |
    | `opened_goods_to_invoice` | Remitos aprobados y sin facturar: abren 2.1.01.02 |
-   | `receptions_invoiced_by_their_order` | **Revisar a mano:** remitos sin factura propia cuya orden de compra tiene una factura que no nombra remitos (antes se facturaba así). No abren 2.1.01.02: su mercadería ya está en el mayor. En pantalla figuran como "facturado con la orden de compra". Si alguno no estaba incluido en esa factura, cargale la suya: va contra 3.1.02.02 (el ajuste de la transición), sin sumar inventario de nuevo |
+   | `receptions_invoiced_by_their_order` | **Revisar a mano:** remitos sin factura propia cuya orden de compra tiene una factura que no nombra remitos (antes se facturaba así). No abren 2.1.01.02: su mercadería ya está en el mayor. En pantalla figuran como "facturado con la orden de compra". Si alguno no estaba incluido en esa factura, cargale la suya: el valor del remito va contra 3.1.02.02 (el ajuste de la transición), sin sumar inventario de nuevo, y una diferencia de precio va a 4.2.02.01 (ADR-029) |
    | `opened_with_returns_after` | **Revisar a mano:** remitos abiertos cuyo proveedor se llevó después mercadería de esos productos sin indicar remito. Su factura va a traer menos de lo abierto, y la diferencia bajaría el costo: conviene revisarla al cargarla |
    | `adjustment` | El ajuste final del mayor al stock valuado, contra 3.1.02.02 (ejercicios anteriores) |
-   | `after.ok` | Mayor = stock valuado y 2.1.01.02 = pendiente de los remitos |
+   | `after.ok` | Mayor = stock valuado, 2.1.01.02 = pendiente de los remitos y 1.1.06.01 = notas de crédito a recibir de las facturas (ADR-029) |
 
 3. **Aplicar**, confirmando el nombre exacto de la base:
 
@@ -106,7 +106,7 @@ Desde `packages/server`, con el entorno de producción:
 - Cada día (o semana), el diagnóstico tiene que seguir en `ok: true`. Si aparece una diferencia,
   algún camino movió stock sin asiento: `sales_without_entry` muestra las ventas sin costo
   posteriores al corte.
-- La migración del CHECK de inventario (069) sigue después de esto (AP2).
+- La migración del CHECK de inventario (070) sigue después de esto (AP2).
 
 ## Verificación hecha
 

@@ -907,6 +907,16 @@ class FinanceService {
             const usesTreasury = allocations.some((alloc) => (alloc.payments || [])
                 .some((p) => disbursementAccountFor(p.method) === ACCOUNTS.TREASURY_CASH));
             if (usesTreasury) await lockTreasury(connection);
+            // AUD-018: every invoice of this payment is locked, in id order, before anything is read.
+            // A plain read fixes the transaction's snapshot: a credit note or payment committed while
+            // this one waited for a later invoice would not be seen, and the invoice paid twice.
+            const invoiceIds = [...new Set(allocations.map((alloc) => alloc.invoiceId).filter(Boolean))].sort();
+            if (invoiceIds.length > 0) {
+                await connection.query(
+                    'SELECT id FROM supplier_invoices WHERE id IN (?) AND supplier_id = ? ORDER BY id FOR UPDATE',
+                    [invoiceIds, supplierId]
+                );
+            }
 
             let totalPaid = 0;
             const results = [];
@@ -931,6 +941,12 @@ class FinanceService {
                     [invoiceId]
                 );
                 const paidBefore = this._roundMoney(paymentRows[0]?.paid_amount || 0);
+                // ADR-029: the supplier's credit notes against this invoice lower what is left to pay.
+                const [creditRows] = await connection.query(
+                    'SELECT COALESCE(SUM(total_amount), 0) AS credited FROM supplier_credit_notes WHERE supplier_invoice_id = ?',
+                    [invoiceId]
+                );
+                const credited = this._roundMoney(creditRows[0]?.credited || 0);
 
                 const normalizedPayments = this._normalizePaymentLines(payments, 'cash');
                 const paidNow = this._roundMoney(
@@ -938,9 +954,11 @@ class FinanceService {
                 );
                 const paidAfter = this._roundMoney(paidBefore + paidNow);
 
-                if (paidAfter > totalAmount + 0.01) {
+                if (paidAfter + credited > totalAmount + 0.01) {
                     throw this._buildValidationError(
-                        `El total de pagos (${paidAfter}) supera el total de la factura de proveedor ${invoiceId} (${totalAmount})`,
+                        credited > 0
+                            ? `El total de pagos (${paidAfter}) supera lo que queda de la factura de proveedor ${invoice.invoice_number} (${this._roundMoney(totalAmount - credited)}, descontadas sus notas de crédito)`
+                            : `El total de pagos (${paidAfter}) supera el total de la factura de proveedor ${invoiceId} (${totalAmount})`,
                         'PAYMENTS_EXCEED_TOTAL'
                     );
                 }
@@ -1016,7 +1034,7 @@ class FinanceService {
                     });
                 }
 
-                const paymentStatus = this._resolvePaymentStatus(totalAmount, paidAfter);
+                const paymentStatus = this._resolvePaymentStatus(totalAmount, paidAfter + credited);
                 await connection.query(
                     'UPDATE supplier_invoices SET payment_status = ? WHERE id = ?',
                     [paymentStatus, invoiceId]

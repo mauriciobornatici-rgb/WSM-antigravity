@@ -67,4 +67,4 @@ Un interbloqueo o una espera agotada responden 409 `busy`.
 | I7 | Unificación del costo (`cost_price` como espejo), quitar `productUnitCosts`, deshabilitar movimientos libres, simulación extendida. | hecho (`a360432`) |
 | I8 | Script de transición (simulación por defecto, `--apply --confirm=<DB>`), runbook, cierre y revisión (AUD-016). | hecho; revisión AUD-016 corregida (ver `AUDIT.md`) |
 
-El CHECK de inventario pasa a la migración **069** (la 067 y la 068 son de ADR-028).
+El CHECK de inventario pasa a la migración **070** (la 067 y la 068 son de ADR-028; la 069, de ADR-029).

@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    createSupplierCreditNote,
     createSupplierInvoice,
     getPendingSupplierInvoices,
+    getSupplierCreditNotes,
     getSupplierInvoices,
     registerBulkSupplierPayments
 } from '../controllers/supplierInvoiceController.js';
+import supplierCreditNoteService from '../domains/procurement/SupplierCreditNoteService.js';
 import pool from '../config/db.js';
 import auditService from '../services/audit.service.js';
 import accountingService from '../services/accounting.service.js';
@@ -244,6 +247,8 @@ test('getPendingSupplierInvoices computes paid and pending amounts', async (t) =
         if (statement.includes('FROM supplier_payments')) {
             return [[{ supplier_invoice_id: 'i1', paid_amount: '40' }, { supplier_invoice_id: 'i3', paid_amount: null }]];
         }
+        // ADR-029: the supplier's credit notes against an invoice lower what is left to pay.
+        if (statement.includes('FROM supplier_credit_notes')) return [[{ supplier_invoice_id: 'i1', credited_amount: '10.5' }]];
         return [[
             { id: 'i1', total_amount: '100' },
             { id: 'i2', total_amount: '30' },
@@ -254,7 +259,8 @@ test('getPendingSupplierInvoices computes paid and pending amounts', async (t) =
     assert.ok(calls[0].statement.includes('AND si.supplier_id = ?'));
     assert.deepEqual(calls[0].params, ['s1']);
     assert.deepEqual(calls[1].params, [['i1', 'i2', 'i3']]);
-    assert.deepEqual(res.body.map((r) => [r.paid_amount, r.pending_amount]), [[40, 60], [0, 30], [0, 0]]);
+    assert.deepEqual(calls[2].params, [['i1', 'i2', 'i3']]);
+    assert.deepEqual(res.body.map((r) => [r.paid_amount, r.credited_amount, r.pending_amount]), [[40, 10.5, 49.5], [0, 0, 30], [0, 0, 0]]);
 });
 
 test('getPendingSupplierInvoices never reports negative pending amount', async (t) => {
@@ -276,4 +282,15 @@ test('registerBulkSupplierPayments delegates to finance service with the authent
 
     await runHandler(registerBulkSupplierPayments, { body: payload });
     assert.equal(received[1][1], null);
+});
+
+test('supplier credit notes: the list reads the parsed query, and a new note answers 201 with the user', async (t) => {
+    const received = [];
+    stub(t, supplierCreditNoteService, 'getCreditNotes', async (filters) => { received.push(['list', filters]); return [{ id: 'n1' }]; });
+    stub(t, supplierCreditNoteService, 'createCreditNote', async (...args) => { received.push(['create', ...args]); return { id: 'n2' }; });
+    const list = await runHandler(getSupplierCreditNotes, { query: { raw: '1' }, validatedQuery: { supplier_id: 's1' } });
+    assert.deepEqual(list.body, [{ id: 'n1' }]);
+    const created = await runHandler(createSupplierCreditNote, { body: { supplier_invoice_id: 'i1' }, user: { id: 'u9' } });
+    assert.deepEqual([created.status, created.body], [201, { id: 'n2' }]);
+    assert.deepEqual(received, [['list', { supplier_id: 's1' }], ['create', { supplier_invoice_id: 'i1' }, 'u9', '127.0.0.1']]);
 });

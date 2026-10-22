@@ -224,7 +224,7 @@ test('the fiscal year starts at midnight in Argentina, whatever the server timez
 });
 
 test('the valuation check compares the inventory ledger with the stock at cost, read only', async () => {
-    const answers = (since, ledger, valued) => recordingConnection((statement) => {
+    const answers = (since, ledger, valued, credit = '30') => recordingConnection((statement) => {
         if (statement.includes("account_code = '1.1.04.01'")) return [[{ balance: ledger }]];
         if (statement.includes('AS value, COALESCE(SUM(i.quantity), 0) AS quantity')) return [[{ value: valued, quantity: '12' }]];
         if (statement.includes('GROUP BY p.id')) return [[{ id: 'p', sku: 'S', name: 'Sin costo', quantity: '3' }]];
@@ -233,6 +233,9 @@ test('the valuation check compares the inventory ledger with the stock at cost, 
         if (statement.includes("account_code = '2.1.01.02'")) return [[{ balance: '120' }]];
         // What the delivery notes that went through 2.1.01.02 still owe.
         if (statement.includes('FROM reception_items ri')) return [[{ value: '120' }]];
+        // ADR-029: 1.1.06.01 against what invoices expect from credit notes not received yet.
+        if (statement.includes("account_code = '1.1.06.01'")) return [[{ balance: '30' }]];
+        if (statement.includes('credit_expected_amount')) return [[{ value: credit }]];
         throw new Error(`unexpected ${statement}`);
     });
 
@@ -243,6 +246,7 @@ test('the valuation check compares the inventory ledger with the stock at cost, 
         products_with_stock_and_no_cost: [{ id: 'p', sku: 'S', name: 'Sin costo', quantity: 3 }],
         valuation_since: null, sales_without_entry: { movements: 2, value: 40.5 },
         goods_to_invoice_balance: 120, goods_to_invoice_pending: 120, goods_to_invoice_difference: 0,
+        credit_notes_to_receive_balance: 30, credit_notes_to_receive_pending: 30, credit_notes_to_receive_difference: 0,
     });
     assert.ok(matching.calls.every(({ statement }) => statement.startsWith('SELECT')), 'only reads');
     assert.deepEqual(matching.calls.find(({ statement }) => statement.includes('FROM inventory i JOIN products')).params, [['Mermas']]);
@@ -253,6 +257,9 @@ test('the valuation check compares the inventory ledger with the stock at cost, 
     assert.equal(result.ok, false);
     assert.equal(result.difference, 0.01);
     assert.deepEqual(off.calls.find(({ statement }) => statement.includes('FROM inventory_movements')).params, [since]);
+    // A credit note settled outside its invoice (or lost) shows as a difference in 1.1.06.01.
+    const credit = await checkInventoryValuation(answers(null, '10', '10', '20'));
+    assert.deepEqual([credit.ok, credit.credit_notes_to_receive_difference], [false, 10]);
 
     const empty = await checkInventoryValuation(recordingConnection((statement) => {
         if (statement.includes('inventory_valuation_since')) return [[]];
@@ -339,6 +346,7 @@ test('runCutover aligns the old data once: costs, old sales, open delivery notes
                 { id: 'r3', reception_number: 'REC-3', remito_number: null, order_invoiced: 0, value: '0' },
             ]];
         }
+        if (statement.includes("account_code = '1.1.06.01'") || statement.includes('credit_expected_amount')) return [[{ balance: '0', value: '0' }]];
         throw new Error(`unexpected ${statement}`);
     });
 
@@ -383,7 +391,7 @@ test('runCutover aligns the old data once: costs, old sales, open delivery notes
     });
     const problems = await checkCutoverPreconditions(preconditions, { findAffectedOrders: async () => [], findReceptionEntries: async () => [] });
     assert.deepEqual(problems, [
-        'Faltan las migraciones 064/065/067 (cuentas 4.2.02.01, 2.1.01.02 y 3.1.02.02).',
-        'Faltan las migraciones 065/066/067 (columnas de la valuación).',
+        'Faltan las migraciones 064/065/067/069 (cuentas 4.2.02.01, 2.1.01.02, 3.1.02.02 y 1.1.06.01).',
+        'Faltan las migraciones 065/066/067/069 (columnas de la valuación).',
     ]);
 });

@@ -80,6 +80,51 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **DB remota:** en desarrollo el servidor rechaza un `DB_HOST` no local salvo `ALLOW_REMOTE_DB=true`.
 - **Migraciones nuevas:** permitidas, probadas únicamente en `wsm_qa` (127.0.0.1:33308); las históricas no se editan.
 
+### ADR-029 — Nota de crédito a recibir de proveedores (usuario y contadora, 2026-10-21)
+- **Origen:** pendientes de ADR-028. Respuestas del usuario: "1- si" (habilitar la cuenta transitoria) y "2- no" (la devolución sin remito sigue como está). Respuestas de la contadora: el ajuste de la transición "va entero" a 3.1.02.02 (ya era así); y las diferencias de precio del año en remitos anteriores a ADR-027 van "a donde el criterio técnico y las buenas prácticas acostumbren a asignarlo".
+- **Diferencias de precio de remitos anteriores a ADR-027 (contadora):**
+  - 3.1.02.02 recibe solo el valor del remito (lo que la transición ya valuó);
+  - la diferencia de precio facturada en el ejercicio va a 4.2.02.01, como cualquier otra (antes iba entera a 3.1.02.02).
+- **Factura que cobra unidades de más (usuario):**
+  - con `expect_credit_note` ("El proveedor cobró unidades de más"), una línea puede cobrar más unidades de las pendientes: no recibidas, devueltas o ya facturadas;
+  - un remito facturado completo se puede volver a cobrar solo así;
+  - las unidades de más, al precio de la línea (con su IVA en una B o C), van a la cuenta nueva **1.1.06.01 "Notas de crédito a recibir de proveedores"**;
+  - solo las unidades pendientes salen del remito (`invoiced_quantity`) y saldan 2.1.01.02;
+  - las unidades de más no entran al stock ni corrigen el costo;
+  - el IVA de una factura A o M se toma entero, porque es el comprobante fiscal; la nota de crédito lo revierte;
+  - sin la marca, más de lo pendiente es 409 `invoice_exceeds_reception` y el mensaje sugiere la marca.
+- **Nota de crédito del proveedor:**
+  - `POST /api/supplier-credit-notes` (`procurement.manage`), contra una factura con crédito pendiente;
+  - lleva la letra de la factura;
+  - salda 1.1.06.01 por su neto (y su IVA, en una B o C) hasta lo pendiente. Si es menor, lo que falta sigue pendiente para otra nota;
+  - lo que exceda es mejor precio (4.2.02.01), solo con la confirmación del usuario (`accept_excess`);
+  - las notas de una factura nunca suman más que la factura (AUD-018);
+  - con IVA y sin líneas por alícuota, exige su alícuota; el IVA se controla contra el neto;
+  - el número se guarda como punto de venta-número ("1-123" = "0001-00000123");
+  - revierte el IVA crédito fiscal por alícuota (A o M) y las percepciones;
+  - baja el saldo del proveedor con un movimiento `adjustment`;
+  - cuenta como cancelación de la factura para su estado de pago y para lo que se puede pagar;
+  - entra negativa al Libro IVA Compras.
+  - Bloqueos: la factura y después el proveedor, como un pago. Número repetido → 409 (se controla primero); otra nota sin crédito pendiente → 409 `no_credit_note_expected`.
+  - El pago de varias facturas las bloquea a todas, en orden, antes de leer pagos y notas (AUD-018).
+  - Un proveedor con notas de crédito a recibir no se puede eliminar.
+  - El control de valuación (`after.ok`) concilia 1.1.06.01 con lo esperado menos lo aplicado.
+- **Pantalla:**
+  - en la factura, la casilla "El proveedor cobró unidades de más"; con ella se ven también los remitos facturados o devueltos, y cada línea muestra las unidades de más;
+  - en Facturas de compra, la columna "NC a recibir" con "Cargar NC";
+  - en la cuenta corriente del proveedor, las notas de crédito, y lo pendiente de cada factura descuenta sus notas.
+- **De paso:**
+  - en la cuenta corriente del proveedor, cada pago aparecía dos veces, una por `supplier_payments` y otra por su movimiento `expense`;
+  - las devoluciones salían sin importe: ahora toman el de su movimiento `adjustment`.
+- **Migración 069:**
+  - la cuenta 1.1.06.01;
+  - `supplier_invoice_items.excess_quantity`;
+  - `supplier_invoices.credit_expected_amount`;
+  - las tablas `supplier_credit_notes` y `supplier_credit_note_vat_lines`, sin FK (como la 060 y la 067, por la collation de la base de producción) y con CHECK `0 ≤ applied_amount ≤ total_amount`.
+  - Aplicada en QA, `wsm_sports_erp` y `wsm_simulacion` (las dos locales, alineadas al texto final tras AUD-018).
+  - El CHECK de inventario pasa a la **070**.
+- **Pendiente del usuario o la contadora (AUD-018):** dar por perdido el resto de una nota menor; cruce con un remito que llega después; anulación de una nota; pagar antes de recibir la nota; saldo a favor del proveedor; excedente a resultado o a costo.
+
 ### ADR-028 — Factura de compra por línea, crédito de devoluciones y ejercicios anteriores (usuario y contadora, 2026-10-21)
 - **Origen:** pendientes de AUD-016. El usuario eligió "lo ideal" para la factura parcial y aceptó la recomendación sobre las devoluciones. La contadora respondió con las buenas prácticas de la profesión.
 - **Factura de compra por línea de remito:**
@@ -90,7 +135,7 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
   - un remito se puede facturar en varias facturas: queda pendiente lo que no se facturó; cada parte puede volver a corregir el costo mientras el producto tenga el del remito o el que dejó una factura anterior de esa línea (AUD-017);
   - los remitos facturados con la orden de compra se pueden facturar igual, con aviso (si esa factura no los incluyó);
   - sin `items` (API anterior), se factura todo lo pendiente y la diferencia se reparte por valor;
-  - un remito sin unidades por facturar (facturado o devuelto completo) se rechaza.
+  - un remito sin unidades por facturar (facturado o devuelto completo) se rechaza (ADR-029: salvo que se esperen unidades de más).
 - **Devolución contra un remito:**
   - toma primero las unidades no facturadas, que bajan su pendiente en 2.1.01.02 (si el producto vino en dos líneas, recorre las dos);
   - las ya facturadas bajan la deuda con el proveedor (Proveedores, con la reversión de IVA de ADR-011);
@@ -105,7 +150,7 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
   - cuenta nueva 3.1.02.02 "Ajuste de resultados de ejercicios anteriores", en el patrimonio;
   - va ahí el ajuste de la transición (D4 queda resuelto así, en lugar de 3.1.03.01);
   - también el costo de lo vendido de ejercicios cerrados que asienta la transición (`--inicio-ejercicio`, en hora argentina y obligatorio para aplicar); el del ejercicio en curso va a costo de lo vendido;
-  - y la parte de una factura o devolución de un remito anterior a ADR-027.
+  - y la parte de una factura o devolución de un remito anterior a ADR-027 (ADR-029: solo el valor del remito; la diferencia de precio va a 4.2.02.01).
   - El stock inicial y el costo cargado desde 0 (D6) siguen en 3.1.03.01.
 - **IVA de facturas B y C:** la contadora confirma que, si no se puede discriminar, va al costo (ya era así).
 - **Migración 067:**
@@ -114,7 +159,7 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
   - la tabla `supplier_invoice_items`;
   - se quita la clave única de `supplier_invoice_receptions.reception_id`.
 - **Migración 068 (AUD-017):** `supplier_invoice_items.product_cost` (el costo que la factura dejó al producto) y `supplier_return_items.cost_overridden`.
-  - El CHECK de inventario pasa a la **069**.
+  - El CHECK de inventario pasa a la **069** (ADR-029: a la 070).
 
 ### ADR-027 — Valuación de la mercadería por costo de última compra (usuario, 2026-10-17)
 - **Estado:** implementado en la rama `feat/revaluacion-stock` (I1-I8). Plan y criterios en `docs/execution/PLAN_VALUACION_INVENTARIO.md`; transición en `RUNBOOK_VALUACION_INVENTARIO.md`.
@@ -156,7 +201,7 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
   - 066: lo saldado por remito, lo devuelto por remito y el remito de la devolución.
   El CHECK de inventario pasa a la **067**.
 - **AUD-016 (2026-10-18), reglas técnicas agregadas:**
-  - un remito anterior a la regla (sin asiento `goods_received`) se factura contra 3.1.02.02 (ADR-028; antes, 3.1.03.01): su mercadería ya la valuó la transición;
+  - un remito anterior a la regla (sin asiento `goods_received`) se factura contra 3.1.02.02 (ADR-028; antes, 3.1.03.01): su mercadería ya la valuó la transición (ADR-029: por el valor del remito; la diferencia de precio va a 4.2.02.01);
   - un remito cuya OC se facturó sin nombrar remitos cuenta como facturado;
   - lo que salió sin costo asentado vuelve contra 3.1.03.01;
   - sin `products.cost_edit`, el remito sin OC lleva el costo del producto (lo corrige la factura) y el producto nuevo no arranca con costo fijo;

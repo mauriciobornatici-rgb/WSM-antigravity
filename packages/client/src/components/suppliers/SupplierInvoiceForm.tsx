@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { todayInArgentina } from '@/lib/argentinaDate';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ArgentinaDateInput } from '@/components/common/ArgentinaDateInput';
@@ -34,6 +35,8 @@ export type SupplierInvoicePayload = {
     vat_lines?: Array<{ vat_rate: number; net_amount: number; vat_amount: number }>;
     // ADR-028: units and net unit cost the invoice charges per delivery note line.
     items?: Array<{ reception_item_id: string; quantity: number; unit_cost: number }>;
+    // ADR-029: the supplier charged units of more and will send a credit note for them.
+    expect_credit_note?: boolean;
     purchase_kind?: 'goods' | 'shipping' | 'expense';
     other_taxes: number;
     total_amount: number;
@@ -65,6 +68,16 @@ type SupplierPurchaseOrderOption = {
 
 type SupplierInvoiceType = SupplierInvoicePayload['invoice_type'];
 type PurchaseKind = NonNullable<SupplierInvoicePayload['purchase_kind']>;
+
+// ADR-028: a delivery note invoiced in part still has units to invoice.
+const hasUnitsToInvoice = (reception: SupplierReceptionOption) => (reception.invoice_status
+    ? reception.invoice_status === 'pending' || reception.invoice_status === 'partial'
+    : !reception.supplier_invoice_id);
+
+const INVOICED_STATUS_LABEL: Partial<Record<NonNullable<SupplierReceptionOption['invoice_status']>, string>> = {
+    invoiced: 'ya facturado',
+    returned: 'devuelto',
+};
 
 const PURCHASE_KINDS: Array<{ value: PurchaseKind; label: string }> = [
     { value: 'goods', label: 'Mercadería' },
@@ -109,7 +122,7 @@ export function SupplierInvoiceForm({
     const [invoiceType, setInvoiceType] = useState<'A' | 'B' | 'C' | 'M'>('A');
     const [receptionIds, setReceptionIds] = useState<string[]>(initialReceptionId ? [initialReceptionId] : []);
     const [purchaseOrderId, setPurchaseOrderId] = useState(initialOrderId);
-    const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10));
+    const [issueDate, setIssueDate] = useState(() => todayInArgentina());
     const [dueDate, setDueDate] = useState('');
     
     const [netAmount, setNetAmount] = useState('');
@@ -125,16 +138,21 @@ export function SupplierInvoiceForm({
     // rounding), kept while that rate's net stays the same.
     const [lineEdits, setLineEdits] = useState<Record<string, InvoiceLineEdit>>({});
     const [vatEdits, setVatEdits] = useState<Record<string, { netCents: number; vat: string }>>({});
+    // ADR-029: the supplier charged more units than are pending and will send a credit note.
+    const [expectCreditNote, setExpectCreditNote] = useState(false);
 
-    // Dynamic dropdown states
-    const [receptions, setReceptions] = useState<SupplierReceptionOption[]>([]);
+    // Dynamic dropdown states: every approved delivery note of the supplier; those with units to
+    // invoice are offered, and the rest too while a credit note is expected (charged twice).
+    const [approvedReceptions, setApprovedReceptions] = useState<SupplierReceptionOption[]>([]);
+    // What happened to the list when the credit note option changed (read by screen readers).
+    const [receptionsNotice, setReceptionsNotice] = useState('');
     const [purchaseOrders, setPurchaseOrders] = useState<SupplierPurchaseOrderOption[]>([]);
     const [loadingDropdowns, setLoadingDropdowns] = useState(false);
 
     // Fetch receptions and purchase orders when supplier is selected
     useEffect(() => {
         if (!supplierId) {
-            setReceptions([]);
+            setApprovedReceptions([]);
             setPurchaseOrders([]);
             return;
         }
@@ -146,10 +164,9 @@ export function SupplierInvoiceForm({
                     api.getReceptions({ supplier_id: supplierId }) as Promise<SupplierReceptionOption[]>,
                     api.getPurchaseOrders({ supplier_id: supplierId }) as Promise<SupplierPurchaseOrderOption[]>
                 ]);
-                // ADR-028: a delivery note invoiced in part still has units to invoice.
-                const available = recs.filter(r => r.status === 'approved'
-                    && (r.invoice_status ? r.invoice_status === 'pending' || r.invoice_status === 'partial' : !r.supplier_invoice_id));
-                setReceptions(available);
+                const approved = recs.filter(r => r.status === 'approved');
+                const available = approved.filter(hasUnitsToInvoice);
+                setApprovedReceptions(approved);
                 setPurchaseOrders(pos);
                 // A reception handed in by the caller starts marked (and prefills the amounts).
                 if (initialReceptionId && available.some(r => r.id === initialReceptionId)) {
@@ -182,6 +199,25 @@ export function SupplierInvoiceForm({
         setReceptionIds([]);
         setLineEdits({});
         setVatEdits({});
+    };
+
+    // Without a credit note expected, only delivery notes with units to invoice stay marked (the
+    // units typed above what is pending show as errors to fix).
+    const changeExpectCreditNote = (checked: boolean) => {
+        setExpectCreditNote(checked);
+        if (checked) {
+            setReceptionsNotice('Ahora se muestran también los remitos ya facturados o devueltos.');
+            return;
+        }
+        setReceptionsNotice('Se muestran solo los remitos con unidades pendientes.');
+        const pendingIds = new Set(approvedReceptions.filter(hasUnitsToInvoice).map(r => r.id));
+        const removed = receptionIds.filter(id => !pendingIds.has(id)).length;
+        if (removed > 0) {
+            setReceptionIds(current => current.filter(id => pendingIds.has(id)));
+            toast.info(removed === 1
+                ? 'Se quitó 1 remito que no tiene unidades pendientes.'
+                : `Se quitaron ${removed} remitos que no tienen unidades pendientes.`);
+        }
     };
 
     const updateInvoiceLine = (lineId: string, patch: { quantity?: string; unitCost?: string }) => {
@@ -257,8 +293,10 @@ export function SupplierInvoiceForm({
 
     // ADR-028: goods are invoiced per delivery note line; the net of each rate is the sum of its lines
     // (the product's rate) and its VAT is calculated, or typed when the supplier rounded it otherwise.
+    const allowExcess = expectCreditNote && effectivePurchaseKind === 'goods';
+    const receptions = allowExcess ? approvedReceptions : approvedReceptions.filter(hasUnitsToInvoice);
     const selectedReceptions = receptions.filter(r => receptionIds.includes(r.id));
-    const lines = invoiceLines(selectedReceptions, lineEdits);
+    const lines = invoiceLines(selectedReceptions, lineEdits, { allowExcess });
     const linesMode = effectivePurchaseKind === 'goods' && lines.length > 0;
     const rateRows = netByRate(lines).map(({ rate, netCents }) => {
         const computed = round2(netCents / 100 * rate / 100);
@@ -268,8 +306,13 @@ export function SupplierInvoiceForm({
         return { rate, netCents, net: netCents / 100, vat };
     });
     const invoicedLines = lines.filter(line => line.units > 0);
-    const linesDifference = round2(invoicedLines.reduce((sum, line) => sum + line.netCents - line.remitoCents, 0) / 100);
-    const productsWithNewCost = new Set(invoicedLines.filter(line => line.netCents !== line.remitoCents).map(line => line.productName)).size;
+    // What the units received cost against the delivery notes (the units of more are owed back).
+    const linesDifference = round2(invoicedLines.reduce((sum, line) => sum + line.receivedNetCents - line.remitoCents, 0) / 100);
+    const productsWithNewCost = new Set(invoicedLines
+        .filter(line => line.units > line.excess && line.receivedNetCents !== line.remitoCents)
+        .map(line => line.productName)).size;
+    const excessUnits = invoicedLines.reduce((sum, line) => sum + line.excess, 0);
+    const excessNet = round2(invoicedLines.reduce((sum, line) => sum + line.excessCents, 0) / 100);
 
     // With several rates the voucher's net and VAT are the sums of the lines.
     let netVal = parseFloat(netAmount) || 0;
@@ -303,7 +346,10 @@ export function SupplierInvoiceForm({
             const invalid = lines.find(line => !line.valid);
             if (invalid) {
                 toast.error(`Revisá ${invalid.productName} (remito ${invalid.receptionLabel})`, {
-                    description: `Las unidades van enteras, de 0 a ${invalid.pending} (lo pendiente del remito), y el costo no puede ser negativo.`,
+                    description: allowExcess
+                        ? 'Las unidades van enteras, 0 o más, y el costo no puede ser negativo.'
+                        : `Las unidades van enteras, de 0 a ${invalid.pending} (lo pendiente del remito), y el costo no puede ser negativo.`
+                            + ' Si el proveedor cobró de más, marcá que cobró unidades de más.',
                 });
                 // Take the user to the field to fix.
                 document.getElementById(invalid.quantityValid ? invoiceLineCostId(invalid.id) : invoiceLineQuantityId(invalid.id))?.focus();
@@ -347,6 +393,7 @@ export function SupplierInvoiceForm({
             };
             if (linesMode) {
                 payload.items = invoicedLines.map(line => ({ reception_item_id: line.id, quantity: line.units, unit_cost: line.cost }));
+                if (allowExcess) payload.expect_credit_note = true;
                 if (rateRows.length === 1) {
                     payload.vat_rate = rateRows[0]?.rate ?? 21;
                 } else {
@@ -370,6 +417,13 @@ export function SupplierInvoiceForm({
             if (dueDate) payload.due_date = dueDate;
             if (notes.trim()) payload.notes = notes.trim();
             const result = await onSubmit(payload);
+            const creditExpected = Number(result?.credit_expected || 0);
+            if (creditExpected > 0) {
+                toast.info(`Quedó una nota de crédito a recibir por ${formatMoney(creditExpected)}`, {
+                    description: 'Cuando llegue la nota de crédito del proveedor, cargala desde Facturas de compra.',
+                    duration: 10000,
+                });
+            }
             const difference = Number(result?.receptions_difference || 0);
             if (difference !== 0) {
                 toast.info(`La factura difiere de lo recibido en ${formatMoney(Math.abs(difference))}`, {
@@ -420,13 +474,34 @@ export function SupplierInvoiceForm({
                     <legend className="text-sm font-medium leading-none">
                         Remitos a facturar {effectivePurchaseKind === 'goods' ? '*' : '(opcional)'}
                     </legend>
+                    {supplierId && effectivePurchaseKind === 'goods' ? (
+                        <div className="flex min-h-11 items-start gap-3 rounded-md border p-3">
+                            <input
+                                id="expect-credit-note"
+                                type="checkbox"
+                                checked={expectCreditNote}
+                                onChange={e => changeExpectCreditNote(e.target.checked)}
+                                aria-describedby="expect-credit-note-help"
+                                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded accent-primary"
+                            />
+                            <div className="space-y-0.5">
+                                <Label htmlFor="expect-credit-note" className="cursor-pointer">El proveedor cobró unidades de más</Label>
+                                <p id="expect-credit-note-help" className="text-xs text-muted-foreground">
+                                    Marcalo si la factura cobra más unidades de las que llegaron (o que ya estaban facturadas o devueltas) y el
+                                    proveedor va a mandar una nota de crédito. Lo cobrado de más queda en «Notas de crédito a recibir» hasta que
+                                    cargues esa nota.
+                                </p>
+                            </div>
+                        </div>
+                    ) : null}
+                    <p role="status" className="sr-only">{receptionsNotice}</p>
                     {!supplierId ? (
                         <p id="receptions-help" className="text-xs text-muted-foreground">Elegí un proveedor para ver sus remitos pendientes de factura.</p>
                     ) : loadingDropdowns ? (
                         <p id="receptions-help" className="text-xs text-muted-foreground">Cargando remitos...</p>
                     ) : receptions.length === 0 ? (
                         <p id="receptions-help" className="text-xs text-muted-foreground">
-                            Este proveedor no tiene remitos aprobados sin facturar.
+                            {allowExcess ? 'Este proveedor no tiene remitos aprobados.' : 'Este proveedor no tiene remitos aprobados sin facturar.'}
                             {effectivePurchaseKind === 'goods' ? ' Registrá primero la recepción de la mercadería (puede ser sin orden de compra).' : ''}
                         </p>
                     ) : (
@@ -448,6 +523,9 @@ export function SupplierInvoiceForm({
                                                 {r.created_at ? <span className="text-muted-foreground"> · {new Date(r.created_at).toLocaleDateString('es-AR')}</span> : null}
                                                 {r.invoice_status === 'partial' ? (
                                                     <span className="text-muted-foreground"> · facturado en parte</span>
+                                                ) : null}
+                                                {r.invoice_status && INVOICED_STATUS_LABEL[r.invoice_status] ? (
+                                                    <span className="text-muted-foreground"> · {INVOICED_STATUS_LABEL[r.invoice_status]}</span>
                                                 ) : null}
                                                 {Number(r.invoiced_by_order) === 1 ? (
                                                     <span className="block text-xs text-amber-800 dark:text-amber-300">
@@ -471,8 +549,15 @@ export function SupplierInvoiceForm({
                 <section className="space-y-2" aria-labelledby="invoice-lines-title">
                     <h4 id="invoice-lines-title" className="text-sm font-semibold">Qué cobra la factura</h4>
                     <p role="status" className="sr-only">Se cargaron {lines.length} líneas para facturar.</p>
-                    <SupplierInvoiceLines lines={lines} onChange={updateInvoiceLine} onSetAll={setAllInvoiceLines} />
+                    <SupplierInvoiceLines lines={lines} onChange={updateInvoiceLine} onSetAll={setAllInvoiceLines} allowExcess={allowExcess} />
                     <div aria-live="polite">
+                        {excessUnits > 0 ? (
+                            <p className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">
+                                La factura cobra {excessUnits === 1 ? '1 unidad' : `${excessUnits} unidades`} de más por {formatMoney(excessNet)} netos
+                                {invoiceType === 'B' ? ' (más su IVA)' : ''}. Quedan como nota de crédito a recibir: no entran
+                                al stock ni cambian el costo.
+                            </p>
+                        ) : null}
                         {Math.abs(linesDifference) > 0.01 ? (
                             <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">
                                 La factura cobra {formatMoney(Math.abs(linesDifference))} {linesDifference > 0 ? 'más' : 'menos'} que el costo de los remitos.

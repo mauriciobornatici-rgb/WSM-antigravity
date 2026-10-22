@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { todayInArgentina } from "@/lib/argentinaDate";
 import { Activity, Plus, TrendingDown, Sparkles, MapPin, Move, Download, Tag, BarChart3, Layers3 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
@@ -193,7 +194,7 @@ export default function InventoryPage() {
             for (const [supplierId, supplierItems] of Object.entries(itemsBySupplier)) {
                 const poPayload = {
                     supplier_id: supplierId,
-                    order_date: new Date().toISOString().slice(0, 10),
+                    order_date: todayInArgentina(),
                     notes: "Orden de reposición automática de stock (WMS)",
                     items: supplierItems.map((item) => {
                         const prod = products.find((p) => p.id === item.id);

@@ -202,7 +202,7 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - [x] `431a5ac` subido; PR #11 con CI verde (4/4), mergeado con autorización del usuario: `5691c44`. Este checkpoint queda sin commitear en `main` hasta la próxima rama.
 - [x] Pendientes de AUD-016 respondidos por el usuario y la contadora (2026-10-21): pasaron a ADR-028.
 
-## EN CURSO — ADR-028: factura por línea, crédito de devoluciones y ejercicios anteriores (rama `feat/factura-parcial-y-area`)
+## ADR-028: factura por línea, crédito de devoluciones y ejercicios anteriores — mergeada (PR #12, `a405401`, 2026-10-22, autorización del usuario)
 
 - Decisiones del usuario: 1) el crédito de la devolución es el último costo facturado y solo gerente o administrador lo cambia; 2) "lo ideal": la factura cobra unidades y costo por línea de remito, en partes.
 - La contadora respondió con las buenas prácticas (RT 17): el ajuste de la transición y el costo de lo vendido de ejercicios cerrados van a 3.1.02.02 (AREA); el IVA de B/C, al costo.
@@ -210,13 +210,43 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
   - Evidencia: validate 0 (1036 + 115); coverage 96,86/90,83/94,89; `qa:integration` 154/154; RBAC OK; E2E 6/6; simulación 161/161; transición simulada en `wsm_sports_erp` con `--inicio-ejercicio` y `after.ok`.
 - [x] AUD-017 (guardián, seguridad, UX y auditor) corregido; detalle en `AUDIT.md`. Migración 068 (`product_cost`, `cost_overridden`) aplicada en QA, `wsm_sports_erp` y `wsm_simulacion`; el CHECK de inventario pasa a la 069.
 - [x] `f2c12a4` subido; PR #12 (`feat/factura-parcial-y-area` → `main`) abierto y vinculado. Evidencia: validate 0 (1037 + 115); coverage 96,89/90,69/94,91; `qa:integration` 157/157; RBAC OK; E2E 6/6; simulación 161/161; transición simulada con `after.ok`. Falta la autorización de merge del usuario.
-- Pendiente del usuario (AUD-017): factura por más unidades que las pendientes ("NC a recibir"); devolución sin remito de un producto que el proveedor nunca entregó. Contadora: alcance de 3.1.02.02 en el ajuste final y en diferencias de precio del año de remitos viejos.
+- [x] CI del PR #12: falló la auditoría de dependencias por avisos nuevos (vite, follow-redirects, vitest); `409f94e` npm audit fix (solo lockfile). CI 4/4 verde y merge: `a405401`.
+- Respuestas del usuario y la contadora sobre AUD-017 (2026-10-21): pasaron a ADR-029.
+
+## EN CURSO — ADR-029: nota de crédito a recibir de proveedores (rama `feat/nc-a-recibir`, PR #13)
+
+- Usuario: "1- si" (cuenta transitoria para facturas que cobran unidades de más) y "2- no" (la devolución sin remito sigue igual). Contadora: el ajuste de la transición va entero a 3.1.02.02; la diferencia de precio del año en remitos viejos va a 4.2.02.01 (solo el valor del remito, a 3.1.02.02).
+- [x] `d2f2439`:
+  - migración 069 (aplicada en QA, `wsm_sports_erp` y `wsm_simulacion`): cuenta 1.1.06.01, `excess_quantity`, `credit_expected_amount` y las tablas de notas de crédito;
+  - `POST/GET /api/supplier-credit-notes`;
+  - en la pantalla, la casilla "El proveedor cobró unidades de más", la columna "NC a recibir" y la cuenta corriente;
+  - de paso, en la cuenta corriente del proveedor los pagos ya no salen duplicados y las devoluciones muestran su importe;
+  - el CHECK de inventario pasa a la 070.
+  - Evidencia: validate 0 (1050 + 117); coverage 96,81/90,52/94,64; `qa:integration` 160/160; RBAC OK (2 casos nuevos); E2E 6/6; simulación 171/171 (paso 16c nuevo); flujo probado en el navegador sobre la base local.
+- [x] AUD-018 (guardián, seguridad, UX y auditor externo) corregido; detalle en `AUDIT.md`.
+  - Tope de la NC en el total de la factura; excedente solo confirmado.
+  - Pago de varias facturas con bloqueo previo (prueba con MySQL real que falla sin el arreglo).
+  - IVA controlado y alícuota obligatoria; número normalizado.
+  - 069 sin FK y con CHECK, alineada en las bases locales; QA rehecha.
+  - Conciliación de 1.1.06.01 en `after.ok`.
+  - Libro IVA exportado sin fórmulas.
+  - Arreglos de UX, y fecha de hoy en hora argentina en los formularios.
+  - **Incidente:** el auditor corrió una prueba fuera de `qa-runner` y una sincronización en segundo plano hizo un SELECT en la base de producción (falló; sin escrituras). Cerrado: la prueba ya no la dispara y el pool rechaza hosts no locales en procesos de prueba.
+  - Evidencia: validate 0 (1053 + 119); coverage 96,99/90,62/94,75; `qa:integration` 161/161 ×2 (QA nueva); RBAC OK; E2E 6/6; simulación 171/171; transición simulada en `wsm_sports_erp` con `after.ok` (1.1.06.01 en 0).
+- [x] `d2f2439` + `88dbe97` subidos; PR #13 (`feat/nc-a-recibir` → `main`) abierto y vinculado: https://github.com/mauriciobornatici-rgb/WSM-antigravity/pull/13. Falta la autorización de merge del usuario.
+- Pendiente del usuario o la contadora (AUD-018):
+  1. resto de una NC menor;
+  2. remito que llega después;
+  3. anulación de una NC;
+  4. pagar antes de la NC;
+  5. saldo a favor del proveedor;
+  6. excedente a resultado o a costo.
 
 ## Próximos pasos
 
 1. Usuario: simular todos los procesos con `scripts/simulacion.ps1` según `docs/execution/GUIA_SIMULACION.md`, y hacer la homologación de ARCA con credenciales de prueba.
 2. Usuario: antes de desplegar, confirmar que producción usa MySQL 8.0.16 o posterior (lo exige la 062; el runner lo controla). Después, correr en producción los runbooks (`docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`) y aplicar las migraciones con el despliegue.
-3. I8: migración 069 (CHECK de inventario; las 063-068 son índices, la valuación de ADR-025/027 y la factura por línea de ADR-028) — solo después de la reparación en producción (AP2).
+3. I8: migración 070 (CHECK de inventario; las 063-069 son índices, la valuación de ADR-025/027, la factura por línea de ADR-028 y la NC a recibir de ADR-029) — solo después de la reparación en producción (AP2).
 - [x] ADR-021 (AUD-009 corregido): condición IVA del cliente (migración 060, sin FK; Inscripto/Monotributista con CUIT), letra controlada antes de numerar (A siempre con CUIT; offline se corrige y audita), sugerencia de letra en POS y pedidos; alertas ARCA (conflicto, verificación > 10 min, rechazados) en el panel y contador en "Facturación". Evidencia: validate 0 (955 + 99); coverage 96,62/90,87/94,10; integración 108/108 ×2; RBAC OK; E2E 6/6; simulación 153/153. Decisiones pendientes del usuario en AUD-009 (anular factura no autorizable, alerta de facturas sin CAE por horas, carga de condiciones existentes, permiso, impresión "Sin especificar").
 - [x] ADR-022 (decisiones del usuario sobre AUD-009; AUD-010 corregido): anular y volver a emitir una factura no autorizada (migración 061), alerta de facturas sin CAE a las 24 h, condición IVA cargada en el momento (POS, pedidos, factura manual) y filtro en Clientes, Monotributista recibe B. Evidencia: validate 0 (965 + 100); coverage 96,67/90,71/93,97; integración 114/114 ×2; RBAC OK; E2E 6/6; simulación 153/153. Decisiones pendientes del usuario en AUD-010 (quién reemite, ticket, antigüedad, fecha al cruzar mes, alerta al configurar ARCA).
 - [x] ADR-023 (decisiones del usuario sobre AUD-010): cualquiera con facturación reemite; A/B → ticket permitido; reemisión hasta 5 días corridos (después solo administrador, auditado); alerta de 24 h solo desde `arca_configured_at` (migración 061 reaplicada en local y QA). Evidencia: validate 0 (967 + 101); coverage 96,67/90,60/93,97; integración 114/114 ×2; RBAC OK; E2E 6/6; simulación 153/153. El punto 4 quedó resuelto en ADR-024 (nota de crédito interna).

@@ -1,5 +1,67 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-018 — 2026-10-22 — ADR-029 (rama `feat/nc-a-recibir`): `guardian-integridad`, `revisor-seguridad`, `revisor-ux` y `auditor-externo`
+
+Veredicto del auditor: **con reservas** (huecos operativos que decide el usuario, abajo).
+- Guardián: ninguna violación alta; asientos balanceados, sin stock tocado y 2.1.01.02 y 1.1.06.01 conciliadas.
+- Seguridad: nada explotable sin permiso; un abuso interno medio.
+
+Cada hallazgo se verificó en el código antes de corregirlo.
+
+**Incidente (auditor):** para revisar, corrió una prueba unitaria (`test/e2eCycle.test.js`) con `node --test`, fuera de `qa-runner`.
+- Al cargar el `.env`, una sincronización de stock con Tiendanube en segundo plano hizo **una lectura (SELECT) en la base de producción**.
+- La consulta falló por una tabla inexistente; no hubo escrituras.
+- Se cerró de dos formas:
+  - la prueba ya no dispara esa sincronización;
+  - el pool de MySQL se niega a conectar a un host no local desde cualquier proceso de pruebas (`NODE_TEST_CONTEXT` / `--test`), con su prueba.
+
+**Corregido:**
+- **Nota sin tope** (seguridad E1, guardián M2, auditor H2):
+  - las notas de una factura no pueden superar su total (409 `credit_note_exceeds_invoice`);
+  - lo que excede lo esperado se registra como mejor precio solo si el usuario lo confirma (`accept_excess`, 409 `credit_note_exceeds_expected`); la pantalla muestra la diferencia y pide la confirmación.
+- **Pago de varias facturas con una foto vieja** (guardián M1): el pago bloquea todas sus facturas, en orden, antes de leer pagos y notas. Una prueba con MySQL real reproduce el caso; falla sin el arreglo.
+- **IVA** (seguridad H1, guardián B3, auditor H5):
+  - con una sola alícuota, el IVA se controla contra el neto, como por línea;
+  - la nota con IVA exige su alícuota: ya no se supone un 21 %.
+- **Número de la nota** (seguridad H4): "1-123" y "0001-00000123" son la misma nota.
+- **Doble clic** (guardián B4): el duplicado se controla antes que lo pendiente y responde "ya registrada".
+- **Proveedor con notas a recibir** (guardián B1): no se puede eliminar.
+- **Costo de líneas que solo cobran de más** (guardián B2, auditor H4):
+  - no dejan `product_cost`;
+  - no cuentan en el crédito sugerido de una devolución.
+- **Conciliación** (guardián B5): el control de valuación (`after.ok`) concilia también 1.1.06.01. Las precondiciones de la transición exigen la 069.
+- **Migración 069** (guardián B6): sin FK, como la 060 y la 067 (collation de la base de producción); con CHECK `0 ≤ applied_amount ≤ total_amount`.
+  - Se alineó en `wsm_sports_erp` y `wsm_simulacion` (se quitaron las FK y se registró el checksum nuevo); QA se rehízo desde cero.
+- **Esquemas** (seguridad H2, H3): topes de importe en factura y nota (400 en lugar de 500); fecha de la nota como AAAA-MM-DD real.
+- **Libro IVA Compras exportado** (seguridad E2): el CSV se arma con `exportUtils` (celdas entre comillas y sin fórmulas).
+- **Listado de notas** (seguridad H5): columnas explícitas.
+- **Pantalla:**
+  - "Cargar NC" solo para quien es de compras (auditor H6);
+  - la casilla de unidades de más está arriba de los remitos (UX A2):
+    - avisa cuando cambia la lista y cuando quita remitos marcados;
+    - con la casilla marcada, el texto de lista vacía cambia.
+  - en la nota:
+    - errores junto a cada campo, "Neto (sin IVA)" o "Importe" según la letra, y aviso ámbar del excedente (UX A1, M2, M3);
+    - en una B, la alícuota divide el mismo total.
+  - "NC" se explica, el nombre accesible contiene el texto visible y se ve "NC recibida" (UX M4, B8);
+  - fecha de hoy en hora argentina en la nota, la factura, el pago, la orden de compra y la contabilidad (UX M5, auditor H5);
+  - en la cuenta corriente:
+    - lo pendiente muestra las notas de crédito y el progreso las incluye (UX A3);
+    - avisa si no se pudieron cargar las notas (UX M6);
+    - las devoluciones sin ajuste valen 0 (UX M1).
+- **Docs** (auditor H3): runbook de valuación (remitos facturados con la OC y `after.ok`); TASKS y DECISIONS al día.
+
+**Decisiones del usuario o la contadora (pendientes):**
+1. Nota menor a lo esperado: ¿se da por perdido el resto (contra resultado) y con qué permiso?
+2. Unidades que llegan después en otro remito: ¿se cruza ese remito con la nota a recibir de la factura, o se indica no usar la marca en ese caso?
+3. Nota cargada con error: procedimiento de anulación (contra-asiento y estado de la factura).
+4. Pagar antes de recibir la nota: ¿limitar el pago a total − crédito pendiente, o solo avisar?
+5. Saldo a favor del proveedor (pagado de más): imputación a otras facturas o reintegro.
+6. Nota mayor a lo esperado: hoy va a 4.2.02.01 confirmada por el usuario; ¿la contadora prefiere corregir costo?
+- Permiso: cargar notas y la marca ya son solo de gerente y administrador (`procurement.manage`).
+
+**Residuales (sin cambio):** la reversión de una NC con varias alícuotas confía en las líneas que trae; no se controla contra el IVA que tomó la factura.
+
 ## AUD-017 — 2026-10-21 — ADR-028 (rama `feat/factura-parcial-y-area`): `guardian-integridad`, `revisor-seguridad`, `revisor-ux` y `auditor-externo`
 
 Veredicto del auditor: **con reservas**. El mayor queda consistente en todos los caminos revisados. Seguridad: nada explotable. Cada hallazgo se verificó en el código antes de corregirlo.

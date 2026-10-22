@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
+import { daysAgoInArgentina, todayInArgentina } from "@/lib/argentinaDate"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 import { api, type BalanceSheetResponse } from "@/services/api"
 import type { QueryParams } from "@/types/api"
@@ -50,19 +51,11 @@ export default function AccountingPage() {
     const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
     // Default dates (last 30 days)
-    const [startDate, setStartDate] = useState<string>(() => {
-        const d = new Date()
-        d.setDate(d.getDate() - 30)
-        return d.toISOString().split("T")[0] || ""
-    })
-    const [endDate, setEndDate] = useState<string>(() => {
-        return new Date().toISOString().split("T")[0] || ""
-    })
+    const [startDate, setStartDate] = useState<string>(() => daysAgoInArgentina(30))
+    const [endDate, setEndDate] = useState<string>(() => todayInArgentina())
 
     // Manual journal entry state
-    const [manualDate, setManualDate] = useState<string>(() => {
-        return new Date().toISOString().split("T")[0] || ""
-    })
+    const [manualDate, setManualDate] = useState<string>(() => todayInArgentina())
     const [manualDesc, setManualDesc] = useState("")
     const [manualLines, setManualLines] = useState<Array<{ account_code: string; debit: number; credit: number; notes: string }>>([
         { account_code: "", debit: 0, credit: 0, notes: "" },

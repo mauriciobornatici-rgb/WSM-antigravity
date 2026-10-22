@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { todayInArgentina } from '@/lib/argentinaDate';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -30,7 +31,7 @@ interface SupplierPaymentFormProps {
 }
 
 export function SupplierPaymentForm({ supplier, onSubmit, onCancel }: SupplierPaymentFormProps) {
-    const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+    const [paymentDate, setPaymentDate] = useState(() => todayInArgentina());
     const [notes, setNotes] = useState('');
     const [submitting, setSubmitting] = useState(false);
     // One key per payment attempt, kept across retries until the payment is confirmed.

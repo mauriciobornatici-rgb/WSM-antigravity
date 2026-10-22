@@ -577,6 +577,55 @@ async function main() {
         check('El remito sin OC también queda saldado al facturarlo', money(bridge.v), 0);
     });
 
+    await step('16c. Factura que cobra una unidad de más y nota de crédito del proveedor (ADR-029)', async () => {
+        const [product] = await q('SELECT purchase_price FROM products WHERE id = ?', [ctx.p2.id]);
+        const cost = money(Number(product.purchase_price));
+        const rec = await call('POST', '/api/receptions', {
+            supplier_id: ctx.supplier.id, remito_number: `R-${RUN}-4`,
+            items: [{ product_id: ctx.p2.id, quantity_received: 2, unit_cost: cost, location_assigned: ctx.dep }],
+        });
+        await call('POST', '/api/quality-checks', { reception_id: rec.id, product_id: ctx.p2.id, result: 'pass', quantity_checked: 2, quantity_passed: 2, quantity_failed: 0 });
+        await call('POST', `/api/receptions/${rec.id}/approve`, {});
+        move(ctx.p2.id, ctx.dep, 2);
+        const [line] = await q('SELECT id FROM reception_items WHERE reception_id = ?', [rec.id]);
+        // Llegaron 2 y el proveedor cobra 3: la tercera queda como nota de crédito a recibir.
+        const net = money(3 * cost);
+        const vat = money(net * 0.21);
+        const balance0 = await supplierBalance();
+        const inv = await call('POST', '/api/supplier-invoices', {
+            invoice_number: `0003-${RUN.slice(-8)}`, invoice_type: 'A', supplier_id: ctx.supplier.id, reception_ids: [rec.id],
+            issue_date: new Date().toISOString().slice(0, 10), net_amount: net, vat_amount: vat, vat_rate: 21, total_amount: money(net + vat),
+            items: [{ reception_item_id: line.id, quantity: 3, unit_cost: cost }], expect_credit_note: true,
+        });
+        check('La unidad de más queda como nota de crédito a recibir', inv.credit_expected, cost);
+        check('Saldo proveedor sube por toda la factura', await supplierBalance(), money(balance0 + net + vat));
+        await verifyStock('La unidad cobrada de más no entra al stock', ctx.pids);
+        const toReceive = async (...ids) => {
+            const [row] = await q(
+                `SELECT COALESCE(SUM(jel.debit - jel.credit), 0) AS v FROM journal_entries je
+                 JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id AND jel.account_code = '1.1.06.01'
+                 WHERE je.reference_id IN (?)`,
+                [ids]
+            );
+            return money(row.v);
+        };
+        check('Notas de crédito a recibir (1.1.06.01) tras la factura', await toReceive(inv.id), cost);
+        const nc = await call('POST', '/api/supplier-credit-notes', {
+            supplier_invoice_id: inv.id, credit_note_number: `NC-${RUN.slice(-8)}`, issue_date: new Date().toISOString().slice(0, 10),
+            net_amount: cost, vat_amount: money(cost * 0.21), vat_rate: 21,
+        });
+        check('La nota de crédito salda lo esperado', [nc.applied_amount, nc.credit_left], [cost, 0]);
+        check('Notas de crédito a recibir queda en 0', await toReceive(inv.id, nc.id), 0);
+        check('Saldo proveedor baja por la nota de crédito', await supplierBalance(), money(balance0 + net + vat - cost - money(cost * 0.21)));
+        try {
+            await call('POST', '/api/supplier-credit-notes', {
+                supplier_invoice_id: inv.id, credit_note_number: `NC2-${RUN.slice(-8)}`, issue_date: new Date().toISOString().slice(0, 10),
+                net_amount: 1, vat_amount: 0.21, vat_rate: 21,
+            }, { expect: 409 });
+            check('Otra nota sin crédito pendiente → 409', true, true);
+        } catch (e) { check('Otra nota sin crédito pendiente → rechazada', e.status === 409, true); }
+    });
+
     await step('17. Cierre de caja sin diferencias', async () => {
         const exp = await shiftExpected();
         const closed = await call('POST', `/api/cash-shifts/${ctx.shift.id}/close`, { actual_balance: exp, notes: 'Cierre simulación' });

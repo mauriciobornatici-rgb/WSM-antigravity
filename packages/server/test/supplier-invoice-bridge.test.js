@@ -80,8 +80,8 @@ test('an invoice for exactly what was received changes no cost; legacy and new d
 
     // r2 came before ADR-027 (never in 2.1.01.02): the transition valued its goods against
     // 3.1.02.02 (ADR-028), so its part settles that adjustment instead of adding inventory (AUD-016).
-    // The 10 below the delivery notes is spread by value: 5 to each line, so the old line's goes
-    // with it to 3.1.02.02 and only the new line's is holding result.
+    // The 10 below the delivery notes is a price of this year: holding result for both lines
+    // (ADR-029, contadora); 3.1.02.02 takes only the old delivery note's value.
     const mixed = harness(t, {
         bridged: ['r1'],
         items: [
@@ -91,7 +91,7 @@ test('an invoice for exactly what was received changes no cost; legacy and new d
     });
     await mixed.service.createSupplierInvoice(invoice({ reception_ids: ['r1', 'r2'], net_amount: 190, vat_amount: 39.9, total_amount: 229.9 }), 'u');
     assert.deepEqual(lines(mixed.entries[0]), [
-        ['2.1.01.02', 100, 0], ['3.1.02.02', 95, 0], ['4.2.02.01', 0, 5], ['1.1.05.02', 39.9, 0], ['2.1.01.01', 0, 229.9],
+        ['2.1.01.02', 100, 0], ['3.1.02.02', 100, 0], ['4.2.02.01', 0, 10], ['1.1.05.02', 39.9, 0], ['2.1.01.01', 0, 229.9],
     ]);
     const links = mixed.calls.filter(({ statement }) => statement.startsWith('INSERT INTO supplier_invoice_receptions'));
     assert.deepEqual(links.map(({ params }) => params.slice(1)), [['r1', 100], ['r2', null]]);
@@ -129,8 +129,9 @@ test('a partial invoice clears only its units at the delivery note cost; each li
     const taken = calls.filter(({ statement }) => statement.startsWith('UPDATE reception_items SET invoiced_quantity'));
     assert.deepEqual(taken.map(({ params }) => params), [[3, 'line-p']]);
     const saved = calls.filter(({ statement }) => statement.startsWith('INSERT INTO supplier_invoice_items'));
-    // Net unit cost, what it cleared, and the cost it left the product (for a later part, AUD-017).
-    assert.deepEqual(saved.map(({ params }) => params.slice(2)), [['r1', 'line-p', 'p', 3, 110, 300, 110]]);
+    // Net unit cost, what it cleared, the cost it left the product (for a later part, AUD-017) and
+    // no units charged of more (ADR-029).
+    assert.deepEqual(saved.map(({ params }) => params.slice(2)), [['r1', 'line-p', 'p', 3, 110, 300, 110, 0]]);
     assert.deepEqual([result.receptions_net, result.receptions_difference], [300, 30]);
     assert.equal(audits[0].new_values.difference, 30);
 });
@@ -163,6 +164,71 @@ test('invoice lines must add up to the net (a cent per line) and never take more
     assert.deepEqual(lines(rounded.entries[0]), [['2.1.01.02', 66.66, 0], ['4.2.02.01', 14.01, 0], ['2.1.01.01', 0, 80.67]]);
     // "p" costs 100 today, not the delivery note's 33.33: someone changed it since, so it stays.
     assert.equal(rounded.changes.length, 0);
+});
+
+// ---- ADR-029: units charged beyond the delivery note wait for the supplier's credit note ----
+
+test('units charged of more go to "Notas de crédito a recibir"; only the units left are taken', async (t) => {
+    const { service, entries, changes, calls, audits } = harness(t, {
+        items: [{ id: 'line-p', reception_id: 'r1', product_id: 'p', quantity_received: 2, returned_quantity: 0, unit_cost: '100.00' }],
+    });
+    // 3 units at 110 for a delivery note of 2 at 100: 2 received (200 + 20 of price) and 1 owed back (110).
+    const result = await service.createSupplierInvoice(invoice({
+        net_amount: 330, vat_amount: 69.3, total_amount: 399.3, expect_credit_note: true,
+        items: [{ reception_item_id: 'line-p', quantity: 3, unit_cost: 110 }],
+    }), 'u');
+
+    assert.deepEqual(lines(entries[0]), [
+        ['2.1.01.02', 200, 0], ['4.2.02.01', 20, 0], ['1.1.06.01', 110, 0], ['1.1.05.02', 69.3, 0], ['2.1.01.01', 0, 399.3],
+    ]);
+    // The price per unit is the same for every unit charged: the cost follows it.
+    assert.deepEqual(changes.map((change) => [change.product.id, change.newCost]), [['p', 110]]);
+    const taken = calls.filter(({ statement }) => statement.startsWith('UPDATE reception_items SET invoiced_quantity'));
+    assert.deepEqual(taken.map(({ params }) => params), [[2, 'line-p']]);
+    const saved = calls.filter(({ statement }) => statement.startsWith('INSERT INTO supplier_invoice_items'));
+    assert.deepEqual(saved.map(({ params }) => params.slice(2)), [['r1', 'line-p', 'p', 2, 110, 200, 110, 1]]);
+    const header = calls.find(({ statement }) => statement.startsWith('INSERT INTO supplier_invoices'));
+    assert.equal(header.params.at(-1), 110);
+    assert.equal(result.credit_expected, 110);
+    // The unit owed back is no price difference: only the 20 of the units received.
+    assert.deepEqual([result.receptions_net, result.receptions_difference], [200, 20]);
+    assert.equal(audits[0].new_values.credit_expected, 110);
+    assert.deepEqual(audits[0].new_values.excess_items, [{ reception_item_id: 'line-p', product_id: 'p', excess_quantity: 1 }]);
+});
+
+test('without the credit note expected, an invoice never charges more than is left', async (t) => {
+    const items = [{ id: 'line-p', reception_id: 'r1', product_id: 'p', quantity_received: 2, returned_quantity: 0, unit_cost: 100 }];
+    const refused = harness(t, { items });
+    await assert.rejects(
+        () => refused.service.createSupplierInvoice(invoice({ net_amount: 300, vat_amount: 63, total_amount: 363, items: [{ reception_item_id: 'line-p', quantity: 3, unit_cost: 100 }] }), 'u'),
+        (err) => err.statusCode === 409 && err.responseBody.error === 'invoice_exceeds_reception' && /nota de crédito/.test(err.message)
+    );
+    assert.equal(refused.entries.length, 0);
+    // The units are what is compared, so the flag needs them.
+    const { service } = harness(t, { items });
+    await assert.rejects(
+        () => service.createSupplierInvoice(invoice({ net_amount: 300, vat_amount: 63, total_amount: 363, expect_credit_note: true }), 'u'),
+        (err) => err.statusCode === 400 && err.responseBody.error === 'invalid_invoice_item'
+    );
+});
+
+test('a delivery note invoiced in full can be charged again only as units owed back', async (t) => {
+    const items = [{ id: 'line-p', reception_id: 'r1', product_id: 'p', quantity_received: 2, returned_quantity: 0, invoiced_quantity: 2, unit_cost: 100 }];
+    const { service } = harness(t, { items });
+    const twice = invoice({ invoice_type: 'B', net_amount: 100, vat_amount: 21, total_amount: 121, items: [{ reception_item_id: 'line-p', quantity: 1, unit_cost: 100 }] });
+    await assert.rejects(
+        () => service.createSupplierInvoice(twice, 'u'),
+        (err) => err.statusCode === 409 && err.responseBody.error === 'reception_already_invoiced'
+    );
+    const owed = harness(t, { items });
+    await owed.service.createSupplierInvoice({ ...twice, expect_credit_note: true }, 'u');
+    // A Factura B puts its VAT in the cost, so the whole of it is owed back.
+    assert.deepEqual(lines(owed.entries[0]), [['1.1.06.01', 121, 0], ['2.1.01.01', 0, 121]]);
+    assert.equal(owed.changes.length, 0, 'units never received move no cost');
+    assert.equal(owed.calls.filter(({ statement }) => statement.startsWith('UPDATE reception_items SET invoiced_quantity')).length, 0);
+    const saved = owed.calls.filter(({ statement }) => statement.startsWith('INSERT INTO supplier_invoice_items'));
+    // No units received: the line leaves no cost for the product (AUD-018).
+    assert.deepEqual(saved.map(({ params }) => params.slice(5)), [[0, 100, 0, null, 1]]);
 });
 
 test('a deadlock while invoicing answers 409 busy (the screen can retry)', async (t) => {

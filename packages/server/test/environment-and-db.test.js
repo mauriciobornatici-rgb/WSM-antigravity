@@ -312,7 +312,8 @@ test('database pool is lazy, applies SSL/options, binds methods and can be reope
         ENCRYPTION_KEY: 'key',
         DB_SSL: 'true',
         DB_SSL_REJECT_UNAUTHORIZED: 'false',
-        DB_HOST: 'db.internal',
+        // Loopback: under the test runner the pool never connects to a remote host (AUD-018).
+        DB_HOST: '127.0.0.2',
         DB_PORT: '3310',
         DB_USER: 'erp',
         DB_PASSWORD: 'password',
@@ -342,7 +343,7 @@ test('database pool is lazy, applies SSL/options, binds methods and can be reope
     assert.equal(pool.query(), 'pool-1');
     assert.equal(pool.marker, 'pool-1');
     assert.deepEqual(options[0], {
-        host: 'db.internal', port: 3310, user: 'erp', password: 'password', database: 'erp_test',
+        host: '127.0.0.2', port: 3310, user: 'erp', password: 'password', database: 'erp_test',
         waitForConnections: true, connectionLimit: 10, queueLimit: 0,
         connectTimeout: 5000, stringifyObjects: true,
         ssl: { rejectUnauthorized: false },

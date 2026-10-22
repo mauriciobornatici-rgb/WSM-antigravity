@@ -227,6 +227,57 @@ export type SupplierInvoiceResponse = {
     net_amount: number;
     vat_amount: number;
     total_amount: number;
+    payment_status?: string;
+    // ADR-029: lo que la factura cobró de más y espera en una nota de crédito del proveedor, lo que
+    // ya saldaron sus notas de crédito y el total de esas notas (baja lo que se debe de la factura).
+    credit_expected_amount?: number | string;
+    credit_applied_amount?: number | string;
+    credit_notes_total?: number | string;
+};
+
+// ADR-029: nota de crédito de un proveedor contra una factura que cobró unidades de más.
+export type SupplierCreditNoteRecord = {
+    id: string;
+    supplier_id: string;
+    supplier_invoice_id: string;
+    supplier_name?: string;
+    invoice_type?: string;
+    invoice_number?: string;
+    credit_note_type: "A" | "B" | "C" | "M";
+    credit_note_number: string;
+    issue_date: string;
+    net_amount: number | string;
+    vat_amount: number | string;
+    other_taxes: number | string;
+    total_amount: number | string;
+    applied_amount: number | string;
+    notes?: string | null;
+    created_at?: string;
+};
+
+export type SupplierCreditNoteCreateInput = {
+    supplier_invoice_id: string;
+    credit_note_number: string;
+    issue_date: string;
+    net_amount: number;
+    vat_amount: number;
+    vat_rate?: number;
+    other_taxes?: number;
+    total_amount: number;
+    notes?: string;
+    // La nota vale más que lo que falta recibir: el usuario confirma que la diferencia es mejor precio.
+    accept_excess?: boolean;
+};
+
+export type SupplierCreditNoteCreateResult = {
+    id: string;
+    success: boolean;
+    total_amount: number;
+    // Lo que saldó de la nota de crédito a recibir, lo que sobró (mejor precio) y lo que falta recibir.
+    applied_amount: number;
+    holding_result: number;
+    credit_left: number;
+    payment_status: "pending" | "partial" | "paid";
 };
 
 export type TraceabilityEvent = {
@@ -465,6 +516,8 @@ export type SupplierInvoiceCreateResult = {
     receptions_difference?: number;
     // ADR-027 (D1): productos cuyo costo (y precio, si lo sigue) cambió con esta factura.
     cost_updates?: Array<{ product_id: string; name?: string; old_cost: number; new_cost: number; new_sale_price?: number }>;
+    // ADR-029: lo que cobró de más y queda como nota de crédito a recibir.
+    credit_expected?: number;
 };
 
 type ReceptionRecord = {
@@ -1002,10 +1055,19 @@ export const api = {
         vat_lines?: Array<{ vat_rate: number; net_amount: number; vat_amount: number }>;
         // ADR-028: unidades y costo neto que la factura cobra de cada línea de remito.
         items?: Array<{ reception_item_id: string; quantity: number; unit_cost: number }>;
+        // ADR-029: el proveedor cobró unidades de más y va a mandar una nota de crédito.
+        expect_credit_note?: boolean;
         other_taxes?: number;
         total_amount?: number;
         notes?: string;
     }) => httpClient.post<SupplierInvoiceCreateResult>("/api/supplier-invoices", data),
+
+    // ADR-029: notas de crédito de proveedores.
+    getSupplierCreditNotes: (filters?: { supplier_id?: string; supplier_invoice_id?: string }) =>
+        httpClient.get<SupplierCreditNoteRecord[]>(withQuery("/api/supplier-credit-notes", filters)),
+
+    createSupplierCreditNote: (data: SupplierCreditNoteCreateInput) =>
+        httpClient.post<SupplierCreditNoteCreateResult>("/api/supplier-credit-notes", data),
 
     // ==================== PURCHASE ORDERS ====================
     getPurchaseOrders: (filters?: { supplier_id?: string; status?: string }) =>

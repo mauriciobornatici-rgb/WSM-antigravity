@@ -200,6 +200,20 @@ test('createSupplier without tax id takes no lock and skips the duplicate check'
     assert.deepEqual(calls.tx, ['begin', 'commit', 'release']);
 });
 
+test('deleteSupplier refuses a supplier with credit notes still to receive (ADR-029)', async (t) => {
+    const calls = installPool(t, async (statement) => {
+        if (statement.includes('credit_expected_amount')) return [[{ pending: '110.00' }]];
+        return [[{ id: 's1', name: 'N', account_balance: '0' }]];
+    });
+    const logs = installAudit(t);
+    const res = await runHandler(deleteSupplier, { params: { id: 's1' } });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, 'has_credit_to_receive');
+    assert.ok(!calls.some((c) => c.statement.startsWith('UPDATE suppliers SET deleted_at')));
+    assert.equal(logs.length, 0);
+    assert.deepEqual(calls.tx, ['begin', 'rollback', 'release']);
+});
+
 test('deleteSupplier soft-deletes a zero-balance supplier and audits', async (t) => {
     const calls = installPool(t, async (statement) => {
         if (statement.startsWith('UPDATE')) return [{ affectedRows: 1 }];
