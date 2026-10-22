@@ -209,7 +209,7 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - [x] `c65f2f6`: migración 067 (aplicada en QA, `wsm_sports_erp` y `wsm_simulacion`), servidor, cliente, pruebas, runbook y ADR-028. El CHECK de inventario pasa a la 068.
   - Evidencia: validate 0 (1036 + 115); coverage 96,86/90,83/94,89; `qa:integration` 154/154; RBAC OK; E2E 6/6; simulación 161/161; transición simulada en `wsm_sports_erp` con `--inicio-ejercicio` y `after.ok`.
 - [x] AUD-017 (guardián, seguridad, UX y auditor) corregido; detalle en `AUDIT.md`. Migración 068 (`product_cost`, `cost_overridden`) aplicada en QA, `wsm_sports_erp` y `wsm_simulacion`; el CHECK de inventario pasa a la 069.
-- Próximo: verificaciones completas, commit, push, PR a `main` y pedir autorización de merge.
+- [x] `f2c12a4` subido; PR #12 (`feat/factura-parcial-y-area` → `main`) abierto y vinculado. Evidencia: validate 0 (1037 + 115); coverage 96,89/90,69/94,91; `qa:integration` 157/157; RBAC OK; E2E 6/6; simulación 161/161; transición simulada con `after.ok`. Falta la autorización de merge del usuario.
 - Pendiente del usuario (AUD-017): factura por más unidades que las pendientes ("NC a recibir"); devolución sin remito de un producto que el proveedor nunca entregó. Contadora: alcance de 3.1.02.02 en el ajuste final y en diferencias de precio del año de remitos viejos.
 
 ## Próximos pasos
