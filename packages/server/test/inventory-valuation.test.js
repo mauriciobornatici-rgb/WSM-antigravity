@@ -283,7 +283,7 @@ test('postReentry: goods back at today\'s cost, the cost of goods sold reversed 
 });
 
 test('runCutover aligns the old data once: costs, old sales, open delivery notes and one adjustment (I8)', async () => {
-    const { runCutover, checkCutoverPreconditions, CUTOVER_REFERENCE } = await import('../scripts/inventory-valuation/valuation.js');
+    const { runCutover, checkCutoverPreconditions, fiscalYearStartOf, CUTOVER_REFERENCE } = await import('../scripts/inventory-valuation/valuation.js');
     const state = { ledgerCents: 90000, since: null };
     const entries = [];
     const audits = [];
@@ -342,7 +342,8 @@ test('runCutover aligns the old data once: costs, old sales, open delivery notes
         throw new Error(`unexpected ${statement}`);
     });
 
-    const fiscalYearStart = new Date(2026, 0, 1);
+    // Midnight in Argentina, as the script builds it (a local midnight is another day on a UTC server).
+    const fiscalYearStart = fiscalYearStartOf('2026-01-01');
     const report = await runCutover(connection, { runId: 'run-1', accounting, audit: { log: async (entry) => { audits.push(entry); } }, fiscalYearStart });
 
     assert.equal(report.costs_from_cost_price, 2);
