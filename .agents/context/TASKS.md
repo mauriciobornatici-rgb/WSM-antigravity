@@ -213,7 +213,7 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - [x] CI del PR #12: falló la auditoría de dependencias por avisos nuevos (vite, follow-redirects, vitest); `409f94e` npm audit fix (solo lockfile). CI 4/4 verde y merge: `a405401`.
 - Respuestas del usuario y la contadora sobre AUD-017 (2026-10-21): pasaron a ADR-029.
 
-## EN CURSO — ADR-029: nota de crédito a recibir de proveedores (rama `feat/nc-a-recibir`, sin push)
+## EN CURSO — ADR-029: nota de crédito a recibir de proveedores (rama `feat/nc-a-recibir`, PR #13)
 
 - Usuario: "1- si" (cuenta transitoria para facturas que cobran unidades de más) y "2- no" (la devolución sin remito sigue igual). Contadora: el ajuste de la transición va entero a 3.1.02.02; la diferencia de precio del año en remitos viejos va a 4.2.02.01 (solo el valor del remito, a 3.1.02.02).
 - [x] `d2f2439`:
@@ -233,7 +233,7 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
   - Arreglos de UX, y fecha de hoy en hora argentina en los formularios.
   - **Incidente:** el auditor corrió una prueba fuera de `qa-runner` y una sincronización en segundo plano hizo un SELECT en la base de producción (falló; sin escrituras). Cerrado: la prueba ya no la dispara y el pool rechaza hosts no locales en procesos de prueba.
   - Evidencia: validate 0 (1053 + 119); coverage 96,99/90,62/94,75; `qa:integration` 161/161 ×2 (QA nueva); RBAC OK; E2E 6/6; simulación 171/171; transición simulada en `wsm_sports_erp` con `after.ok` (1.1.06.01 en 0).
-- [ ] Commit, push de `feat/nc-a-recibir`, PR a `main` y pedir autorización de merge.
+- [x] `d2f2439` + `88dbe97` subidos; PR #13 (`feat/nc-a-recibir` → `main`) abierto y vinculado: https://github.com/mauriciobornatici-rgb/WSM-antigravity/pull/13. Falta la autorización de merge del usuario.
 - Pendiente del usuario o la contadora (AUD-018):
   1. resto de una NC menor;
   2. remito que llega después;
