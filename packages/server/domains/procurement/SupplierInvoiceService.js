@@ -2,7 +2,6 @@ import crypto from 'crypto';
 import pool from '../../config/db.js';
 import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
-import purchaseOrderService from './PurchaseOrderService.js';
 import { businessError } from '../../utils/businessError.js';
 import { ACCOUNTS } from '../../utils/paymentAccounts.js';
 import { vatCreditAccount } from '../../utils/vatAccounts.js';
@@ -112,6 +111,10 @@ export class SupplierInvoiceService {
                 error: 'invalid_purchase_kind',
                 message: 'Una factura vinculada a una recepción u orden de compra es de mercadería.'
             });
+        }
+        // ADR-028: lines say what is charged of each delivery note, so they come with them.
+        if (Array.isArray(data.items) && data.items.length > 0 && receptionIds.length === 0) {
+            throw businessError(400, { error: 'invalid_invoice_item', message: 'Las líneas de la factura van con los remitos que cobra.' });
         }
         // ADR-027 (D2): goods enter the stock and the ledger with their delivery note; an invoice
         // without one would book goods that never came in.
@@ -241,10 +244,10 @@ export class SupplierInvoiceService {
                 );
                 await connection.query(
                     `INSERT INTO supplier_invoice_items
-                        (id, supplier_invoice_id, reception_id, reception_item_id, product_id, quantity, unit_cost, cleared_amount)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                        (id, supplier_invoice_id, reception_id, reception_item_id, product_id, quantity, unit_cost, cleared_amount, product_cost)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [crypto.randomUUID(), id, line.receptionId, line.id, line.productId, line.quantity,
-                        roundCost(line.netCents / line.quantity / 100), line.bridged ? line.remitoCents / 100 : null]
+                        roundCost(line.netCents / line.quantity / 100), line.bridged ? line.remitoCents / 100 : null, line.productCost]
                 );
             }
             for (const receptionId of bridge?.receptionIds || []) {
@@ -403,8 +406,10 @@ export class SupplierInvoiceService {
     async _invoiceLines(connection, receptions, { items, netCents, vatToCostCents }) {
         const receptionIds = receptions.map((row) => row.id);
         const label = new Map(receptions.map((row) => [row.id, row.remito_number || row.reception_number]));
+        // A locking read: a delivery note approved while this invoice waited for its lock is seen
+        // as bridged (a plain read could still use an older snapshot).
         const [bridgedRows] = await connection.query(
-            "SELECT DISTINCT reference_id FROM journal_entries WHERE reference_type = 'goods_received' AND reference_id IN (?)",
+            "SELECT DISTINCT reference_id FROM journal_entries WHERE reference_type = 'goods_received' AND reference_id IN (?) FOR SHARE",
             [receptionIds]
         );
         const bridgedIds = new Set(bridgedRows.map((row) => row.reference_id));
@@ -416,6 +421,19 @@ export class SupplierInvoiceService {
              WHERE ri.reception_id IN (?) ORDER BY ri.id FOR UPDATE OF ri`,
             [receptionIds]
         );
+        // What earlier invoices of these lines left as the product's cost (an invoice in parts).
+        const [earlierRows] = rows.length > 0
+            ? await connection.query(
+                `SELECT sii.reception_item_id, sii.product_cost
+                 FROM supplier_invoice_items sii JOIN supplier_invoices si ON si.id = sii.supplier_invoice_id
+                 WHERE sii.reception_item_id IN (?) AND sii.product_cost IS NOT NULL AND COALESCE(si.status, '') <> 'cancelled'`,
+                [rows.map((row) => row.id)]
+            )
+            : [[]];
+        const earlierByLine = new Map();
+        for (const row of earlierRows) {
+            earlierByLine.set(row.reception_item_id, [...(earlierByLine.get(row.reception_item_id) || []), roundCost(row.product_cost)]);
+        }
         const all = rows.map((row) => ({
             id: row.id,
             receptionId: row.reception_id,
@@ -423,6 +441,8 @@ export class SupplierInvoiceService {
             productName: row.product_name || 'Un producto',
             left: Math.max(0, Number(row.quantity_received || 0) - Number(row.invoiced_quantity || 0) - Number(row.returned_quantity || 0)),
             unitCost: roundCost(row.unit_cost),
+            // What earlier invoices of this line left as the product's cost (an invoice in parts).
+            earlierInvoicedCosts: earlierByLine.get(row.id) || [],
             bridged: bridgedIds.has(row.reception_id),
             quantity: 0,
             netCents: 0,
@@ -453,7 +473,9 @@ export class SupplierInvoiceService {
                     });
                 }
                 line.quantity = quantity;
-                line.netCents = valueCents(quantity, item.unit_cost);
+                // The unit price as the invoice prints it (it may have more than 2 decimals): the
+                // line's amount is rounded once, not the price before multiplying.
+                line.netCents = Math.round(Number((quantity * Number(item.unit_cost)).toFixed(4)) * 100);
             }
         } else {
             for (const line of all) {
@@ -481,6 +503,18 @@ export class SupplierInvoiceService {
         lines.forEach((line, index) => { line.netCents += residualShares[index]; });
         const vatShares = allocateCents(vatToCostCents, lines.map((line) => line.netCents));
         lines.forEach((line, index) => { line.costCents = line.netCents + (vatToCostCents ? vatShares[index] : 0); });
+        // The cost per unit this invoice gives each product (all its lines), kept with the lines.
+        const perProduct = new Map();
+        for (const line of lines) {
+            const current = perProduct.get(line.productId) || { cents: 0, quantity: 0 };
+            current.cents += line.costCents;
+            current.quantity += line.quantity;
+            perProduct.set(line.productId, current);
+        }
+        for (const line of lines) {
+            const product = perProduct.get(line.productId);
+            line.productCost = roundCost(product.cents / product.quantity / 100);
+        }
 
         const totals = { pendingCents: 0, legacyCents: 0, bridgedCostCents: 0, legacyCostCents: 0 };
         const clearedByReception = new Map();
@@ -500,23 +534,29 @@ export class SupplierInvoiceService {
 
     /**
      * D1: a product that follows the last purchase (auto_update_cost) takes what this invoice
-     * charged for it per unit, revaluing its stock. Only when its cost is still the delivery note's
-     * (nobody changed it since): otherwise the difference stays as holding result. Lines of delivery
-     * notes received before ADR-027 do not move the cost. Returns the costs that changed.
+     * charged for it per unit, revaluing its stock. Only when its cost is still this delivery
+     * note's: its cost, or what an earlier invoice of the same line left (an invoice in parts). If
+     * anything else changed it since (a newer purchase, a manual edit), the difference stays as
+     * holding result. Lines of delivery notes received before ADR-027 do not move the cost.
+     * Returns the costs that changed.
      */
     async _correctCosts(connection, lines, { userId, invoiceId }) {
         const byProduct = new Map();
         for (const line of lines) {
             if (!line.bridged) continue;
-            const current = byProduct.get(line.productId) || { quantity: 0, cents: 0, remitoCents: 0, costs: new Set() };
+            const current = byProduct.get(line.productId)
+                || { quantity: 0, cents: 0, remitoCents: 0, costs: new Set(), earlierInvoiced: new Set() };
             current.quantity += line.quantity;
             current.cents += line.costCents;
             current.remitoCents += line.remitoCents;
             current.costs.add(line.unitCost);
+            for (const cost of line.earlierInvoicedCosts || []) current.earlierInvoiced.add(cost);
             byProduct.set(line.productId, current);
         }
-        // Invoiced at the delivery note's cost: it already is the cost, nothing to lock or change.
-        for (const [productId, line] of byProduct) if (line.cents === line.remitoCents) byProduct.delete(productId);
+        // Invoiced at the delivery note's cost and never invoiced before: it already is the cost.
+        for (const [productId, line] of byProduct) {
+            if (line.cents === line.remitoCents && line.earlierInvoiced.size === 0) byProduct.delete(productId);
+        }
         if (byProduct.size === 0) return [];
         const productIds = [...byProduct.keys()];
         const stockByProduct = await this.valuation.lockStock(connection, productIds);
@@ -525,7 +565,9 @@ export class SupplierInvoiceService {
         for (const [productId, line] of byProduct) {
             const product = products.get(productId);
             if (!product || Number(product.auto_update_cost ?? 1) === 0) continue;
-            if (line.costs.size !== 1 || ![...line.costs][0] || [...line.costs][0] !== effectiveCost(product)) continue;
+            const today = effectiveCost(product);
+            const remitoCost = line.costs.size === 1 ? [...line.costs][0] : null;
+            if (!(remitoCost && remitoCost === today) && !line.earlierInvoiced.has(today)) continue;
             const newCost = roundCost(line.cents / line.quantity / 100);
             if (!(newCost > 0)) continue;
             const changed = await this.valuation.changeCost(connection, {
@@ -607,19 +649,22 @@ export class SupplierInvoiceService {
             ORDER BY si.issue_date DESC
         `);
 
-        // 2. Get all approved returns
+        // 2. Approved returns, as the ledger booked them (AUD-017): only what lowered the debt with the
+        // supplier, and the VAT credit actually reversed. Units the supplier had not invoiced yet
+        // (against 2.1.01.02) are no fiscal document and stay out.
         const [returns] = await pool.query(`
             SELECT sr.return_number, sr.created_at, s.name AS supplier_name, s.tax_id AS supplier_tax_id,
-                   COALESCE(SUM(sri.quantity * sri.unit_cost), 0) AS subtotal
+                   COALESCE(SUM(CASE WHEN jl.account_code = ? THEN jl.debit ELSE 0 END), 0) AS gross,
+                   COALESCE(SUM(CASE WHEN jl.account_code LIKE '1.1.05.%' AND jl.account_code <> ? THEN jl.credit ELSE 0 END), 0) AS vat
             FROM supplier_returns sr
             JOIN suppliers s ON sr.supplier_id = s.id
-            JOIN supplier_return_items sri ON sri.return_id = sr.id
+            JOIN journal_entries je ON je.reference_type = 'supplier_return' AND je.reference_id = sr.id
+            JOIN journal_entry_lines jl ON jl.journal_entry_id = je.id
             WHERE sr.status = 'approved'
             GROUP BY sr.id, sr.return_number, sr.created_at, s.name, s.tax_id
+            HAVING gross > 0
             ORDER BY sr.created_at DESC
-        `);
-
-        const taxRate = await purchaseOrderService.getTaxRate();
+        `, [ACCOUNTS.SUPPLIERS, ACCOUNTS.WITHHOLDINGS]);
 
         // 3. Merge and sort chronologically
         const records = [];
@@ -641,9 +686,9 @@ export class SupplierInvoiceService {
         }
 
         for (const ret of returns) {
-            const sub = Number(ret.subtotal || 0);
-            const iva = sub * taxRate;
-            const total = sub + iva;
+            const total = Math.round(Number(ret.gross || 0) * 100) / 100;
+            const iva = Math.round(Number(ret.vat || 0) * 100) / 100;
+            const sub = Math.round((total - iva) * 100) / 100;
             records.push({
                 date: new Date(ret.created_at),
                 type: 'Devolución (Egreso/Ajuste)',

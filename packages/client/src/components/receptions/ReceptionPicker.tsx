@@ -82,7 +82,7 @@ export function ReceptionPicker({ id, supplierId, value, onChange }: ReceptionPi
             ) : null}
             <p id={`${id}-hint`} className="text-xs text-muted-foreground">
                 {selected && hasUninvoiced(selected)
-                    ? "Las unidades que el proveedor todavía no facturó bajan lo que se le debe por ese remito (su factura cobra solo lo que quedó); las ya facturadas bajan la deuda con el proveedor."
+                    ? "Lo que el proveedor todavía no facturó baja lo pendiente de este remito; lo ya facturado baja la deuda con el proveedor."
                     : "Si el proveedor todavía no facturó la mercadería, elegí su remito."}
             </p>
         </div>

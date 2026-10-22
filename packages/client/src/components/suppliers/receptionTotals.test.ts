@@ -31,6 +31,9 @@ describe("líneas de factura por remito (ADR-028)", () => {
         });
         expect(lines.find((line) => line.id === "a")?.netCents).toBe(12000);
         expect(lines.find((line) => line.id === "a")?.remitoCents).toBe(9999);
+        // A price with 3 decimals, as printed: 10 × 12,345 = 123,45 (not 10 × 12,35).
+        const printed = invoiceLines([{ ...reception, items: [{ id: "x", quantity_to_invoice: 10, unit_cost: 12 }] }], { x: { quantity: "10", unitCost: "12.345" } });
+        expect(printed[0]?.netCents).toBe(12345);
         expect(netByRate(lines)).toEqual([{ rate: 21, netCents: 12000 }]);
 
         const invalid = invoiceLines(receptions, { a: { quantity: "5", unitCost: "1" }, b: { quantity: "1.5", unitCost: "-1" } });

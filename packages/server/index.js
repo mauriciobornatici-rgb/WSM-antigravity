@@ -108,6 +108,10 @@ const captureRawBody = (req, res, buffer) => {
 
 const defaultJsonParser = express.json({ limit: '10kb', verify: captureRawBody });
 const uploadsJsonParser = express.json({ limit: '2mb', verify: captureRawBody });
+// ADR-028: a supplier invoice lists what it charges per delivery note line (up to 500 lines, about
+// 100 bytes each); every other route keeps the 10 kb limit.
+const supplierInvoiceJsonParser = express.json({ limit: '64kb', verify: captureRawBody });
+const isSupplierInvoiceCreate = (req) => req.method === 'POST' && req.path === '/api/supplier-invoices';
 // A spreadsheet import carries a bigger body: its router reads it after the session and the
 // permission are checked (routes/importRoutes.js), never for an anonymous request.
 const isImportPath = (path) => path.startsWith('/api/imports/');
@@ -117,6 +121,7 @@ app.use('/api/products/image-upload', uploadsJsonParser);
 app.use((req, res, next) => {
     if (req.path === '/api/products/image-upload') return next();
     if (isImportPath(req.path)) return next();
+    if (isSupplierInvoiceCreate(req)) return supplierInvoiceJsonParser(req, res, next);
     return defaultJsonParser(req, res, next);
 });
 

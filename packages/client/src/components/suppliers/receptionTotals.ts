@@ -54,6 +54,10 @@ export type InvoiceLineView = {
 
 const toCents = (value: number) => Math.round((value + Number.EPSILON) * 100);
 
+// Ids of a line's inputs, so the form can take the user to the one to fix.
+export const invoiceLineQuantityId = (lineId: string) => `invoice-line-qty-${lineId}`;
+export const invoiceLineCostId = (lineId: string) => `invoice-line-cost-${lineId}`;
+
 // Las líneas pendientes de los remitos elegidos, con lo que el usuario cargó (por defecto, todo lo
 // pendiente al costo del remito).
 export function invoiceLines(
@@ -88,7 +92,8 @@ export function invoiceLines(
                 valid,
                 units: valid ? units : 0,
                 cost: valid ? cost : 0,
-                netCents: valid ? Math.round(units * toCents(cost)) : 0,
+                // The unit price as the invoice prints it (up to 4 decimals): the line is rounded once.
+                netCents: valid ? Math.round(Number((units * cost).toFixed(4)) * 100) : 0,
                 remitoCents: valid ? Math.round(units * toCents(remitoCost)) : 0,
             };
         }));

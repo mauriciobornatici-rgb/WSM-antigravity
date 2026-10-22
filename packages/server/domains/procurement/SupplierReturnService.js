@@ -211,22 +211,28 @@ export class SupplierReturnService {
             }
         }
         const missing = () => ids.filter((productId) => !found.has(productId));
+        // One row per product (the latest), not the whole history (AUD-017).
         if (missing().length > 0) {
             const [rows] = await executor.query(
-                `SELECT sii.product_id, sii.unit_cost
-                 FROM supplier_invoice_items sii JOIN supplier_invoices si ON si.id = sii.supplier_invoice_id
-                 WHERE si.supplier_id = ? AND sii.product_id IN (?) AND COALESCE(si.status, '') <> 'cancelled'
-                 ORDER BY si.issue_date DESC, si.created_at DESC, sii.created_at DESC`,
+                `SELECT product_id, unit_cost FROM (
+                     SELECT sii.product_id, sii.unit_cost,
+                            ROW_NUMBER() OVER (PARTITION BY sii.product_id
+                                               ORDER BY si.issue_date DESC, si.created_at DESC, sii.created_at DESC) AS position
+                     FROM supplier_invoice_items sii JOIN supplier_invoices si ON si.id = sii.supplier_invoice_id
+                     WHERE si.supplier_id = ? AND sii.product_id IN (?) AND COALESCE(si.status, '') <> 'cancelled'
+                 ) latest WHERE position = 1`,
                 [supplierId, missing()]
             );
             for (const row of rows) if (!found.has(row.product_id)) found.set(row.product_id, { cost: roundCost(row.unit_cost), source: 'invoice' });
         }
         if (missing().length > 0) {
             const [rows] = await executor.query(
-                `SELECT ri.product_id, ri.unit_cost
-                 FROM reception_items ri JOIN receptions r ON r.id = ri.reception_id
-                 WHERE r.supplier_id = ? AND r.status = 'approved' AND ri.product_id IN (?) AND ri.unit_cost > 0
-                 ORDER BY r.created_at DESC, ri.id`,
+                `SELECT product_id, unit_cost FROM (
+                     SELECT ri.product_id, ri.unit_cost,
+                            ROW_NUMBER() OVER (PARTITION BY ri.product_id ORDER BY r.created_at DESC, ri.id) AS position
+                     FROM reception_items ri JOIN receptions r ON r.id = ri.reception_id
+                     WHERE r.supplier_id = ? AND r.status = 'approved' AND ri.product_id IN (?) AND ri.unit_cost > 0
+                 ) latest WHERE position = 1`,
                 [supplierId, missing()]
             );
             for (const row of rows) if (!found.has(row.product_id)) found.set(row.product_id, { cost: roundCost(row.unit_cost), source: 'reception' });
@@ -294,16 +300,19 @@ export class SupplierReturnService {
             `, [id, returnNumber, supplier_id, notes || null, receptionId]);
 
             for (const [index, item] of (items || []).entries()) {
+                // Not overridden: the approval takes the last invoiced cost of that moment.
+                const overridden = costs[index] !== (suggested.get(item.product_id) ?? 0);
                 await connection.query(`
-                    INSERT INTO supplier_return_items (id, return_id, product_id, quantity, unit_cost, reason)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO supplier_return_items (id, return_id, product_id, quantity, unit_cost, reason, cost_overridden)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 `, [
                     crypto.randomUUID(),
                     id,
                     item.product_id,
                     item.quantity,
                     costs[index],
-                    item.reason || null
+                    item.reason || null,
+                    overridden ? 1 : 0
                 ]);
             }
 
@@ -318,7 +327,13 @@ export class SupplierReturnService {
                     supplier_id,
                     reception_id: receptionId,
                     notes: notes || null,
-                    items: items || []
+                    // The cost applied, the one suggested and whether purchasing changed it (ADR-028).
+                    items: (items || []).map((item, index) => ({
+                        ...item,
+                        unit_cost: costs[index],
+                        suggested_cost: suggested.get(item.product_id) ?? 0,
+                        cost_overridden: costs[index] !== (suggested.get(item.product_id) ?? 0),
+                    }))
                 },
                 ip_address: ipAddress
             }, connection);
@@ -346,6 +361,12 @@ export class SupplierReturnService {
                 throw Object.assign(new Error('La devolución ya fue aprobada'), { errorCode: 'RETURN_ALREADY_APPROVED', statusCode: 409 });
             }
 
+            // Same order as a supplier invoice: the supplier, then the delivery note (L1), its lines
+            // (L2), the stock (L3) and the cost (L4), so neither waits on the other in a circle. The
+            // supplier before any plain read: under REPEATABLE READ the first plain read fixes the
+            // snapshot, and an invoice committed while this waited must be seen (AUD-017).
+            await connection.query('SELECT id FROM suppliers WHERE id = ? FOR UPDATE', [supplierReturn.supplier_id]);
+
             const [items] = await connection.query('SELECT * FROM supplier_return_items WHERE return_id = ? ORDER BY product_id, id', [id]);
             if (items.length === 0) {
                 throw Object.assign(new Error('La devolución no tiene ítems'), { errorCode: 'RETURN_WITHOUT_ITEMS', statusCode: 400 });
@@ -358,15 +379,24 @@ export class SupplierReturnService {
                 });
             }
 
-            // Same order as a supplier invoice: the supplier, then the delivery note (L1), its lines
-            // (L2), the stock (L3) and the cost (L4), so neither waits on the other in a circle.
-            await connection.query('SELECT id FROM suppliers WHERE id = ? FOR UPDATE', [supplierReturn.supplier_id]);
             const reception = supplierReturn.reception_id
                 ? await this._lockReception(connection, supplierReturn, items)
                 : null;
             const productIds = items.map((item) => item.product_id);
             await this.valuation.lockStock(connection, productIds);
             const costs = await this.valuation.lockCosts(connection, productIds);
+            // ADR-028: invoiced units go back at the last invoiced cost of now (an invoice may have
+            // arrived after the draft), unless purchasing typed another one.
+            const lastInvoiced = new Map((await this.suggestedCosts({
+                supplierId: supplierReturn.supplier_id, receptionId: supplierReturn.reception_id, productIds,
+            }, connection)).map((row) => [row.product_id, row]));
+            const creditCostOf = (item) => {
+                const saved = Number(item.unit_cost || 0);
+                if (Number(item.cost_overridden) === 1) return saved;
+                // Only an invoiced cost replaces the draft's (a fallback is what the draft already took).
+                const latest = lastInvoiced.get(item.product_id);
+                return latest?.source === 'invoice' && Number(latest.unit_cost) > 0 ? Number(latest.unit_cost) : saved;
+            };
 
             // ADR-027/028: the goods leave the ledger at their book value (today's cost; Mermas has
             // none). Against a delivery note, the units it still had to invoice lower what is owed
@@ -385,14 +415,34 @@ export class SupplierReturnService {
                 const moved = await this.decreaseInventory(connection, item, id, { unitCost: bookCost });
                 movementIds.push(...moved.movementIds);
                 bookCents += valueCents(moved.valuedQuantity, bookCost);
-                const line = reception?.lines.get(item.product_id);
-                const notInvoiced = line ? Math.min(quantity, line.toInvoice) : 0;
-                if (line) line.toInvoice -= notInvoiced;
-                const notInvoicedCents = valueCents(notInvoiced, line?.unit_cost);
+                // The delivery note's lines of this product (an order may bring it in two): the units
+                // not invoiced first, line by line, at each line's cost; then the invoiced ones.
+                const productLines = reception?.lines.get(item.product_id) || [];
+                let left = quantity;
+                let notInvoicedCents = 0;
+                for (const line of productLines) {
+                    const take = Math.min(left, line.toInvoice);
+                    if (take <= 0) continue;
+                    line.toInvoice -= take;
+                    line.returning += take;
+                    notInvoicedCents += valueCents(take, line.unit_cost);
+                    left -= take;
+                }
+                const invoicedUnits = left;
+                for (const line of productLines) {
+                    const room = Number(line.quantity_received || 0) - Number(line.returned_quantity || 0) - line.returning;
+                    const take = Math.min(left, Math.max(0, room));
+                    if (take <= 0) continue;
+                    line.returning += take;
+                    left -= take;
+                }
                 if (reception?.bridged) bridgeCents += notInvoicedCents;
                 else legacyCents += notInvoicedCents;
-                const invoicedUnits = quantity - notInvoiced;
-                const itemCreditCents = valueCents(invoicedUnits, item.unit_cost);
+                const creditCost = creditCostOf(item);
+                if (creditCost !== Number(item.unit_cost || 0)) {
+                    await connection.query('UPDATE supplier_return_items SET unit_cost = ? WHERE id = ?', [creditCost, item.id]);
+                }
+                const itemCreditCents = valueCents(invoicedUnits, creditCost);
                 creditCents += itemCreditCents;
                 // Invoiced units handed back for nothing are a loss (their book value).
                 if (invoicedUnits > 0 && itemCreditCents === 0) {
@@ -402,10 +452,13 @@ export class SupplierReturnService {
                 if (moved.unvaluedQuantity > 0) {
                     wasteCents += Math.round((notInvoicedCents + itemCreditCents) * moved.unvaluedQuantity / quantity);
                 }
-                if (line) {
+            }
+            for (const productLines of reception?.lines.values() || []) {
+                for (const line of productLines) {
+                    if (line.returning <= 0) continue;
                     await connection.query(
                         'UPDATE reception_items SET returned_quantity = returned_quantity + ? WHERE id = ?',
-                        [quantity, line.id]
+                        [line.returning, line.id]
                     );
                 }
             }
@@ -517,21 +570,27 @@ export class SupplierReturnService {
              FROM reception_items WHERE reception_id = ? ORDER BY id FOR UPDATE`,
             [reception.id]
         );
-        const byProduct = new Map(lines.map((line) => [line.product_id, line]));
+        // Every line of each product (an order may bring a product in two lines).
+        const byProduct = new Map();
+        for (const line of lines) {
+            line.returning = 0;
+            byProduct.set(line.product_id, [...(byProduct.get(line.product_id) || []), line]);
+        }
         const requested = new Map();
         for (const item of items) requested.set(item.product_id, (requested.get(item.product_id) || 0) + Number(item.quantity || 0));
         for (const [productId, quantity] of requested) {
-            const line = byProduct.get(productId);
-            const left = line ? Number(line.quantity_received || 0) - Number(line.returned_quantity || 0) : 0;
-            if (!line || quantity > left) {
+            const productLines = byProduct.get(productId) || [];
+            const left = productLines.reduce((sum, line) => sum + Number(line.quantity_received || 0) - Number(line.returned_quantity || 0), 0);
+            if (productLines.length === 0 || quantity > left) {
                 throw businessError(409, {
                     error: 'return_exceeds_reception',
                     message: `Se devuelve más de lo que quedó de ese remito (${Math.max(left, 0)} u.).`,
                 });
             }
         }
+        // A locking read: a delivery note approved while this waited is seen as bridged (AUD-017).
         const [bridged] = await connection.query(
-            "SELECT id FROM journal_entries WHERE reference_type = 'goods_received' AND reference_id = ? LIMIT 1",
+            "SELECT id FROM journal_entries WHERE reference_type = 'goods_received' AND reference_id = ? LIMIT 1 FOR SHARE",
             [reception.id]
         );
         // One whose purchase order was invoiced without naming it is invoiced in full: its goods are
@@ -540,7 +599,7 @@ export class SupplierReturnService {
             ? await connection.query(`SELECT ${invoicedByOrderSql('r')} AS invoiced FROM receptions r WHERE r.id = ?`, [reception.id])
             : [[]];
         const invoicedByOrder = Boolean(Number(byOrder[0]?.invoiced || 0));
-        for (const line of byProduct.values()) {
+        for (const line of lines) {
             line.toInvoice = invoicedByOrder
                 ? 0
                 : Math.max(0, Number(line.quantity_received || 0) - Number(line.invoiced_quantity || 0) - Number(line.returned_quantity || 0));

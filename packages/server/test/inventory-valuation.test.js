@@ -212,6 +212,17 @@ test('revalue: holding result, from cost 0 an opening adjustment (D6), and nothi
     assert.equal(accounting.entries.length, 3);
 });
 
+test('the fiscal year starts at midnight in Argentina, whatever the server timezone (AUD-017)', async () => {
+    const { fiscalYearStartOf } = await import('../scripts/inventory-valuation/valuation.js');
+    assert.equal(fiscalYearStartOf('2026-01-01').toISOString(), '2026-01-01T03:00:00.000Z');
+    assert.equal(fiscalYearStartOf('2025-07-01').toISOString(), '2025-07-01T03:00:00.000Z');
+    // A sale on 31 December at 22:00 in Buenos Aires is still the year before.
+    assert.ok(new Date('2026-01-01T01:00:00Z') < fiscalYearStartOf('2026-01-01'));
+    assert.equal(fiscalYearStartOf('2026-02-30'), null);
+    assert.equal(fiscalYearStartOf('01/01/2026'), null);
+    assert.equal(fiscalYearStartOf(undefined), null);
+});
+
 test('the valuation check compares the inventory ledger with the stock at cost, read only', async () => {
     const answers = (since, ledger, valued) => recordingConnection((statement) => {
         if (statement.includes("account_code = '1.1.04.01'")) return [[{ balance: ledger }]];

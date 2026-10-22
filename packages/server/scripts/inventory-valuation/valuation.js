@@ -2,6 +2,7 @@
 // product cost, to the cent. Read only: every query is a plain SELECT.
 import { UNVALUED_LOCATIONS, effectiveCost, valueCents } from '../../domains/inventory/InventoryValuation.js';
 import { invoicedByOrderSql } from '../../domains/procurement/receptionInvoicing.js';
+import { BUSINESS_TIME_ZONE, businessYear } from '../../utils/businessDate.js';
 
 const cents = (value) => Math.round(Number(value || 0) * 100);
 
@@ -64,6 +65,18 @@ export async function checkInventoryValuation(connection) {
     };
 }
 
+/**
+ * The instant a fiscal year starts: midnight of that day in Argentina (UTC−3, no daylight saving),
+ * whatever the server's timezone. Null for anything but a real AAAA-MM-DD date.
+ */
+export function fiscalYearStartOf(value) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ''));
+    if (!match) return null;
+    const date = new Date(`${match[1]}-${match[2]}-${match[3]}T00:00:00-03:00`);
+    const local = new Intl.DateTimeFormat('en-CA', { timeZone: BUSINESS_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+    return local === `${match[1]}-${match[2]}-${match[3]}` ? date : null;
+}
+
 export const CUTOVER_REFERENCE = 'inventory_valuation_cutover';
 export const CUTOVER_AUDIT_ACTION = 'INVENTORY_VALUATION_CUTOVER';
 
@@ -94,10 +107,10 @@ export async function checkCutoverPreconditions(connection, { findAffectedOrders
  * ledger of Inventario with the stock at cost and opens 2.1.01.02 for the delivery notes not yet
  * invoiced. Runs once: a second run finds inventory_valuation_since set and does nothing.
  * `accounting` posts entries (accounting.service), `audit` logs (audit.service).
- * `fiscalYearStart`: the first day of the fiscal year in course (ADR-028): what belongs to earlier
- * years goes to 3.1.02.02. By default, January 1 of this year.
+ * `fiscalYearStart`: the instant the fiscal year in course starts (ADR-028): what belongs to earlier
+ * years goes to 3.1.02.02. By default, January 1 of this year at midnight in Argentina.
  */
-export async function runCutover(connection, { runId, userId = null, accounting, audit, fiscalYearStart = new Date(new Date().getFullYear(), 0, 1) }) {
+export async function runCutover(connection, { runId, userId = null, accounting, audit, fiscalYearStart = fiscalYearStartOf(`${businessYear()}-01-01`) }) {
     // The cut-over date lives in the company settings (row 1, the one the app uses): without it a
     // second run would not know it was done.
     await connection.query('INSERT IGNORE INTO company_settings (id) VALUES (1)');
@@ -177,7 +190,9 @@ export async function runCutover(connection, { runId, userId = null, accounting,
         if (!(Number(movement.unit_cost || 0) > 0) && cost > 0) current.costs.push([cost, movement.id]);
         byOrder.set(movement.order_id, current);
     }
-    report.fiscal_year_start = fiscalYearStart.toISOString().slice(0, 10);
+    report.fiscal_year_start = new Intl.DateTimeFormat('en-CA', {
+        timeZone: BUSINESS_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(fiscalYearStart);
     report.costs_posted_for_sales = { orders: 0, amount: 0, this_year: 0, earlier_years: 0 };
     for (const [orderId, sale] of byOrder) {
         const totalCents = sale.currentCents + sale.priorCents;
@@ -220,10 +235,11 @@ export async function runCutover(connection, { runId, userId = null, accounting,
                 COALESCE(SUM(GREATEST(ri.quantity_received - COALESCE(ri.invoiced_quantity, 0) - COALESCE(ri.returned_quantity, 0), 0) * ri.unit_cost), 0) AS value
          FROM receptions r JOIN reception_items ri ON ri.reception_id = r.id
          WHERE r.status = 'approved'
-           AND NOT EXISTS (SELECT 1 FROM supplier_invoice_receptions sir WHERE sir.reception_id = r.id)
-           AND NOT EXISTS (SELECT 1 FROM supplier_invoices si WHERE si.reception_id = r.id)
            AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.reference_type = 'goods_received' AND je.reference_id = r.id)
          GROUP BY r.id, r.reception_number, r.remito_number, r.purchase_order_id, r.supplier_id, r.created_at
+         -- ADR-028: by the units still to invoice, so one invoiced in part opens what is left
+         -- (one invoiced in full counts its units as invoiced since the 067).
+         HAVING value > 0
          ORDER BY r.id`
     );
     report.opened_goods_to_invoice = { receptions: 0, amount: 0 };

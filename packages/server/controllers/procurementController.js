@@ -94,7 +94,12 @@ export const getSupplierReturns = getReturns;
 const canSetReturnCost = (req) => hasPermission(req.user?.role, PERMISSIONS.PROCUREMENT_MANAGE);
 
 export const getReturnSuggestedCosts = catchAsync(async (req, res) => {
-    const { supplier_id: supplierId, reception_id: receptionId, product_ids: productIds } = req.query;
+    // The parsed query (product_ids split): in Express 5 req.query is re-read from the URL.
+    const query = req.validatedQuery || req.query;
+    const { supplier_id: supplierId, reception_id: receptionId } = query;
+    const productIds = Array.isArray(query.product_ids)
+        ? query.product_ids
+        : String(query.product_ids || '').split(',').filter(Boolean);
     res.json(await supplierReturnService.suggestedCosts({ supplierId, receptionId, productIds }));
 });
 

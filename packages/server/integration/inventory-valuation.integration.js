@@ -564,6 +564,111 @@ test('a delivery note invoiced in two parts: each invoice clears its units, and 
     await assert.rejects(tooMany, (err) => err.statusCode === 409 && err.responseBody.error === 'reception_already_invoiced');
 });
 
+test('each part of a delivery note invoiced in parts moves the cost: the last purchase wins (AUD-017)', async () => {
+    const { SupplierInvoiceService } = await import('../domains/procurement/SupplierInvoiceService.js');
+    const supplierId = await seedSupplier();
+    const productId = await seedProduct({ cost: 100, salePrice: 300 });
+    const receptionId = await receiveWithoutOrder(supplierId, productId, 10, 100);
+    const [[line]] = await pool.query('SELECT id FROM reception_items WHERE reception_id = ?', [receptionId]);
+    const invoicePart = (quantity, unitCost) => new SupplierInvoiceService().createSupplierInvoice({
+        invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-21',
+        reception_ids: [receptionId], net_amount: quantity * unitCost, vat_amount: Math.round(quantity * unitCost * 21) / 100, vat_rate: 21,
+        total_amount: Math.round(quantity * unitCost * 121) / 100,
+        items: [{ reception_item_id: line.id, quantity, unit_cost: unitCost }],
+    }, null);
+    const cost = async () => Number((await pool.query('SELECT purchase_price FROM products WHERE id = ?', [productId]))[0][0].purchase_price);
+
+    await invoicePart(6, 110);
+    assert.equal(await cost(), 110);
+    // The second part may move it again (it used to stay at 110: only the delivery note's 100 counted).
+    await invoicePart(2, 120);
+    assert.equal(await cost(), 120);
+    await invoicePart(2, 100);
+    assert.equal(await cost(), 100, 'back to the delivery note price: the last purchase');
+
+    // A cost set by hand in between is not overridden by a later part of an older delivery note.
+    const otherReception = await receiveWithoutOrder(supplierId, productId, 4, 100);
+    const [[otherLine]] = await pool.query('SELECT id FROM reception_items WHERE reception_id = ?', [otherReception]);
+    await new SupplierInvoiceService().createSupplierInvoice({
+        invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-21',
+        reception_ids: [otherReception], net_amount: 210, vat_amount: 44.1, vat_rate: 21, total_amount: 254.1,
+        items: [{ reception_item_id: otherLine.id, quantity: 2, unit_cost: 105 }],
+    }, null);
+    assert.equal(await cost(), 105);
+    await inventoryService.updateProduct(productId, { purchase_price: 130 }, null, null, 'admin');
+    await new SupplierInvoiceService().createSupplierInvoice({
+        invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-21',
+        reception_ids: [otherReception], net_amount: 220, vat_amount: 46.2, vat_rate: 21, total_amount: 266.2,
+        items: [{ reception_item_id: otherLine.id, quantity: 2, unit_cost: 110 }],
+    }, null);
+    assert.equal(await cost(), 130, 'the manual cost stays: the difference is holding result');
+});
+
+test('a draft return takes, when approved, the cost of an invoice that arrived after it (AUD-017)', async () => {
+    const { SupplierInvoiceService } = await import('../domains/procurement/SupplierInvoiceService.js');
+    const { default: supplierReturnService } = await import('../domains/procurement/SupplierReturnService.js');
+    const supplierId = await seedSupplier();
+    const productId = await seedProduct({ cost: 40, salePrice: 100 });
+    const receptionId = await receiveWithoutOrder(supplierId, productId, 5, 40);
+    // The draft: nothing invoiced yet, it suggests the delivery note's 40.
+    const back = await supplierReturnService.createReturn({
+        supplier_id: supplierId, reception_id: receptionId, items: [{ product_id: productId, quantity: 2 }],
+    }, null);
+    // Then the supplier invoices the 5 units at 45.
+    await new SupplierInvoiceService().createSupplierInvoice({
+        invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-21',
+        reception_ids: [receptionId], net_amount: 225, vat_amount: 47.25, vat_rate: 21, total_amount: 272.25,
+    }, null);
+    await supplierReturnService.approveSupplierReturn(back.id, null);
+    // The 2 units are invoiced now: the debt goes down at 45 (2 × 45 + 21 %), not at the draft's 40.
+    const { lines } = await ledgerOf('supplier_return', back.id);
+    assert.ok(lines.some(([account, debit]) => account === '2.1.01.01' && debit === 108.9), JSON.stringify(lines));
+    const [[item]] = await pool.query('SELECT unit_cost, cost_overridden FROM supplier_return_items WHERE return_id = ?', [back.id]);
+    assert.deepEqual([Number(item.unit_cost), Number(item.cost_overridden)], [45, 0]);
+});
+
+test('a return against a delivery note that brings a product in two lines takes the units not invoiced of both first', async () => {
+    const { SupplierInvoiceService } = await import('../domains/procurement/SupplierInvoiceService.js');
+    const { default: supplierReturnService } = await import('../domains/procurement/SupplierReturnService.js');
+    const supplierId = await seedSupplier();
+    const productId = await seedProduct({ cost: 50, salePrice: 100, stock: [{ location: 'QA-A', quantity: 5 }] });
+    // A delivery note with the product twice (older data, or an order that listed it twice), approved
+    // and through 2.1.01.02 (today's approval asks to unify such lines first).
+    const receptionId = crypto.randomUUID();
+    await pool.query("INSERT INTO receptions (id, reception_number, supplier_id, status) VALUES (?, ?, ?, 'approved')",
+        [receptionId, `REC-QA-${receptionId.slice(0, 8)}`, supplierId]);
+    const [lineA, lineB] = [crypto.randomUUID(), crypto.randomUUID()].sort();
+    await pool.query('INSERT INTO reception_items (id, reception_id, product_id, quantity_received, unit_cost) VALUES (?, ?, ?, 3, 50), (?, ?, ?, 2, 50)',
+        [lineA, receptionId, productId, lineB, receptionId, productId]);
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        await accountingService.createJournalEntry(connection, {
+            date: new Date(), description: 'QA', reference_type: 'goods_received', reference_id: receptionId,
+            lines: [{ account_code: '1.1.04.01', debit: 250, credit: 0 }, { account_code: '2.1.01.02', debit: 0, credit: 250 }],
+        });
+        await connection.commit();
+    } finally {
+        connection.release();
+    }
+    // The supplier invoices the first line in full (3 units): 2 of the second line are still to invoice.
+    await new SupplierInvoiceService().createSupplierInvoice({
+        invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-21',
+        reception_ids: [receptionId], net_amount: 150, vat_amount: 31.5, vat_rate: 21, total_amount: 181.5,
+        items: [{ reception_item_id: lineA, quantity: 3, unit_cost: 50 }, { reception_item_id: lineB, quantity: 0, unit_cost: 50 }],
+    }, null);
+    // 3 back: the 2 not invoiced (second line) against 2.1.01.02, 1 invoiced against the supplier.
+    const back = await supplierReturnService.createReturn({
+        supplier_id: supplierId, reception_id: receptionId, items: [{ product_id: productId, quantity: 3 }],
+    }, null);
+    await supplierReturnService.approveSupplierReturn(back.id, null);
+    const { lines } = await ledgerOf('supplier_return', back.id);
+    assert.ok(lines.some(([account, debit]) => account === '2.1.01.02' && debit === 100), JSON.stringify(lines));
+    assert.ok(lines.some(([account, debit]) => account === '2.1.01.01' && debit === 60.5), JSON.stringify(lines));
+    const [returned] = await pool.query('SELECT id, returned_quantity FROM reception_items WHERE reception_id = ? ORDER BY id', [receptionId]);
+    assert.deepEqual(returned.map((row) => Number(row.returned_quantity)), [1, 2]);
+});
+
 test('a return of invoiced units lowers the debt at the last invoiced cost; the rest of the delivery note, its pending', async () => {
     const { SupplierInvoiceService } = await import('../domains/procurement/SupplierInvoiceService.js');
     const { default: supplierReturnService } = await import('../domains/procurement/SupplierReturnService.js');

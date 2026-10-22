@@ -200,16 +200,23 @@ Decisión del coordinador (el usuario delegó la elección): el PR #1 queda cong
 - [x] 2026-10-18: AUD-016 (guardián, seguridad, auditor externo y UX) corregido; detalle en `AUDIT.md`.
   - Evidencia: validate 0 (1032 + 113); coverage 96,79/90,76/94,72; `qa:integration` 152/152; RBAC OK; E2E 6/6; simulación 161/161; transición simulada en `wsm_sports_erp` con `after.ok`.
 - [x] `431a5ac` subido; PR #11 con CI verde (4/4), mergeado con autorización del usuario: `5691c44`. Este checkpoint queda sin commitear en `main` hasta la próxima rama.
-- Pendiente del usuario (AUD-016):
-  1. precio de crédito de la devolución a proveedor de mercadería facturada (hoy lo tipea quien carga, Depósito incluido);
-  2. factura por menos unidades que el remito (hoy la diferencia baja el costo).
-  - Contador: D4, CMV histórico de la transición, IVA de facturas B/C al costo.
+- [x] Pendientes de AUD-016 respondidos por el usuario y la contadora (2026-10-21): pasaron a ADR-028.
+
+## EN CURSO — ADR-028: factura por línea, crédito de devoluciones y ejercicios anteriores (rama `feat/factura-parcial-y-area`)
+
+- Decisiones del usuario: 1) el crédito de la devolución es el último costo facturado y solo gerente o administrador lo cambia; 2) "lo ideal": la factura cobra unidades y costo por línea de remito, en partes.
+- La contadora respondió con las buenas prácticas (RT 17): el ajuste de la transición y el costo de lo vendido de ejercicios cerrados van a 3.1.02.02 (AREA); el IVA de B/C, al costo.
+- [x] `c65f2f6`: migración 067 (aplicada en QA, `wsm_sports_erp` y `wsm_simulacion`), servidor, cliente, pruebas, runbook y ADR-028. El CHECK de inventario pasa a la 068.
+  - Evidencia: validate 0 (1036 + 115); coverage 96,86/90,83/94,89; `qa:integration` 154/154; RBAC OK; E2E 6/6; simulación 161/161; transición simulada en `wsm_sports_erp` con `--inicio-ejercicio` y `after.ok`.
+- [x] AUD-017 (guardián, seguridad, UX y auditor) corregido; detalle en `AUDIT.md`. Migración 068 (`product_cost`, `cost_overridden`) aplicada en QA, `wsm_sports_erp` y `wsm_simulacion`; el CHECK de inventario pasa a la 069.
+- Próximo: verificaciones completas, commit, push, PR a `main` y pedir autorización de merge.
+- Pendiente del usuario (AUD-017): factura por más unidades que las pendientes ("NC a recibir"); devolución sin remito de un producto que el proveedor nunca entregó. Contadora: alcance de 3.1.02.02 en el ajuste final y en diferencias de precio del año de remitos viejos.
 
 ## Próximos pasos
 
 1. Usuario: simular todos los procesos con `scripts/simulacion.ps1` según `docs/execution/GUIA_SIMULACION.md`, y hacer la homologación de ARCA con credenciales de prueba.
 2. Usuario: antes de desplegar, confirmar que producción usa MySQL 8.0.16 o posterior (lo exige la 062; el runner lo controla). Después, correr en producción los runbooks (`docs/execution/RUNBOOK_REPARACION_STOCK_C1.md`, `RUNBOOK_ASIENTOS_COMPRA_DUPLICADOS.md`) y aplicar las migraciones con el despliegue.
-3. I8: migración 068 (CHECK de inventario; las 063-067 son índices, la valuación de ADR-025/027 y la factura por línea de ADR-028) — solo después de la reparación en producción (AP2).
+3. I8: migración 069 (CHECK de inventario; las 063-068 son índices, la valuación de ADR-025/027 y la factura por línea de ADR-028) — solo después de la reparación en producción (AP2).
 - [x] ADR-021 (AUD-009 corregido): condición IVA del cliente (migración 060, sin FK; Inscripto/Monotributista con CUIT), letra controlada antes de numerar (A siempre con CUIT; offline se corrige y audita), sugerencia de letra en POS y pedidos; alertas ARCA (conflicto, verificación > 10 min, rechazados) en el panel y contador en "Facturación". Evidencia: validate 0 (955 + 99); coverage 96,62/90,87/94,10; integración 108/108 ×2; RBAC OK; E2E 6/6; simulación 153/153. Decisiones pendientes del usuario en AUD-009 (anular factura no autorizable, alerta de facturas sin CAE por horas, carga de condiciones existentes, permiso, impresión "Sin especificar").
 - [x] ADR-022 (decisiones del usuario sobre AUD-009; AUD-010 corregido): anular y volver a emitir una factura no autorizada (migración 061), alerta de facturas sin CAE a las 24 h, condición IVA cargada en el momento (POS, pedidos, factura manual) y filtro en Clientes, Monotributista recibe B. Evidencia: validate 0 (965 + 100); coverage 96,67/90,71/93,97; integración 114/114 ×2; RBAC OK; E2E 6/6; simulación 153/153. Decisiones pendientes del usuario en AUD-010 (quién reemite, ticket, antigüedad, fecha al cruzar mes, alerta al configurar ARCA).
 - [x] ADR-023 (decisiones del usuario sobre AUD-010): cualquiera con facturación reemite; A/B → ticket permitido; reemisión hasta 5 días corridos (después solo administrador, auditado); alerta de 24 h solo desde `arca_configured_at` (migración 061 reaplicada en local y QA). Evidencia: validate 0 (967 + 101); coverage 96,67/90,60/93,97; integración 114/114 ×2; RBAC OK; E2E 6/6; simulación 153/153. El punto 4 quedó resuelto en ADR-024 (nota de crédito interna).

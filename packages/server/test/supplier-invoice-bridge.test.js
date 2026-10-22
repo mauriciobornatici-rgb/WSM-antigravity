@@ -129,7 +129,8 @@ test('a partial invoice clears only its units at the delivery note cost; each li
     const taken = calls.filter(({ statement }) => statement.startsWith('UPDATE reception_items SET invoiced_quantity'));
     assert.deepEqual(taken.map(({ params }) => params), [[3, 'line-p']]);
     const saved = calls.filter(({ statement }) => statement.startsWith('INSERT INTO supplier_invoice_items'));
-    assert.deepEqual(saved.map(({ params }) => params.slice(2)), [['r1', 'line-p', 'p', 3, 110, 300]]);
+    // Net unit cost, what it cleared, and the cost it left the product (for a later part, AUD-017).
+    assert.deepEqual(saved.map(({ params }) => params.slice(2)), [['r1', 'line-p', 'p', 3, 110, 300, 110]]);
     assert.deepEqual([result.receptions_net, result.receptions_difference], [300, 30]);
     assert.equal(audits[0].new_values.difference, 30);
 });

@@ -8,7 +8,10 @@ import { FileText, DollarSign, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type SupplierInvoiceCreateResult } from '@/services/api';
 import { formatMoney } from '@/lib/formatters';
-import { invoiceLines, netByRate, receptionPendingNet, sharedPurchaseOrderId, type InvoiceLineEdit, type InvoiceLineSource } from './receptionTotals';
+import {
+    invoiceLineCostId, invoiceLineQuantityId, invoiceLines, netByRate, receptionPendingNet, sharedPurchaseOrderId,
+    type InvoiceLineEdit, type InvoiceLineSource,
+} from './receptionTotals';
 import { SupplierInvoiceLines } from './SupplierInvoiceLines';
 import { createClientUuid } from '@/lib/clientUuid';
 import { VAT_RATE_OPTIONS, formatVatRate } from '@/lib/pricing';
@@ -118,9 +121,10 @@ export function SupplierInvoiceForm({
     const [multiRate, setMultiRate] = useState(false);
     const [vatLines, setVatLines] = useState<VatLineState[]>([]);
     const [submitting, setSubmitting] = useState(false);
-    // ADR-028: what the user typed per delivery note line, and a VAT typed per rate (the supplier's rounding).
+    // ADR-028: what the user typed per delivery note line, and a VAT typed per rate (the supplier's
+    // rounding), kept while that rate's net stays the same.
     const [lineEdits, setLineEdits] = useState<Record<string, InvoiceLineEdit>>({});
-    const [vatEdits, setVatEdits] = useState<Record<string, string>>({});
+    const [vatEdits, setVatEdits] = useState<Record<string, { netCents: number; vat: string }>>({});
 
     // Dynamic dropdown states
     const [receptions, setReceptions] = useState<SupplierReceptionOption[]>([]);
@@ -166,11 +170,18 @@ export function SupplierInvoiceForm({
     // Marking remitos brings their pending lines (ADR-028): the net and VAT come from them.
     const applyReceptionSelection = (ids: string[], source: SupplierReceptionOption[]) => {
         setReceptionIds(ids);
-        setVatEdits({});
         const selected = source.filter(r => ids.includes(r.id));
         // When every marked remito comes from the same PO, link it as well
         const sharedPo = sharedPurchaseOrderId(selected);
         if (sharedPo) setPurchaseOrderId(sharedPo);
+    };
+
+    // Another supplier: nothing marked of the previous one stays.
+    const changeSupplier = (value: string) => {
+        setSupplierId(value);
+        setReceptionIds([]);
+        setLineEdits({});
+        setVatEdits({});
     };
 
     const updateInvoiceLine = (lineId: string, patch: { quantity?: string; unitCost?: string }) => {
@@ -179,8 +190,14 @@ export function SupplierInvoiceForm({
             const previous = current[lineId] ?? { quantity: line?.quantity ?? '', unitCost: line?.unitCost ?? '' };
             return { ...current, [lineId]: { ...previous, ...patch } };
         });
-        // A VAT typed for the old net no longer applies.
-        setVatEdits({});
+    };
+
+    const setAllInvoiceLines = (mode: 'pending' | 'none') => {
+        setLineEdits(current => {
+            const next = { ...current };
+            for (const line of lines) next[line.id] = { quantity: mode === 'pending' ? String(line.pending) : '0', unitCost: line.unitCost };
+            return next;
+        });
     };
 
     const toggleReception = (id: string, checked: boolean) => {
@@ -245,11 +262,14 @@ export function SupplierInvoiceForm({
     const linesMode = effectivePurchaseKind === 'goods' && lines.length > 0;
     const rateRows = netByRate(lines).map(({ rate, netCents }) => {
         const computed = round2(netCents / 100 * rate / 100);
-        const vat = vatEdits[String(rate)] ?? String(computed);
-        return { rate, net: netCents / 100, vat };
+        // A VAT typed for another net no longer applies: it is calculated again.
+        const edit = vatEdits[String(rate)];
+        const vat = edit && edit.netCents === netCents ? edit.vat : String(computed);
+        return { rate, netCents, net: netCents / 100, vat };
     });
     const invoicedLines = lines.filter(line => line.units > 0);
     const linesDifference = round2(invoicedLines.reduce((sum, line) => sum + line.netCents - line.remitoCents, 0) / 100);
+    const productsWithNewCost = new Set(invoicedLines.filter(line => line.netCents !== line.remitoCents).map(line => line.productName)).size;
 
     // With several rates the voucher's net and VAT are the sums of the lines.
     let netVal = parseFloat(netAmount) || 0;
@@ -272,19 +292,21 @@ export function SupplierInvoiceForm({
         e.preventDefault();
 
         if (!supplierId) {
-            toast.error("Debe seleccionar un proveedor");
+            toast.error("Elegí un proveedor");
             return;
         }
         if (!invoiceNumber.trim()) {
-            toast.error("Debe ingresar el número de factura");
+            toast.error("Ingresá el número de factura");
             return;
         }
         if (linesMode) {
             const invalid = lines.find(line => !line.valid);
             if (invalid) {
-                toast.error(`Revisá ${invalid.productName}`, {
+                toast.error(`Revisá ${invalid.productName} (remito ${invalid.receptionLabel})`, {
                     description: `Las unidades van enteras, de 0 a ${invalid.pending} (lo pendiente del remito), y el costo no puede ser negativo.`,
                 });
+                // Take the user to the field to fix.
+                document.getElementById(invalid.quantityValid ? invoiceLineCostId(invalid.id) : invoiceLineQuantityId(invalid.id))?.focus();
                 return;
             }
             if (invoicedLines.length === 0) {
@@ -293,7 +315,7 @@ export function SupplierInvoiceForm({
             }
         }
         if (netVal <= 0) {
-            toast.error("El Neto Gravado debe ser mayor a 0");
+            toast.error("El neto gravado tiene que ser mayor a 0");
             return;
         }
         if (goodsWithoutReception) {
@@ -305,8 +327,8 @@ export function SupplierInvoiceForm({
             return;
         }
 
-        if (multiRate && vatLines.some(line => !(parseFloat(line.net) > 0))) {
-            toast.error("Cada alícuota debe tener un neto mayor a 0");
+        if (!linesMode && multiRate && vatLines.some(line => !(parseFloat(line.net) > 0))) {
+            toast.error("Cada alícuota tiene que tener un neto mayor a 0");
             return;
         }
 
@@ -381,7 +403,7 @@ export function SupplierInvoiceForm({
                 {/* Supplier Selection */}
                 <div className="space-y-2">
                     <Label htmlFor="supplier">Proveedor *</Label>
-                    <Select value={supplierId} onValueChange={setSupplierId} disabled={!!initialSupplierId}>
+                    <Select value={supplierId} onValueChange={changeSupplier} disabled={!!initialSupplierId}>
                         <SelectTrigger id="supplier">
                             <SelectValue placeholder="Seleccione un proveedor" />
                         </SelectTrigger>
@@ -448,12 +470,14 @@ export function SupplierInvoiceForm({
             {linesMode ? (
                 <section className="space-y-2" aria-labelledby="invoice-lines-title">
                     <h4 id="invoice-lines-title" className="text-sm font-semibold">Qué cobra la factura</h4>
-                    <SupplierInvoiceLines lines={lines} onChange={updateInvoiceLine} />
+                    <p role="status" className="sr-only">Se cargaron {lines.length} líneas para facturar.</p>
+                    <SupplierInvoiceLines lines={lines} onChange={updateInvoiceLine} onSetAll={setAllInvoiceLines} />
                     <div aria-live="polite">
                         {Math.abs(linesDifference) > 0.01 ? (
                             <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">
                                 La factura cobra {formatMoney(Math.abs(linesDifference))} {linesDifference > 0 ? 'más' : 'menos'} que el costo de los remitos.
-                                La diferencia corrige el costo de los productos que lo actualizan con cada compra; en los de costo fijo se anota como
+                                Cambia el costo de {productsWithNewCost === 1 ? '1 producto' : `${productsWithNewCost} productos`} y, en los que siguen al
+                                costo, también su precio de venta. En los productos de costo fijo, la diferencia queda como
                                 {linesDifference > 0 ? ' pérdida' : ' ganancia'}.
                             </p>
                         ) : null}
@@ -592,8 +616,8 @@ export function SupplierInvoiceForm({
                                         min="0"
                                         inputMode="decimal"
                                         value={row.vat}
-                                        onChange={e => setVatEdits(current => ({ ...current, [String(row.rate)]: e.target.value }))}
-                                        className="font-mono"
+                                        onChange={e => setVatEdits(current => ({ ...current, [String(row.rate)]: { netCents: row.netCents, vat: e.target.value } }))}
+                                        className="h-11 font-mono lg:h-9"
                                     />
                                 </div>
                             </div>
@@ -678,24 +702,27 @@ export function SupplierInvoiceForm({
                 ) : null}
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    {/* Net Amount */}
+                    {/* Net Amount (a sum, shown as an amount, when it comes from lines or rates) */}
                     <div className="space-y-2">
-                        <Label htmlFor="netAmount">Neto Gravado *</Label>
-                        <div className="relative">
-                            <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                id="netAmount"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={derivedAmounts ? String(netVal) : netAmount}
-                                onChange={e => setNetAmount(e.target.value)}
-                                placeholder="0.00"
-                                className="pl-9 font-mono"
-                                readOnly={derivedAmounts}
-                                required={!derivedAmounts}
-                            />
-                        </div>
+                        <Label htmlFor="netAmount">Neto gravado *</Label>
+                        {derivedAmounts ? (
+                            <output id="netAmount" className="block py-2 font-mono text-base">{formatMoney(netVal)}</output>
+                        ) : (
+                            <div className="relative">
+                                <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    id="netAmount"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={netAmount}
+                                    onChange={e => setNetAmount(e.target.value)}
+                                    placeholder="0.00"
+                                    className="pl-9 font-mono"
+                                    required
+                                />
+                            </div>
+                        )}
                     </div>
 
                     {/* VAT Rate (with lines, each product brings its own: see above) */}
@@ -714,23 +741,26 @@ export function SupplierInvoiceForm({
                         </Select>
                     </div>
 
-                    {/* VAT Amount (calculated but editable) */}
+                    {/* VAT Amount (calculated but editable; a sum with lines or rates) */}
                     <div className="space-y-2">
                         <Label htmlFor="vatAmount">Monto IVA</Label>
-                        <div className="relative">
-                            <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                id="vatAmount"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={derivedAmounts ? String(vatVal) : vatAmount}
-                                onChange={e => setVatAmount(e.target.value)}
-                                placeholder="0.00"
-                                className="pl-9 font-mono"
-                                readOnly={derivedAmounts}
-                            />
-                        </div>
+                        {derivedAmounts ? (
+                            <output id="vatAmount" className="block py-2 font-mono text-base">{formatMoney(vatVal)}</output>
+                        ) : (
+                            <div className="relative">
+                                <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    id="vatAmount"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={vatAmount}
+                                    onChange={e => setVatAmount(e.target.value)}
+                                    placeholder="0.00"
+                                    className="pl-9 font-mono"
+                                />
+                            </div>
+                        )}
                     </div>
 
                     {/* Other taxes (percepciones) */}
@@ -753,8 +783,8 @@ export function SupplierInvoiceForm({
                 </div>
 
                 <div className="flex justify-between items-center border-t pt-3 mt-4 text-sm font-semibold">
-                    <span className="text-muted-foreground">Total de Comprobante (Deuda):</span>
-                    <span className="text-2xl font-extrabold text-blue-600 font-mono">${totalAmount.toLocaleString()}</span>
+                    <span className="text-muted-foreground">Total del comprobante (deuda):</span>
+                    <span className="text-2xl font-extrabold text-blue-600 font-mono" aria-live="polite">{formatMoney(totalAmount)}</span>
                 </div>
             </div>
 
@@ -774,8 +804,9 @@ export function SupplierInvoiceForm({
                 <Button type="button" variant="outline" onClick={onCancel} disabled={submitting}>
                     Cancelar
                 </Button>
-                <Button type="submit" disabled={submitting || totalAmount <= 0} className="bg-blue-600 hover:bg-blue-700 text-white font-medium">
-                    {submitting ? 'Guardando...' : 'Cargar y Registrar Factura'}
+                {/* Enabled while not saving: what is missing is said when it is pressed (and the field gets the focus). */}
+                <Button type="submit" disabled={submitting} className="bg-blue-600 hover:bg-blue-700 text-white font-medium">
+                    {submitting ? 'Guardando...' : 'Registrar factura'}
                 </Button>
             </div>
         </form>

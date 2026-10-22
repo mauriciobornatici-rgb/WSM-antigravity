@@ -4,8 +4,9 @@
 // informe sin escribir nada. Para aplicar (después de revisar la simulación):
 //   node scripts/repair-inventory-valuation.js --apply --confirm=<DB_NAME>
 // Opcional: --out=transicion.json
-//           --inicio-ejercicio=AAAA-MM-DD (primer día del ejercicio en curso; por defecto, el 1 de
-//           enero de este año). Lo de ejercicios anteriores va a 3.1.02.02 (ADR-028).
+//           --inicio-ejercicio=AAAA-MM-DD (primer día del ejercicio en curso, hora argentina;
+//           obligatorio con --apply, la simulación asume el 1 de enero de este año). Lo de ejercicios
+//           anteriores va a 3.1.02.02 (ADR-028).
 //
 // Antes exige: migraciones 064-067, la reparación de stock C1 hecha y ningún asiento de recepción
 // sin revertir. Pasos (ver RUNBOOK_VALUACION_INVENTARIO.md):
@@ -23,22 +24,22 @@ import auditService from '../services/audit.service.js';
 import { assertSafeDatabaseTarget, getEnvConfig } from '../config/env.js';
 import { findAffectedOrders } from './stock-drift/stockDrift.js';
 import { findReceptionEntries } from './purchase-entries/purchaseEntries.js';
-import { checkCutoverPreconditions, runCutover } from './inventory-valuation/valuation.js';
+import { checkCutoverPreconditions, fiscalYearStartOf, runCutover } from './inventory-valuation/valuation.js';
+import { businessYear } from '../utils/businessDate.js';
 import { assertMinimumMysqlVersion, describeTarget, parseArgs, writeOutput } from './stock-drift/cli.js';
-
-function parseFiscalYearStart(value) {
-    if (value === undefined) return new Date(new Date().getFullYear(), 0, 1);
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
-    if (!match) return null;
-    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-    return date.getMonth() === Number(match[2]) - 1 && date.getDate() === Number(match[3]) ? date : null;
-}
 
 const args = parseArgs(process.argv.slice(2));
 const apply = args.apply === true;
 const target = describeTarget();
-// ADR-028: the first day of the fiscal year in course (what is earlier goes to 3.1.02.02).
-const fiscalYearStart = parseFiscalYearStart(args['inicio-ejercicio']);
+// ADR-028: the first day of the fiscal year in course, in Argentine time (what is earlier goes to
+// 3.1.02.02). Applying needs it said; a simulation assumes January 1 of this year.
+if (apply && args['inicio-ejercicio'] === undefined) {
+    console.error('Para aplicar se requiere --inicio-ejercicio=AAAA-MM-DD (el primer día del ejercicio en curso).');
+    process.exit(2);
+}
+const fiscalYearStart = args['inicio-ejercicio'] === undefined
+    ? fiscalYearStartOf(`${businessYear()}-01-01`)
+    : fiscalYearStartOf(args['inicio-ejercicio']);
 if (!fiscalYearStart) {
     console.error('--inicio-ejercicio tiene que ser una fecha AAAA-MM-DD (el primer día del ejercicio en curso).');
     process.exit(2);
