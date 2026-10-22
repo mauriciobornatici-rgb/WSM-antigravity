@@ -20,6 +20,7 @@ import { CurrentAccountsSummaryCards } from "@/components/currentAccounts/Curren
 import { CurrentAccountsLedgerTable, type UnifiedMovement } from "@/components/currentAccounts/CurrentAccountsLedgerTable";
 import { CurrentAccountsPendingDocsTable, type PendingDoc } from "@/components/currentAccounts/CurrentAccountsPendingDocsTable";
 import { CurrentAccountsPrintStatement } from "@/components/currentAccounts/CurrentAccountsPrintStatement";
+import { supplierInvoicePending } from "@/components/suppliers/supplierCredit";
 
 type AccountType = "client" | "supplier";
 
@@ -86,6 +87,13 @@ export default function CurrentAccountsPage() {
     const { data: supplierReturns = [] } = useQuery({
         queryKey: ["current-accounts", "supplier-returns", selectedSupplierId],
         queryFn: () => api.getSupplierReturns({ supplier_id: selectedSupplierId }),
+        enabled: accountType === "supplier" && !!selectedSupplierId,
+    });
+
+    // ADR-029: notas de crédito del proveedor por unidades que sus facturas cobraron de más.
+    const { data: supplierCreditNotes = [] } = useQuery({
+        queryKey: ["current-accounts", "supplier-credit-notes", selectedSupplierId],
+        queryFn: () => api.getSupplierCreditNotes({ supplier_id: selectedSupplierId }),
         enabled: accountType === "supplier" && !!selectedSupplierId,
     });
 
@@ -228,6 +236,13 @@ export default function CurrentAccountsPage() {
             balanceAfter: 0
         }));
 
+        // What a return lowered of the debt is its 'adjustment' movement (the return row has no
+        // amount; units the supplier had not invoiced yet lower nothing here).
+        const adjustmentByReference = new Map<string, number>();
+        for (const tx of supplierTransactions) {
+            if (String(tx.type).toLowerCase() !== "adjustment" || !tx.reference_id) continue;
+            adjustmentByReference.set(tx.reference_id, (adjustmentByReference.get(tx.reference_id) || 0) + Number(tx.amount || 0));
+        }
         const returnRows: UnifiedMovement[] = supplierReturns
             .filter((ret) => ret.status === "approved" || ret.status === "completed")
             .map((ret) => ({
@@ -237,13 +252,29 @@ export default function CurrentAccountsPage() {
                 typeLabel: "Devolución Proveedor",
                 reference: `DEV-${String(ret.return_number || String(ret.id || "").substring(0, 8))}`,
                 description: `Devolución de mercadería a proveedor: ${String(ret.notes || "")}`,
-                debit: Number(ret.total_credit_amount || 0),
+                debit: adjustmentByReference.get(String(ret.id || "")) ?? Number(ret.total_credit_amount || 0),
                 credit: 0,
                 balanceAfter: 0
             }));
 
+        const creditNoteRows: UnifiedMovement[] = supplierCreditNotes.map((note) => ({
+            id: note.id,
+            date: note.issue_date || note.created_at || new Date().toISOString(),
+            type: "credit_note" as const,
+            typeLabel: `Nota de Crédito Proveedor ${note.credit_note_type}`,
+            reference: `NC ${note.credit_note_type}-${note.credit_note_number}`,
+            description: `Por unidades cobradas de más en la factura ${note.invoice_type || ""}-${note.invoice_number || ""}`,
+            debit: Number(note.total_amount || 0),
+            credit: 0,
+            balanceAfter: 0
+        }));
+
+        // A payment is already listed from supplier_payments: its 'expense' movement (same id as
+        // reference) is not listed again.
+        const paymentIds = new Set(supplierPayments.map((pay: { id: string }) => pay.id));
         const transactionRows: UnifiedMovement[] = supplierTransactions
             .filter(tx => String(tx.type).toLowerCase() === "expense" && Number(tx.amount || 0) > 0)
+            .filter(tx => !(tx.reference_id && paymentIds.has(tx.reference_id)))
             .map(tx => ({
                 id: String(tx.id),
                 date: String(tx.date || new Date().toISOString()),
@@ -256,10 +287,10 @@ export default function CurrentAccountsPage() {
                 balanceAfter: 0
             }));
 
-        return [...invoiceRows, ...paymentRows, ...returnRows, ...transactionRows].sort(
+        return [...invoiceRows, ...paymentRows, ...returnRows, ...creditNoteRows, ...transactionRows].sort(
             (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
         );
-    }, [selectedSupplierId, supplierInvoices, supplierPayments, supplierReturns, supplierTransactions]);
+    }, [selectedSupplierId, supplierInvoices, supplierPayments, supplierReturns, supplierCreditNotes, supplierTransactions]);
 
     // Calculate Running Balance
     const ledgerMovements = useMemo<UnifiedMovement[]>(() => {
@@ -382,7 +413,8 @@ export default function CurrentAccountsPage() {
 
             return supplierInvoices.map((inv: SupplierInvoiceResponse) => {
                 const paid = paidMap.get(inv.id) || 0;
-                const pending = Number(inv.total_amount || 0) - paid;
+                // ADR-029: its supplier credit notes also lower what is owed of it.
+                const pending = supplierInvoicePending(inv.total_amount, paid, inv.credit_notes_total);
                 const isOverdue = Boolean(inv.due_date && new Date(inv.due_date).getTime() < currentTimestamp);
                 return {
                     id: inv.id,

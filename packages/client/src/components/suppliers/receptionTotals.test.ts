@@ -44,6 +44,34 @@ describe("líneas de factura por remito (ADR-028)", () => {
     });
 });
 
+describe("unidades cobradas de más (ADR-029)", () => {
+    const reception = {
+        id: "r1",
+        reception_number: "REC-1",
+        items: [
+            { id: "a", product_name: "Pelota", vat_rate: 21, quantity_to_invoice: 2, unit_cost: 100 },
+            { id: "c", product_name: "Facturado", vat_rate: 21, quantity_to_invoice: 0, unit_cost: 50 },
+        ],
+    };
+
+    it("sin la nota de crédito esperada, más de lo pendiente es un error y no aparecen las líneas ya facturadas", () => {
+        const [line, ...rest] = invoiceLines([reception], { a: { quantity: "3", unitCost: "100" } });
+        expect(rest).toHaveLength(0);
+        expect(line?.quantityValid).toBe(false);
+        expect(line?.excess).toBe(0);
+    });
+
+    it("con la nota de crédito esperada, lo de más queda aparte al precio de la línea", () => {
+        const lines = invoiceLines([reception], { a: { quantity: "3", unitCost: "110" }, c: { quantity: "1", unitCost: "50" } }, { allowExcess: true });
+        const [a, c] = lines;
+        expect(lines).toHaveLength(2);
+        // 3 a 110: 2 recibidas (220 contra 200 del remito) y 1 de más (110).
+        expect([a?.valid, a?.netCents, a?.remitoCents, a?.excess, a?.excessCents, a?.receivedNetCents]).toEqual([true, 33000, 20000, 1, 11000, 22000]);
+        // Una línea ya facturada: todo lo que cobra es de más.
+        expect([c?.pending, c?.excess, c?.remitoCents, c?.receivedNetCents]).toEqual([0, 1, 0, 0]);
+        expect(netByRate(lines)).toEqual([{ rate: 21, netCents: 38000 }]);
+    });
+});
 describe("receptionTotals", () => {
     it("suma cantidad recibida por costo unitario", () => {
         expect(receptionNet({ items: [{ quantity_received: 3, unit_cost: 10.5 }, { quantity_received: "2", unit_cost: "4" }] })).toBe(39.5);

@@ -3,7 +3,7 @@ import { QualityCheckDialog, type QualityCheckItemInput } from "@/components/rec
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, RotateCcw, Download, Tag } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/services/api";
+import { api, type SupplierCreditNoteCreateInput, type SupplierInvoiceResponse } from "@/services/api";
 import type { QualityCheckCreateInput } from "@/types/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { formatMoney } from "@/lib/formatters";
@@ -14,6 +14,8 @@ import { ReceptionsHistorySection } from "@/components/receptions/ReceptionsHist
 import { ReturnForm } from "@/components/receptions/ReturnForm";
 import { SupplierReturnsSection } from "@/components/receptions/SupplierReturnsSection";
 import { SupplierInvoiceForm, type SupplierInvoicePayload } from "@/components/suppliers/SupplierInvoiceForm";
+import { SupplierCreditNoteForm } from "@/components/suppliers/SupplierCreditNoteForm";
+import { creditPending } from "@/components/suppliers/supplierCredit";
 import { PrintableBarcodeLabelsDialog } from "@/components/receptions/PrintableBarcodeLabelsDialog";
 import type {
     PendingReceptionOrder,
@@ -63,6 +65,8 @@ export default function ReceptionsPage() {
     const [selectedQcReception, setSelectedQcReception] = useState<ReceptionRecord | null>(null);
     const [isQcSubmitting, setIsQcSubmitting] = useState(false);
     const [printingReception, setPrintingReception] = useState<ReceptionRecord | null>(null);
+    // ADR-029: la factura cuya nota de crédito del proveedor se está cargando.
+    const [creditNoteInvoice, setCreditNoteInvoice] = useState<SupplierInvoiceResponse | null>(null);
 
     const pendingOrdersQuery = useQuery({
         queryKey: queryKeys.purchaseOrders.pendingReception,
@@ -140,6 +144,17 @@ export default function ReceptionsPage() {
             await Promise.all([
                 queryClient.invalidateQueries({ queryKey: ["supplier-invoices"] }),
                 queryClient.invalidateQueries({ queryKey: queryKeys.suppliers.all }),
+            ]);
+        },
+    });
+
+    const createCreditNoteMutation = useMutation({
+        mutationFn: (payload: SupplierCreditNoteCreateInput) => api.createSupplierCreditNote(payload),
+        onSuccess: async () => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ["supplier-invoices"] }),
+                queryClient.invalidateQueries({ queryKey: queryKeys.suppliers.all }),
+                queryClient.invalidateQueries({ queryKey: ["current-accounts"] }),
             ]);
         },
     });
@@ -266,6 +281,15 @@ export default function ReceptionsPage() {
         } catch {
             // El manejo global de React Query ya informa el error.
         }
+    }
+
+    async function handleCreateCreditNote(data: SupplierCreditNoteCreateInput) {
+        const result = await createCreditNoteMutation.mutateAsync(data);
+        const parts = [`Saldó ${formatMoney(result.applied_amount)} de lo que faltaba recibir.`];
+        if (result.holding_result > 0) parts.push(`${formatMoney(result.holding_result)} de más quedaron como ganancia por mejor precio.`);
+        if (result.credit_left > 0) parts.push(`Faltan ${formatMoney(result.credit_left)} por recibir.`);
+        toast.success("Nota de crédito registrada", { description: parts.join(" ") });
+        setCreditNoteInvoice(null);
     }
 
     const handleExportLibroIVACompras = async () => {
@@ -467,6 +491,7 @@ export default function ReceptionsPage() {
                                     <th className="px-6 py-3 text-right font-semibold text-slate-500 dark:text-slate-400">Neto</th>
                                     <th className="px-6 py-3 text-right font-semibold text-slate-500 dark:text-slate-400">IVA</th>
                                     <th className="px-6 py-3 text-right font-semibold text-slate-500 dark:text-slate-400">Total</th>
+                                    <th className="px-6 py-3 text-right font-semibold text-slate-500 dark:text-slate-400">NC a recibir</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -498,11 +523,30 @@ export default function ReceptionsPage() {
                                         <td className="px-6 py-4 text-right font-bold text-emerald-600 dark:text-emerald-400 font-mono whitespace-nowrap">
                                             {formatMoney(inv.total_amount)}
                                         </td>
+                                        <td className="px-6 py-4 text-right whitespace-nowrap">
+                                            {creditPending(inv) > 0 ? (
+                                                <div className="flex flex-col items-end gap-1">
+                                                    <span className="font-mono text-amber-800 dark:text-amber-300">{formatMoney(creditPending(inv))}</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setCreditNoteInvoice(inv)}
+                                                        aria-label={`Cargar la nota de crédito de la factura ${inv.invoice_type} ${inv.invoice_number}`}
+                                                        className="min-h-11 rounded border border-border px-3 text-xs font-medium hover:bg-muted lg:min-h-8"
+                                                    >
+                                                        Cargar NC
+                                                    </button>
+                                                </div>
+                                            ) : Number(inv.credit_expected_amount || 0) > 0 ? (
+                                                <span className="text-xs text-muted-foreground">Recibida</span>
+                                            ) : (
+                                                <span className="text-muted-foreground" aria-label="Sin nota de crédito a recibir">—</span>
+                                            )}
+                                        </td>
                                     </tr>
                                 ))}
                                 {(supplierInvoicesQuery.data || []).length === 0 && (
                                     <tr>
-                                        <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
+                                        <td colSpan={8} className="px-6 py-12 text-center text-muted-foreground">
                                             No hay facturas de proveedor registradas.
                                         </td>
                                     </tr>
@@ -539,6 +583,25 @@ export default function ReceptionsPage() {
                         onSubmit={handleCreateSupplierInvoice}
                         onCancel={() => setIsInvoiceDialogOpen(false)}
                     />
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={Boolean(creditNoteInvoice)} onOpenChange={(open) => { if (!open) setCreditNoteInvoice(null); }}>
+                <DialogContent className="w-[95vw] max-h-[92vh] overflow-y-auto sm:max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle>Nota de crédito del proveedor</DialogTitle>
+                        <DialogDescription>
+                            Registrá la nota de crédito por las unidades que la factura cobró de más. Baja la deuda con el proveedor.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {creditNoteInvoice ? (
+                        <SupplierCreditNoteForm
+                            key={creditNoteInvoice.id}
+                            invoice={creditNoteInvoice}
+                            onSubmit={handleCreateCreditNote}
+                            onCancel={() => setCreditNoteInvoice(null)}
+                        />
+                    ) : null}
                 </DialogContent>
             </Dialog>
 

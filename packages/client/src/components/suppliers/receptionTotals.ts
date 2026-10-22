@@ -50,6 +50,10 @@ export type InvoiceLineView = {
     // Neto de la línea y lo que valía al costo del remito, en centavos.
     netCents: number;
     remitoCents: number;
+    // ADR-029: unidades cobradas de más (más que lo pendiente), su parte del neto y el neto de lo recibido.
+    excess: number;
+    excessCents: number;
+    receivedNetCents: number;
 };
 
 const toCents = (value: number) => Math.round((value + Number.EPSILON) * 100);
@@ -58,24 +62,36 @@ const toCents = (value: number) => Math.round((value + Number.EPSILON) * 100);
 export const invoiceLineQuantityId = (lineId: string) => `invoice-line-qty-${lineId}`;
 export const invoiceLineCostId = (lineId: string) => `invoice-line-cost-${lineId}`;
 
+// Tope de unidades por línea (el mismo que acepta el servidor).
+export const MAX_INVOICE_LINE_UNITS = 999_999;
+
 // Las líneas pendientes de los remitos elegidos, con lo que el usuario cargó (por defecto, todo lo
-// pendiente al costo del remito).
+// pendiente al costo del remito). ADR-029: con `allowExcess` (el proveedor va a mandar una nota de
+// crédito), una línea puede cobrar más unidades que las pendientes, y entran también las líneas
+// que ya no tienen nada pendiente.
 export function invoiceLines(
     receptions: Array<{ id: string; remito_number?: string | null; reception_number: string; items?: InvoiceLineSource[] }>,
     edits: Record<string, InvoiceLineEdit>,
+    { allowExcess = false }: { allowExcess?: boolean } = {},
 ): InvoiceLineView[] {
     return receptions.flatMap((reception) => (reception.items ?? [])
-        .filter((item) => Number(item.quantity_to_invoice || 0) > 0)
+        .filter((item) => allowExcess || Number(item.quantity_to_invoice || 0) > 0)
         .map((item) => {
-            const pending = Number(item.quantity_to_invoice || 0);
+            const pending = Math.max(0, Number(item.quantity_to_invoice || 0));
             const remitoCost = Number(item.unit_cost || 0);
             const quantity = edits[item.id]?.quantity ?? String(pending);
             const unitCost = edits[item.id]?.unitCost ?? String(remitoCost);
             const units = Number(quantity);
             const cost = Number(unitCost);
-            const quantityValid = quantity.trim() !== '' && Number.isInteger(units) && units >= 0 && units <= pending;
+            const maxUnits = allowExcess ? MAX_INVOICE_LINE_UNITS : pending;
+            const quantityValid = quantity.trim() !== '' && Number.isInteger(units) && units >= 0 && units <= maxUnits;
             const costValid = unitCost.trim() !== '' && Number.isFinite(cost) && cost >= 0;
             const valid = quantityValid && costValid;
+            const netCents = valid ? Math.round(Number((units * cost).toFixed(4)) * 100) : 0;
+            const received = valid ? Math.min(units, pending) : 0;
+            const excess = valid ? units - received : 0;
+            // La parte de lo cobrado de más, al precio de la línea (como la reparte el servidor).
+            const excessCents = excess > 0 ? Math.round(netCents * excess / units) : 0;
             return {
                 id: item.id,
                 receptionId: reception.id,
@@ -93,8 +109,11 @@ export function invoiceLines(
                 units: valid ? units : 0,
                 cost: valid ? cost : 0,
                 // The unit price as the invoice prints it (up to 4 decimals): the line is rounded once.
-                netCents: valid ? Math.round(Number((units * cost).toFixed(4)) * 100) : 0,
-                remitoCents: valid ? Math.round(units * toCents(remitoCost)) : 0,
+                netCents,
+                remitoCents: Math.round(received * toCents(remitoCost)),
+                excess,
+                excessCents,
+                receivedNetCents: netCents - excessCents,
             };
         }));
 }

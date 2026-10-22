@@ -183,6 +183,12 @@ export const zodSchemas = {
     supplierInvoiceCreate: z.object({
         body: commonSchemas.supplierInvoiceCreateSchema
     }),
+    supplierCreditNoteFilters: z.object({
+        query: commonSchemas.supplierCreditNoteFiltersSchema.optional()
+    }),
+    supplierCreditNoteCreate: z.object({
+        body: commonSchemas.supplierCreditNoteCreateSchema
+    }),
     qualityCheck: z.object({
         body: commonSchemas.qualityCheckSchema
     }),

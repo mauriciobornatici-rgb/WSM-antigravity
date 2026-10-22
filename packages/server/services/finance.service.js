@@ -931,6 +931,12 @@ class FinanceService {
                     [invoiceId]
                 );
                 const paidBefore = this._roundMoney(paymentRows[0]?.paid_amount || 0);
+                // ADR-029: the supplier's credit notes against this invoice lower what is left to pay.
+                const [creditRows] = await connection.query(
+                    'SELECT COALESCE(SUM(total_amount), 0) AS credited FROM supplier_credit_notes WHERE supplier_invoice_id = ?',
+                    [invoiceId]
+                );
+                const credited = this._roundMoney(creditRows[0]?.credited || 0);
 
                 const normalizedPayments = this._normalizePaymentLines(payments, 'cash');
                 const paidNow = this._roundMoney(
@@ -938,9 +944,11 @@ class FinanceService {
                 );
                 const paidAfter = this._roundMoney(paidBefore + paidNow);
 
-                if (paidAfter > totalAmount + 0.01) {
+                if (paidAfter + credited > totalAmount + 0.01) {
                     throw this._buildValidationError(
-                        `El total de pagos (${paidAfter}) supera el total de la factura de proveedor ${invoiceId} (${totalAmount})`,
+                        credited > 0
+                            ? `El total de pagos (${paidAfter}) supera lo que queda de la factura de proveedor ${invoice.invoice_number} (${this._roundMoney(totalAmount - credited)}, descontadas sus notas de crédito)`
+                            : `El total de pagos (${paidAfter}) supera el total de la factura de proveedor ${invoiceId} (${totalAmount})`,
                         'PAYMENTS_EXCEED_TOTAL'
                     );
                 }
@@ -1016,7 +1024,7 @@ class FinanceService {
                     });
                 }
 
-                const paymentStatus = this._resolvePaymentStatus(totalAmount, paidAfter);
+                const paymentStatus = this._resolvePaymentStatus(totalAmount, paidAfter + credited);
                 await connection.query(
                     'UPDATE supplier_invoices SET payment_status = ? WHERE id = ?',
                     [paymentStatus, invoiceId]

@@ -34,7 +34,7 @@ la versión con ADR-027.
    `--inicio-ejercicio=AAAA-MM-DD` (hora argentina). Para aplicar es obligatorio; la simulación, sin él,
    toma el 1 de enero del año en curso.
 5. Desplegá la versión nueva con la **app detenida para la operación** (ventana de
-   mantenimiento) y aplicá las migraciones 064 a 068 **sin arrancar el servidor**:
+   mantenimiento) y aplicá las migraciones 064 a 069 **sin arrancar el servidor**:
 
    ```powershell
    node scripts/run-migrations.js
@@ -106,7 +106,7 @@ Desde `packages/server`, con el entorno de producción:
 - Cada día (o semana), el diagnóstico tiene que seguir en `ok: true`. Si aparece una diferencia,
   algún camino movió stock sin asiento: `sales_without_entry` muestra las ventas sin costo
   posteriores al corte.
-- La migración del CHECK de inventario (069) sigue después de esto (AP2).
+- La migración del CHECK de inventario (070) sigue después de esto (AP2).
 
 ## Verificación hecha
 

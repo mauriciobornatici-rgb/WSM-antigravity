@@ -4,9 +4,9 @@ import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
 import { businessError } from '../../utils/businessError.js';
 import { ACCOUNTS } from '../../utils/paymentAccounts.js';
-import { vatCreditAccount } from '../../utils/vatAccounts.js';
 import { allocateCents } from '../../utils/vatMath.js';
 import defaultValuation, { effectiveCost, roundCost, valueCents } from '../inventory/InventoryValuation.js';
+import { purchaseDocumentAmounts, vatCreditByAccount } from './purchaseDocumentAmounts.js';
 
 // What a supplier invoice buys (ADR-017): goods go to inventory, freight and other expenses
 // to their expense accounts.
@@ -23,10 +23,17 @@ export class SupplierInvoiceService {
 
     async getSupplierInvoices(filters = {}) {
         const { supplier_id, status } = filters;
+        // ADR-029: what its credit notes settled of the credit expected, and their total.
         let query = `
             SELECT si.*, s.name AS supplier_name, s.tax_id AS supplier_tax_id,
-                   r.reception_number, po.po_number
+                   r.reception_number, po.po_number,
+                   COALESCE(cn.applied_amount, 0) AS credit_applied_amount,
+                   COALESCE(cn.total_amount, 0) AS credit_notes_total
             FROM supplier_invoices si
+            LEFT JOIN (
+                SELECT supplier_invoice_id, SUM(applied_amount) AS applied_amount, SUM(total_amount) AS total_amount
+                FROM supplier_credit_notes GROUP BY supplier_invoice_id
+            ) cn ON cn.supplier_invoice_id = si.id
             LEFT JOIN suppliers s ON si.supplier_id = s.id
             LEFT JOIN receptions r ON si.reception_id = r.id
             LEFT JOIN purchase_orders po ON si.purchase_order_id = po.id
@@ -57,54 +64,13 @@ export class SupplierInvoiceService {
             purchase_order_id,
             issue_date,
             due_date,
-            net_amount,
-            vat_amount,
-            other_taxes,
-            total_amount,
             notes
         } = data;
 
         const id = crypto.randomUUID();
         // ADR-019: one invoice may cover one or several delivery notes (receptions).
         const receptionIds = [...new Set([...(Array.isArray(data.reception_ids) ? data.reception_ids : []), reception_id].filter(Boolean))];
-        // ADR-017: an invoice with several VAT rates comes as one line per rate.
-        const vatLines = Array.isArray(data.vat_lines) && data.vat_lines.length > 0
-            ? data.vat_lines.map((line) => ({
-                vat_rate: Number(line.vat_rate),
-                net: Math.round(Number(line.net_amount || 0) * 100) / 100,
-                vat: Math.round(Number(line.vat_amount || 0) * 100) / 100,
-            }))
-            : null;
-        const net = vatLines
-            ? vatLines.reduce((sum, line) => sum + Math.round(line.net * 100), 0) / 100
-            : Math.round(Number(net_amount || 0) * 100) / 100;
-        const vat = vatLines
-            ? vatLines.reduce((sum, line) => sum + Math.round(line.vat * 100), 0) / 100
-            : Math.round(Number(vat_amount || 0) * 100) / 100;
-        if (vatLines && vatLines.some((line) => line.vat > 0 && line.vat_rate === 0)) {
-            throw businessError(400, { error: 'invalid_vat_rate', message: 'Una línea con IVA no puede tener alícuota 0 %.' });
-        }
-        // AUD-006: each line's VAT must match its rate (a few cents of rounding per item are
-        // allowed), and the header amounts, when sent, must be the sums of the lines.
-        for (const line of vatLines || []) {
-            const expected = line.net * line.vat_rate / 100;
-            if (line.vat_rate > 0 && Math.abs(line.vat - expected) > Math.max(0.05, line.net * 0.001)) {
-                throw businessError(400, {
-                    error: 'invalid_vat_line',
-                    message: `El IVA de la línea al ${line.vat_rate}% (${line.vat.toFixed(2)}) no corresponde a su neto (${expected.toFixed(2)}).`
-                });
-            }
-        }
-        if (vatLines && ((net_amount != null && Math.round(Number(net_amount) * 100) !== Math.round(net * 100))
-            || (vat_amount != null && Math.round(Number(vat_amount) * 100) !== Math.round(vat * 100)))) {
-            throw businessError(400, {
-                error: 'invalid_invoice_total',
-                message: 'El neto y el IVA del comprobante deben ser la suma de sus alícuotas.'
-            });
-        }
-        if (!(net > 0)) {
-            throw businessError(400, { error: 'invalid_net_amount', message: 'El neto del comprobante debe ser mayor a cero.' });
-        }
+        const { vatLines, net, vat, taxes, total } = purchaseDocumentAmounts(data);
         const purchaseKind = data.purchase_kind || 'goods';
         if (purchaseKind !== 'goods' && (receptionIds.length > 0 || purchase_order_id)) {
             throw businessError(400, {
@@ -124,24 +90,16 @@ export class SupplierInvoiceService {
                 message: 'Una factura de mercadería se carga contra su remito: registrá la recepción (puede ser sin orden de compra) y elegila en la factura.'
             });
         }
-        const taxes = Math.round(Number(other_taxes || 0) * 100) / 100;
-        const total = Math.round(Number(total_amount || (net + vat + taxes)) * 100) / 100;
+        // ADR-029: units charged beyond what the delivery notes have left, only when the user says
+        // the supplier will send a credit note for them.
+        const expectCreditNote = data.expect_credit_note === true;
+        if (expectCreditNote && !(Array.isArray(data.items) && data.items.length > 0)) {
+            throw businessError(400, {
+                error: 'invalid_invoice_item',
+                message: 'Para esperar una nota de crédito, indicá las unidades que cobró el proveedor en cada línea.',
+            });
+        }
         const creatorId = userId || null;
-        // The total is what we owe: it must be the sum of its parts or the entry would not
-        // balance (a typed total that disagrees used to post an unbalanced purchase).
-        const partsCents = Math.round(net * 100) + Math.round(vat * 100) + Math.round(taxes * 100);
-        if (Math.round(total * 100) !== partsCents) {
-            throw businessError(400, {
-                error: 'invalid_invoice_total',
-                message: `El total (${total.toFixed(2)}) no coincide con neto + IVA + percepciones (${(partsCents / 100).toFixed(2)}).`
-            });
-        }
-        if (vat > 0 && data.vat_rate != null && Number(data.vat_rate) === 0) {
-            throw businessError(400, {
-                error: 'invalid_vat_rate',
-                message: 'La factura tiene IVA: elegí su alícuota (0 % es solo para comprobantes sin IVA).'
-            });
-        }
 
         const connection = await pool.getConnection();
         try {
@@ -200,14 +158,19 @@ export class SupplierInvoiceService {
                     items: data.items,
                     netCents: Math.round(net * 100),
                     vatToCostCents: givesCredit ? 0 : Math.round(vat * 100),
+                    expectCreditNote,
                 });
                 receptionsNet = (bridge.pendingCents + bridge.legacyCents) / 100;
             }
 
             // Locks for a new cost: stock (L3) and products (L4), before any entry.
-            // The holding result: what the lines of bridged delivery notes cost against what they
-            // cleared (the lines of older delivery notes go whole to 3.1.02.02).
-            const differenceCents = bridge ? bridge.bridgedCostCents - bridge.pendingCents : 0;
+            // The holding result: what the units received cost against what they cleared (the units
+            // charged beyond them wait for a credit note). ADR-029 (contadora): in a delivery note
+            // received before ADR-027, only its value settles 3.1.02.02; a price difference invoiced
+            // this year is a result of this year, like any other.
+            const differenceCents = bridge
+                ? bridge.bridgedCostCents + bridge.legacyCostCents - bridge.pendingCents - bridge.legacyCents
+                : 0;
             const costUpdates = bridge
                 ? await this._correctCosts(connection, bridge.lines, { userId: creatorId, invoiceId: id })
                 : [];
@@ -217,8 +180,8 @@ export class SupplierInvoiceService {
                 INSERT INTO supplier_invoices (
                     id, invoice_number, invoice_type, supplier_id, reception_id, purchase_order_id,
                     issue_date, due_date, net_amount, vat_amount, other_taxes, total_amount, status, notes, created_by,
-                    purchase_kind
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?)
+                    purchase_kind, credit_expected_amount
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?)
             `, [
                 id,
                 invoice_number,
@@ -234,20 +197,26 @@ export class SupplierInvoiceService {
                 total,
                 notes || null,
                 creatorId,
-                purchaseKind
+                purchaseKind,
+                (bridge?.creditExpectedCents || 0) / 100
             ]);
             // ADR-028: what this invoice charged per delivery note line, and the units it took.
+            // ADR-029: the units charged beyond them (excess_quantity) are not taken from the line.
             for (const line of bridge?.lines || []) {
-                await connection.query(
-                    'UPDATE reception_items SET invoiced_quantity = invoiced_quantity + ? WHERE id = ?',
-                    [line.quantity, line.id]
-                );
+                if (line.quantity > 0) {
+                    await connection.query(
+                        'UPDATE reception_items SET invoiced_quantity = invoiced_quantity + ? WHERE id = ?',
+                        [line.quantity, line.id]
+                    );
+                }
                 await connection.query(
                     `INSERT INTO supplier_invoice_items
-                        (id, supplier_invoice_id, reception_id, reception_item_id, product_id, quantity, unit_cost, cleared_amount, product_cost)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        (id, supplier_invoice_id, reception_id, reception_item_id, product_id, quantity, unit_cost, cleared_amount, product_cost,
+                         excess_quantity)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [crypto.randomUUID(), id, line.receptionId, line.id, line.productId, line.quantity,
-                        roundCost(line.netCents / line.quantity / 100), line.bridged ? line.remitoCents / 100 : null, line.productCost]
+                        roundCost(line.netCents / (line.quantity + line.excess) / 100), line.bridged ? line.remitoCents / 100 : null,
+                        line.productCost, line.excess]
                 );
             }
             for (const receptionId of bridge?.receptionIds || []) {
@@ -293,28 +262,18 @@ export class SupplierInvoiceService {
             // invoice goes to its expense account instead of inventory.
             const rateLines = vatLines || [{ vat_rate: data.vat_rate == null ? 21 : Number(data.vat_rate), net, vat }];
             const debitAccount = PURCHASE_ACCOUNTS[purchaseKind] || PURCHASE_ACCOUNTS.goods;
-            const creditByAccount = new Map();
-            if (givesCredit) {
-                for (const line of rateLines) {
-                    if (!(line.vat > 0)) continue;
-                    const account = vatCreditAccount(line.vat_rate);
-                    const current = creditByAccount.get(account) || { amount: 0, rates: new Set() };
-                    current.amount = Math.round((current.amount + line.vat) * 100) / 100;
-                    current.rates.add(line.vat_rate);
-                    creditByAccount.set(account, current);
-                }
-            }
+            const creditByAccount = givesCredit ? vatCreditByAccount(rateLines) : new Map();
             // Goods whose delivery notes went through 2.1.01.02 clear it, and what they cost beyond
             // (or below) it is holding result. Delivery notes received before ADR-027 never did: the
             // transition valued their goods with the stock against 3.1.02.02 (ADR-028, earlier
-            // years), so their invoice settles that adjustment instead of adding inventory again
-            // (before the transition, its final adjustment nets the same amount).
+            // years), so their value at the delivery note's cost settles that adjustment instead of
+            // adding inventory again (before the transition, its final adjustment nets the same amount).
             const goodsLines = bridge
                 ? [
                     { account_code: ACCOUNTS.GOODS_TO_INVOICE, debit: bridge.pendingCents / 100, credit: 0, notes: 'Mercadería recibida a facturar' },
                     {
                         account_code: ACCOUNTS.PRIOR_PERIOD_ADJUSTMENT,
-                        debit: bridge.legacyCostCents / 100,
+                        debit: bridge.legacyCents / 100,
                         credit: 0,
                         notes: 'Remito anterior a la valuación por costo de última compra',
                     },
@@ -323,6 +282,13 @@ export class SupplierInvoiceService {
                         debit: differenceCents > 0 ? differenceCents / 100 : 0,
                         credit: differenceCents < 0 ? -differenceCents / 100 : 0,
                         notes: 'Diferencia entre lo facturado y lo recibido',
+                    },
+                    // ADR-029: units charged beyond the delivery notes, until the supplier's credit note.
+                    {
+                        account_code: ACCOUNTS.CREDIT_NOTES_TO_RECEIVE,
+                        debit: bridge.creditExpectedCents / 100,
+                        credit: 0,
+                        notes: 'Unidades facturadas de más: nota de crédito a recibir',
                     },
                 ]
                 : [{ account_code: debitAccount.code, debit: debitBase, credit: 0, notes: debitAccount.notes }];
@@ -362,6 +328,13 @@ export class SupplierInvoiceService {
                     other_taxes: taxes,
                     total_amount: total,
                     ...(bridge ? { cleared_from_received: bridge.pendingCents / 100, difference: differenceCents / 100 } : {}),
+                    ...(bridge?.creditExpectedCents
+                        ? {
+                            credit_expected: bridge.creditExpectedCents / 100,
+                            excess_items: bridge.lines.filter((line) => line.excess > 0)
+                                .map((line) => ({ reception_item_id: line.id, product_id: line.productId, excess_quantity: line.excess })),
+                        }
+                        : {}),
                     ...(costUpdates.length > 0 ? { cost_updates: costUpdates } : {})
                 },
                 ip_address: ipAddress
@@ -370,14 +343,19 @@ export class SupplierInvoiceService {
 
             // ADR-019: what the delivery notes received (at their cost) against the invoice's net:
             // a difference is shown to the user (it is not blocked: prices or extras can differ).
+            // ADR-029: the net of the units charged of more is not a price difference (it is owed back).
             return {
                 id,
                 success: true,
                 total_amount: total,
                 reception_ids: receptionIds,
                 ...(receptionsNet != null
-                    ? { receptions_net: receptionsNet, receptions_difference: Math.round((net - receptionsNet) * 100) / 100 }
+                    ? {
+                        receptions_net: receptionsNet,
+                        receptions_difference: (Math.round(net * 100) - Math.round(receptionsNet * 100) - bridge.excessNetCents) / 100,
+                    }
                     : {}),
+                ...(bridge?.creditExpectedCents ? { credit_expected: bridge.creditExpectedCents / 100 } : {}),
                 // ADR-027 (D1): products whose cost (and price, if it follows) changed with this invoice.
                 ...(costUpdates.length > 0 ? { cost_updates: costUpdates } : {})
             };
@@ -402,8 +380,11 @@ export class SupplierInvoiceService {
      * net (`netCents`) and its cost (`costCents`: the net plus the VAT of a B or C invoice).
      * Delivery notes received before ADR-027 have no 'goods_received' entry: they never went
      * through 2.1.01.02 (`legacy*`).
+     * ADR-029: with `expectCreditNote`, a line may charge more units than it has left (`excess`):
+     * their share of the line's cost waits for the supplier's credit note (`creditExpectedCents`),
+     * and only the units left are taken from the line.
      */
-    async _invoiceLines(connection, receptions, { items, netCents, vatToCostCents }) {
+    async _invoiceLines(connection, receptions, { items, netCents, vatToCostCents, expectCreditNote = false }) {
         const receptionIds = receptions.map((row) => row.id);
         const label = new Map(receptions.map((row) => [row.id, row.remito_number || row.reception_number]));
         // A locking read: a delivery note approved while this invoice waited for its lock is seen
@@ -445,17 +426,19 @@ export class SupplierInvoiceService {
             earlierInvoicedCosts: earlierByLine.get(row.id) || [],
             bridged: bridgedIds.has(row.reception_id),
             quantity: 0,
+            excess: 0,
             netCents: 0,
         }));
+        const explicit = Array.isArray(items) && items.length > 0;
+        // A delivery note with nothing left can only be charged again as units owed back (ADR-029).
         const exhausted = receptions.filter((row) => !all.some((line) => line.receptionId === row.id && line.left > 0));
-        if (exhausted.length > 0) {
+        if (exhausted.length > 0 && !(explicit && expectCreditNote)) {
             throw businessError(409, {
                 error: 'reception_already_invoiced',
                 message: `Estos remitos ya están facturados (o devueltos) completos: ${exhausted.map((row) => label.get(row.id)).join(', ')}.`,
             });
         }
 
-        const explicit = Array.isArray(items) && items.length > 0;
         if (explicit) {
             const byId = new Map(all.map((line) => [line.id, line]));
             const seen = new Set();
@@ -466,13 +449,15 @@ export class SupplierInvoiceService {
                     throw businessError(400, { error: 'invalid_invoice_item', message: 'Alguna línea no es de los remitos elegidos, está repetida o tiene una cantidad inválida.' });
                 }
                 seen.add(item.reception_item_id);
-                if (quantity > line.left) {
+                if (quantity > line.left && !expectCreditNote) {
                     throw businessError(409, {
                         error: 'invoice_exceeds_reception',
-                        message: `De ${line.productName} quedan ${line.left} u. por facturar en el remito ${label.get(line.receptionId)}.`,
+                        message: `De ${line.productName} quedan ${line.left} u. por facturar en el remito ${label.get(line.receptionId)}. `
+                            + 'Si el proveedor cobró de más, marcá que vas a recibir su nota de crédito.',
                     });
                 }
-                line.quantity = quantity;
+                line.quantity = Math.min(quantity, line.left);
+                line.excess = quantity - line.quantity;
                 // The unit price as the invoice prints it (it may have more than 2 decimals): the
                 // line's amount is rounded once, not the price before multiplying.
                 line.netCents = Math.round(Number((quantity * Number(item.unit_cost)).toFixed(4)) * 100);
@@ -483,7 +468,7 @@ export class SupplierInvoiceService {
                 line.netCents = valueCents(line.left, line.unitCost);
             }
         }
-        const lines = all.filter((line) => line.quantity > 0);
+        const lines = all.filter((line) => line.quantity + line.excess > 0);
         if (lines.length === 0) {
             throw businessError(400, { error: 'invoice_without_items', message: 'Indicá al menos una línea con unidades facturadas.' });
         }
@@ -499,16 +484,23 @@ export class SupplierInvoiceService {
                 message: `Las líneas suman $${linesNet.toFixed(2)} y el neto de la factura es $${(netCents / 100).toFixed(2)}: revisá las unidades y los costos.`,
             });
         }
-        const residualShares = allocateCents(residualCents, lines.map((line) => line.remitoCents));
+        const residualShares = allocateCents(residualCents, lines.map((line) => valueCents(line.quantity + line.excess, line.unitCost)));
         lines.forEach((line, index) => { line.netCents += residualShares[index]; });
         const vatShares = allocateCents(vatToCostCents, lines.map((line) => line.netCents));
         lines.forEach((line, index) => { line.costCents = line.netCents + (vatToCostCents ? vatShares[index] : 0); });
+        // ADR-029: the units charged beyond what was left, at the line's price, wait for the credit
+        // note; the rest is what the units received cost.
+        for (const line of lines) {
+            line.excessCents = line.excess > 0 ? Math.round(line.costCents * line.excess / (line.quantity + line.excess)) : 0;
+            line.excessNetCents = line.excess > 0 ? Math.round(line.netCents * line.excess / (line.quantity + line.excess)) : 0;
+            line.receivedCostCents = line.costCents - line.excessCents;
+        }
         // The cost per unit this invoice gives each product (all its lines), kept with the lines.
         const perProduct = new Map();
         for (const line of lines) {
             const current = perProduct.get(line.productId) || { cents: 0, quantity: 0 };
             current.cents += line.costCents;
-            current.quantity += line.quantity;
+            current.quantity += line.quantity + line.excess;
             perProduct.set(line.productId, current);
         }
         for (const line of lines) {
@@ -516,16 +508,18 @@ export class SupplierInvoiceService {
             line.productCost = roundCost(product.cents / product.quantity / 100);
         }
 
-        const totals = { pendingCents: 0, legacyCents: 0, bridgedCostCents: 0, legacyCostCents: 0 };
+        const totals = { pendingCents: 0, legacyCents: 0, bridgedCostCents: 0, legacyCostCents: 0, creditExpectedCents: 0, excessNetCents: 0 };
         const clearedByReception = new Map();
         for (const line of lines) {
+            totals.creditExpectedCents += line.excessCents;
+            totals.excessNetCents += line.excessNetCents;
             if (line.bridged) {
                 totals.pendingCents += line.remitoCents;
-                totals.bridgedCostCents += line.costCents;
+                totals.bridgedCostCents += line.receivedCostCents;
                 clearedByReception.set(line.receptionId, (clearedByReception.get(line.receptionId) || 0) + line.remitoCents);
             } else {
                 totals.legacyCents += line.remitoCents;
-                totals.legacyCostCents += line.costCents;
+                totals.legacyCostCents += line.receivedCostCents;
                 if (!clearedByReception.has(line.receptionId)) clearedByReception.set(line.receptionId, null);
             }
         }
@@ -537,17 +531,19 @@ export class SupplierInvoiceService {
      * charged for it per unit, revaluing its stock. Only when its cost is still this delivery
      * note's: its cost, or what an earlier invoice of the same line left (an invoice in parts). If
      * anything else changed it since (a newer purchase, a manual edit), the difference stays as
-     * holding result. Lines of delivery notes received before ADR-027 do not move the cost.
-     * Returns the costs that changed.
+     * holding result. Lines of delivery notes received before ADR-027 do not move the cost, nor do
+     * lines that only charged units owed back (ADR-029). Returns the costs that changed.
      */
     async _correctCosts(connection, lines, { userId, invoiceId }) {
         const byProduct = new Map();
         for (const line of lines) {
-            if (!line.bridged) continue;
+            if (!line.bridged || line.quantity === 0) continue;
             const current = byProduct.get(line.productId)
-                || { quantity: 0, cents: 0, remitoCents: 0, costs: new Set(), earlierInvoiced: new Set() };
-            current.quantity += line.quantity;
+                || { quantity: 0, cents: 0, receivedCents: 0, remitoCents: 0, costs: new Set(), earlierInvoiced: new Set() };
+            // The price per unit charged (excess units included, at the same price).
+            current.quantity += line.quantity + (line.excess || 0);
             current.cents += line.costCents;
+            current.receivedCents += line.receivedCostCents ?? line.costCents;
             current.remitoCents += line.remitoCents;
             current.costs.add(line.unitCost);
             for (const cost of line.earlierInvoicedCosts || []) current.earlierInvoiced.add(cost);
@@ -555,7 +551,7 @@ export class SupplierInvoiceService {
         }
         // Invoiced at the delivery note's cost and never invoiced before: it already is the cost.
         for (const [productId, line] of byProduct) {
-            if (line.cents === line.remitoCents && line.earlierInvoiced.size === 0) byProduct.delete(productId);
+            if (line.receivedCents === line.remitoCents && line.earlierInvoiced.size === 0) byProduct.delete(productId);
         }
         if (byProduct.size === 0) return [];
         const productIds = [...byProduct.keys()];
@@ -625,12 +621,25 @@ export class SupplierInvoiceService {
             for (const pr of paymentRows) {
                 paidMap[pr.supplier_invoice_id] = Number(pr.paid_amount || 0);
             }
+            // ADR-029: the supplier's credit notes against an invoice lower what is left to pay.
+            const [creditRows] = await pool.query(`
+                SELECT supplier_invoice_id, SUM(total_amount) AS credited_amount
+                FROM supplier_credit_notes
+                WHERE supplier_invoice_id IN (?)
+                GROUP BY supplier_invoice_id
+            `, [invoiceIds]);
+            const creditedMap = {};
+            for (const cr of creditRows || []) {
+                creditedMap[cr.supplier_invoice_id] = Number(cr.credited_amount || 0);
+            }
 
             for (const row of rows) {
                 const paid = paidMap[row.id] || 0;
+                const credited = creditedMap[row.id] || 0;
                 const total = Number(row.total_amount || 0);
                 row.paid_amount = paid;
-                row.pending_amount = Math.max(0, total - paid);
+                row.credited_amount = credited;
+                row.pending_amount = Math.max(0, Math.round((total - paid - credited) * 100) / 100);
             }
         }
 
@@ -666,7 +675,16 @@ export class SupplierInvoiceService {
             ORDER BY sr.created_at DESC
         `, [ACCOUNTS.SUPPLIERS, ACCOUNTS.WITHHOLDINGS]);
 
-        // 3. Merge and sort chronologically
+        // 3. The supplier's credit notes (ADR-029), negative.
+        const [creditNotes] = await pool.query(`
+            SELECT scn.credit_note_type, scn.credit_note_number, scn.issue_date, s.name AS supplier_name, s.tax_id AS supplier_tax_id,
+                   scn.net_amount, scn.vat_amount, scn.other_taxes, scn.total_amount
+            FROM supplier_credit_notes scn
+            JOIN suppliers s ON scn.supplier_id = s.id
+            ORDER BY scn.issue_date DESC
+        `);
+
+        // 4. Merge and sort chronologically
         const records = [];
         for (const inv of invoices) {
             const net = Number(inv.net_amount || 0);
@@ -698,6 +716,19 @@ export class SupplierInvoiceService {
                 subtotal: -sub,
                 iva: -iva,
                 total: -total
+            });
+        }
+
+        for (const note of creditNotes || []) {
+            records.push({
+                date: new Date(note.issue_date),
+                type: `Nota de crédito ${note.credit_note_type}`,
+                number: note.credit_note_number,
+                tax_id: note.supplier_tax_id || '-',
+                supplier_name: note.supplier_name,
+                subtotal: -Number(note.net_amount || 0),
+                iva: -Number(note.vat_amount || 0),
+                total: -Number(note.total_amount || 0)
             });
         }
 

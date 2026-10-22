@@ -9,6 +9,8 @@ export const ACCOUNTS = Object.freeze({
     CARDS_TO_COLLECT: '1.1.02.03',
     RECEIVABLES: '1.1.03.01',
     INVENTORY: '1.1.04.01',
+    // ADR-029: what a supplier invoice charged beyond its delivery notes, until its credit note.
+    CREDIT_NOTES_TO_RECEIVE: '1.1.06.01',
     SUPPLIERS: '2.1.01.01',
     // ADR-027: goods received and not yet invoiced by the supplier.
     GOODS_TO_INVOICE: '2.1.01.02',

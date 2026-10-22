@@ -20,7 +20,7 @@ declarando ~17 % menos de lo cobrado, compras asentadas dos veces, precio e IVA 
 del cliente, checkout POS no atómico. Decisiones del usuario: ADR-008 y ADR-010.
 Evidencia: `validate` verde, 476 unitarios, 40 tests contra MySQL real (`qa:integration`).
 Pendiente del usuario en producción: runbooks de reparación de stock y de asientos
-duplicados, rotar la contraseña admin si se usó `Password123!`, luego migración 069 (CHECK de inventario).
+duplicados, rotar la contraseña admin si se usó `Password123!`, luego migración 070 (CHECK de inventario).
 Detalle: [AUDIT](../../.agents/context/AUDIT.md), [plan Ola B](PLAN_OLA_B_INTEGRIDAD_2026-09-25.md).
 
 ## Hito: adaptación de Base Codex y correcciones de QA

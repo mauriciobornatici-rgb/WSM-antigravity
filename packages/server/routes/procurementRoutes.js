@@ -41,6 +41,9 @@ router.get('/supplier-invoices/pending', purchaseOrderReadRoles, supplierInvoice
 router.get('/supplier-invoices', purchaseOrderReadRoles, validate(schemas.supplierInvoiceFilters), supplierInvoiceController.getSupplierInvoices);
 router.post('/supplier-invoices', purchaseOrderWriteRoles, validate(schemas.supplierInvoiceCreate), supplierInvoiceController.createSupplierInvoice);
 router.post('/supplier-payments/bulk', supplierPaymentRoles, supplierInvoiceController.registerBulkSupplierPayments);
+// ADR-029: supplier credit notes for units an invoice charged of more.
+router.get('/supplier-credit-notes', purchaseOrderReadRoles, validate(schemas.supplierCreditNoteFilters), supplierInvoiceController.getSupplierCreditNotes);
+router.post('/supplier-credit-notes', purchaseOrderWriteRoles, validate(schemas.supplierCreditNoteCreate), supplierInvoiceController.createSupplierCreditNote);
 
 
 // Quality checks

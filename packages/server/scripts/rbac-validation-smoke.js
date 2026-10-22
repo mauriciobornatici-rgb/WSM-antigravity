@@ -287,6 +287,23 @@ async function run() {
             }
         },
         {
+            // ADR-029: a supplier credit note lowers the debt and posts: purchasing only.
+            name: 'warehouse cannot load a supplier credit note',
+            method: 'POST',
+            endpoint: '/api/supplier-credit-notes',
+            token: warehouse,
+            expected: 403,
+            body: { supplier_invoice_id: '11111111-1111-4111-8111-111111111111', credit_note_number: '0001-RBAC', issue_date: '2026-10-22', net_amount: 10, vat_amount: 2.1 }
+        },
+        {
+            name: 'a supplier credit note needs an invoice that expects it',
+            method: 'POST',
+            endpoint: '/api/supplier-credit-notes',
+            token: manager,
+            expected: 404,
+            body: { supplier_invoice_id: '11111111-1111-4111-8111-111111111111', credit_note_number: '0001-RBAC', issue_date: '2026-10-22', net_amount: 10, vat_amount: 2.1 }
+        },
+        {
             name: 'manager can list POS exceptions',
             method: 'GET',
             endpoint: '/api/pos/exceptions',

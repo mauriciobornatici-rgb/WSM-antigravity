@@ -230,6 +230,41 @@ export const supplierInvoiceCreateSchema = z.object({
   })).max(500).optional(),
   // ADR-017: goods (inventory), freight (Fletes y envíos) or another expense.
   purchase_kind: z.enum(['goods', 'shipping', 'expense']).optional(),
+  // ADR-029: the supplier charged more units than the delivery notes have left and will send a
+  // credit note for them ("Notas de crédito a recibir").
+  expect_credit_note: z.boolean().optional(),
+});
+
+const purchaseVatRateSchema = z.coerce.number().refine((rate) => [0, 2.5, 5, 10.5, 21, 27].includes(rate), {
+  message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
+});
+
+export const supplierCreditNoteFiltersSchema = z.object({
+  supplier_id: optionalUuidSchema,
+  supplier_invoice_id: optionalUuidSchema,
+});
+
+// ADR-029: the supplier's credit note for units its invoice charged of more. It carries the
+// invoice's letter.
+export const supplierCreditNoteCreateSchema = z.object({
+  supplier_invoice_id: uuidSchema,
+  credit_note_type: z.enum(['A', 'B', 'C', 'M']).optional(),
+  credit_note_number: z.string().trim().min(2).max(100),
+  issue_date: z.string().min(1),
+  net_amount: z.coerce.number().positive().max(999_999_999),
+  vat_amount: z.coerce.number().min(0).max(999_999_999),
+  vat_rate: z.preprocess(
+    (value) => (value === null || value === '' ? undefined : value),
+    purchaseVatRateSchema.optional()
+  ),
+  other_taxes: z.coerce.number().min(0).max(999_999_999).optional(),
+  total_amount: z.coerce.number().min(0).max(999_999_999).optional(),
+  notes: z.string().max(1000).nullable().optional(),
+  vat_lines: z.array(z.object({
+    vat_rate: purchaseVatRateSchema,
+    net_amount: z.coerce.number().min(0),
+    vat_amount: z.coerce.number().min(0),
+  })).max(6).optional(),
 });
 
 // 5. Quality QC
