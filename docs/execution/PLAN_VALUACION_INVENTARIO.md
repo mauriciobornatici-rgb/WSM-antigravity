@@ -16,7 +16,7 @@ Decisión del usuario del 2026-10-17: **opción a, costo de última compra (repo
 | D1 | De dónde sale el costo nuevo al comprar | Del remito (precio de la OC). Si la factura trae otro total, la diferencia se reparte y el costo se corrige (a2). **Agregado del usuario: dos casillas por producto, marcadas por defecto:** `auto_update_cost` (si se desmarca, el costo queda fijo y la diferencia va a resultado) y `auto_update_price` (si el costo cambia, el precio de venta se recalcula manteniendo el margen; si se desmarca, queda el precio cargado). |
 | D2 | Factura de mercadería sin remito | **No se permite** (409 `goods_invoice_requires_reception`). Para compras chicas se hace un remito sin OC. |
 | D3 | Pasar a Mermas | Es pérdida en ese momento: Debe 5.1.02.02 / Haber 1.1.04.01. Si vuelve, se recupera. |
-| D4 | Contra qué cuenta va el ajuste de la transición | 3.1.03.01 "Ajuste por inventario inicial" (que lo confirme el contador). |
+| D4 | Contra qué cuenta va el ajuste de la transición | 3.1.02.02 "Ajuste de resultados de ejercicios anteriores" (ADR-028: la contadora pidió las buenas prácticas, RT 17). Antes decía 3.1.03.01. |
 | D5 | Quién cambia el costo a mano | Solo administrador y gerente (permiso nuevo). |
 | D6 | Costo cargado a un producto con stock y costo 0 | Ajuste de inventario inicial (3.1.03.01), no ganancia. |
 | D7 | Devolución al proveedor de algo sin facturar | Se elige el remito; la factura descuenta lo devuelto. Sin remito y sin facturas de ese proveedor: no se permite. |
@@ -67,4 +67,4 @@ Un interbloqueo o una espera agotada responden 409 `busy`.
 | I7 | Unificación del costo (`cost_price` como espejo), quitar `productUnitCosts`, deshabilitar movimientos libres, simulación extendida. | hecho (`a360432`) |
 | I8 | Script de transición (simulación por defecto, `--apply --confirm=<DB>`), runbook, cierre y revisión (AUD-016). | hecho; revisión AUD-016 corregida (ver `AUDIT.md`) |
 
-El CHECK de inventario pasa a la migración **067**.
+El CHECK de inventario pasa a la migración **069** (la 067 y la 068 son de ADR-028).

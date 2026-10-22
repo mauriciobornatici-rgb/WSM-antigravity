@@ -3,7 +3,7 @@ import { Trash2, Save, Search } from 'lucide-react';
 import { api } from '@/services/api';
 import { showErrorToast } from '@/lib/errorHandling';
 import { formatMoney } from '@/lib/formatters';
-import { grossLineTotal, grossPrice } from '@/lib/pricing';
+import { grossLineTotal } from '@/lib/pricing';
 import { toast } from 'sonner';
 import type { Product, Supplier } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ReceptionPicker } from '@/components/receptions/ReceptionPicker';
 import { receptionIdToSend } from '@/lib/receptionChoice';
+import { returnItemCost, useReturnCosts } from '@/components/returns/useReturnCosts';
+import { ReturnCostField } from '@/components/returns/ReturnCostField';
 
 interface ReturnFormProps {
     onCancel: () => void;
@@ -23,7 +25,8 @@ interface ReturnItem {
     product_name: string;
     sku: string;
     quantity: number;
-    unit_cost: number;
+    // Typed by purchasing (ADR-028); undefined or empty: the last invoiced cost applies.
+    cost_input?: string;
     reason: string;
 }
 
@@ -36,6 +39,11 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
     const [loading, setLoading] = useState(false);
     const [notes, setNotes] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const returnCosts = useReturnCosts(selectedSupplierId, receptionId, items.map((item) => item.product_id));
+    const { canSetCost, costs } = returnCosts;
+    // What the supplier takes it back at: typed by purchasing, or the last invoiced cost (ADR-028).
+    const costOf = (item: ReturnItem) => returnItemCost(item, canSetCost, costs);
+    const costsMissing = items.some((item) => costOf(item) == null);
 
     useEffect(() => {
         void loadSuppliers();
@@ -92,7 +100,6 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                 product_name: product.name,
                 sku: product.sku,
                 quantity: 1,
-                unit_cost: product.purchase_price || 0,
                 reason: '',
             },
         ]);
@@ -118,14 +125,25 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
         setItems((prev) => prev.map((item, idx) => (idx === index ? { ...item, [field]: value } : item)));
     };
 
+    // ADR-028: purchasing may type another cost; clearing it (or undefined) uses the suggested one.
+    const handleCostChange = (index: number, costInput: string | undefined) => {
+        setItems((prev) => prev.map((item, idx) => {
+            if (idx !== index) return item;
+            const next = { ...item };
+            if (costInput === undefined) delete next.cost_input;
+            else next.cost_input = costInput;
+            return next;
+        }));
+    };
+
     const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         if (!selectedSupplierId) {
-            showErrorToast('Seleccione un proveedor', new Error('Proveedor requerido'));
+            showErrorToast('Elegí un proveedor', new Error('El proveedor es obligatorio.'));
             return;
         }
         if (items.length === 0) {
-            showErrorToast('Agregue productos', new Error('Agregue al menos un producto a devolver'));
+            showErrorToast('Agregá productos', new Error('Agregá al menos un producto para devolver.'));
             return;
         }
 
@@ -138,11 +156,22 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
             showErrorToast('Cantidad inválida', new Error(`Revisá ${invalid.product_name}: se devuelven unidades enteras, al menos 1.`));
             return;
         }
+        if (costsMissing || returnCosts.failed) {
+            showErrorToast('Falta el costo', new Error('Todavía no está el costo de todos los productos: esperá a que se calcule o reintentá.'));
+            return;
+        }
         const reception = receptionIdToSend(receptionId);
         const payload: Parameters<typeof api.createReturn>[0] = {
             supplier_id: selectedSupplierId,
             ...(reception ? { reception_id: reception } : {}),
-            items,
+            items: items.map((item) => ({
+                product_id: item.product_id,
+                quantity: item.quantity,
+                reason: item.reason,
+                ...(canSetCost && item.cost_input !== undefined && item.cost_input.trim() !== ''
+                    ? { unit_cost: Number(item.cost_input) }
+                    : {}),
+            })),
             ...(notes ? { notes } : {}),
         };
 
@@ -154,9 +183,9 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
         }
     };
 
-    // The cost is typed net (supplier invoice); what is shown is the final one (ADR-015).
+    // The cost is net (supplier invoice); what is shown is the final one (ADR-015).
     const vatRateOfItem = (item: ReturnItem) => products.find((p) => p.id === item.product_id)?.vat_rate;
-    const totalAmount = items.reduce((sum, item) => sum + grossLineTotal(item.quantity, item.unit_cost, vatRateOfItem(item)), 0);
+    const totalAmount = items.reduce((sum, item) => sum + grossLineTotal(item.quantity, costOf(item) ?? 0, vatRateOfItem(item)), 0);
 
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -238,8 +267,9 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                                     </div>
                                 </div>
                                 <div className="sm:col-span-2">
-                                    <Label className="mb-1 text-xs sm:hidden">Cantidad</Label>
+                                    <Label htmlFor={`return-form-quantity-${index}`} className="mb-1 text-xs sm:hidden">Cantidad</Label>
                                     <Input
+                                        id={`return-form-quantity-${index}`}
                                         type="number"
                                         min="1"
                                         step="1"
@@ -247,30 +277,35 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                                         aria-label={`Cantidad de ${item.product_name}`}
                                         value={item.quantity}
                                         onChange={(e) => handleUpdateItem(index, 'quantity', Math.trunc(Number(e.target.value)) || 0)}
-                                        className="h-8 text-center"
+                                        className="h-11 text-center lg:h-9"
                                     />
                                 </div>
                                 <div className="sm:col-span-2">
-                                    <Label className="mb-1 text-xs sm:hidden">Costo unitario neto</Label>
-                                    <Input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        value={item.unit_cost}
-                                        onChange={(e) => handleUpdateItem(index, 'unit_cost', Number.parseFloat(e.target.value) || 0)}
-                                        className="h-8 text-right"
+                                    <Label htmlFor={`return-form-cost-${index}`} className="mb-1 text-xs sm:hidden">Costo unitario neto</Label>
+                                    <ReturnCostField
+                                        id={`return-form-cost-${index}`}
+                                        productName={item.product_name}
+                                        costInput={item.cost_input}
+                                        suggested={costs.get(item.product_id)}
+                                        cost={costOf(item)}
+                                        vatRate={vatRateOfItem(item)}
+                                        canSetCost={canSetCost}
+                                        waitingForReception={returnCosts.waitingForReception}
+                                        loading={returnCosts.loading}
+                                        failed={returnCosts.failed}
+                                        onRetry={returnCosts.retry}
+                                        onChange={(costInput) => handleCostChange(index, costInput)}
                                     />
-                                    <p className="mt-0.5 text-right text-[11px] text-muted-foreground">
-                                        Costo final (c/IVA): {formatMoney(grossPrice(item.unit_cost, vatRateOfItem(item)))}
-                                    </p>
                                 </div>
                                 <div className="sm:col-span-2">
-                                    <Label className="mb-1 text-xs sm:hidden">Motivo</Label>
+                                    <Label htmlFor={`return-form-reason-${index}`} className="mb-1 text-xs sm:hidden">Motivo</Label>
                                     <Input
+                                        id={`return-form-reason-${index}`}
+                                        aria-label={`Motivo de ${item.product_name}`}
                                         value={item.reason}
                                         onChange={(e) => handleUpdateItem(index, 'reason', e.target.value)}
                                         placeholder="Motivo..."
-                                        className="h-8"
+                                        className="h-11 lg:h-9"
                                     />
                                 </div>
                                 <div className="flex justify-end sm:col-span-1 sm:text-right">
@@ -278,9 +313,9 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                                         variant="ghost"
                                         size="icon"
                                         type="button"
-                                        aria-label={`Eliminar ${item.product_name}`}
+                                        aria-label={`Quitar ${item.product_name}`}
                                         onClick={() => handleRemoveItem(index)}
-                                        className="h-8 w-8 text-red-500 hover:bg-red-50 hover:text-red-700"
+                                        className="h-11 w-11 text-red-500 hover:bg-red-50 hover:text-red-700"
                                     >
                                         <Trash2 className="h-4 w-4" />
                                     </Button>
@@ -292,8 +327,10 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
 
                 {items.length > 0 && (
                     <div className="mt-4 flex items-center justify-end gap-4 border-t pt-4">
-                        <span className="text-sm font-medium">Total Estimado de Devolución (IVA incl.):</span>
-                        <span className="text-xl font-bold text-slate-900 dark:text-white">{formatMoney(totalAmount)}</span>
+                        <span className="text-sm font-medium">Total estimado de la devolución (IVA incl.):</span>
+                        <span className="text-xl font-bold text-slate-900 dark:text-white" aria-live="polite">
+                            {costsMissing ? 'Calculando…' : formatMoney(totalAmount)}
+                        </span>
                     </div>
                 )}
             </div>
@@ -304,7 +341,7 @@ export const ReturnForm = ({ onCancel, onSubmit }: ReturnFormProps) => {
                 </Button>
                 <Button type="submit" disabled={isSubmitting || items.length === 0} className="bg-red-600 text-white hover:bg-red-700">
                     <Save className="mr-2 h-4 w-4" />
-                    {isSubmitting ? 'Guardando...' : 'Confirmar devolucion'}
+                    {isSubmitting ? 'Guardando...' : 'Confirmar devolución'}
                 </Button>
             </div>
         </form>

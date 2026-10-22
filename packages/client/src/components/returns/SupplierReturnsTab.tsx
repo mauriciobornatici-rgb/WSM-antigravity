@@ -18,6 +18,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { QueryErrorBanner, QueryLoadingState } from "./QueryStates"
 import { ReceptionPicker } from "@/components/receptions/ReceptionPicker"
 import { receptionIdToSend } from "@/lib/receptionChoice"
+import { returnItemCost, useReturnCosts } from "./useReturnCosts"
+import { ReturnCostField } from "./ReturnCostField"
 import { returnStatusLabel } from "./helpers"
 import type { SupplierReturnRow, SupplierReturnFormItem, SupplierReturnFormField } from "@/types/returns"
 import type { Supplier } from "@/types"
@@ -72,6 +74,11 @@ export function SupplierReturnsTab() {
     const returns = returnsQuery.data ?? []
     const suppliers = (suppliersQuery.data ?? []) as Supplier[]
     const products = productsQuery.data ?? []
+    const returnCosts = useReturnCosts(supplierId, receptionId, items.map((item) => item.product_id))
+    const { canSetCost, costs } = returnCosts
+    // What the supplier takes it back at: typed by purchasing, or the last invoiced cost (null: not known yet).
+    const costOf = (item: SupplierReturnFormItem) => returnItemCost(item, canSetCost, costs)
+    const costsMissing = items.some((item) => item.product_id && costOf(item) == null)
 
     const loading = returnsQuery.isLoading || suppliersQuery.isLoading || productsQuery.isLoading
     const hasLoadError = returnsQuery.isError || suppliersQuery.isError || productsQuery.isError
@@ -102,20 +109,27 @@ export function SupplierReturnsTab() {
 
         if (field === "product_id") {
             currentItem.product_id = value as string
-            const prod = products.find((p) => p.id === value)
-            if (prod) {
-                currentItem.unit_cost = Number(prod.purchase_price || 0)
-            }
+            // A new product takes its own last invoiced cost.
+            delete currentItem.cost_input
         } else if (field === "quantity") {
             currentItem.quantity = Number(value)
-        } else if (field === "unit_cost") {
-            currentItem.unit_cost = Number(value)
         } else if (field === "reason") {
             currentItem.reason = value as string
         }
 
         newItems[index] = currentItem as typeof newItems[number]
         setItems(newItems)
+    }
+
+    // ADR-028: purchasing may type another cost; clearing it (or undefined) uses the suggested one.
+    const handleCostChange = (index: number, costInput: string | undefined) => {
+        setItems((current) => current.map((item, itemIndex) => {
+            if (itemIndex !== index) return item
+            const next = { ...item }
+            if (costInput === undefined) delete next.cost_input
+            else next.cost_input = costInput
+            return next
+        }))
     }
 
     async function handleCreateReturn() {
@@ -137,6 +151,10 @@ export function SupplierReturnsTab() {
             toast.error("Elegí el remito con el que llegó la mercadería, o «Sin remito» si el proveedor ya la facturó")
             return
         }
+        if (costsMissing || returnCosts.failed) {
+            toast.error("Todavía no está el costo de todos los productos", { description: "Esperá a que se calcule o reintentá." })
+            return
+        }
 
         try {
             const reception = receptionIdToSend(receptionId)
@@ -144,7 +162,14 @@ export function SupplierReturnsTab() {
                 supplier_id: supplierId,
                 ...(reception ? { reception_id: reception } : {}),
                 notes: notes.trim(),
-                items: validItems,
+                items: validItems.map((item) => ({
+                    product_id: item.product_id,
+                    quantity: item.quantity,
+                    reason: item.reason,
+                    ...(canSetCost && item.cost_input !== undefined && item.cost_input.trim() !== ""
+                        ? { unit_cost: Number(item.cost_input) }
+                        : {}),
+                })),
             })
             toast.success("Devolución a proveedor registrada en borrador")
             setCreateOpen(false)
@@ -419,12 +444,12 @@ export function SupplierReturnsTab() {
                                         className="grid grid-cols-1 gap-3 rounded-lg border p-3 sm:grid-cols-12 items-end"
                                     >
                                         <div className="space-y-1 sm:col-span-4">
-                                            <Label className="text-xs">Producto</Label>
+                                            <Label htmlFor={`return-product-${index}`} className="text-xs">Producto</Label>
                                             <Select
                                                 value={item.product_id}
                                                 onValueChange={(val) => handleItemChange(index, "product_id", val)}
                                             >
-                                                <SelectTrigger className="h-9">
+                                                <SelectTrigger id={`return-product-${index}`} className="h-11 lg:h-9">
                                                     <SelectValue placeholder="Seleccionar" />
                                                 </SelectTrigger>
                                                 <SelectContent>
@@ -437,38 +462,46 @@ export function SupplierReturnsTab() {
                                             </Select>
                                         </div>
                                         <div className="space-y-1 sm:col-span-2">
-                                            <Label className="text-xs">Cantidad</Label>
+                                            <Label htmlFor={`return-quantity-${index}`} className="text-xs">Cantidad</Label>
                                             <Input
+                                                id={`return-quantity-${index}`}
                                                 type="number"
                                                 min="1"
                                                 step="1"
                                                 inputMode="numeric"
-                                                className="h-9"
+                                                className="h-11 lg:h-9"
                                                 value={item.quantity}
                                                 onChange={(e) => handleItemChange(index, "quantity", Math.trunc(Number(e.target.value)) || 0)}
                                             />
                                         </div>
                                         <div className="space-y-1 sm:col-span-2">
-                                            <Label className="text-xs">Costo Unitario neto ($)</Label>
-                                            <Input
-                                                type="number"
-                                                min="0"
-                                                step="0.01"
-                                                className="h-9"
-                                                value={item.unit_cost}
-                                                onChange={(e) => handleItemChange(index, "unit_cost", Number(e.target.value))}
-                                            />
-                                            <p className="text-[11px] text-muted-foreground">
-                                                Costo final (c/IVA): {formatMoney(grossPrice(item.unit_cost, products.find((p) => p.id === item.product_id)?.vat_rate))}
-                                            </p>
+                                            <Label htmlFor={`return-cost-${index}`} className="text-xs">Costo unitario neto</Label>
+                                            {item.product_id ? (
+                                                <ReturnCostField
+                                                    id={`return-cost-${index}`}
+                                                    productName={products.find((p) => p.id === item.product_id)?.name ?? "el producto"}
+                                                    costInput={item.cost_input}
+                                                    suggested={costs.get(item.product_id)}
+                                                    cost={costOf(item)}
+                                                    vatRate={products.find((p) => p.id === item.product_id)?.vat_rate}
+                                                    canSetCost={canSetCost}
+                                                    waitingForReception={returnCosts.waitingForReception}
+                                                    loading={returnCosts.loading}
+                                                    failed={returnCosts.failed}
+                                                    onRetry={returnCosts.retry}
+                                                    onChange={(costInput) => handleCostChange(index, costInput)}
+                                                />
+                                            ) : (
+                                                <p id={`return-cost-${index}`} className="py-2 text-xs text-muted-foreground">Elegí el producto.</p>
+                                            )}
                                         </div>
                                         <div className="space-y-1 sm:col-span-3">
-                                            <Label className="text-xs">Motivo</Label>
+                                            <Label htmlFor={`return-reason-${index}`} className="text-xs">Motivo</Label>
                                             <Select
                                                 value={item.reason}
                                                 onValueChange={(val) => handleItemChange(index, "reason", val)}
                                             >
-                                                <SelectTrigger className="h-9">
+                                                <SelectTrigger id={`return-reason-${index}`} className="h-11 lg:h-9">
                                                     <SelectValue placeholder="Seleccionar motivo" />
                                                 </SelectTrigger>
                                                 <SelectContent>
@@ -483,8 +516,9 @@ export function SupplierReturnsTab() {
                                             <Button
                                                 type="button"
                                                 variant="ghost"
-                                                size="sm"
-                                                className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                                size="icon"
+                                                aria-label={`Quitar ítem ${index + 1}`}
+                                                className="h-11 w-11 text-red-500 hover:bg-red-50 hover:text-red-700"
                                                 onClick={() => handleRemoveItem(index)}
                                             >
                                                 <Trash2 className="h-4 w-4" />
@@ -499,8 +533,11 @@ export function SupplierReturnsTab() {
                             <Button variant="outline" onClick={() => setCreateOpen(false)}>
                                 Cancelar
                             </Button>
-                            <Button onClick={() => void handleCreateReturn()} disabled={createReturnMutation.isPending}>
-                                Guardar Borrador
+                            <Button
+                                onClick={() => void handleCreateReturn()}
+                                disabled={createReturnMutation.isPending || (Boolean(receptionId) && returnCosts.loading && costsMissing)}
+                            >
+                                Guardar borrador
                             </Button>
                         </div>
                     </div>

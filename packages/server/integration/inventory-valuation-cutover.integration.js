@@ -89,7 +89,8 @@ test('the cut-over aligns old data with the valuation and runs once (simulated: 
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
-        const report = await runCutover(connection, { runId: crypto.randomUUID(), accounting: accountingService, audit: auditService });
+        const runId = crypto.randomUUID();
+        const report = await runCutover(connection, { runId, accounting: accountingService, audit: auditService });
 
         const [[normalized]] = await connection.query('SELECT purchase_price, cost_price FROM products WHERE id = ?', [legacyCost]);
         assert.deepEqual([Number(normalized.purchase_price), Number(normalized.cost_price)], [30, 30]);
@@ -122,6 +123,13 @@ test('the cut-over aligns old data with the valuation and runs once (simulated: 
         // Whatever else was apart is one adjustment: the ledger ends equal to the stock at cost.
         assert.equal(report.after.ok, true, JSON.stringify({ difference: report.after.difference, bridge: report.after.goods_to_invoice_difference }));
         assert.ok(report.after.valuation_since);
+        // ADR-028 (contadora): that adjustment corrects earlier years, in equity (3.1.02.02).
+        const [adjustment] = await connection.query(
+            `SELECT DISTINCT jel.account_code FROM journal_entries je JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+             WHERE je.reference_type = ? AND je.reference_id = ? ORDER BY jel.account_code`,
+            [CUTOVER_REFERENCE, runId]
+        );
+        if (report.adjustment !== 0) assert.deepEqual(adjustment.map((line) => line.account_code), ['1.1.04.01', '3.1.02.02']);
 
         // A second run does nothing.
         const again = await runCutover(connection, { runId: crypto.randomUUID(), accounting: accountingService, audit: auditService });

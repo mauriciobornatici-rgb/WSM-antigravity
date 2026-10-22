@@ -451,9 +451,10 @@ test('createReturn inserts draft return with items and audits', async (t) => {
         ['MAX(CAST', [[{ max_seq: 11 }]]],
         ['SELECT `last_value`', [[{ last_value: 3 }]]]
     ]);
+    // A manager may type the credit cost (ADR-028); without one, the last invoiced (here none: 0).
     const res = await runHandler(ctrl.createReturn, {
         body: { supplier_id: 's1', notes: 'roto', items: [{ product_id: 'p1', quantity: 2, unit_cost: 10, reason: 'dañado' }, { product_id: 'p2', quantity: 1 }] },
-        user: { id: 'u1' }
+        user: { id: 'u1', role: 'manager' }
     });
     assert.equal(res.body.return_number, `SR-${year}-0012`);
     assert.deepEqual(lifecycle, ['begin', 'commit', 'release']);
@@ -461,9 +462,57 @@ test('createReturn inserts draft return with items and audits', async (t) => {
     assert.ok(header.statement.includes("'draft'"));
     assert.deepEqual(header.params.slice(1), [`SR-${year}-0012`, 's1', 'roto', null]);
     const rows = calls.filter((c) => c.statement.startsWith('INSERT INTO supplier_return_items'));
-    assert.deepEqual(rows.map((c) => c.params.slice(2)), [['p1', 2, 10, 'dañado'], ['p2', 1, 0, null]]);
+    // The typed cost is marked as overridden; the other keeps following the last invoiced one.
+    assert.deepEqual(rows.map((c) => c.params.slice(2)), [['p1', 2, 10, 'dañado', 1], ['p2', 1, 0, null, 0]]);
     assert.equal(logs[0].payload.action, 'CREATE_SUPPLIER_RETURN');
     assert.equal(logs[0].conn, connection);
+});
+
+test('createReturn takes the last invoiced cost; only purchasing may change it (ADR-028)', async (t) => {
+    installAudit(t);
+    const rules = () => [
+        // The supplier's last invoice charged p1 at 12.50 net; p2 was never invoiced: its delivery note.
+        ['FROM supplier_invoice_items sii JOIN supplier_invoices si', [[{ product_id: 'p1', unit_cost: '12.50' }, { product_id: 'p1', unit_cost: '9.00' }]]],
+        ['FROM reception_items ri JOIN receptions r', [[{ product_id: 'p2', unit_cost: '7.00' }]]],
+        ['MAX(CAST', [[{ max_seq: 1 }]]],
+        ['SELECT `last_value`', [[{ last_value: 1 }]]],
+    ];
+    const items = (p1Cost) => [{ product_id: 'p1', quantity: 1, ...(p1Cost === undefined ? {} : { unit_cost: p1Cost }) }, { product_id: 'p2', quantity: 1 }];
+    const savedCosts = (calls) => calls.filter((c) => c.statement.startsWith('INSERT INTO supplier_return_items')).map((c) => c.params[4]);
+
+    let db = installPool(t, rules());
+    await runHandler(ctrl.createReturn, { body: { supplier_id: 's1', items: items() }, user: { id: 'w', role: 'warehouse' } });
+    assert.deepEqual(savedCosts(db.calls), [12.5, 7]);
+    // The same cost typed is fine; another one, only for purchasing.
+    db = installPool(t, rules());
+    await runHandler(ctrl.createReturn, { body: { supplier_id: 's1', items: items(12.5) }, user: { id: 'w', role: 'warehouse' } });
+    assert.deepEqual(savedCosts(db.calls), [12.5, 7]);
+    db = installPool(t, rules());
+    const refused = await runHandler(ctrl.createReturn, { body: { supplier_id: 's1', items: items(5) }, user: { id: 'w', role: 'warehouse' } });
+    assert.deepEqual([refused.status, refused.body.error], [403, 'return_cost_not_allowed']);
+    assert.match(refused.body.message, /\$12\.50/);
+    assert.deepEqual(db.lifecycle, ['begin', 'rollback', 'release']);
+    db = installPool(t, rules());
+    await runHandler(ctrl.createReturn, { body: { supplier_id: 's1', items: items(5) }, user: { id: 'm', role: 'manager' } });
+    assert.deepEqual(savedCosts(db.calls), [5, 7]);
+});
+
+test('getReturnSuggestedCosts answers per product, falling back to the product cost', async (t) => {
+    installPool(t, [
+        ['FROM supplier_invoice_items sii JOIN supplier_invoices si', [[]]],
+        ['FROM reception_items ri JOIN receptions r', [[]]],
+        ['FROM products WHERE id IN', [[{ id: 'p1', purchase_price: '0', cost_price: '4.5' }]]],
+    ]);
+    const res = await runHandler(ctrl.getReturnSuggestedCosts, { query: { supplier_id: 's1', product_ids: ['p1', 'p1'] } });
+    assert.deepEqual(res.body, [{ product_id: 'p1', unit_cost: 4.5, source: 'product' }]);
+    // As the browser sends it (AUD-017): Express 5 re-reads req.query, the parsed one is validatedQuery.
+    const fromUrl = await runHandler(ctrl.getReturnSuggestedCosts, {
+        query: { supplier_id: 's1', product_ids: 'p1,p1' },
+        validatedQuery: { supplier_id: 's1', product_ids: ['p1'] },
+    });
+    assert.deepEqual(fromUrl.body, [{ product_id: 'p1', unit_cost: 4.5, source: 'product' }]);
+    const rawOnly = await runHandler(ctrl.getReturnSuggestedCosts, { query: { supplier_id: 's1', product_ids: 'p1' } });
+    assert.deepEqual(rawOnly.body, [{ product_id: 'p1', unit_cost: 4.5, source: 'product' }]);
 });
 
 test('createReturn against a delivery note checks it is this supplier\'s, approved, and brought the products (D7)', async (t) => {
@@ -633,11 +682,11 @@ test('exportIVACompras merges invoices and returns (negative) sorted by date des
             { invoice_number: 'F1', invoice_type: 'A', issue_date: '2026-01-10', supplier_name: 'S1', supplier_tax_id: '30', net_amount: '100', vat_amount: '21', other_taxes: '4', total_amount: '125' },
             { invoice_number: 'F2', invoice_type: 'B', issue_date: '2026-03-10', supplier_name: 'S2', supplier_tax_id: null, net_amount: '10', vat_amount: '2', other_taxes: null, total_amount: null }
         ]]],
+        // As the ledger booked them: what lowered the debt with the supplier and the VAT reversed.
         ['FROM supplier_returns sr', [[
-            { return_number: 'SR1', created_at: '2026-02-10', supplier_name: 'S1', supplier_tax_id: null, subtotal: '100' },
-            { return_number: 'SR2', created_at: '2026-02-11', supplier_name: 'S3', supplier_tax_id: '33', subtotal: null }
-        ]]],
-        ['company_settings', [[{ tax_rate: '0.10' }]]]
+            { return_number: 'SR1', created_at: '2026-02-10', supplier_name: 'S1', supplier_tax_id: null, gross: '121', vat: '21' },
+            { return_number: 'SR2', created_at: '2026-02-11', supplier_name: 'S3', supplier_tax_id: '33', gross: '50', vat: '0' }
+        ]]]
     ]);
     const res = await runHandler(ctrl.exportIVACompras);
     assert.deepEqual(res.body.map((r) => r.number), ['F2', 'SR2', 'SR1', 'F1']);
@@ -647,18 +696,16 @@ test('exportIVACompras merges invoices and returns (negative) sorted by date des
     // total falls back to net + iva + taxes
     assert.deepEqual([f2.total, f2.tax_id], [12, '-']);
     assert.equal(sr1.type, 'Devolución (Egreso/Ajuste)');
-    assert.ok(Math.abs(sr1.subtotal + 100) < 1e-9);
-    assert.ok(Math.abs(sr1.iva + 10) < 1e-9);
-    assert.ok(Math.abs(sr1.total + 110) < 1e-9);
-    assert.equal(sr1.tax_id, '-');
-    assert.equal(sr2.total, -0);
-    assert.equal(sr2.tax_id, '33');
+    assert.deepEqual([sr1.subtotal, sr1.iva, sr1.total, sr1.tax_id], [-100, -21, -121, '-']);
+    // A Factura C return: no VAT reversed.
+    assert.deepEqual([sr2.subtotal, sr2.iva, sr2.total, sr2.tax_id], [-50, -0, -50, '33']);
 });
 
-test('exportIVACompras falls back to 21% when company settings are missing', async (t) => {
-    installPool(t, [
-        ['FROM supplier_returns sr', [[{ return_number: 'SR1', created_at: '2026-02-10', supplier_name: 'S', subtotal: 100 }]]]
-    ]);
-    const res = await runHandler(ctrl.exportIVACompras);
-    assert.ok(Math.abs(res.body[0].iva + 21) < 1e-9);
+test('exportIVACompras reads returns from their entries: only the supplier credit counts (AUD-017)', async (t) => {
+    const { calls } = installPool(t, [['FROM supplier_returns sr', [[]]]]);
+    await runHandler(ctrl.exportIVACompras);
+    const query = calls.find((c) => c.statement.includes('FROM supplier_returns sr'));
+    assert.match(query.statement, /JOIN journal_entry_lines/);
+    assert.match(query.statement, /HAVING gross > 0/);
+    assert.deepEqual(query.params, ['2.1.01.01', '1.1.05.04']);
 });

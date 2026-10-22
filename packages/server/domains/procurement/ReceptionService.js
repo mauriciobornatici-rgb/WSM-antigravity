@@ -66,8 +66,20 @@ export class ReceptionService {
             if (!itemsByReception[item.reception_id]) itemsByReception[item.reception_id] = [];
             itemsByReception[item.reception_id].push(item);
         }
+        // ADR-028: what each line has left to invoice, and how invoiced the delivery note is. One
+        // whose purchase order was invoiced without naming it keeps its units (`invoiced_by_order`
+        // warns): its own invoice can still be loaded if that one did not include it.
         for (const reception of receptions) {
-            reception.items = itemsByReception[reception.id] || [];
+            const byOrder = Number(reception.invoiced_by_order) === 1;
+            reception.items = (itemsByReception[reception.id] || []).map((item) => ({
+                ...item,
+                quantity_to_invoice: Math.max(0,
+                    Number(item.quantity_received || 0) - Number(item.invoiced_quantity || 0) - Number(item.returned_quantity || 0)),
+            }));
+            const toInvoice = reception.items.reduce((sum, item) => sum + item.quantity_to_invoice, 0);
+            const invoicedAny = Boolean(reception.supplier_invoice_id) || byOrder;
+            if (toInvoice > 0) reception.invoice_status = invoicedAny ? 'partial' : 'pending';
+            else reception.invoice_status = invoicedAny ? 'invoiced' : 'returned';
         }
 
         return receptions;

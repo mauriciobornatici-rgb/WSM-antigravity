@@ -82,6 +82,8 @@ export type SupplierReturnFormItem = {
     product_id: string;
     quantity: number;
     unit_cost: number;
+    // Typed by purchasing (ADR-028); undefined or empty: the last invoiced cost applies.
+    cost_input?: string;
     reason: string;
 };
 

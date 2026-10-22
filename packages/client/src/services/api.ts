@@ -475,13 +475,32 @@ type ReceptionRecord = {
     supplier_invoice_id?: string | null;
     // Su orden de compra se facturó sin nombrar los remitos (antes de ADR-019): ya está facturado.
     invoiced_by_order?: number | boolean | null;
+    // ADR-028: cuánto le falta facturar (por unidades de sus líneas).
+    invoice_status?: "pending" | "partial" | "invoiced" | "returned";
     supplier_name: string;
     po_number?: string;
     reception_date?: string;
     status: "pending_qc" | "approved" | "partially_approved" | "rejected";
-    items?: Array<GenericRecord>;
+    items?: Array<ReceptionItemRecord>;
     [key: string]: unknown;
 };
+
+type ReceptionItemRecord = {
+    id: string;
+    product_id: string;
+    product_name?: string | null;
+    sku?: string | null;
+    vat_rate?: number | string | null;
+    quantity_received?: number | string | null;
+    invoiced_quantity?: number | string | null;
+    returned_quantity?: number | string | null;
+    // ADR-028: unidades que le faltan facturar a la línea.
+    quantity_to_invoice?: number | string | null;
+    unit_cost?: number | string | null;
+    [key: string]: unknown;
+};
+
+export type SupplierReturnSuggestedCost = { product_id: string; unit_cost: number; source: "invoice" | "reception" | "product" };
 
 function withQuery(path: string, params?: QueryParams): string {
     if (!params) return path;
@@ -714,6 +733,14 @@ export const api = {
 
     createReturn: (data: ReturnCreateInput) =>
         httpClient.post<{ id: string; return_number: string }>("/api/returns", data),
+
+    // ADR-028: costo al que el proveedor se lleva cada producto (el último facturado).
+    getReturnSuggestedCosts: (params: { supplier_id: string; reception_id?: string; product_ids: string[] }) =>
+        httpClient.get<SupplierReturnSuggestedCost[]>(withQuery("/api/returns/suggested-costs", {
+            supplier_id: params.supplier_id,
+            ...(params.reception_id ? { reception_id: params.reception_id } : {}),
+            product_ids: params.product_ids.join(","),
+        })),
 
     approveReturn: (id: string) =>
         httpClient.post<{ success: boolean; message?: string }>(`/api/returns/${id}/approve`),
@@ -973,6 +1000,8 @@ export const api = {
         vat_rate?: number;
         purchase_kind?: "goods" | "shipping" | "expense";
         vat_lines?: Array<{ vat_rate: number; net_amount: number; vat_amount: number }>;
+        // ADR-028: unidades y costo neto que la factura cobra de cada línea de remito.
+        items?: Array<{ reception_item_id: string; quantity: number; unit_cost: number }>;
         other_taxes?: number;
         total_amount?: number;
         notes?: string;

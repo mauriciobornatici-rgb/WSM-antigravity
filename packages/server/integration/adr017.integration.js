@@ -90,6 +90,12 @@ test('ADR-017: a purchase with two rates and its return reverse the fiscal credi
         "INSERT INTO receptions (id, reception_number, supplier_id, remito_number, status) VALUES (?, ?, ?, ?, 'approved')",
         [receptionId, `REC-QA-${receptionId.slice(0, 8)}`, supplierId, `R-${receptionId.slice(0, 6)}`]
     );
+    // ADR-028: what it brought, so the invoice has units to charge.
+    const receivedId = await seedProduct({ salePrice: 100 });
+    await pool.query(
+        'INSERT INTO reception_items (id, reception_id, product_id, quantity_received, unit_cost) VALUES (?, ?, ?, 2, 1000)',
+        [crypto.randomUUID(), receptionId, receivedId]
+    );
     const invoice = await new SupplierInvoiceService().createSupplierInvoice({
         invoice_number: `A-${crypto.randomUUID().slice(0, 8)}`, invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-12',
         reception_ids: [receptionId],

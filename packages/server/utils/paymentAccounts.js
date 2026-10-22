@@ -14,6 +14,8 @@ export const ACCOUNTS = Object.freeze({
     GOODS_TO_INVOICE: '2.1.01.02',
     // ADR-018: the counterpart of stock that entered without a purchase (opening stock).
     OPENING_ADJUSTMENT: '3.1.03.01',
+    // ADR-028: corrections of earlier fiscal years (RT 17, AREA), straight to equity.
+    PRIOR_PERIOD_ADJUSTMENT: '3.1.02.02',
     // ADR-027: the change in value of the goods in stock when their cost changes.
     HOLDING_RESULT: '4.2.02.01',
     VAT_DEBIT_21: '2.1.02.02',

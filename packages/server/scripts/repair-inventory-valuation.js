@@ -4,14 +4,17 @@
 // informe sin escribir nada. Para aplicar (después de revisar la simulación):
 //   node scripts/repair-inventory-valuation.js --apply --confirm=<DB_NAME>
 // Opcional: --out=transicion.json
+//           --inicio-ejercicio=AAAA-MM-DD (primer día del ejercicio en curso, hora argentina;
+//           obligatorio con --apply, la simulación asume el 1 de enero de este año). Lo de ejercicios
+//           anteriores va a 3.1.02.02 (ADR-028).
 //
-// Antes exige: migraciones 064-066, la reparación de stock C1 hecha y ningún asiento de recepción
+// Antes exige: migraciones 064-067, la reparación de stock C1 hecha y ningún asiento de recepción
 // sin revertir. Pasos (ver RUNBOOK_VALUACION_INVENTARIO.md):
 //   1. un solo costo por producto (purchase_price; cost_price como espejo);
 //   2. las ventas que salieron sin costo registrado lo registran (o quedan vinculadas al costo que
-//      asentó su factura con la regla anterior);
+//      asentó su factura con la regla anterior); las de ejercicios anteriores, contra 3.1.02.02;
 //   3. los remitos aprobados y sin facturar abren 2.1.01.02;
-//   4. un ajuste final del mayor de Inventario al stock valuado, contra 3.1.03.01 (D4);
+//   4. un ajuste final del mayor de Inventario al stock valuado, contra 3.1.02.02 (D4, ADR-028);
 //   5. queda la fecha de corte; una segunda corrida no hace nada.
 // Sale con código 1 si al final el mayor no coincide con el stock valuado (y no confirma nada).
 import crypto from 'node:crypto';
@@ -21,12 +24,26 @@ import auditService from '../services/audit.service.js';
 import { assertSafeDatabaseTarget, getEnvConfig } from '../config/env.js';
 import { findAffectedOrders } from './stock-drift/stockDrift.js';
 import { findReceptionEntries } from './purchase-entries/purchaseEntries.js';
-import { checkCutoverPreconditions, runCutover } from './inventory-valuation/valuation.js';
+import { checkCutoverPreconditions, fiscalYearStartOf, runCutover } from './inventory-valuation/valuation.js';
+import { businessYear } from '../utils/businessDate.js';
 import { assertMinimumMysqlVersion, describeTarget, parseArgs, writeOutput } from './stock-drift/cli.js';
 
 const args = parseArgs(process.argv.slice(2));
 const apply = args.apply === true;
 const target = describeTarget();
+// ADR-028: the first day of the fiscal year in course, in Argentine time (what is earlier goes to
+// 3.1.02.02). Applying needs it said; a simulation assumes January 1 of this year.
+if (apply && args['inicio-ejercicio'] === undefined) {
+    console.error('Para aplicar se requiere --inicio-ejercicio=AAAA-MM-DD (el primer día del ejercicio en curso).');
+    process.exit(2);
+}
+const fiscalYearStart = args['inicio-ejercicio'] === undefined
+    ? fiscalYearStartOf(`${businessYear()}-01-01`)
+    : fiscalYearStartOf(args['inicio-ejercicio']);
+if (!fiscalYearStart) {
+    console.error('--inicio-ejercicio tiene que ser una fecha AAAA-MM-DD (el primer día del ejercicio en curso).');
+    process.exit(2);
+}
 
 if (apply) {
     assertSafeDatabaseTarget(getEnvConfig());
@@ -51,7 +68,7 @@ try {
         process.exitCode = 2;
     } else {
         await connection.beginTransaction();
-        report = await runCutover(connection, { runId: crypto.randomUUID(), accounting: accountingService, audit: auditService });
+        report = await runCutover(connection, { runId: crypto.randomUUID(), accounting: accountingService, audit: auditService, fiscalYearStart });
         const ok = report.already_done || report.after?.ok;
         if (apply && ok && !report.already_done) await connection.commit();
         else await connection.rollback();

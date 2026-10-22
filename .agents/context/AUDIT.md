@@ -1,5 +1,54 @@
 # Evidencia de revisión — WSM SportsERP
 
+## AUD-017 — 2026-10-21 — ADR-028 (rama `feat/factura-parcial-y-area`): `guardian-integridad`, `revisor-seguridad`, `revisor-ux` y `auditor-externo`
+
+Veredicto del auditor: **con reservas**. El mayor queda consistente en todos los caminos revisados. Seguridad: nada explotable. Cada hallazgo se verificó en el código antes de corregirlo.
+
+**Corregido:**
+- **Endpoint de costos sugeridos** (seguridad 1, auditor H1): respondía 500 siempre por HTTP. En Express 5, `req.query` se vuelve a leer de la URL y perdía la lista ya convertida. Ahora se lee `req.validatedQuery`, con una prueba de la consulta como texto.
+- **Factura en partes** (guardián 4, auditor H3): solo la primera parte corregía el costo. Ahora cada parte lo corrige mientras el producto tenga el costo del remito o el que dejó una factura anterior de esa línea. Para eso se agregó `supplier_invoice_items.product_cost` (migración 068). Un costo cambiado a mano en el medio no se pisa.
+- **Crédito del borrador** (guardián 1, auditor H5): si compras no lo cambió (`cost_overridden`, migración 068), la aprobación toma el último costo facturado de ese momento. Si no hay costo facturado, queda el del borrador.
+- **Foto vieja** (guardián 2): la aprobación de la devolución bloquea al proveedor antes de la primera lectura simple, y el asiento `goods_received` se lee con `FOR SHARE` en la factura y en la devolución.
+- **Precios con más de 2 decimales** (guardián 3): el importe de la línea se redondea una vez, con el precio tal como lo imprime la factura (servidor y pantalla, hasta 4 decimales).
+- **Libro IVA Compras** (guardián 5): las devoluciones salen de su asiento (crédito al proveedor e IVA revertido). Lo no facturado queda afuera.
+- **Transición** (guardián 6, 8 y 5 de decisiones; auditor H6):
+  - abre el puente por unidades pendientes, así que un remito facturado en parte abre lo que le queda;
+  - `--inicio-ejercicio` en hora argentina, obligatorio para aplicar.
+- **Dos líneas del mismo producto** en un remito (guardián 7): la devolución recorre todas, primero lo no facturado, con tope por la suma de las líneas.
+- **Remitos facturados con la OC** (auditor H2): se pueden facturar desde la pantalla, con aviso.
+- **Factura grande** (seguridad 4, auditor H4): `POST /api/supplier-invoices` acepta 64 kB, que alcanzan para las 500 líneas del esquema. El resto de las rutas sigue en 10 kB.
+- **Seguridad, otros:**
+  - `items` sin remitos devuelve 400;
+  - la auditoría guarda el costo aplicado, el sugerido y si se cambió;
+  - las sugerencias traen una fila por producto (`ROW_NUMBER`), no todo el historial.
+- **UX:**
+  - el costo de la devolución no muestra $0 mientras carga, si falla o sin remito: dice "Calculando…", "Reintentar" o "Elegí el remito";
+  - para quien no es de compras se muestra como texto;
+  - vaciarlo vuelve al último facturado;
+  - en la tabla de líneas, cada error se explica en texto junto al campo, y el foco va al primero;
+  - las etiquetas nombran el remito y la línea con costo distinto lo dice;
+  - hay resumen de unidades, botones "Todo lo pendiente" y "Ninguna", y un pie con el neto;
+  - los importes calculados usan formato es-AR;
+  - el IVA editado se conserva mientras no cambie el neto de esa alícuota;
+  - al cambiar de proveedor se limpian los remitos;
+  - controles de 44 px en tablet, voseo, y etiquetas asociadas a sus campos.
+- **Docs** (auditor H7): ADR-027 y el plan dicen 3.1.02.02 para D4; el CHECK de inventario pasa a la 069.
+
+**Residuales anotados (sin cambio):**
+- `supplier_invoice_items.unit_cost` tiene 2 decimales: 3 u por $100 guardan $33,33 y devolverlas acredita $99,99.
+- La reversión de IVA de una devolución usa la proporción de la última factura del proveedor, no la de la factura que cobró esas unidades (ADR-011).
+- El patrón `req.query` de Express 5 afecta a otros controladores que dependieran de valores convertidos por Zod (no hay ninguno conocido con efecto).
+- UX:
+  - el formulario de factura supera las 500 líneas de código (conviene partirlo);
+  - no hay confirmación antes de registrar una factura con diferencias.
+
+**Pendiente del usuario o de la contadora:**
+1. **Factura por más unidades de las que quedan en el remito** (el proveedor cobra unidades devueltas y manda la NC después): hoy no se puede cargar. ¿Se habilita una cuenta "NC a recibir"?
+2. **Devolución sin remito** de un producto que ese proveedor nunca entregó: se permite, al costo del producto. ¿Se exige una compra previa a ese proveedor?
+3. **Contadora:**
+   - ¿Todo el ajuste final de la transición va a 3.1.02.02, aunque una parte venga de hechos del año?
+   - ¿Las diferencias de precio del año en remitos anteriores a ADR-027 van a 3.1.02.02 o a resultado?
+
 ## AUD-016 — 2026-10-18 — ADR-027 completo (rama `feat/revaluacion-stock`): `guardian-integridad`, `revisor-seguridad`, `auditor-externo` y `revisor-ux`
 
 Veredicto del auditor: **con reservas**. El núcleo es correcto (asientos balanceados, orden de bloqueos, CMV sin duplicar, D1-D9). Hubo tres agujeros que rompían el invariante 1 después de la transición, uno de ellos inducido por el runbook. Cada hallazgo se verificó en el código antes de corregirlo.

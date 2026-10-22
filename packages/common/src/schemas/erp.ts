@@ -152,6 +152,16 @@ export const supplierReturnCreateSchema = z.object({
   ).min(1),
 });
 
+// ADR-028: the credit cost a return suggests per product (the last one invoiced).
+export const supplierReturnSuggestedCostsSchema = z.object({
+  supplier_id: uuidSchema,
+  reception_id: optionalUuidSchema,
+  product_ids: z.preprocess(
+    (value) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value),
+    z.array(uuidSchema).min(1).max(100)
+  ),
+});
+
 export const supplierPaymentFiltersSchema = z.object({
   supplier_id: optionalUuidSchema,
 });
@@ -210,6 +220,14 @@ export const supplierInvoiceCreateSchema = z.object({
   })).max(6).optional(),
   // ADR-019: the delivery notes (receptions) the invoice covers: one or several.
   reception_ids: z.array(uuidSchema).max(50).optional(),
+  // ADR-028: what the invoice charges per delivery note line (units and net unit cost). Lines of
+  // the chosen delivery notes left out are not invoiced now. Without it, every pending unit is
+  // invoiced and the difference with the net is spread by value.
+  items: z.array(z.object({
+    reception_item_id: uuidSchema,
+    quantity: z.coerce.number().int().min(0).max(999_999),
+    unit_cost: unitCostSchema,
+  })).max(500).optional(),
   // ADR-017: goods (inventory), freight (Fletes y envíos) or another expense.
   purchase_kind: z.enum(['goods', 'shipping', 'expense']).optional(),
 });

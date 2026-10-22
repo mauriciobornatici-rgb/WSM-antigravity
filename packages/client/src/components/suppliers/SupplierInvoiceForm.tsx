@@ -8,7 +8,11 @@ import { FileText, DollarSign, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type SupplierInvoiceCreateResult } from '@/services/api';
 import { formatMoney } from '@/lib/formatters';
-import { receptionNet, receptionsNetTotal, sharedPurchaseOrderId } from './receptionTotals';
+import {
+    invoiceLineCostId, invoiceLineQuantityId, invoiceLines, netByRate, receptionPendingNet, sharedPurchaseOrderId,
+    type InvoiceLineEdit, type InvoiceLineSource,
+} from './receptionTotals';
+import { SupplierInvoiceLines } from './SupplierInvoiceLines';
 import { createClientUuid } from '@/lib/clientUuid';
 import { VAT_RATE_OPTIONS, formatVatRate } from '@/lib/pricing';
 import { Switch } from '@/components/ui/switch';
@@ -28,6 +32,8 @@ export type SupplierInvoicePayload = {
     vat_rate?: number;
     // One line per rate when the voucher carries several; net/VAT above are their sums.
     vat_lines?: Array<{ vat_rate: number; net_amount: number; vat_amount: number }>;
+    // ADR-028: units and net unit cost the invoice charges per delivery note line.
+    items?: Array<{ reception_item_id: string; quantity: number; unit_cost: number }>;
     purchase_kind?: 'goods' | 'shipping' | 'expense';
     other_taxes: number;
     total_amount: number;
@@ -44,10 +50,9 @@ type SupplierReceptionOption = {
     supplier_invoice_id?: string | null;
     // ADR-027: its purchase order was invoiced without naming its delivery notes (before ADR-019).
     invoiced_by_order?: number | boolean | null;
-    items?: Array<{
-        quantity_received?: number;
-        unit_cost?: number;
-    }>;
+    // ADR-028: how much of it is left to invoice.
+    invoice_status?: 'pending' | 'partial' | 'invoiced' | 'returned';
+    items?: InvoiceLineSource[];
 };
 
 type SupplierPurchaseOrderOption = {
@@ -116,6 +121,10 @@ export function SupplierInvoiceForm({
     const [multiRate, setMultiRate] = useState(false);
     const [vatLines, setVatLines] = useState<VatLineState[]>([]);
     const [submitting, setSubmitting] = useState(false);
+    // ADR-028: what the user typed per delivery note line, and a VAT typed per rate (the supplier's
+    // rounding), kept while that rate's net stays the same.
+    const [lineEdits, setLineEdits] = useState<Record<string, InvoiceLineEdit>>({});
+    const [vatEdits, setVatEdits] = useState<Record<string, { netCents: number; vat: string }>>({});
 
     // Dynamic dropdown states
     const [receptions, setReceptions] = useState<SupplierReceptionOption[]>([]);
@@ -137,7 +146,9 @@ export function SupplierInvoiceForm({
                     api.getReceptions({ supplier_id: supplierId }) as Promise<SupplierReceptionOption[]>,
                     api.getPurchaseOrders({ supplier_id: supplierId }) as Promise<SupplierPurchaseOrderOption[]>
                 ]);
-                const available = recs.filter(r => r.status === 'approved' && !r.supplier_invoice_id);
+                // ADR-028: a delivery note invoiced in part still has units to invoice.
+                const available = recs.filter(r => r.status === 'approved'
+                    && (r.invoice_status ? r.invoice_status === 'pending' || r.invoice_status === 'partial' : !r.supplier_invoice_id));
                 setReceptions(available);
                 setPurchaseOrders(pos);
                 // A reception handed in by the caller starts marked (and prefills the amounts).
@@ -156,27 +167,37 @@ export function SupplierInvoiceForm({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [supplierId]);
 
-    // Marking remitos prefills the net (and VAT) with the sum of the marked ones.
+    // Marking remitos brings their pending lines (ADR-028): the net and VAT come from them.
     const applyReceptionSelection = (ids: string[], source: SupplierReceptionOption[]) => {
         setReceptionIds(ids);
-        if (ids.length === 0) return;
-
         const selected = source.filter(r => ids.includes(r.id));
-        if (selected.length === 0) return;
-
         // When every marked remito comes from the same PO, link it as well
         const sharedPo = sharedPurchaseOrderId(selected);
         if (sharedPo) setPurchaseOrderId(sharedPo);
+    };
 
-        if (selected.some(r => Array.isArray(r.items) && r.items.length > 0)) {
-            const netPrefill = receptionsNetTotal(selected);
-            setNetAmount(String(netPrefill));
+    // Another supplier: nothing marked of the previous one stays.
+    const changeSupplier = (value: string) => {
+        setSupplierId(value);
+        setReceptionIds([]);
+        setLineEdits({});
+        setVatEdits({});
+    };
 
-            const rate = parseFloat(vatRate);
-            const vatPrefill = Math.round((netPrefill * rate) * 100) / 100;
-            setVatAmount(String(vatPrefill));
-            if (multiRate) setVatLines([newVatLine(String(Math.round(rate * 1000) / 10), String(netPrefill))]);
-        }
+    const updateInvoiceLine = (lineId: string, patch: { quantity?: string; unitCost?: string }) => {
+        setLineEdits(current => {
+            const line = lines.find(item => item.id === lineId);
+            const previous = current[lineId] ?? { quantity: line?.quantity ?? '', unitCost: line?.unitCost ?? '' };
+            return { ...current, [lineId]: { ...previous, ...patch } };
+        });
+    };
+
+    const setAllInvoiceLines = (mode: 'pending' | 'none') => {
+        setLineEdits(current => {
+            const next = { ...current };
+            for (const line of lines) next[line.id] = { quantity: mode === 'pending' ? String(line.pending) : '0', unitCost: line.unitCost };
+            return next;
+        });
     };
 
     const toggleReception = (id: string, checked: boolean) => {
@@ -234,19 +255,36 @@ export function SupplierInvoiceForm({
         }
     }, [netAmount, vatRate]);
 
+    // ADR-028: goods are invoiced per delivery note line; the net of each rate is the sum of its lines
+    // (the product's rate) and its VAT is calculated, or typed when the supplier rounded it otherwise.
+    const selectedReceptions = receptions.filter(r => receptionIds.includes(r.id));
+    const lines = invoiceLines(selectedReceptions, lineEdits);
+    const linesMode = effectivePurchaseKind === 'goods' && lines.length > 0;
+    const rateRows = netByRate(lines).map(({ rate, netCents }) => {
+        const computed = round2(netCents / 100 * rate / 100);
+        // A VAT typed for another net no longer applies: it is calculated again.
+        const edit = vatEdits[String(rate)];
+        const vat = edit && edit.netCents === netCents ? edit.vat : String(computed);
+        return { rate, netCents, net: netCents / 100, vat };
+    });
+    const invoicedLines = lines.filter(line => line.units > 0);
+    const linesDifference = round2(invoicedLines.reduce((sum, line) => sum + line.netCents - line.remitoCents, 0) / 100);
+    const productsWithNewCost = new Set(invoicedLines.filter(line => line.netCents !== line.remitoCents).map(line => line.productName)).size;
+
     // With several rates the voucher's net and VAT are the sums of the lines.
-    const netVal = multiRate
-        ? round2(vatLines.reduce((sum, line) => sum + (parseFloat(line.net) || 0), 0))
-        : parseFloat(netAmount) || 0;
-    const vatVal = multiRate
-        ? round2(vatLines.reduce((sum, line) => sum + (parseFloat(line.vat) || 0), 0))
-        : parseFloat(vatAmount) || 0;
+    let netVal = parseFloat(netAmount) || 0;
+    let vatVal = parseFloat(vatAmount) || 0;
+    if (linesMode) {
+        netVal = round2(rateRows.reduce((sum, row) => sum + row.net, 0));
+        vatVal = round2(rateRows.reduce((sum, row) => sum + (parseFloat(row.vat) || 0), 0));
+    } else if (multiRate) {
+        netVal = round2(vatLines.reduce((sum, line) => sum + (parseFloat(line.net) || 0), 0));
+        vatVal = round2(vatLines.reduce((sum, line) => sum + (parseFloat(line.vat) || 0), 0));
+    }
+    // The net and VAT fields only show sums when they come from lines or rates.
+    const derivedAmounts = linesMode || multiRate;
     const taxVal = parseFloat(otherTaxes) || 0;
     const totalAmount = Math.round((netVal + vatVal + taxVal) * 100) / 100;
-
-    const selectedReceptions = receptions.filter(r => receptionIds.includes(r.id));
-    const receivedNet = receptionsNetTotal(selectedReceptions);
-    const receivedDifference = round2(netVal - receivedNet);
     // ADR-027 (D2): goods are invoiced against their delivery notes (the stock came in with them).
     const goodsWithoutReception = effectivePurchaseKind === 'goods' && receptionIds.length === 0;
 
@@ -254,15 +292,30 @@ export function SupplierInvoiceForm({
         e.preventDefault();
 
         if (!supplierId) {
-            toast.error("Debe seleccionar un proveedor");
+            toast.error("Elegí un proveedor");
             return;
         }
         if (!invoiceNumber.trim()) {
-            toast.error("Debe ingresar el número de factura");
+            toast.error("Ingresá el número de factura");
             return;
         }
+        if (linesMode) {
+            const invalid = lines.find(line => !line.valid);
+            if (invalid) {
+                toast.error(`Revisá ${invalid.productName} (remito ${invalid.receptionLabel})`, {
+                    description: `Las unidades van enteras, de 0 a ${invalid.pending} (lo pendiente del remito), y el costo no puede ser negativo.`,
+                });
+                // Take the user to the field to fix.
+                document.getElementById(invalid.quantityValid ? invoiceLineCostId(invalid.id) : invoiceLineQuantityId(invalid.id))?.focus();
+                return;
+            }
+            if (invoicedLines.length === 0) {
+                toast.error("Indicá al menos una línea con unidades facturadas");
+                return;
+            }
+        }
         if (netVal <= 0) {
-            toast.error("El Neto Gravado debe ser mayor a 0");
+            toast.error("El neto gravado tiene que ser mayor a 0");
             return;
         }
         if (goodsWithoutReception) {
@@ -274,8 +327,8 @@ export function SupplierInvoiceForm({
             return;
         }
 
-        if (multiRate && vatLines.some(line => !(parseFloat(line.net) > 0))) {
-            toast.error("Cada alícuota debe tener un neto mayor a 0");
+        if (!linesMode && multiRate && vatLines.some(line => !(parseFloat(line.net) > 0))) {
+            toast.error("Cada alícuota tiene que tener un neto mayor a 0");
             return;
         }
 
@@ -292,7 +345,18 @@ export function SupplierInvoiceForm({
                 other_taxes: taxVal,
                 total_amount: totalAmount,
             };
-            if (multiRate) {
+            if (linesMode) {
+                payload.items = invoicedLines.map(line => ({ reception_item_id: line.id, quantity: line.units, unit_cost: line.cost }));
+                if (rateRows.length === 1) {
+                    payload.vat_rate = rateRows[0]?.rate ?? 21;
+                } else {
+                    payload.vat_lines = rateRows.map(row => ({
+                        vat_rate: row.rate,
+                        net_amount: round2(row.net),
+                        vat_amount: round2(parseFloat(row.vat) || 0),
+                    }));
+                }
+            } else if (multiRate) {
                 payload.vat_lines = vatLines.map(line => ({
                     vat_rate: parseFloat(line.rate) || 0,
                     net_amount: round2(parseFloat(line.net) || 0),
@@ -339,7 +403,7 @@ export function SupplierInvoiceForm({
                 {/* Supplier Selection */}
                 <div className="space-y-2">
                     <Label htmlFor="supplier">Proveedor *</Label>
-                    <Select value={supplierId} onValueChange={setSupplierId} disabled={!!initialSupplierId}>
+                    <Select value={supplierId} onValueChange={changeSupplier} disabled={!!initialSupplierId}>
                         <SelectTrigger id="supplier">
                             <SelectValue placeholder="Seleccione un proveedor" />
                         </SelectTrigger>
@@ -382,33 +446,44 @@ export function SupplierInvoiceForm({
                                             <span>
                                                 Remito {r.remito_number || r.reception_number}
                                                 {r.created_at ? <span className="text-muted-foreground"> · {new Date(r.created_at).toLocaleDateString('es-AR')}</span> : null}
+                                                {r.invoice_status === 'partial' ? (
+                                                    <span className="text-muted-foreground"> · facturado en parte</span>
+                                                ) : null}
                                                 {Number(r.invoiced_by_order) === 1 ? (
                                                     <span className="block text-xs text-amber-800 dark:text-amber-300">
                                                         Su orden de compra ya tiene una factura: elegilo solo si esa factura no lo incluyó.
                                                     </span>
                                                 ) : null}
                                             </span>
-                                            <span className="font-mono text-xs">{formatMoney(receptionNet(r))}</span>
+                                            <span className="font-mono text-xs">
+                                                <span className="sr-only">Pendiente de facturar: </span>{formatMoney(receptionPendingNet(r))}
+                                            </span>
                                         </Label>
                                     </div>
                                 ))}
                             </div>
                         </>
                     )}
-                    {receptionIds.length > 0 ? (
-                        <div className="space-y-1" aria-live="polite">
-                            <p className="text-sm font-medium">Recibido en los remitos: {formatMoney(receivedNet)}</p>
-                            {Math.abs(receivedDifference) > 0.01 ? (
-                                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">
-                                    La factura es {receivedDifference > 0 ? 'mayor' : 'menor'} que lo recibido en {formatMoney(Math.abs(receivedDifference))}.
-                                    La diferencia corrige el costo de los productos que lo actualizan con cada compra; en los de costo fijo se anota como
-                                    {receivedDifference > 0 ? ' pérdida' : ' ganancia'}.
-                                </p>
-                            ) : null}
-                        </div>
-                    ) : null}
                 </fieldset>
             </div>
+
+            {linesMode ? (
+                <section className="space-y-2" aria-labelledby="invoice-lines-title">
+                    <h4 id="invoice-lines-title" className="text-sm font-semibold">Qué cobra la factura</h4>
+                    <p role="status" className="sr-only">Se cargaron {lines.length} líneas para facturar.</p>
+                    <SupplierInvoiceLines lines={lines} onChange={updateInvoiceLine} onSetAll={setAllInvoiceLines} />
+                    <div aria-live="polite">
+                        {Math.abs(linesDifference) > 0.01 ? (
+                            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">
+                                La factura cobra {formatMoney(Math.abs(linesDifference))} {linesDifference > 0 ? 'más' : 'menos'} que el costo de los remitos.
+                                Cambia el costo de {productsWithNewCost === 1 ? '1 producto' : `${productsWithNewCost} productos`} y, en los que siguen al
+                                costo, también su precio de venta. En los productos de costo fijo, la diferencia queda como
+                                {linesDifference > 0 ? ' pérdida' : ' ganancia'}.
+                            </p>
+                        ) : null}
+                    </div>
+                </section>
+            ) : null}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Optional Purchase Order Link */}
@@ -517,16 +592,49 @@ export function SupplierInvoiceForm({
             <div className="bg-slate-50 dark:bg-slate-900 p-5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-4">
                 <h4 className="text-sm font-semibold border-b pb-2">Desglose Impositivo y Financiero</h4>
 
-                <div className="flex items-center gap-3">
-                    <Switch
-                        checked={multiRate}
-                        onChange={e => handleMultiRateChange(e.target.checked)}
-                        aria-label="Varias alícuotas"
-                    />
-                    <span className="text-sm">Varias alícuotas</span>
-                </div>
+                {linesMode ? (
+                    <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                            El neto sale de las líneas, por la alícuota de cada producto. Si el IVA de la factura difiere por redondeo, corregilo acá.
+                        </p>
+                        {rateRows.map(row => (
+                            <div key={row.rate} className="grid grid-cols-1 gap-3 rounded-md border bg-background p-3 sm:grid-cols-3 sm:items-end">
+                                <div className="text-sm">
+                                    <span className="text-muted-foreground">Alícuota</span>{' '}
+                                    <span className="font-medium">{formatVatRate(row.rate)}</span>
+                                </div>
+                                <div className="text-sm">
+                                    <span className="text-muted-foreground">Neto</span>{' '}
+                                    <span className="font-mono font-medium">{formatMoney(row.net)}</span>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label htmlFor={`rate-vat-${row.rate}`}>IVA {formatVatRate(row.rate)}</Label>
+                                    <Input
+                                        id={`rate-vat-${row.rate}`}
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        inputMode="decimal"
+                                        value={row.vat}
+                                        onChange={e => setVatEdits(current => ({ ...current, [String(row.rate)]: { netCents: row.netCents, vat: e.target.value } }))}
+                                        className="h-11 font-mono lg:h-9"
+                                    />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="flex items-center gap-3">
+                        <Switch
+                            checked={multiRate}
+                            onChange={e => handleMultiRateChange(e.target.checked)}
+                            aria-label="Varias alícuotas"
+                        />
+                        <span className="text-sm">Varias alícuotas</span>
+                    </div>
+                )}
 
-                {multiRate ? (
+                {multiRate && !linesMode ? (
                     <div className="space-y-3">
                         {vatLines.map((line, index) => (
                             <div key={line.id} className="grid grid-cols-1 gap-3 rounded-md border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
@@ -594,30 +702,33 @@ export function SupplierInvoiceForm({
                 ) : null}
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    {/* Net Amount */}
+                    {/* Net Amount (a sum, shown as an amount, when it comes from lines or rates) */}
                     <div className="space-y-2">
-                        <Label htmlFor="netAmount">Neto Gravado *</Label>
-                        <div className="relative">
-                            <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                id="netAmount"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={multiRate ? String(netVal) : netAmount}
-                                onChange={e => setNetAmount(e.target.value)}
-                                placeholder="0.00"
-                                className="pl-9 font-mono"
-                                readOnly={multiRate}
-                                required={!multiRate}
-                            />
-                        </div>
+                        <Label htmlFor="netAmount">Neto gravado *</Label>
+                        {derivedAmounts ? (
+                            <output id="netAmount" className="block py-2 font-mono text-base">{formatMoney(netVal)}</output>
+                        ) : (
+                            <div className="relative">
+                                <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    id="netAmount"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={netAmount}
+                                    onChange={e => setNetAmount(e.target.value)}
+                                    placeholder="0.00"
+                                    className="pl-9 font-mono"
+                                    required
+                                />
+                            </div>
+                        )}
                     </div>
 
-                    {/* VAT Rate */}
-                    <div className="space-y-2">
+                    {/* VAT Rate (with lines, each product brings its own: see above) */}
+                    <div className={linesMode ? 'hidden' : 'space-y-2'}>
                         <Label htmlFor="vatRate">Alícuota IVA</Label>
-                        <Select value={vatRate} onValueChange={setVatRate} disabled={multiRate}>
+                        <Select value={vatRate} onValueChange={setVatRate} disabled={derivedAmounts}>
                             <SelectTrigger id="vatRate">
                                 <SelectValue />
                             </SelectTrigger>
@@ -630,23 +741,26 @@ export function SupplierInvoiceForm({
                         </Select>
                     </div>
 
-                    {/* VAT Amount (calculated but editable) */}
+                    {/* VAT Amount (calculated but editable; a sum with lines or rates) */}
                     <div className="space-y-2">
                         <Label htmlFor="vatAmount">Monto IVA</Label>
-                        <div className="relative">
-                            <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                id="vatAmount"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={multiRate ? String(vatVal) : vatAmount}
-                                onChange={e => setVatAmount(e.target.value)}
-                                placeholder="0.00"
-                                className="pl-9 font-mono"
-                                readOnly={multiRate}
-                            />
-                        </div>
+                        {derivedAmounts ? (
+                            <output id="vatAmount" className="block py-2 font-mono text-base">{formatMoney(vatVal)}</output>
+                        ) : (
+                            <div className="relative">
+                                <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    id="vatAmount"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={vatAmount}
+                                    onChange={e => setVatAmount(e.target.value)}
+                                    placeholder="0.00"
+                                    className="pl-9 font-mono"
+                                />
+                            </div>
+                        )}
                     </div>
 
                     {/* Other taxes (percepciones) */}
@@ -669,8 +783,8 @@ export function SupplierInvoiceForm({
                 </div>
 
                 <div className="flex justify-between items-center border-t pt-3 mt-4 text-sm font-semibold">
-                    <span className="text-muted-foreground">Total de Comprobante (Deuda):</span>
-                    <span className="text-2xl font-extrabold text-blue-600 font-mono">${totalAmount.toLocaleString()}</span>
+                    <span className="text-muted-foreground">Total del comprobante (deuda):</span>
+                    <span className="text-2xl font-extrabold text-blue-600 font-mono" aria-live="polite">{formatMoney(totalAmount)}</span>
                 </div>
             </div>
 
@@ -690,8 +804,9 @@ export function SupplierInvoiceForm({
                 <Button type="button" variant="outline" onClick={onCancel} disabled={submitting}>
                     Cancelar
                 </Button>
-                <Button type="submit" disabled={submitting || totalAmount <= 0} className="bg-blue-600 hover:bg-blue-700 text-white font-medium">
-                    {submitting ? 'Guardando...' : 'Cargar y Registrar Factura'}
+                {/* Enabled while not saving: what is missing is said when it is pressed (and the field gets the focus). */}
+                <Button type="submit" disabled={submitting} className="bg-blue-600 hover:bg-blue-700 text-white font-medium">
+                    {submitting ? 'Guardando...' : 'Registrar factura'}
                 </Button>
             </div>
         </form>

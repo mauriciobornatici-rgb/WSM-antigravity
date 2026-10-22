@@ -40,8 +40,9 @@ function supplierInvoiceHarness(t) {
         calls.push({ sql: String(sql), params });
         if (/FROM suppliers WHERE id = \? AND deleted_at IS NULL FOR UPDATE/.test(String(sql))) return [[{ id: params[0] }]];
         // A delivery note received before ADR-027: its goods were valued by the transition against
-        // 3.1.03.01, so the invoice settles that adjustment (AUD-016) instead of adding inventory.
+        // 3.1.02.02 (ADR-028), so the invoice settles that adjustment (AUD-016) instead of adding inventory.
         if (String(sql).includes('FROM receptions WHERE id IN')) return [[{ id: 'r', supplier_id: 's', status: 'approved' }]];
+        if (String(sql).includes('FROM reception_items ri')) return [[{ id: 'ri', reception_id: 'r', product_id: 'p', quantity_received: 1, unit_cost: 3000 }]];
         return [[]];
     });
     const originals = { journal: accountingService.createJournalEntry, audit: auditService.log };
@@ -62,7 +63,7 @@ test('a Factura A with several rates books one fiscal credit line per rate and s
         other_taxes: 30, total_amount: 3450,
     }, 'u');
     assert.deepEqual(lineSet(journals[0].lines), [
-        ['3.1.03.01', 3000, 0], ['1.1.05.02', 210, 0], ['1.1.05.01', 210, 0], ['1.1.05.04', 30, 0], ['2.1.01.01', 0, 3450],
+        ['3.1.02.02', 3000, 0], ['1.1.05.02', 210, 0], ['1.1.05.01', 210, 0], ['1.1.05.04', 30, 0], ['2.1.01.01', 0, 3450],
     ]);
     assert.equal(calls.filter((call) => call.sql.includes('INSERT INTO supplier_invoice_vat_lines')).length, 2);
 });
