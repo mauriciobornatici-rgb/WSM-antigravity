@@ -6,7 +6,11 @@ import { toast } from "sonner";
 import { api, type SupplierCreditNoteCreateInput, type SupplierInvoiceResponse } from "@/services/api";
 import type { QualityCheckCreateInput } from "@/types/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { useAuth } from "@/context/AuthContext";
+import { hasPermission, PERMISSIONS } from "@wsm/common";
 import { formatMoney } from "@/lib/formatters";
+import { convertToCSV, downloadCSV } from "@/lib/exportUtils";
+import { todayInArgentina } from "@/lib/argentinaDate";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PendingOrdersSection } from "@/components/receptions/PendingOrdersSection";
 import { ReceptionForm } from "@/components/receptions/ReceptionForm";
@@ -52,6 +56,9 @@ function toSupplierReturnRecord(row: SupplierReturnRaw): SupplierReturnRecord {
 
 export default function ReceptionsPage() {
     const queryClient = useQueryClient();
+    const { user } = useAuth();
+    // ADR-029: loading a supplier credit note is purchasing's (the server checks it too).
+    const canManageProcurement = hasPermission(user?.role, PERMISSIONS.PROCUREMENT_MANAGE);
 
     const [filter, setFilter] = useState<ReceptionsFilter>("all");
     const [activeTab, setActiveTab] = useState<ReceptionsTab>("pending");
@@ -286,7 +293,7 @@ export default function ReceptionsPage() {
     async function handleCreateCreditNote(data: SupplierCreditNoteCreateInput) {
         const result = await createCreditNoteMutation.mutateAsync(data);
         const parts = [`Saldó ${formatMoney(result.applied_amount)} de lo que faltaba recibir.`];
-        if (result.holding_result > 0) parts.push(`${formatMoney(result.holding_result)} de más quedaron como ganancia por mejor precio.`);
+        if (result.holding_result > 0) parts.push(`${formatMoney(result.holding_result)} de más se registraron a favor, como mejor precio.`);
         if (result.credit_left > 0) parts.push(`Faltan ${formatMoney(result.credit_left)} por recibir.`);
         toast.success("Nota de crédito registrada", { description: parts.join(" ") });
         setCreditNoteInvoice(null);
@@ -300,30 +307,30 @@ export default function ReceptionsPage() {
                 return;
             }
 
-            const headers = ["Fecha", "Tipo Comprobante", "Numero", "CUIT Proveedor", "Proveedor/Razon Social", "Neto Gravado", "IVA Credito Fiscal", "Total"];
-            const rows = records.map((r) => [
-                new Date(r.date).toLocaleDateString("es-AR"),
-                r.type,
-                r.number,
-                r.tax_id,
-                `"${r.supplier_name.replace(/"/g, '""')}"`,
-                Number(r.subtotal).toFixed(2),
-                Number(r.iva).toFixed(2),
-                Number(r.total).toFixed(2)
-            ]);
-
-            const csvContent =
-                "\uFEFF" +
-                [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\n");
-
-            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.setAttribute("href", url);
-            link.setAttribute("download", `libro_iva_compras_${new Date().toISOString().split("T")[0]}.csv`);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            // Numbers, comprobante numbers and names typed by people: every text cell is quoted and
+            // neutralized against formulas (exportUtils); the amounts stay numbers (negative ones too).
+            const money = (value: number | string) => Math.round(Number(value || 0) * 100) / 100;
+            const rows = records.map((r) => ({
+                date: new Date(r.date).toLocaleDateString("es-AR"),
+                type: r.type,
+                number: r.number,
+                tax_id: r.tax_id,
+                supplier_name: r.supplier_name,
+                subtotal: money(r.subtotal),
+                iva: money(r.iva),
+                total: money(r.total),
+            }));
+            const csvContent = convertToCSV(rows, [
+                { key: "date", label: "Fecha" },
+                { key: "type", label: "Tipo de comprobante" },
+                { key: "number", label: "Número" },
+                { key: "tax_id", label: "CUIT del proveedor" },
+                { key: "supplier_name", label: "Proveedor / Razón social" },
+                { key: "subtotal", label: "Neto gravado" },
+                { key: "iva", label: "IVA crédito fiscal" },
+                { key: "total", label: "Total" },
+            ], { separator: ";" });
+            downloadCSV(`libro_iva_compras_${todayInArgentina()}.csv`, csvContent);
             toast.success("Libro IVA Compras exportado con éxito");
         } catch {
             toast.error("Error al exportar Libro IVA Compras");
@@ -491,7 +498,7 @@ export default function ReceptionsPage() {
                                     <th className="px-6 py-3 text-right font-semibold text-slate-500 dark:text-slate-400">Neto</th>
                                     <th className="px-6 py-3 text-right font-semibold text-slate-500 dark:text-slate-400">IVA</th>
                                     <th className="px-6 py-3 text-right font-semibold text-slate-500 dark:text-slate-400">Total</th>
-                                    <th className="px-6 py-3 text-right font-semibold text-slate-500 dark:text-slate-400">NC a recibir</th>
+                                    <th className="px-6 py-3 text-right font-semibold text-slate-500 dark:text-slate-400"><abbr title="Nota de crédito" className="no-underline">NC</abbr> a recibir</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -527,17 +534,17 @@ export default function ReceptionsPage() {
                                             {creditPending(inv) > 0 ? (
                                                 <div className="flex flex-col items-end gap-1">
                                                     <span className="font-mono text-amber-800 dark:text-amber-300">{formatMoney(creditPending(inv))}</span>
-                                                    <button
+                                                    {canManageProcurement ? <button
                                                         type="button"
                                                         onClick={() => setCreditNoteInvoice(inv)}
-                                                        aria-label={`Cargar la nota de crédito de la factura ${inv.invoice_type} ${inv.invoice_number}`}
+                                                        aria-label={`Cargar NC de la factura ${inv.invoice_type} ${inv.invoice_number}`}
                                                         className="min-h-11 rounded border border-border px-3 text-xs font-medium hover:bg-muted lg:min-h-8"
                                                     >
                                                         Cargar NC
-                                                    </button>
+                                                    </button> : null}
                                                 </div>
                                             ) : Number(inv.credit_expected_amount || 0) > 0 ? (
-                                                <span className="text-xs text-muted-foreground">Recibida</span>
+                                                <span className="text-xs text-muted-foreground">NC recibida</span>
                                             ) : (
                                                 <span className="text-muted-foreground" aria-label="Sin nota de crédito a recibir">—</span>
                                             )}

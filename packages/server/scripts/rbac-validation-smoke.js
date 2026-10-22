@@ -293,7 +293,7 @@ async function run() {
             endpoint: '/api/supplier-credit-notes',
             token: warehouse,
             expected: 403,
-            body: { supplier_invoice_id: '11111111-1111-4111-8111-111111111111', credit_note_number: '0001-RBAC', issue_date: '2026-10-22', net_amount: 10, vat_amount: 2.1 }
+            body: { supplier_invoice_id: '11111111-1111-4111-8111-111111111111', credit_note_number: '0001-RBAC', issue_date: '2026-10-22', net_amount: 10, vat_amount: 2.1, vat_rate: 21 }
         },
         {
             name: 'a supplier credit note needs an invoice that expects it',
@@ -301,7 +301,7 @@ async function run() {
             endpoint: '/api/supplier-credit-notes',
             token: manager,
             expected: 404,
-            body: { supplier_invoice_id: '11111111-1111-4111-8111-111111111111', credit_note_number: '0001-RBAC', issue_date: '2026-10-22', net_amount: 10, vat_amount: 2.1 }
+            body: { supplier_invoice_id: '11111111-1111-4111-8111-111111111111', credit_note_number: '0001-RBAC', issue_date: '2026-10-22', net_amount: 10, vat_amount: 2.1, vat_rate: 21 }
         },
         {
             name: 'manager can list POS exceptions',

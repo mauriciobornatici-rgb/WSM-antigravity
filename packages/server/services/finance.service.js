@@ -907,6 +907,16 @@ class FinanceService {
             const usesTreasury = allocations.some((alloc) => (alloc.payments || [])
                 .some((p) => disbursementAccountFor(p.method) === ACCOUNTS.TREASURY_CASH));
             if (usesTreasury) await lockTreasury(connection);
+            // AUD-018: every invoice of this payment is locked, in id order, before anything is read.
+            // A plain read fixes the transaction's snapshot: a credit note or payment committed while
+            // this one waited for a later invoice would not be seen, and the invoice paid twice.
+            const invoiceIds = [...new Set(allocations.map((alloc) => alloc.invoiceId).filter(Boolean))].sort();
+            if (invoiceIds.length > 0) {
+                await connection.query(
+                    'SELECT id FROM supplier_invoices WHERE id IN (?) AND supplier_id = ? ORDER BY id FOR UPDATE',
+                    [invoiceIds, supplierId]
+                );
+            }
 
             let totalPaid = 0;
             const results = [];

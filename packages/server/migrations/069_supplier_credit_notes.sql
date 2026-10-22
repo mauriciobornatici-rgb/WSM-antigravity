@@ -5,6 +5,8 @@
 -- supplier_invoices.credit_expected_amount: what the invoice put in 1.1.06.01.
 -- supplier_credit_notes: the supplier's credit notes, each against one invoice. applied_amount is
 -- what it settled of 1.1.06.01 (the rest of its value is holding result).
+-- No foreign keys on purpose (as 060 and 067): a database seeded before may hold another collation,
+-- and the migration runs at start-up. The service checks the supplier and the invoice under lock.
 -- Reverse: DROP TABLE supplier_credit_note_vat_lines, DROP TABLE supplier_credit_notes, DROP COLUMN
 -- credit_expected_amount, DROP COLUMN excess_quantity (only while 1.1.06.01 has no movements).
 -- (No semicolons in comments: the migration runner splits statements on them.)
@@ -32,8 +34,7 @@ CREATE TABLE IF NOT EXISTS supplier_credit_notes (
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_supplier_credit_notes_number (supplier_id, credit_note_type, credit_note_number),
     INDEX idx_supplier_credit_notes_invoice (supplier_invoice_id),
-    CONSTRAINT fk_supplier_credit_notes_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
-    CONSTRAINT fk_supplier_credit_notes_invoice FOREIGN KEY (supplier_invoice_id) REFERENCES supplier_invoices(id)
+    CONSTRAINT chk_supplier_credit_notes_applied CHECK (applied_amount >= 0 AND applied_amount <= total_amount)
 );
 
 CREATE TABLE IF NOT EXISTS supplier_credit_note_vat_lines (

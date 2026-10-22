@@ -67,6 +67,13 @@ export const orderItemPickSchema = z.object({
 });
 
 // 2. Purchase Orders & Procurement
+// AUD-018: the amounts of a purchase document fit DECIMAL(15,2) (a typo answers 400, not a 500).
+const MAX_DOCUMENT_AMOUNT = 999_999_999;
+// A calendar date as the forms send it (YYYY-MM-DD), and a real one.
+const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va como AAAA-MM-DD')
+  .refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().startsWith(value), {
+    message: 'Fecha inexistente',
+  });
 // A net unit cost: it becomes the product's cost and values its stock (ADR-027). The bound keeps
 // a typo from overflowing the DECIMAL columns or posting an absurd entry.
 const unitCostSchema = z.coerce.number().min(0).max(99_999_999);
@@ -196,8 +203,8 @@ export const supplierInvoiceCreateSchema = z.object({
   purchase_order_id: optionalUuidSchema,
   issue_date: z.string().min(1),
   due_date: z.string().nullable().optional(),
-  net_amount: z.coerce.number().min(0),
-  vat_amount: z.coerce.number().min(0),
+  net_amount: z.coerce.number().min(0).max(MAX_DOCUMENT_AMOUNT),
+  vat_amount: z.coerce.number().min(0).max(MAX_DOCUMENT_AMOUNT),
   // ADR-016: the invoice's VAT rate, so the fiscal credit lands in its own account.
   // null / empty means "not sent" (z.coerce would turn null into 0 %).
   vat_rate: z.preprocess(
@@ -206,8 +213,8 @@ export const supplierInvoiceCreateSchema = z.object({
       message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
     }).optional()
   ),
-  other_taxes: z.coerce.number().min(0).optional(),
-  total_amount: z.coerce.number().min(0).optional(),
+  other_taxes: z.coerce.number().min(0).max(MAX_DOCUMENT_AMOUNT).optional(),
+  total_amount: z.coerce.number().min(0).max(MAX_DOCUMENT_AMOUNT).optional(),
   notes: z.string().nullable().optional(),
   // ADR-017: an invoice with several VAT rates: one line per rate (net and VAT). When sent,
   // net_amount and vat_amount must be their sums.
@@ -215,8 +222,8 @@ export const supplierInvoiceCreateSchema = z.object({
     vat_rate: z.coerce.number().refine((rate) => [0, 2.5, 5, 10.5, 21, 27].includes(rate), {
       message: 'Alícuota no válida (0, 2,5, 5, 10,5, 21 o 27 %)',
     }),
-    net_amount: z.coerce.number().min(0),
-    vat_amount: z.coerce.number().min(0),
+    net_amount: z.coerce.number().min(0).max(MAX_DOCUMENT_AMOUNT),
+    vat_amount: z.coerce.number().min(0).max(MAX_DOCUMENT_AMOUNT),
   })).max(6).optional(),
   // ADR-019: the delivery notes (receptions) the invoice covers: one or several.
   reception_ids: z.array(uuidSchema).max(50).optional(),
@@ -250,20 +257,23 @@ export const supplierCreditNoteCreateSchema = z.object({
   supplier_invoice_id: uuidSchema,
   credit_note_type: z.enum(['A', 'B', 'C', 'M']).optional(),
   credit_note_number: z.string().trim().min(2).max(100),
-  issue_date: z.string().min(1),
-  net_amount: z.coerce.number().positive().max(999_999_999),
-  vat_amount: z.coerce.number().min(0).max(999_999_999),
+  issue_date: isoDateSchema,
+  net_amount: z.coerce.number().positive().max(MAX_DOCUMENT_AMOUNT),
+  vat_amount: z.coerce.number().min(0).max(MAX_DOCUMENT_AMOUNT),
   vat_rate: z.preprocess(
     (value) => (value === null || value === '' ? undefined : value),
     purchaseVatRateSchema.optional()
   ),
-  other_taxes: z.coerce.number().min(0).max(999_999_999).optional(),
-  total_amount: z.coerce.number().min(0).max(999_999_999).optional(),
+  other_taxes: z.coerce.number().min(0).max(MAX_DOCUMENT_AMOUNT).optional(),
+  total_amount: z.coerce.number().min(0).max(MAX_DOCUMENT_AMOUNT).optional(),
   notes: z.string().max(1000).nullable().optional(),
+  // The note is worth more than the credit still to receive: the user confirms the difference is a
+  // better price (it is booked as a gain).
+  accept_excess: z.boolean().optional(),
   vat_lines: z.array(z.object({
     vat_rate: purchaseVatRateSchema,
-    net_amount: z.coerce.number().min(0),
-    vat_amount: z.coerce.number().min(0),
+    net_amount: z.coerce.number().min(0).max(MAX_DOCUMENT_AMOUNT),
+    vat_amount: z.coerce.number().min(0).max(MAX_DOCUMENT_AMOUNT),
   })).max(6).optional(),
 });
 

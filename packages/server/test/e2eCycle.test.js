@@ -95,7 +95,8 @@ test("Circuito E2E Operativo Completo: Compra -> Stock -> Venta -> Cta Cte -> Co
     });
 
     await t.test("3. Procesar Venta POS y Creación de Pedido", async () => {
-        const createOrderUseCase = new CreateOrderUseCase();
+        // No online stock sync: it runs after the sale, outside the mocked pool (AUD-018).
+        const createOrderUseCase = new CreateOrderUseCase({ onStockChanged: async () => {} });
         const orderRes = await createOrderUseCase.execute({
             client_id: "cli-100",
             items: [

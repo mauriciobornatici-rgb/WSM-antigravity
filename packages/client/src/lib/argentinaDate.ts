@@ -23,3 +23,16 @@ export function parseArgentinaDate(value: string): string | null {
 
     return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
+
+// Today's date (YYYY-MM-DD) in Argentina. toISOString() is UTC: from 21:00 Argentine time on it
+// already gives tomorrow.
+export function todayInArgentina(now: Date = new Date()): string {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).format(now);
+}
+
+// A date (YYYY-MM-DD) some days before today, in Argentina.
+export function daysAgoInArgentina(days: number, now: Date = new Date()): string {
+    const [year, month, day] = todayInArgentina(now).split("-").map(Number);
+    const date = new Date(Date.UTC(year ?? 1970, (month ?? 1) - 1, (day ?? 1) - days));
+    return date.toISOString().slice(0, 10);
+}

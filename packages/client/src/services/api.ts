@@ -265,6 +265,8 @@ export type SupplierCreditNoteCreateInput = {
     other_taxes?: number;
     total_amount: number;
     notes?: string;
+    // La nota vale más que lo que falta recibir: el usuario confirma que la diferencia es mejor precio.
+    accept_excess?: boolean;
 };
 
 export type SupplierCreditNoteCreateResult = {

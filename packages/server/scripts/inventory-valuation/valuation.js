@@ -48,10 +48,21 @@ export async function checkInventoryValuation(connection) {
          WHERE ri.reception_id IN (SELECT je.reference_id FROM journal_entries je WHERE je.reference_type = 'goods_received')`
     );
 
+    // ADR-029 (AUD-018): 1.1.06.01 is what invoices charged of more and their credit notes did not
+    // settle yet.
+    const [[creditLedger]] = await connection.query(
+        "SELECT COALESCE(SUM(debit - credit), 0) AS balance FROM journal_entry_lines WHERE account_code = '1.1.06.01'"
+    );
+    const [[creditPending]] = await connection.query(
+        `SELECT COALESCE((SELECT SUM(credit_expected_amount) FROM supplier_invoices), 0)
+              - COALESCE((SELECT SUM(applied_amount) FROM supplier_credit_notes), 0) AS value`
+    );
+
     const differenceCents = cents(ledger.balance) - cents(valued.value);
     const bridgeDifferenceCents = cents(bridge.balance) - cents(pending.value);
+    const creditDifferenceCents = cents(creditLedger?.balance || 0) - cents(creditPending?.value || 0);
     return {
-        ok: differenceCents === 0 && bridgeDifferenceCents === 0,
+        ok: differenceCents === 0 && bridgeDifferenceCents === 0 && creditDifferenceCents === 0,
         inventory_ledger: cents(ledger.balance) / 100,
         stock_valued: cents(valued.value) / 100,
         difference: differenceCents / 100,
@@ -62,6 +73,9 @@ export async function checkInventoryValuation(connection) {
         goods_to_invoice_balance: cents(bridge.balance) / 100,
         goods_to_invoice_pending: cents(pending.value) / 100,
         goods_to_invoice_difference: bridgeDifferenceCents / 100,
+        credit_notes_to_receive_balance: cents(creditLedger?.balance || 0) / 100,
+        credit_notes_to_receive_pending: cents(creditPending?.value || 0) / 100,
+        credit_notes_to_receive_difference: creditDifferenceCents / 100,
     };
 }
 
@@ -86,15 +100,16 @@ export const CUTOVER_AUDIT_ACTION = 'INVENTORY_VALUATION_CUTOVER';
  */
 export async function checkCutoverPreconditions(connection, { findAffectedOrders, findReceptionEntries }) {
     const problems = [];
-    const [accounts] = await connection.query("SELECT code FROM chart_of_accounts WHERE code IN ('4.2.02.01', '2.1.01.02', '3.1.02.02')");
-    if (accounts.length < 3) problems.push('Faltan las migraciones 064/065/067 (cuentas 4.2.02.01, 2.1.01.02 y 3.1.02.02).');
+    const [accounts] = await connection.query("SELECT code FROM chart_of_accounts WHERE code IN ('4.2.02.01', '2.1.01.02', '3.1.02.02', '1.1.06.01')");
+    if (accounts.length < 4) problems.push('Faltan las migraciones 064/065/067/069 (cuentas 4.2.02.01, 2.1.01.02, 3.1.02.02 y 1.1.06.01).');
     const [columns] = await connection.query(
         `SELECT CONCAT(TABLE_NAME, '.', COLUMN_NAME) AS name FROM information_schema.COLUMNS
          WHERE TABLE_SCHEMA = DATABASE() AND CONCAT(TABLE_NAME, '.', COLUMN_NAME) IN
                ('inventory_movements.journal_entry_id', 'company_settings.inventory_valuation_since',
-                'supplier_invoice_receptions.cleared_amount', 'reception_items.invoiced_quantity')`
+                'supplier_invoice_receptions.cleared_amount', 'reception_items.invoiced_quantity',
+                'supplier_invoices.credit_expected_amount')`
     );
-    if (columns.length < 4) problems.push('Faltan las migraciones 065/066/067 (columnas de la valuación).');
+    if (columns.length < 5) problems.push('Faltan las migraciones 065/066/067/069 (columnas de la valuación).');
     const pendingC1 = await findAffectedOrders(connection);
     if (pendingC1.length > 0) problems.push(`Hay ${pendingC1.length} ventas POS sin descontar stock: corré antes RUNBOOK_REPARACION_STOCK_C1.`);
     const duplicates = await findReceptionEntries(connection);

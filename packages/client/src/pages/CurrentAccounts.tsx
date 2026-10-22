@@ -91,7 +91,7 @@ export default function CurrentAccountsPage() {
     });
 
     // ADR-029: notas de crédito del proveedor por unidades que sus facturas cobraron de más.
-    const { data: supplierCreditNotes = [] } = useQuery({
+    const { data: supplierCreditNotes = [], isError: supplierCreditNotesFailed } = useQuery({
         queryKey: ["current-accounts", "supplier-credit-notes", selectedSupplierId],
         queryFn: () => api.getSupplierCreditNotes({ supplier_id: selectedSupplierId }),
         enabled: accountType === "supplier" && !!selectedSupplierId,
@@ -252,7 +252,7 @@ export default function CurrentAccountsPage() {
                 typeLabel: "Devolución Proveedor",
                 reference: `DEV-${String(ret.return_number || String(ret.id || "").substring(0, 8))}`,
                 description: `Devolución de mercadería a proveedor: ${String(ret.notes || "")}`,
-                debit: adjustmentByReference.get(String(ret.id || "")) ?? Number(ret.total_credit_amount || 0),
+                debit: adjustmentByReference.get(String(ret.id || "")) ?? 0,
                 credit: 0,
                 balanceAfter: 0
             }));
@@ -263,7 +263,9 @@ export default function CurrentAccountsPage() {
             type: "credit_note" as const,
             typeLabel: `Nota de Crédito Proveedor ${note.credit_note_type}`,
             reference: `NC ${note.credit_note_type}-${note.credit_note_number}`,
-            description: `Por unidades cobradas de más en la factura ${note.invoice_type || ""}-${note.invoice_number || ""}`,
+            description: note.invoice_number
+                ? `Por unidades cobradas de más en la factura ${[note.invoice_type, note.invoice_number].filter(Boolean).join(" ")}`
+                : "Por unidades cobradas de más",
             debit: Number(note.total_amount || 0),
             credit: 0,
             balanceAfter: 0
@@ -423,6 +425,7 @@ export default function CurrentAccountsPage() {
                     dueDate: inv.due_date || "",
                     total: Number(inv.total_amount || 0),
                     paid,
+                    credited: Number(inv.credit_notes_total || 0),
                     pending: Math.max(0, pending),
                     status: inv.status || "approved",
                     isOverdue
@@ -539,6 +542,13 @@ export default function CurrentAccountsPage() {
                             selectedClient={selectedClient}
                             selectedSupplier={selectedSupplier}
                         />
+
+                        {accountType === "supplier" && supplierCreditNotesFailed ? (
+                            <p role="alert" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">
+                                No se pudieron cargar las notas de crédito del proveedor: los movimientos y lo pendiente pueden estar incompletos.
+                                Recargá la página para reintentar.
+                            </p>
+                        ) : null}
 
                         {/* Pestañas de Detalle */}
                         <Tabs defaultValue="ledger" className="space-y-4">

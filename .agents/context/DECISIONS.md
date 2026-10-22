@@ -96,12 +96,19 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
 - **Nota de crédito del proveedor:**
   - `POST /api/supplier-credit-notes` (`procurement.manage`), contra una factura con crédito pendiente;
   - lleva la letra de la factura;
-  - salda 1.1.06.01 por su neto (y su IVA, en una B o C) hasta lo pendiente. Lo que exceda es mejor precio (4.2.02.01). Si es menor, lo que falta sigue pendiente para otra nota;
+  - salda 1.1.06.01 por su neto (y su IVA, en una B o C) hasta lo pendiente. Si es menor, lo que falta sigue pendiente para otra nota;
+  - lo que exceda es mejor precio (4.2.02.01), solo con la confirmación del usuario (`accept_excess`);
+  - las notas de una factura nunca suman más que la factura (AUD-018);
+  - con IVA y sin líneas por alícuota, exige su alícuota; el IVA se controla contra el neto;
+  - el número se guarda como punto de venta-número ("1-123" = "0001-00000123");
   - revierte el IVA crédito fiscal por alícuota (A o M) y las percepciones;
   - baja el saldo del proveedor con un movimiento `adjustment`;
   - cuenta como cancelación de la factura para su estado de pago y para lo que se puede pagar;
   - entra negativa al Libro IVA Compras.
-  - Bloqueos: la factura y después el proveedor, como un pago. Número repetido → 409; otra nota sin crédito pendiente → 409 `no_credit_note_expected`.
+  - Bloqueos: la factura y después el proveedor, como un pago. Número repetido → 409 (se controla primero); otra nota sin crédito pendiente → 409 `no_credit_note_expected`.
+  - El pago de varias facturas las bloquea a todas, en orden, antes de leer pagos y notas (AUD-018).
+  - Un proveedor con notas de crédito a recibir no se puede eliminar.
+  - El control de valuación (`after.ok`) concilia 1.1.06.01 con lo esperado menos lo aplicado.
 - **Pantalla:**
   - en la factura, la casilla "El proveedor cobró unidades de más"; con ella se ven también los remitos facturados o devueltos, y cada línea muestra las unidades de más;
   - en Facturas de compra, la columna "NC a recibir" con "Cargar NC";
@@ -113,8 +120,10 @@ Este registro documenta las decisiones estructurales y de arquitectura que condi
   - la cuenta 1.1.06.01;
   - `supplier_invoice_items.excess_quantity`;
   - `supplier_invoices.credit_expected_amount`;
-  - las tablas `supplier_credit_notes` y `supplier_credit_note_vat_lines`.
+  - las tablas `supplier_credit_notes` y `supplier_credit_note_vat_lines`, sin FK (como la 060 y la 067, por la collation de la base de producción) y con CHECK `0 ≤ applied_amount ≤ total_amount`.
+  - Aplicada en QA, `wsm_sports_erp` y `wsm_simulacion` (las dos locales, alineadas al texto final tras AUD-018).
   - El CHECK de inventario pasa a la **070**.
+- **Pendiente del usuario o la contadora (AUD-018):** dar por perdido el resto de una nota menor; cruce con un remito que llega después; anulación de una nota; pagar antes de recibir la nota; saldo a favor del proveedor; excedente a resultado o a costo.
 
 ### ADR-028 — Factura de compra por línea, crédito de devoluciones y ejercicios anteriores (usuario y contadora, 2026-10-21)
 - **Origen:** pendientes de AUD-016. El usuario eligió "lo ideal" para la factura parcial y aceptó la recomendación sobre las devoluciones. La contadora respondió con las buenas prácticas de la profesión.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { SupplierCreditNoteService } from '../domains/procurement/SupplierCreditNoteService.js';
 import { SupplierInvoiceService } from '../domains/procurement/SupplierInvoiceService.js';
-import { purchaseDocumentAmounts } from '../domains/procurement/purchaseDocumentAmounts.js';
+import { normalizeVoucherNumber, purchaseDocumentAmounts } from '../domains/procurement/purchaseDocumentAmounts.js';
 import accountingService from '../services/accounting.service.js';
 import auditService from '../services/audit.service.js';
 import { mockPool } from './helpers/mockDb.js';
@@ -52,12 +52,13 @@ test('a credit note A settles 1.1.06.01, reverses its VAT credit and lowers the 
     assert.deepEqual(lines(entries[0]), [['2.1.01.01', 133.1, 0], ['1.1.06.01', 0, 110], ['1.1.05.02', 0, 23.1]]);
     assert.equal(entries[0].reference_type, 'supplier_credit_note');
     const saved = calls.find(({ statement }) => statement.startsWith('INSERT INTO supplier_credit_notes'));
-    assert.deepEqual(saved.params.slice(1, 11), ['s', 'inv', 'A', '0001-7', '2026-10-21', 110, 23.1, 0, 133.1, 110]);
+    // The number is kept as point of sale-number: '0001-7' is 0001-00000007 (AUD-018).
+    assert.deepEqual(saved.params.slice(1, 11), ['s', 'inv', 'A', '0001-00000007', '2026-10-21', 110, 23.1, 0, 133.1, 110]);
     const balance = calls.find(({ statement }) => statement.startsWith('UPDATE suppliers SET account_balance'));
     assert.deepEqual(balance.params, [133.1, 's']);
     const movement = calls.find(({ statement }) => statement.startsWith('INSERT INTO transactions'));
     assert.equal(movement.params[1], 133.1);
-    assert.match(movement.params[2], /Nota de crédito A 0001-7/);
+    assert.match(movement.params[2], /Nota de crédito A 0001-00000007/);
     // 266.20 paid + 133.10 credited settle the 399.30 invoice.
     const status = calls.find(({ statement }) => statement.startsWith('UPDATE supplier_invoices SET payment_status'));
     assert.deepEqual(status.params, ['paid', 'inv']);
@@ -68,7 +69,14 @@ test('a credit note A settles 1.1.06.01, reverses its VAT credit and lowers the 
 test('a credit note B or C is worth its total; more than expected is holding result, less leaves the rest', async (t) => {
     // Factura B: the invoice put 121 (net and VAT) in 1.1.06.01.
     const bigger = harness(t, { invoice: { invoice_type: 'B', credit_expected_amount: 121, total_amount: 242 } });
-    await bigger.service.createCreditNote(note({ net_amount: 110, vat_amount: 23.1, total_amount: 133.1 }), 'u');
+    const biggerNote = note({ net_amount: 110, vat_amount: 23.1, total_amount: 133.1 });
+    // More than expected books a gain: the user confirms it first (AUD-018).
+    await assert.rejects(
+        () => bigger.service.createCreditNote(biggerNote, 'u'),
+        (err) => err.statusCode === 409 && err.responseBody.error === 'credit_note_exceeds_expected' && err.responseBody.excess_amount === 12.1
+    );
+    assert.equal(bigger.entries.length, 0);
+    await bigger.service.createCreditNote({ ...biggerNote, accept_excess: true }, 'u');
     assert.deepEqual(lines(bigger.entries[0]), [['2.1.01.01', 133.1, 0], ['1.1.06.01', 0, 121], ['4.2.02.01', 0, 12.1]]);
 
     const smaller = harness(t, { invoice: { credit_expected_amount: 110 }, applied: 30, credited: 36.3 });
@@ -103,6 +111,18 @@ test('a credit note needs an invoice with credit to receive, its letter and a ne
     await assert.rejects(() => h.service.createCreditNote(note(), 'u'), (err) => err.statusCode === 409 && err.responseBody.error === 'duplicate_credit_note');
     assert.equal(h.entries.length, 0);
     assert.ok(h.rolledBack());
+    // A second click after the first note settled everything says it is already registered (AUD-018).
+    h = harness(t, { duplicate: true, applied: 110 });
+    await assert.rejects(() => h.service.createCreditNote(note(), 'u'), (err) => err.responseBody.error === 'duplicate_credit_note');
+    // The notes of an invoice never add up to more than the invoice.
+    h = harness(t, { invoice: { total_amount: 150 }, credited: 20 });
+    await assert.rejects(
+        () => h.service.createCreditNote(note(), 'u'),
+        (err) => err.statusCode === 409 && err.responseBody.error === 'credit_note_exceeds_invoice' && /153\.10.*150\.00/.test(err.message)
+    );
+    // The fiscal credit is reversed at the note's own rate, never a guessed one.
+    h = harness(t);
+    await assert.rejects(() => h.service.createCreditNote(note({ vat_rate: undefined }), 'u'), (err) => err.statusCode === 400 && err.responseBody.error === 'invalid_vat_rate');
     // Its amounts are checked like an invoice's.
     h = harness(t);
     await assert.rejects(() => h.service.createCreditNote(note({ total_amount: 140 }), 'u'), (err) => err.statusCode === 400 && err.responseBody.error === 'invalid_invoice_total');
@@ -147,6 +167,17 @@ test('the amounts of a purchase document are checked before anything is booked',
     refused({ vat_lines: [{ vat_rate: 21, net_amount: 100, vat_amount: 30 }] }, 'invalid_vat_line');
     refused({ net_amount: 90, vat_lines: [{ vat_rate: 21, net_amount: 100, vat_amount: 21 }] }, 'invalid_invoice_total');
     refused({ ...base, total_amount: 120 }, 'invalid_invoice_total');
+    // AUD-018: a single rate's VAT is checked too; a VAT of 0 is a document without it.
+    refused({ net_amount: 100, vat_amount: 30, vat_rate: 21 }, 'invalid_vat_line');
+    assert.equal(purchaseDocumentAmounts({ net_amount: 100, vat_amount: 0, vat_rate: 21 }).total, 100);
+    assert.equal(purchaseDocumentAmounts({ net_amount: 99.99, vat_amount: 21, vat_rate: 21 }).vat, 21);
+});
+
+test('voucher numbers are kept as point of sale-number', () => {
+    assert.equal(normalizeVoucherNumber(' 1-123 '), '0001-00000123');
+    assert.equal(normalizeVoucherNumber('00002 - 45'), '00002-00000045');
+    assert.equal(normalizeVoucherNumber('NC sin formato'), 'NC sin formato');
+    assert.equal(normalizeVoucherNumber(null), '');
 });
 
 test('the IVA book lists the supplier credit notes, negative', async (t) => {

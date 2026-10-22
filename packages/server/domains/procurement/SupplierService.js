@@ -119,6 +119,22 @@ export class SupplierService {
             if (Math.abs(balance) > 0.000001) {
                 throw businessError(409, { error: 'has_balance', message: 'No se puede eliminar un proveedor con saldo pendiente' });
             }
+            // ADR-029 (AUD-018): a credit note still to receive could not be loaded afterwards, and
+            // "Notas de crédito a recibir" would stay open for good.
+            const [creditRows] = await connection.query(
+                `SELECT COALESCE(SUM(si.credit_expected_amount - COALESCE(cn.applied, 0)), 0) AS pending
+                 FROM supplier_invoices si
+                 LEFT JOIN (SELECT supplier_invoice_id, SUM(applied_amount) AS applied FROM supplier_credit_notes GROUP BY supplier_invoice_id) cn
+                   ON cn.supplier_invoice_id = si.id
+                 WHERE si.supplier_id = ? AND si.credit_expected_amount > 0`,
+                [id]
+            );
+            if (Number(creditRows?.[0]?.pending || 0) > 0.004) {
+                throw businessError(409, {
+                    error: 'has_credit_to_receive',
+                    message: 'No se puede eliminar un proveedor con notas de crédito a recibir: cargalas antes.',
+                });
+            }
 
             await connection.query('UPDATE suppliers SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL', [id]);
             await auditService.log({

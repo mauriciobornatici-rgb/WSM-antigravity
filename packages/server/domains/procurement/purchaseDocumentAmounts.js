@@ -61,7 +61,29 @@ export function purchaseDocumentAmounts(data) {
             message: 'El comprobante tiene IVA: elegí su alícuota (0 % es solo para comprobantes sin IVA).'
         });
     }
+    // AUD-018: with a single rate, its VAT is checked like a line's (a VAT unrelated to the net
+    // would post, or reverse, an arbitrary fiscal credit). A VAT of 0 is a document without it.
+    const singleRate = !vatLines && data.vat_rate != null && data.vat_rate !== '' ? Number(data.vat_rate) : null;
+    if (singleRate > 0 && vat > 0) {
+        const expected = net * singleRate / 100;
+        if (Math.abs(vat - expected) > Math.max(0.05, net * 0.001)) {
+            throw businessError(400, {
+                error: 'invalid_vat_line',
+                message: `El IVA (${vat.toFixed(2)}) no corresponde al ${singleRate}% del neto (${expected.toFixed(2)}).`
+            });
+        }
+    }
     return { vatLines, net, vat, taxes, total };
+}
+
+/**
+ * A voucher number as "point of sale-number" (0001-00000123), so the same voucher typed as
+ * "1-123" is the same one. Anything else is kept as typed (trimmed).
+ */
+export function normalizeVoucherNumber(value) {
+    const text = String(value ?? '').trim();
+    const match = /^(\d{1,5})\s*-\s*(\d{1,8})$/.exec(text);
+    return match ? `${match[1].padStart(4, '0')}-${match[2].padStart(8, '0')}` : text;
 }
 
 /**

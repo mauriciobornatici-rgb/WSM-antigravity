@@ -227,7 +227,8 @@ test('a delivery note invoiced in full can be charged again only as units owed b
     assert.equal(owed.changes.length, 0, 'units never received move no cost');
     assert.equal(owed.calls.filter(({ statement }) => statement.startsWith('UPDATE reception_items SET invoiced_quantity')).length, 0);
     const saved = owed.calls.filter(({ statement }) => statement.startsWith('INSERT INTO supplier_invoice_items'));
-    assert.deepEqual(saved.map(({ params }) => params.slice(5)), [[0, 100, 0, 121, 1]]);
+    // No units received: the line leaves no cost for the product (AUD-018).
+    assert.deepEqual(saved.map(({ params }) => params.slice(5)), [[0, 100, 0, null, 1]]);
 });
 
 test('a deadlock while invoicing answers 409 busy (the screen can retry)', async (t) => {

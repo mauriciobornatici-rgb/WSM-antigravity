@@ -2,7 +2,7 @@ import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatMoney } from '@/lib/formatters';
-import { invoiceLineCostId, invoiceLineQuantityId, type InvoiceLineView } from './receptionTotals';
+import { MAX_INVOICE_LINE_UNITS, invoiceLineCostId, invoiceLineQuantityId, type InvoiceLineView } from './receptionTotals';
 
 interface SupplierInvoiceLinesProps {
     lines: InvoiceLineView[];
@@ -87,7 +87,7 @@ export function SupplierInvoiceLines({ lines, onChange, onSetAll, allowExcess = 
                                         {line.quantityValid ? null : (
                                             <p id={quantityErrorId} role="alert" className="mt-1 flex items-center justify-center gap-1 text-xs text-destructive">
                                                 <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                                                {allowExcess ? 'Un número entero, 0 o más' : `Entero de 0 a ${line.pending}`}
+                                                {allowExcess ? `Un número entero de 0 a ${MAX_INVOICE_LINE_UNITS.toLocaleString('es-AR')}` : `Entero de 0 a ${line.pending}`}
                                             </p>
                                         )}
                                         {line.excess > 0 ? (

@@ -192,12 +192,13 @@ export class SupplierReturnService {
         const ids = [...new Set((productIds || []).filter(Boolean))];
         const found = new Map();
         if (ids.length === 0) return [];
+        // Only lines that invoiced units received: units charged of more and owed back are no price (ADR-029).
         if (receptionId) {
             const [rows] = await executor.query(
                 `SELECT ri.product_id, ri.unit_cost,
                         (SELECT sii.unit_cost FROM supplier_invoice_items sii
                          JOIN supplier_invoices si ON si.id = sii.supplier_invoice_id
-                         WHERE sii.reception_item_id = ri.id AND COALESCE(si.status, '') <> 'cancelled'
+                         WHERE sii.reception_item_id = ri.id AND sii.quantity > 0 AND COALESCE(si.status, '') <> 'cancelled'
                          ORDER BY si.issue_date DESC, si.created_at DESC LIMIT 1) AS invoiced_cost
                  FROM reception_items ri JOIN receptions r ON r.id = ri.reception_id
                  WHERE ri.reception_id = ? AND r.supplier_id = ? AND ri.product_id IN (?)
@@ -219,7 +220,7 @@ export class SupplierReturnService {
                             ROW_NUMBER() OVER (PARTITION BY sii.product_id
                                                ORDER BY si.issue_date DESC, si.created_at DESC, sii.created_at DESC) AS position
                      FROM supplier_invoice_items sii JOIN supplier_invoices si ON si.id = sii.supplier_invoice_id
-                     WHERE si.supplier_id = ? AND sii.product_id IN (?) AND COALESCE(si.status, '') <> 'cancelled'
+                     WHERE si.supplier_id = ? AND sii.product_id IN (?) AND sii.quantity > 0 AND COALESCE(si.status, '') <> 'cancelled'
                  ) latest WHERE position = 1`,
                 [supplierId, missing()]
             );

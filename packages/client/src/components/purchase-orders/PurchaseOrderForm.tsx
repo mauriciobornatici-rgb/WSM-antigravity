@@ -1,4 +1,5 @@
-﻿import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { todayInArgentina } from '@/lib/argentinaDate';
 import { Trash2, Plus } from 'lucide-react';
 import { api } from '@/services/api';
 import { showErrorToast } from '@/lib/errorHandling';
@@ -30,7 +31,7 @@ export function PurchaseOrderForm({ onSubmit, onCancel }: PurchaseOrderFormProps
     const [loading, setLoading] = useState(true);
 
     const [supplierId, setSupplierId] = useState('');
-    const [orderDate, setOrderDate] = useState(new Date().toISOString().slice(0, 10));
+    const [orderDate, setOrderDate] = useState(() => todayInArgentina());
     const [expectedDeliveryDate, setExpectedDeliveryDate] = useState('');
     const [notes, setNotes] = useState('');
     const [items, setItems] = useState<OrderItem[]>([]);

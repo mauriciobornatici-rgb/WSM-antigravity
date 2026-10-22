@@ -495,17 +495,19 @@ export class SupplierInvoiceService {
             line.excessNetCents = line.excess > 0 ? Math.round(line.netCents * line.excess / (line.quantity + line.excess)) : 0;
             line.receivedCostCents = line.costCents - line.excessCents;
         }
-        // The cost per unit this invoice gives each product (all its lines), kept with the lines.
+        // The cost per unit this invoice gives each product (its lines with units received), kept
+        // with the lines. A line that only charged units owed back gives none (AUD-018).
         const perProduct = new Map();
         for (const line of lines) {
+            if (line.quantity === 0) continue;
             const current = perProduct.get(line.productId) || { cents: 0, quantity: 0 };
             current.cents += line.costCents;
             current.quantity += line.quantity + line.excess;
             perProduct.set(line.productId, current);
         }
         for (const line of lines) {
-            const product = perProduct.get(line.productId);
-            line.productCost = roundCost(product.cents / product.quantity / 100);
+            const product = line.quantity > 0 ? perProduct.get(line.productId) : null;
+            line.productCost = product ? roundCost(product.cents / product.quantity / 100) : null;
         }
 
         const totals = { pendingCents: 0, legacyCents: 0, bridgedCostCents: 0, legacyCostCents: 0, creditExpectedCents: 0, excessNetCents: 0 };

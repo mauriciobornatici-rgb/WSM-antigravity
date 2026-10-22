@@ -93,7 +93,14 @@ test('a Factura A that charges a unit of more: the unit waits in 1.1.06.01 and t
 
     // 200 paid, then the credit note: 363 - 200 - 121 leaves 42 to pay.
     await pay(finance, supplierId, invoice.id, 200);
-    const credit = await notes.createCreditNote({
+    // A note for more than the 100 expected would book a gain: it is refused unless confirmed (AUD-018).
+    await assert.rejects(
+        () => notes.createCreditNote({
+            supplier_invoice_id: invoice.id, credit_note_number: number('NCA'), issue_date: '2026-10-22',
+            net_amount: 110, vat_amount: 23.1, vat_rate: 21,
+        }, null),
+        (err) => err.statusCode === 409 && err.responseBody.error === 'credit_note_exceeds_expected' && err.responseBody.excess_amount === 10
+    );    const credit = await notes.createCreditNote({
         supplier_invoice_id: invoice.id, credit_note_number: number('NCA'), issue_date: '2026-10-22',
         net_amount: 100, vat_amount: 21, vat_rate: 21, total_amount: 121,
     }, null);
@@ -160,22 +167,30 @@ test('a delivery note invoiced twice by a Factura B: the second one waits whole;
     assert.deepEqual([first.applied_amount, first.credit_left], [36.3, 24.2]);
     await assert.rejects(
         () => notes.createCreditNote({
-            supplier_invoice_id: twice.id, credit_note_type: 'A', credit_note_number: number('NCA'), issue_date: '2026-10-22', net_amount: 30, vat_amount: 6.3,
+            supplier_invoice_id: twice.id, credit_note_type: 'A', credit_note_number: number('NCA'), issue_date: '2026-10-22', net_amount: 30, vat_amount: 6.3, vat_rate: 21,
         }, null),
         (err) => err.statusCode === 400 && err.responseBody.error === 'credit_note_type_mismatch'
     );
     const secondNumber = number('NCB');
+    // The notes of an invoice never add up to more than it (36.30 + 36.30 > 60.50, AUD-018).
+    await assert.rejects(
+        () => notes.createCreditNote({
+            supplier_invoice_id: twice.id, credit_note_number: secondNumber, issue_date: '2026-10-22', net_amount: 30, vat_amount: 6.3, vat_rate: 21,
+        }, null),
+        (err) => err.statusCode === 409 && err.responseBody.error === 'credit_note_exceeds_invoice'
+    );
     const second = await notes.createCreditNote({
-        supplier_invoice_id: twice.id, credit_note_number: secondNumber, issue_date: '2026-10-22', net_amount: 30, vat_amount: 6.3, vat_rate: 21,
+        supplier_invoice_id: twice.id, credit_note_number: secondNumber, issue_date: '2026-10-22', net_amount: 20, vat_amount: 4.2, vat_rate: 21,
     }, null);
-    // 24.20 were left: the other 12.10 are a better price than invoiced (holding result).
-    assert.deepEqual(await ledgerOf('supplier_credit_note', second.id), [['1.1.06.01', 0, 24.2], ['2.1.01.01', 36.3, 0], ['4.2.02.01', 0, 12.1]]);
+    // The 24.20 left, with its VAT (a Factura B put it in the cost).
+    assert.deepEqual(await ledgerOf('supplier_credit_note', second.id), [['1.1.06.01', 0, 24.2], ['2.1.01.01', 24.2, 0]]);
     assert.equal(await creditToReceive(twice.id, first.id, second.id), 0);
     await assert.rejects(
         () => notes.createCreditNote({
-            supplier_invoice_id: twice.id, credit_note_number: secondNumber, issue_date: '2026-10-22', net_amount: 1, vat_amount: 0.21,
+            supplier_invoice_id: twice.id, credit_note_number: secondNumber, issue_date: '2026-10-22', net_amount: 1, vat_amount: 0.21, vat_rate: 21,
         }, null),
-        (err) => err.statusCode === 409 && ['duplicate_credit_note', 'no_credit_note_expected'].includes(err.responseBody.error)
+        // The same number, typed as the supplier prints it or not, is the same note.
+        (err) => err.statusCode === 409 && err.responseBody.error === 'duplicate_credit_note'
     );
 });
 
@@ -202,6 +217,55 @@ test('two notes for the same credit at the same time: one settles it, the other 
     assert.equal(await creditToReceive(invoice.id, settled[0].value.id), 0);
     const [[status]] = await pool.query('SELECT payment_status FROM supplier_invoices WHERE id = ?', [invoice.id]);
     assert.equal(status.payment_status, 'paid');
+});
+
+test('a payment of several invoices sees a credit note committed while it waited for them (AUD-018)', async () => {
+    const { invoices, finance } = await services();
+    const supplierId = await seedSupplier();
+    const productId = await seedProduct({ cost: 50 });
+    const first = await receiveWithoutOrder(supplierId, productId, 1, 50);
+    const second = await receiveWithoutOrder(supplierId, productId, 1, 50);
+    const plain = await invoices.createSupplierInvoice({
+        invoice_number: number('A'), invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-21', reception_ids: [first.receptionId],
+        net_amount: 50, vat_amount: 10.5, vat_rate: 21, total_amount: 60.5,
+    }, null);
+    const charged = await invoices.createSupplierInvoice({
+        invoice_number: number('A'), invoice_type: 'A', supplier_id: supplierId, issue_date: '2026-10-21', reception_ids: [second.receptionId],
+        net_amount: 100, vat_amount: 21, vat_rate: 21, total_amount: 121, expect_credit_note: true,
+        items: [{ reception_item_id: second.lineId, quantity: 2, unit_cost: 50 }],
+    }, null);
+
+    // A credit note in progress on the second invoice holds its row.
+    const noteConnection = await pool.getConnection();
+    let payment;
+    try {
+        await noteConnection.beginTransaction();
+        await noteConnection.query('SELECT id FROM supplier_invoices WHERE id = ? FOR UPDATE', [charged.id]);
+        // The payment covers both, the second in full; it starts while the note is open.
+        payment = finance.registerBulkSupplierPayments({
+            supplierId,
+            allocations: [
+                { invoiceId: plain.id, payments: [{ amount: 60.5, method: 'transfer' }] },
+                { invoiceId: charged.id, payments: [{ amount: 121, method: 'transfer' }] },
+            ],
+        }, null).then(() => 'paid', (err) => err);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        // Only the row the payment reads (its total): without an entry, it settles nothing of 1.1.06.01.
+        await noteConnection.query(
+            `INSERT INTO supplier_credit_notes (id, supplier_id, supplier_invoice_id, credit_note_type, credit_note_number, issue_date,
+                net_amount, vat_amount, total_amount, applied_amount)
+             VALUES (?, ?, ?, 'A', ?, '2026-10-22', 50, 10.5, 60.5, 0)`,
+            [crypto.randomUUID(), supplierId, charged.id, number('NCA')]
+        );
+        await noteConnection.commit();
+    } finally {
+        noteConnection.release();
+    }
+    // Paying the whole 121 of an invoice already credited 60.50 is refused, and nothing is paid.
+    const outcome = await payment;
+    assert.equal(outcome?.errorCode, 'PAYMENTS_EXCEED_TOTAL', String(outcome?.message || outcome));
+    const [[paid]] = await pool.query('SELECT COUNT(*) AS n FROM supplier_payments WHERE supplier_invoice_id IN (?)', [[plain.id, charged.id]]);
+    assert.equal(Number(paid.n), 0);
 });
 
 test.after(async () => {

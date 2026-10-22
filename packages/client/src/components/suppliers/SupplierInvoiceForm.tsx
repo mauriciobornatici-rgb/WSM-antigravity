@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { todayInArgentina } from '@/lib/argentinaDate';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ArgentinaDateInput } from '@/components/common/ArgentinaDateInput';
@@ -121,7 +122,7 @@ export function SupplierInvoiceForm({
     const [invoiceType, setInvoiceType] = useState<'A' | 'B' | 'C' | 'M'>('A');
     const [receptionIds, setReceptionIds] = useState<string[]>(initialReceptionId ? [initialReceptionId] : []);
     const [purchaseOrderId, setPurchaseOrderId] = useState(initialOrderId);
-    const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10));
+    const [issueDate, setIssueDate] = useState(() => todayInArgentina());
     const [dueDate, setDueDate] = useState('');
     
     const [netAmount, setNetAmount] = useState('');
@@ -143,7 +144,8 @@ export function SupplierInvoiceForm({
     // Dynamic dropdown states: every approved delivery note of the supplier; those with units to
     // invoice are offered, and the rest too while a credit note is expected (charged twice).
     const [approvedReceptions, setApprovedReceptions] = useState<SupplierReceptionOption[]>([]);
-    const receptions = expectCreditNote ? approvedReceptions : approvedReceptions.filter(hasUnitsToInvoice);
+    // What happened to the list when the credit note option changed (read by screen readers).
+    const [receptionsNotice, setReceptionsNotice] = useState('');
     const [purchaseOrders, setPurchaseOrders] = useState<SupplierPurchaseOrderOption[]>([]);
     const [loadingDropdowns, setLoadingDropdowns] = useState(false);
 
@@ -203,9 +205,18 @@ export function SupplierInvoiceForm({
     // units typed above what is pending show as errors to fix).
     const changeExpectCreditNote = (checked: boolean) => {
         setExpectCreditNote(checked);
-        if (!checked) {
-            const pendingIds = new Set(approvedReceptions.filter(hasUnitsToInvoice).map(r => r.id));
+        if (checked) {
+            setReceptionsNotice('Ahora se muestran también los remitos ya facturados o devueltos.');
+            return;
+        }
+        setReceptionsNotice('Se muestran solo los remitos con unidades pendientes.');
+        const pendingIds = new Set(approvedReceptions.filter(hasUnitsToInvoice).map(r => r.id));
+        const removed = receptionIds.filter(id => !pendingIds.has(id)).length;
+        if (removed > 0) {
             setReceptionIds(current => current.filter(id => pendingIds.has(id)));
+            toast.info(removed === 1
+                ? 'Se quitó 1 remito que no tiene unidades pendientes.'
+                : `Se quitaron ${removed} remitos que no tienen unidades pendientes.`);
         }
     };
 
@@ -282,8 +293,9 @@ export function SupplierInvoiceForm({
 
     // ADR-028: goods are invoiced per delivery note line; the net of each rate is the sum of its lines
     // (the product's rate) and its VAT is calculated, or typed when the supplier rounded it otherwise.
-    const selectedReceptions = receptions.filter(r => receptionIds.includes(r.id));
     const allowExcess = expectCreditNote && effectivePurchaseKind === 'goods';
+    const receptions = allowExcess ? approvedReceptions : approvedReceptions.filter(hasUnitsToInvoice);
+    const selectedReceptions = receptions.filter(r => receptionIds.includes(r.id));
     const lines = invoiceLines(selectedReceptions, lineEdits, { allowExcess });
     const linesMode = effectivePurchaseKind === 'goods' && lines.length > 0;
     const rateRows = netByRate(lines).map(({ rate, netCents }) => {
@@ -462,13 +474,34 @@ export function SupplierInvoiceForm({
                     <legend className="text-sm font-medium leading-none">
                         Remitos a facturar {effectivePurchaseKind === 'goods' ? '*' : '(opcional)'}
                     </legend>
+                    {supplierId && effectivePurchaseKind === 'goods' ? (
+                        <div className="flex min-h-11 items-start gap-3 rounded-md border p-3">
+                            <input
+                                id="expect-credit-note"
+                                type="checkbox"
+                                checked={expectCreditNote}
+                                onChange={e => changeExpectCreditNote(e.target.checked)}
+                                aria-describedby="expect-credit-note-help"
+                                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded accent-primary"
+                            />
+                            <div className="space-y-0.5">
+                                <Label htmlFor="expect-credit-note" className="cursor-pointer">El proveedor cobró unidades de más</Label>
+                                <p id="expect-credit-note-help" className="text-xs text-muted-foreground">
+                                    Marcalo si la factura cobra más unidades de las que llegaron (o que ya estaban facturadas o devueltas) y el
+                                    proveedor va a mandar una nota de crédito. Lo cobrado de más queda en «Notas de crédito a recibir» hasta que
+                                    cargues esa nota.
+                                </p>
+                            </div>
+                        </div>
+                    ) : null}
+                    <p role="status" className="sr-only">{receptionsNotice}</p>
                     {!supplierId ? (
                         <p id="receptions-help" className="text-xs text-muted-foreground">Elegí un proveedor para ver sus remitos pendientes de factura.</p>
                     ) : loadingDropdowns ? (
                         <p id="receptions-help" className="text-xs text-muted-foreground">Cargando remitos...</p>
                     ) : receptions.length === 0 ? (
                         <p id="receptions-help" className="text-xs text-muted-foreground">
-                            Este proveedor no tiene remitos aprobados sin facturar.
+                            {allowExcess ? 'Este proveedor no tiene remitos aprobados.' : 'Este proveedor no tiene remitos aprobados sin facturar.'}
                             {effectivePurchaseKind === 'goods' ? ' Registrá primero la recepción de la mercadería (puede ser sin orden de compra).' : ''}
                         </p>
                     ) : (
@@ -511,27 +544,6 @@ export function SupplierInvoiceForm({
                     )}
                 </fieldset>
             </div>
-
-            {supplierId && effectivePurchaseKind === 'goods' ? (
-                <div className="flex min-h-11 items-start gap-3 rounded-md border p-3">
-                    <input
-                        id="expect-credit-note"
-                        type="checkbox"
-                        checked={expectCreditNote}
-                        onChange={e => changeExpectCreditNote(e.target.checked)}
-                        aria-describedby="expect-credit-note-help"
-                        className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded accent-primary"
-                    />
-                    <div className="space-y-0.5">
-                        <Label htmlFor="expect-credit-note" className="cursor-pointer">El proveedor cobró unidades de más</Label>
-                        <p id="expect-credit-note-help" className="text-xs text-muted-foreground">
-                            Marcalo si la factura cobra más unidades de las que llegaron (o que ya estaban facturadas o devueltas) y el
-                            proveedor va a mandar una nota de crédito. Lo cobrado de más queda en «Notas de crédito a recibir» hasta que
-                            cargues esa nota.
-                        </p>
-                    </div>
-                </div>
-            ) : null}
 
             {linesMode ? (
                 <section className="space-y-2" aria-labelledby="invoice-lines-title">

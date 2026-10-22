@@ -4,7 +4,7 @@ import auditService from '../../services/audit.service.js';
 import accountingService from '../../services/accounting.service.js';
 import { businessError } from '../../utils/businessError.js';
 import { ACCOUNTS } from '../../utils/paymentAccounts.js';
-import { purchaseDocumentAmounts, vatCreditByAccount } from './purchaseDocumentAmounts.js';
+import { normalizeVoucherNumber, purchaseDocumentAmounts, vatCreditByAccount } from './purchaseDocumentAmounts.js';
 
 /**
  * A supplier's credit note for units its invoice charged beyond the delivery notes (ADR-029). It
@@ -15,8 +15,9 @@ export class SupplierCreditNoteService {
     async getCreditNotes(filters = {}) {
         const { supplier_id, supplier_invoice_id } = filters;
         let query = `
-            SELECT scn.*, s.name AS supplier_name, s.tax_id AS supplier_tax_id,
-                   si.invoice_type, si.invoice_number
+            SELECT scn.id, scn.supplier_id, scn.supplier_invoice_id, scn.credit_note_type, scn.credit_note_number, scn.issue_date,
+                   scn.net_amount, scn.vat_amount, scn.other_taxes, scn.total_amount, scn.applied_amount, scn.notes, scn.created_at,
+                   s.name AS supplier_name, s.tax_id AS supplier_tax_id, si.invoice_type, si.invoice_number
             FROM supplier_credit_notes scn
             JOIN suppliers s ON s.id = scn.supplier_id
             JOIN supplier_invoices si ON si.id = scn.supplier_invoice_id
@@ -37,8 +38,14 @@ export class SupplierCreditNoteService {
     }
 
     async createCreditNote(data, userId, ipAddress = null) {
-        const { supplier_invoice_id, credit_note_number, issue_date, notes } = data;
+        const { supplier_invoice_id, issue_date, notes } = data;
+        // AUD-018: "1-123" and "0001-00000123" are the same voucher.
+        const credit_note_number = normalizeVoucherNumber(data.credit_note_number);
         const { vatLines, net, vat, taxes, total } = purchaseDocumentAmounts(data);
+        // The fiscal credit is reversed in the account of its rate: never a guessed 21 % (AUD-018).
+        if (vat > 0 && !vatLines && (data.vat_rate == null || data.vat_rate === '')) {
+            throw businessError(400, { error: 'invalid_vat_rate', message: 'Indicá la alícuota del IVA de la nota de crédito.' });
+        }
         const creatorId = userId || null;
         const id = crypto.randomUUID();
 
@@ -75,20 +82,7 @@ export class SupplierCreditNoteService {
                     message: `La nota de crédito de una factura ${invoice.invoice_type} también es ${invoice.invoice_type}.`,
                 });
             }
-
-            const [appliedRows] = await connection.query(
-                `SELECT COALESCE(SUM(applied_amount), 0) AS applied, COALESCE(SUM(total_amount), 0) AS credited
-                 FROM supplier_credit_notes WHERE supplier_invoice_id = ?`,
-                [supplier_invoice_id]
-            );
-            const expectedCents = Math.round(Number(invoice.credit_expected_amount || 0) * 100);
-            const pendingCents = expectedCents - Math.round(Number(appliedRows[0]?.applied || 0) * 100);
-            if (pendingCents <= 0) {
-                throw businessError(409, {
-                    error: 'no_credit_note_expected',
-                    message: `La factura ${invoice.invoice_type} ${invoice.invoice_number} no tiene una nota de crédito a recibir pendiente.`,
-                });
-            }
+            // A second click finds the first note: it says so, before what is left to receive (AUD-018).
             const [existing] = await connection.query(
                 'SELECT id FROM supplier_credit_notes WHERE supplier_id = ? AND credit_note_type = ? AND credit_note_number = ? LIMIT 1',
                 [invoice.supplier_id, type, credit_note_number]
@@ -100,6 +94,31 @@ export class SupplierCreditNoteService {
                 });
             }
 
+            const [appliedRows] = await connection.query(
+                `SELECT COALESCE(SUM(applied_amount), 0) AS applied, COALESCE(SUM(total_amount), 0) AS credited
+                 FROM supplier_credit_notes WHERE supplier_invoice_id = ?`,
+                [supplier_invoice_id]
+            );
+            // AUD-018: the notes of an invoice never add up to more than the invoice itself (a note
+            // is a correction of its voucher).
+            const invoiceCents = Math.round(Number(invoice.total_amount || 0) * 100);
+            const creditedBeforeCents = Math.round(Number(appliedRows[0]?.credited || 0) * 100);
+            if (creditedBeforeCents + Math.round(total * 100) > invoiceCents) {
+                throw businessError(409, {
+                    error: 'credit_note_exceeds_invoice',
+                    message: `Las notas de crédito de la factura ${invoice.invoice_type} ${invoice.invoice_number} sumarían `
+                        + `$${((creditedBeforeCents + Math.round(total * 100)) / 100).toFixed(2)} y la factura es de $${(invoiceCents / 100).toFixed(2)}.`,
+                });
+            }
+            const expectedCents = Math.round(Number(invoice.credit_expected_amount || 0) * 100);
+            const pendingCents = expectedCents - Math.round(Number(appliedRows[0]?.applied || 0) * 100);
+            if (pendingCents <= 0) {
+                throw businessError(409, {
+                    error: 'no_credit_note_expected',
+                    message: `La factura ${invoice.invoice_type} ${invoice.invoice_number} no tiene una nota de crédito a recibir pendiente.`,
+                });
+            }
+
             // What the note is worth against 1.1.06.01: its net, plus its VAT on a B or C note (the
             // invoice put that VAT in the cost). Up to what is left to receive; beyond that it is a
             // better price than invoiced (holding result). Less leaves the rest to receive.
@@ -107,6 +126,16 @@ export class SupplierCreditNoteService {
             const baseCents = Math.round(net * 100) + (givesCredit ? 0 : Math.round(vat * 100));
             const appliedCents = Math.min(baseCents, pendingCents);
             const extraCents = baseCents - appliedCents;
+            // AUD-018: more than expected is booked as a better price; a typo would book a gain, so
+            // the user confirms it (the screen shows the difference first).
+            if (extraCents > 0 && data.accept_excess !== true) {
+                throw businessError(409, {
+                    error: 'credit_note_exceeds_expected',
+                    message: `La nota vale $${(baseCents / 100).toFixed(2)} y falta recibir $${(pendingCents / 100).toFixed(2)}: `
+                        + `confirmá que los $${(extraCents / 100).toFixed(2)} de diferencia son un mejor precio.`,
+                    excess_amount: extraCents / 100,
+                });
+            }
 
             await connection.query(
                 `INSERT INTO supplier_credit_notes
@@ -129,9 +158,7 @@ export class SupplierCreditNoteService {
                 'SELECT COALESCE(SUM(amount), 0) AS paid FROM supplier_payments WHERE supplier_invoice_id = ?',
                 [supplier_invoice_id]
             );
-            const settledCents = Math.round(Number(paidRows[0]?.paid || 0) * 100)
-                + Math.round(Number(appliedRows[0]?.credited || 0) * 100) + Math.round(total * 100);
-            const invoiceCents = Math.round(Number(invoice.total_amount || 0) * 100);
+            const settledCents = Math.round(Number(paidRows[0]?.paid || 0) * 100) + creditedBeforeCents + Math.round(total * 100);
             const paymentStatus = settledCents <= 0 ? 'pending' : (settledCents + 1 < invoiceCents ? 'partial' : 'paid');
             await connection.query('UPDATE supplier_invoices SET payment_status = ? WHERE id = ?', [paymentStatus, supplier_invoice_id]);
 
@@ -148,7 +175,7 @@ export class SupplierCreditNoteService {
                 [total, invoice.supplier_id]
             );
 
-            const rateLines = vatLines || [{ vat_rate: data.vat_rate == null ? 21 : Number(data.vat_rate), net, vat }];
+            const rateLines = vatLines || [{ vat_rate: Number(data.vat_rate || 0), net, vat }];
             const creditByAccount = givesCredit ? vatCreditByAccount(rateLines) : new Map();
             const entryId = await accountingService.createJournalEntryIfAny(connection, {
                 date: issue_date || new Date(),

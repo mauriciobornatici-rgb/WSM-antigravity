@@ -1,9 +1,19 @@
 import mysql from 'mysql2/promise';
-import { getEnvConfig } from './env.js';
+import { getEnvConfig, isLocalDatabaseHost } from './env.js';
 
 const env = getEnvConfig();
 
 let _pool = null;
+
+// A test process never talks to a remote database (AUD-018: a test run outside qa-runner loaded
+// .env, which points to production, and a background stock sync queried it). Node's test runner
+// marks its processes with NODE_TEST_CONTEXT.
+export function assertTestDatabaseIsLocal(environment = process.env, execArgv = process.execArgv) {
+    const underTestRunner = Boolean(environment.NODE_TEST_CONTEXT) || execArgv.includes('--test');
+    if (underTestRunner && !isLocalDatabaseHost(environment.DB_HOST || 'localhost')) {
+        throw new Error(`Refusing to open a database connection from a test to non-local DB_HOST '${environment.DB_HOST}'.`);
+    }
+}
 
 const getPool = () => {
     if (!_pool) {
@@ -32,6 +42,8 @@ export const closePool = async () => {
     }
 };
 
+const CONNECTING_METHODS = new Set(['query', 'execute', 'getConnection']);
+
 const poolProxy = new Proxy({}, {
     get: (target, prop) => {
         if (prop in target) {
@@ -39,7 +51,11 @@ const poolProxy = new Proxy({}, {
         }
         const p = getPool();
         if (typeof p[prop] === 'function') {
-            return p[prop].bind(p);
+            const bound = p[prop].bind(p);
+            // Checked when used, not when read: tests read pool.query to put it back after a mock.
+            return CONNECTING_METHODS.has(prop)
+                ? (...args) => { assertTestDatabaseIsLocal(); return bound(...args); }
+                : bound;
         }
         return p[prop];
     },
